@@ -3,15 +3,13 @@ package soy.iko.opencode.ui.file
 import android.content.Intent
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ContentCopy
@@ -100,7 +98,6 @@ fun FileViewScreen(
                 )
                 else -> {
                     val content = state.content
-                    val scrollState = rememberScrollState()
                     if (content?.diff != null && content.diff.isNotBlank()) {
                         DiffView(
                             diff = content.diff,
@@ -121,28 +118,24 @@ fun FileViewScreen(
                         val gutterWidth = remember(lines.size) {
                             (lines.size.toString().length.coerceAtLeast(3) * 10).dp
                         }
-                        Row(
+                        val hScrollState = rememberScrollState()
+                        LazyColumn(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .verticalScroll(scrollState)
-                                .horizontalScroll(rememberScrollState())
                                 .padding(8.dp),
                         ) {
-                            // Line-number gutter
-                            Column(modifier = Modifier.width(gutterWidth)) {
-                                lines.forEachIndexed { i, _ ->
+                            itemsIndexed(lines, key = { index, _ -> index }) { index, line ->
+                                Row(modifier = Modifier.horizontalScroll(hScrollState)) {
                                     Text(
-                                        "${i + 1}",
+                                        "${index + 1}",
+                                        modifier = Modifier.width(gutterWidth),
                                         style = MaterialTheme.typography.bodySmall,
                                         fontFamily = FontFamily.Monospace,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
-                                }
-                            }
-                            Column(modifier = Modifier.padding(start = 8.dp)) {
-                                lines.forEach { line ->
                                     Text(
                                         line,
+                                        modifier = Modifier.padding(start = 8.dp),
                                         style = MaterialTheme.typography.bodySmall,
                                         fontFamily = FontFamily.Monospace,
                                     )

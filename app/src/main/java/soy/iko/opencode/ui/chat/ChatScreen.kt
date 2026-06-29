@@ -75,6 +75,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
 import soy.iko.opencode.data.network.EventStreamClient
+import soy.iko.opencode.data.model.ReasoningPart
+import soy.iko.opencode.data.model.TextPart
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
 import soy.iko.opencode.ui.vmFactory
@@ -120,7 +122,16 @@ fun ChatScreen(
     }
 
     // Keep the newest content in view as parts stream in — only if already at the bottom.
-    LaunchedEffect(messages.size, messages.lastOrNull()?.parts?.size) {
+    // Include the growing text length so we follow streaming within a single part, not
+    // only when a brand-new message or part is added.
+    val lastPartLen = messages.lastOrNull()?.parts?.lastOrNull()?.let { part ->
+        when (part) {
+            is TextPart -> part.text.length
+            is ReasoningPart -> part.text.length
+            else -> 0
+        }
+    } ?: 0
+    LaunchedEffect(messages.size, messages.lastOrNull()?.parts?.size, lastPartLen) {
         if (messages.isNotEmpty() && isPinnedToBottom) {
             listState.animateScrollToItem(messages.lastIndex)
         }

@@ -3,14 +3,15 @@ package soy.iko.opencode.ui.components
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material3.Icon
@@ -82,28 +83,24 @@ fun DiffView(diff: String, modifier: Modifier = Modifier) {
     val addText = MaterialTheme.colorScheme.primary
     val removeText = MaterialTheme.colorScheme.error
     val context = LocalContext.current
+    val hScrollState = rememberScrollState()
 
-    Column(
+    LazyColumn(
         modifier = modifier
             .fillMaxWidth()
             .padding(vertical = 4.dp)
             .clip(RoundedCornerShape(8.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant)
-            .padding(top = 2.dp, end = 4.dp),
+            .background(MaterialTheme.colorScheme.surfaceVariant),
     ) {
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            IconButton(onClick = { copyToClipboard(context, "diff", diff) }) {
-                Icon(Icons.Filled.ContentCopy, contentDescription = stringResource(R.string.copy), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        item(key = "__copy") {
+            Row(modifier = Modifier.fillMaxWidth().padding(top = 2.dp, end = 4.dp), horizontalArrangement = Arrangement.End) {
+                IconButton(onClick = { copyToClipboard(context, "diff", diff) }) {
+                    Icon(Icons.Filled.ContentCopy, contentDescription = stringResource(R.string.copy), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
         }
-        Column(
-            modifier = Modifier
-                .horizontalScroll(rememberScrollState())
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 10.dp)
-                .padding(bottom = 10.dp),
-        ) {
-            for (line in lines) {
+        itemsIndexed(lines, key = { index, _ -> index }) { _, line ->
+            Row(modifier = Modifier.horizontalScroll(hScrollState).padding(horizontal = 10.dp)) {
                 when (line) {
                     is DiffLine.Hunk -> Text(
                         line.text,
@@ -125,13 +122,14 @@ fun DiffView(diff: String, modifier: Modifier = Modifier) {
                 }
             }
         }
+        item(key = "__spacer") { Spacer(Modifier.padding(bottom = 10.dp)) }
     }
 }
 
 @Composable
 private fun DiffRow(text: String, prefix: String, bg: Color, textColor: androidx.compose.ui.graphics.Color) {
     Row(
-        modifier = Modifier.fillMaxWidth().background(bg),
+        modifier = Modifier.background(bg),
     ) {
         Text(
             prefix,

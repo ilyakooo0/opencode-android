@@ -58,6 +58,11 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
     private val _state = MutableStateFlow(SessionListState())
     val state: StateFlow<SessionListState> = _state.asStateFlow()
 
+    /** Transient errors (failed create/delete/rename) surfaced as a snackbar, not by hiding the list. */
+    private val _transientError = MutableStateFlow<String?>(null)
+    val transientError: StateFlow<String?> = _transientError.asStateFlow()
+    fun clearTransientError() { _transientError.value = null }
+
     private var previewJob: Job? = null
 
     private val activeProfileId: String?
@@ -72,7 +77,12 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
     fun refresh() {
         val conn = container.activeConnection.value
         if (conn == null) {
-            _state.value = SessionListState(loading = false, error = container.string(R.string.not_connected))
+            if (_state.value.sessions.isEmpty()) {
+                _state.value = SessionListState(loading = false, error = container.string(R.string.not_connected))
+            } else {
+                _state.value = _state.value.copy(loading = false)
+                _transientError.value = container.string(R.string.not_connected)
+            }
             return
         }
         _serverLabel.value = conn.profile.displayLabel
@@ -81,10 +91,17 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
             runCatching { conn.repository.listSessions() }
                 .onSuccess { list ->
                     val sorted = list.sortedByDescending { it.time?.updated ?: it.time?.created ?: 0 }
-                    _state.value = _state.value.copy(sessions = sorted, loading = false)
+                    _state.value = _state.value.copy(sessions = sorted, loading = false, error = null)
                     loadPreviews(sorted)
                 }
-                .onFailure { _state.value = SessionListState(loading = false, error = container.friendlyError(it)) }
+                .onFailure {
+                    if (_state.value.sessions.isNotEmpty()) {
+                        _state.value = _state.value.copy(loading = false)
+                        _transientError.value = container.friendlyError(it)
+                    } else {
+                        _state.value = SessionListState(loading = false, error = container.friendlyError(it))
+                    }
+                }
         }
     }
 
@@ -120,7 +137,10 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             runCatching { conn.repository.createSession() }
                 .onSuccess { onCreated(it.id); refresh() }
-                .onFailure { _state.value = _state.value.copy(error = container.friendlyError(it)) }
+                .onFailure {
+                    _state.value = _state.value.copy(error = null)
+                    _transientError.value = container.friendlyError(it)
+                }
         }
     }
 
@@ -129,7 +149,10 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             runCatching { conn.repository.deleteSession(session.id) }
                 .onSuccess { refresh() }
-                .onFailure { _state.value = _state.value.copy(error = container.friendlyError(it)) }
+                .onFailure {
+                    _state.value = _state.value.copy(error = null)
+                    _transientError.value = container.friendlyError(it)
+                }
         }
     }
 
@@ -140,7 +163,10 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             runCatching { conn.api.updateSession(session.id, title) }
                 .onSuccess { refresh() }
-                .onFailure { _state.value = _state.value.copy(error = container.friendlyError(it)) }
+                .onFailure {
+                    _state.value = _state.value.copy(error = null)
+                    _transientError.value = container.friendlyError(it)
+                }
         }
     }
 

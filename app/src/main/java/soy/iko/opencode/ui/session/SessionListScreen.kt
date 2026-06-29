@@ -39,10 +39,13 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -76,13 +79,21 @@ fun SessionListScreen(
 ) {
     val vm: SessionListViewModel = viewModel(factory = vmFactory { SessionListViewModel(container) })
     val state by vm.state.collectAsStateWithLifecycle()
+    val transientError by vm.transientError.collectAsStateWithLifecycle()
     val serverLabel by vm.serverLabel.collectAsStateWithLifecycle()
     val profiles by vm.profiles.collectAsStateWithLifecycle()
     val switchingId by vm.switchingId.collectAsStateWithLifecycle()
     val haptics = LocalHapticFeedback.current
+    val snackbar = remember { SnackbarHostState() }
     var showServerMenu by remember { mutableStateOf(false) }
     var pendingDelete by remember { mutableStateOf<Session?>(null) }
     var pendingRename by remember { mutableStateOf<Session?>(null) }
+
+    LaunchedEffect(transientError) {
+        val msg = transientError ?: return@LaunchedEffect
+        snackbar.showSnackbar(msg)
+        vm.clearTransientError()
+    }
 
     Scaffold(
         topBar = {
@@ -153,6 +164,7 @@ fun SessionListScreen(
                 },
             )
         },
+        snackbarHost = { SnackbarHost(snackbar) },
         floatingActionButton = {
             ExtendedFloatingActionButton(
                 onClick = { vm.createSession(onCreated = onOpenSession) },
@@ -164,7 +176,7 @@ fun SessionListScreen(
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
             when {
                 state.loading -> CircularProgressIndicator(Modifier.align(Alignment.Center))
-                state.error != null -> Text(
+                state.sessions.isEmpty() && state.error != null -> Text(
                     state.error ?: "",
                     modifier = Modifier.align(Alignment.Center).padding(24.dp),
                     color = MaterialTheme.colorScheme.error,
