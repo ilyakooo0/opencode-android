@@ -16,6 +16,7 @@ import soy.iko.opencode.data.model.toOptions
 import soy.iko.opencode.data.network.EventStreamClient
 import soy.iko.opencode.data.repo.SessionRepository
 import soy.iko.opencode.di.AppContainer
+import soy.iko.opencode.R
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -100,7 +101,7 @@ class ChatViewModel(
                     if (SessionRepository.isIdle(event, sessionId)) _running.value = false
                     if (SessionRepository.isError(event, sessionId)) {
                         _running.value = false
-                        _error.value = "The agent reported an error."
+                        _error.value = container.string(R.string.error_agent_reported)
                     }
                     when (event) {
                         is PermissionUpdated ->
@@ -160,7 +161,7 @@ class ChatViewModel(
             if (!ok) {
                 _failedDraft.value = trimmed
                 updateDraft(trimmed)
-                _error.value = "Failed to send"
+                _error.value = container.string(R.string.error_failed_to_send)
             }
         }
         return true
@@ -182,7 +183,7 @@ class ChatViewModel(
         viewModelScope.launch {
             runCatching {
                 conn.repository.runCommand(sessionId, command.name, agent = command.agent)
-            }.onFailure { _error.value = it.message ?: "Failed to run command" }
+            }.onFailure { _error.value = it.message ?: container.string(R.string.error_failed_command) }
             _running.value = false
         }
     }

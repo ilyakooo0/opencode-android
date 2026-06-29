@@ -1,4 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  The Compose theme (OpencodeTheme) takes over once the UI inflates; this XML
+  theme only governs the window before Compose and hosts the SplashScreen API.
+-->
 <resources>
     <style name="Theme.OpencodeAndroid" parent="android:Theme.Material.NoActionBar" />
+
+    <!-- Shown by core-splashscreen on cold start, then swapped for the theme above. -->
+    <style name="Theme.OpencodeAndroid.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/splash_background</item>
+        <item name="postSplashScreenTheme">@style/Theme.OpencodeAndroid</item>
+    </style>
 </resources>

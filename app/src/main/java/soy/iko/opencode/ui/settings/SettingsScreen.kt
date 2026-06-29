@@ -31,11 +31,13 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
 import soy.iko.opencode.data.repo.ThemeMode
 import soy.iko.opencode.di.AppContainer
+import soy.iko.opencode.R
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -47,23 +49,23 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onManageServers:
     val context = LocalContext.current
     val versionName = remember {
         runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }
-            .getOrDefault("0.1.0")
+            .getOrNull() ?: "0.1.0"
     }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Settings") },
+                title = { Text(stringResource(R.string.settings)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
                     }
                 },
             )
         },
     ) { padding ->
         Column(modifier = Modifier.padding(padding).padding(16.dp)) {
-            Text("Appearance", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+            Text(stringResource(R.string.appearance), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
             ThemeMode.entries.forEach { mode ->
                 ThemeRow(
                     mode = mode,
@@ -78,9 +80,9 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onManageServers:
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("Dynamic color", style = MaterialTheme.typography.bodyLarge)
+                    Text(stringResource(R.string.dynamic_color), style = MaterialTheme.typography.bodyLarge)
                     Text(
-                        "Use Material You wallpaper colors (Android 12+)",
+                        stringResource(R.string.dynamic_color_desc),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -93,17 +95,17 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onManageServers:
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
 
-            Text("Connection", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+            Text(stringResource(R.string.connection), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
             if (activeProfile != null) {
                 Text(activeProfile.displayLabel, modifier = Modifier.padding(top = 8.dp))
                 Text(
-                    activeProfile.baseUrl + if (activeProfile.hasAuth) "  •  Basic auth" else "",
+                    activeProfile.baseUrl + if (activeProfile.hasAuth) stringResource(R.string.server_auth_basic) else "",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             } else {
                 Text(
-                    "Not connected.",
+                    stringResource(R.string.not_connected),
                     modifier = Modifier.padding(top = 8.dp),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -117,20 +119,20 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onManageServers:
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(Icons.Filled.Dns, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                Text("  Manage servers", modifier = Modifier.weight(1f))
+                Text("  " + stringResource(R.string.manage_servers), modifier = Modifier.weight(1f))
                 Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
 
-            Text("About", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+            Text(stringResource(R.string.about), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
             Text(
-                "opencode-android $versionName",
+                stringResource(R.string.about_version, versionName),
                 style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.padding(top = 8.dp),
             )
             Text(
-                "A native Android client for the opencode serve HTTP API.",
+                stringResource(R.string.about_desc),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 4.dp),
@@ -151,7 +153,11 @@ private fun ThemeRow(mode: ThemeMode, selected: Boolean, onSelect: () -> Unit) {
     ) {
         RadioButton(selected = selected, onClick = onSelect)
         Text(
-            mode.name.lowercase().replaceFirstChar { it.uppercase() },
+            when (mode) {
+                ThemeMode.SYSTEM -> stringResource(R.string.theme_system)
+                ThemeMode.LIGHT -> stringResource(R.string.theme_light)
+                ThemeMode.DARK -> stringResource(R.string.theme_dark)
+            },
             style = MaterialTheme.typography.bodyLarge,
         )
     }

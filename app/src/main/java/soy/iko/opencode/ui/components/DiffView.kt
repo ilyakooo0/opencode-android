@@ -26,6 +26,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.stringResource
+import soy.iko.opencode.R
 
 /** A single line of a parsed unified diff. */
 sealed interface DiffLine {
@@ -91,7 +93,7 @@ fun DiffView(diff: String, modifier: Modifier = Modifier) {
     ) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
             IconButton(onClick = { copyToClipboard(context, "diff", diff) }) {
-                Icon(Icons.Filled.ContentCopy, contentDescription = "Copy", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                Icon(Icons.Filled.ContentCopy, contentDescription = stringResource(R.string.copy), tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
         Column(

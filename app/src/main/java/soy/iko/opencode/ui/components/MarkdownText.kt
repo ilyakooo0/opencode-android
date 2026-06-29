@@ -12,6 +12,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import com.mikepenz.markdown.m3.Markdown
+import soy.iko.opencode.R
 
 /**
  * Renders markdown using [multiplatform-markdown-renderer](https://github.com/mikepenz/multiplatform-markdown-renderer)
@@ -39,5 +40,5 @@ fun MarkdownText(
 internal fun copyToClipboard(context: Context, label: String, text: String = label) {
     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
     clipboard.setPrimaryClip(ClipData.newPlainText(label.take(40), text))
-    Toast.makeText(context, "Copied", Toast.LENGTH_SHORT).show()
+    Toast.makeText(context, context.getString(R.string.copied), Toast.LENGTH_SHORT).show()
 }

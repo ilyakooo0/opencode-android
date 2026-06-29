@@ -13,8 +13,10 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import soy.iko.opencode.data.model.Agent
+import soy.iko.opencode.R
 
 /** Bottom sheet that lists every agent and lets the user pick one. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -27,13 +29,13 @@ fun AgentPickerSheet(
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Text(
-            "Agent",
+            stringResource(R.string.agent),
             style = MaterialTheme.typography.titleMedium,
             modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 8.dp),
         )
         if (agents.isEmpty()) {
             Text(
-                "No agents reported by the server.",
+                stringResource(R.string.no_agents),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp),
@@ -48,12 +50,12 @@ fun AgentPickerSheet(
                             .padding(horizontal = 24.dp, vertical = 12.dp),
                     ) {
                         Text(
-                            "Default",
+                            stringResource(R.string.default_agent),
                             style = MaterialTheme.typography.bodyLarge,
                             color = if (selected == null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
                         )
                         Text(
-                            "Server default agent" + if (selected == null) "  ✓" else "",
+                            stringResource(R.string.default_agent_desc) + if (selected == null) "  ✓" else "",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )

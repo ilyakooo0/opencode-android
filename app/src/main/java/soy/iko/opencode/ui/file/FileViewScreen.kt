@@ -33,9 +33,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import soy.iko.opencode.di.AppContainer
+import soy.iko.opencode.R
 import soy.iko.opencode.ui.components.DiffView
 import soy.iko.opencode.ui.components.copyToClipboard
 import soy.iko.opencode.ui.vmFactory
@@ -51,6 +53,7 @@ fun FileViewScreen(
     val state by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val filename = remember(path) { path.substringAfterLast('/') }
+    val shareLabel = stringResource(R.string.share)
 
     Scaffold(
         topBar = {
@@ -58,14 +61,14 @@ fun FileViewScreen(
                 title = { Text(filename, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
                     }
                 },
                 actions = {
                     val content = state.content?.content.orEmpty()
                     if (content.isNotEmpty()) {
                         IconButton(onClick = { copyToClipboard(context, filename, content) }) {
-                            Icon(Icons.Filled.ContentCopy, contentDescription = "Copy")
+                            Icon(Icons.Filled.ContentCopy, contentDescription = stringResource(R.string.copy))
                         }
                         IconButton(onClick = {
                             val send = Intent(Intent.ACTION_SEND).apply {
@@ -73,9 +76,9 @@ fun FileViewScreen(
                                 putExtra(Intent.EXTRA_SUBJECT, filename)
                                 putExtra(Intent.EXTRA_TEXT, content)
                             }
-                            context.startActivity(Intent.createChooser(send, "Share $filename"))
+                            context.startActivity(Intent.createChooser(send, shareLabel))
                         }) {
-                            Icon(Icons.Filled.Share, contentDescription = "Share")
+                            Icon(Icons.Filled.Share, contentDescription = stringResource(R.string.share))
                         }
                     }
                 },
@@ -91,7 +94,7 @@ fun FileViewScreen(
                     color = MaterialTheme.colorScheme.error,
                 )
                 state.content?.isBinary == true -> Text(
-                    "Binary file — preview not supported.",
+                    stringResource(R.string.binary_file),
                     modifier = Modifier.align(Alignment.Center).padding(24.dp),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

@@ -37,10 +37,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import soy.iko.opencode.data.model.FileStatusEntry
 import soy.iko.opencode.di.AppContainer
+import soy.iko.opencode.R
 import soy.iko.opencode.ui.vmFactory
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -56,10 +58,10 @@ fun FileBrowserScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Files", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                title = { Text(stringResource(R.string.files), maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
                     }
                 },
             )
@@ -76,7 +78,7 @@ fun FileBrowserScreen(
                 value = state.query,
                 onValueChange = vm::setQuery,
                 modifier = Modifier.fillMaxWidth().padding(12.dp),
-                placeholder = { Text("Search files…") },
+                placeholder = { Text(stringResource(R.string.search_files)) },
                 leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                 singleLine = true,
             )
@@ -112,7 +114,7 @@ private fun Breadcrumbs(path: String, onNavigate: (String) -> Unit, modifier: Mo
         verticalAlignment = Alignment.CenterVertically,
     ) {
         IconButton(onClick = { onNavigate("") }, modifier = Modifier.size(20.dp)) {
-            Icon(Icons.Filled.Home, contentDescription = "Root", modifier = Modifier.size(18.dp))
+            Icon(Icons.Filled.Home, contentDescription = stringResource(R.string.root), modifier = Modifier.size(18.dp))
         }
         var acc = ""
         segments.forEachIndexed { index, segment ->
@@ -137,7 +139,7 @@ private fun Breadcrumbs(path: String, onNavigate: (String) -> Unit, modifier: Mo
 @Composable
 private fun SearchResults(results: List<String>, onOpenFile: (String) -> Unit) {
     if (results.isEmpty()) {
-        Text("No matches.", modifier = Modifier.padding(24.dp))
+        Text(stringResource(R.string.no_matches), modifier = Modifier.padding(24.dp))
         return
     }
     LazyColumn(modifier = Modifier.fillMaxSize()) {

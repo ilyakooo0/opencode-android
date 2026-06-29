@@ -25,6 +25,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -43,10 +44,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import soy.iko.opencode.data.model.ServerProfile
 import soy.iko.opencode.di.AppContainer
+import soy.iko.opencode.R
 import soy.iko.opencode.ui.vmFactory
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -62,6 +65,7 @@ fun ServerListScreen(
     val connectingId by vm.connectingId.collectAsStateWithLifecycle()
     val error by vm.error.collectAsStateWithLifecycle()
     val activeConnection by container.activeConnection.collectAsStateWithLifecycle()
+    val reconnecting by container.reconnecting.collectAsStateWithLifecycle()
     val haptics = LocalHapticFeedback.current
     val snackbar = remember { SnackbarHostState() }
     var pendingDelete by remember { mutableStateOf<ServerProfile?>(null) }
@@ -74,21 +78,34 @@ fun ServerListScreen(
         }
     }
 
+    // On cold start the container auto-reconnects to the last server; once it lands,
+    // skip this screen and go straight to the session list. Consumed once so a later
+    // manual visit to this screen doesn't bounce the user back out.
+    LaunchedEffect(Unit) {
+        container.autoConnectDone.collect { succeeded ->
+            if (succeeded && container.consumeAutoConnect()) onConnected()
+        }
+    }
+
     Scaffold(
-        topBar = { TopAppBar(title = { Text("opencode servers") }) },
+        topBar = { TopAppBar(title = { Text(stringResource(R.string.servers_title)) }) },
         snackbarHost = { SnackbarHost(snackbar) },
         floatingActionButton = {
             FloatingActionButton(onClick = onAddProfile) {
-                Icon(Icons.Filled.Add, contentDescription = "Add server")
+                Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.add_server))
             }
         },
     ) { padding ->
-        if (profiles.isEmpty()) {
-            EmptyServers(
-                onAdd = onAddProfile,
-                modifier = Modifier.fillMaxSize().padding(padding),
-            )
-        } else {
+        Column(modifier = Modifier.fillMaxSize()) {
+            if (reconnecting && profiles.isNotEmpty()) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
+            if (profiles.isEmpty()) {
+                EmptyServers(
+                    onAdd = onAddProfile,
+                    modifier = Modifier.fillMaxSize().padding(padding),
+                )
+            } else {
             LazyColumn(
                 modifier = Modifier.fillMaxSize().padding(padding),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
@@ -115,7 +132,7 @@ fun ServerListScreen(
                                     overflow = TextOverflow.Ellipsis,
                                 )
                                 Text(
-                                    profile.baseUrl + if (profile.hasAuth) "  •  auth" else "",
+                                    profile.baseUrl + if (profile.hasAuth) stringResource(R.string.server_auth_short) else "",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 1,
@@ -123,7 +140,7 @@ fun ServerListScreen(
                                 )
                                 if (isActive) {
                                     Text(
-                                        "Connected",
+                                        stringResource(R.string.connected),
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.primary,
                                     )
@@ -132,7 +149,7 @@ fun ServerListScreen(
                             if (isActive) {
                                 Icon(
                                     Icons.Filled.CheckCircle,
-                                    contentDescription = "Connected",
+                                    contentDescription = stringResource(R.string.connected),
                                     tint = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.size(22.dp),
                                 )
@@ -140,15 +157,16 @@ fun ServerListScreen(
                                 CircularProgressIndicator(modifier = Modifier.size(24.dp))
                             } else {
                                 IconButton(onClick = { onEditProfile(profile.id) }) {
-                                    Icon(Icons.Filled.Edit, contentDescription = "Edit")
+                                    Icon(Icons.Filled.Edit, contentDescription = stringResource(R.string.edit))
                                 }
                                 IconButton(onClick = { pendingDelete = profile }) {
-                                    Icon(Icons.Filled.Delete, contentDescription = "Delete")
+                                    Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.delete))
                                 }
                             }
                         }
                     }
                 }
+            }
             }
         }
     }
@@ -156,17 +174,17 @@ fun ServerListScreen(
     pendingDelete?.let { profile ->
         AlertDialog(
             onDismissRequest = { pendingDelete = null },
-            title = { Text("Remove server?") },
-            text = { Text("“${profile.displayLabel}” will be removed from your saved servers.") },
+            title = { Text(stringResource(R.string.remove_server_title)) },
+            text = { Text(stringResource(R.string.remove_server_text, profile.displayLabel)) },
             confirmButton = {
                 TextButton(onClick = {
                     haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                     pendingDelete = null
                     vm.delete(profile)
-                }) { Text("Remove", color = MaterialTheme.colorScheme.error) }
+                }) { Text(stringResource(R.string.remove), color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = {
-                TextButton(onClick = { pendingDelete = null }) { Text("Cancel") }
+                TextButton(onClick = { pendingDelete = null }) { Text(stringResource(R.string.cancel)) }
             },
         )
     }
@@ -186,17 +204,17 @@ private fun EmptyServers(onAdd: () -> Unit, modifier: Modifier = Modifier) {
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.size(16.dp))
-            Text("No servers yet", style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.no_servers_yet), style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.size(8.dp))
             Text(
-                "Add an opencode serve endpoint to connect.",
+                stringResource(R.string.no_servers_hint),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.size(20.dp))
             TextButton(onClick = onAdd) {
                 Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                Text("  Add server")
+                Text("  " + stringResource(R.string.add_server))
             }
         }
     }

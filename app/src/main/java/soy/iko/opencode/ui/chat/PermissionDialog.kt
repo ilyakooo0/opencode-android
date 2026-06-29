@@ -17,10 +17,12 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import soy.iko.opencode.data.model.Permission
 import soy.iko.opencode.data.model.PermissionResponse
+import soy.iko.opencode.R
 
 /**
  * Modal asking the user to approve a tool the agent wants to run. The agent run is
@@ -36,7 +38,7 @@ fun PermissionDialog(
     AlertDialog(
         onDismissRequest = { /* require an explicit choice */ },
         icon = { Icon(Icons.Filled.Shield, contentDescription = null) },
-        title = { Text(permission.title ?: "Permission requested") },
+        title = { Text(permission.title ?: stringResource(R.string.permission_title)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 permission.type?.let {
@@ -51,7 +53,7 @@ fun PermissionDialog(
                     )
                 }
                 Text(
-                    "Allow this tool to run?",
+                    stringResource(R.string.permission_text),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -68,14 +70,14 @@ fun PermissionDialog(
                         onRespond(PermissionResponse.ONCE)
                     },
                     modifier = Modifier.fillMaxWidth(),
-                ) { Text("Allow once") }
+                ) { Text(stringResource(R.string.allow_once)) }
                 OutlinedButton(
                     onClick = {
                         haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                         onRespond(PermissionResponse.ALWAYS)
                     },
                     modifier = Modifier.fillMaxWidth(),
-                ) { Text("Always allow") }
+                ) { Text(stringResource(R.string.always_allow)) }
             }
         },
         dismissButton = {
@@ -83,7 +85,7 @@ fun PermissionDialog(
                 haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                 onRespond(PermissionResponse.REJECT)
             }) {
-                Text("Reject", color = MaterialTheme.colorScheme.error)
+                Text(stringResource(R.string.reject), color = MaterialTheme.colorScheme.error)
             }
         },
     )

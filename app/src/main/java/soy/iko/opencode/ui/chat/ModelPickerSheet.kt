@@ -13,8 +13,10 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import soy.iko.opencode.data.model.ModelOption
+import soy.iko.opencode.R
 
 /** Bottom sheet that lists every provider/model and lets the user pick one. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -27,13 +29,13 @@ fun ModelPickerSheet(
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Text(
-            "Model",
+            stringResource(R.string.model),
             style = MaterialTheme.typography.titleMedium,
             modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 8.dp),
         )
         if (options.isEmpty()) {
             Text(
-                "No models reported by the server.",
+                stringResource(R.string.no_models),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp),

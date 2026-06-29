@@ -57,12 +57,14 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
 import soy.iko.opencode.data.network.EventStreamClient
 import soy.iko.opencode.di.AppContainer
+import soy.iko.opencode.R
 import soy.iko.opencode.ui.vmFactory
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -111,10 +113,11 @@ fun ChatScreen(
             listState.animateScrollToItem(messages.lastIndex)
         }
     }
+    val retryLabel = stringResource(R.string.retry)
     LaunchedEffect(error) {
         val msg = error ?: return@LaunchedEffect
         val result = if (failedDraft != null) {
-            snackbar.showSnackbar(message = msg, actionLabel = "Retry")
+            snackbar.showSnackbar(message = msg, actionLabel = retryLabel)
         } else {
             snackbar.showSnackbar(msg)
         }
@@ -135,10 +138,10 @@ fun ChatScreen(
             TopAppBar(
                 title = {
                     Column(modifier = Modifier.clickable(enabled = models.isNotEmpty()) { showModelPicker = true }) {
-                        Text(sessionTitle ?: "Session")
+                        Text(sessionTitle ?: stringResource(R.string.session))
                         Text(
                             buildString {
-                                append(selectedModel?.modelLabel ?: "default model")
+                                append(selectedModel?.modelLabel ?: stringResource(R.string.default_model))
                                 selectedAgent?.let { append("  •  $it") }
                             },
                             style = MaterialTheme.typography.labelSmall,
@@ -150,18 +153,18 @@ fun ChatScreen(
                     IconButton(onClick = {
                         if (running) showExitConfirm = true else onBack()
                     }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
                     }
                 },
                 actions = {
                     IconButton(onClick = { showCommandPicker = true }, enabled = commands.isNotEmpty()) {
-                        Icon(Icons.Filled.Terminal, contentDescription = "Commands")
+                        Icon(Icons.Filled.Terminal, contentDescription = stringResource(R.string.commands))
                     }
                     IconButton(onClick = { showAgentPicker = true }, enabled = agents.isNotEmpty()) {
-                        Icon(Icons.Filled.SmartToy, contentDescription = "Choose agent")
+                        Icon(Icons.Filled.SmartToy, contentDescription = stringResource(R.string.choose_agent))
                     }
                     IconButton(onClick = { showModelPicker = true }, enabled = models.isNotEmpty()) {
-                        Icon(Icons.Filled.Tune, contentDescription = "Choose model")
+                        Icon(Icons.Filled.Tune, contentDescription = stringResource(R.string.choose_model))
                     }
                 },
             )
@@ -181,7 +184,7 @@ fun ChatScreen(
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
             if (!vm.connected) {
                 Text(
-                    "Not connected.",
+                    stringResource(R.string.not_connected),
                     modifier = Modifier.align(Alignment.Center).padding(24.dp),
                     color = MaterialTheme.colorScheme.error,
                 )
@@ -203,7 +206,7 @@ fun ChatScreen(
                         item(key = "__typing") {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                                Text("  working…", style = MaterialTheme.typography.labelMedium)
+                                Text("  " + stringResource(R.string.working), style = MaterialTheme.typography.labelMedium)
                             }
                         }
                     }
@@ -220,7 +223,7 @@ fun ChatScreen(
                             }
                         },
                         icon = { Icon(Icons.Filled.KeyboardArrowDown, contentDescription = null) },
-                        text = { Text("Latest") },
+                        text = { Text(stringResource(R.string.latest)) },
                         modifier = Modifier.padding(end = 16.dp, bottom = 16.dp),
                     )
                 }
@@ -231,17 +234,17 @@ fun ChatScreen(
     if (showExitConfirm) {
         AlertDialog(
             onDismissRequest = { showExitConfirm = false },
-            title = { Text("Stop and exit?") },
-            text = { Text("The agent is still working. Exit anyway?") },
+            title = { Text(stringResource(R.string.stop_and_exit_title)) },
+            text = { Text(stringResource(R.string.stop_and_exit_text)) },
             confirmButton = {
                 TextButton(onClick = {
                     showExitConfirm = false
                     vm.abort()
                     onBack()
-                }) { Text("Stop & exit") }
+                }) { Text(stringResource(R.string.stop_and_exit)) }
             },
             dismissButton = {
-                TextButton(onClick = { showExitConfirm = false }) { Text("Stay") }
+                TextButton(onClick = { showExitConfirm = false }) { Text(stringResource(R.string.stay)) }
             },
         )
     }
@@ -286,8 +289,8 @@ private fun ConnectionBanner(
     modifier: Modifier = Modifier,
 ) {
     val text = when (state) {
-        EventStreamClient.ConnectionState.Connecting -> "Connecting…"
-        EventStreamClient.ConnectionState.Disconnected -> "Reconnecting…"
+        EventStreamClient.ConnectionState.Connecting -> stringResource(R.string.connecting)
+        EventStreamClient.ConnectionState.Disconnected -> stringResource(R.string.reconnecting)
         EventStreamClient.ConnectionState.Connected -> null
     }
     if (text != null) {
@@ -342,13 +345,13 @@ private fun ChatInputBar(
                             false
                         }
                     },
-                placeholder = { Text("Message opencode…") },
+                placeholder = { Text(stringResource(R.string.message_placeholder)) },
                 enabled = enabled,
                 maxLines = 6,
             )
             if (running) {
                 IconButton(onClick = onAbort, modifier = Modifier.padding(start = 4.dp)) {
-                    Icon(Icons.Filled.Stop, contentDescription = "Stop")
+                    Icon(Icons.Filled.Stop, contentDescription = stringResource(R.string.stop))
                 }
             } else {
                 IconButton(
@@ -356,7 +359,7 @@ private fun ChatInputBar(
                     enabled = enabled && value.isNotBlank(),
                     modifier = Modifier.padding(start = 4.dp),
                 ) {
-                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
+                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = stringResource(R.string.send))
                 }
             }
         }

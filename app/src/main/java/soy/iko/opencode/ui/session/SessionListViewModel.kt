@@ -6,6 +6,7 @@ import soy.iko.opencode.data.model.ServerProfile
 import soy.iko.opencode.data.model.Session
 import soy.iko.opencode.data.model.TextPart
 import soy.iko.opencode.di.AppContainer
+import soy.iko.opencode.R
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -71,7 +72,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
     fun refresh() {
         val conn = container.activeConnection.value
         if (conn == null) {
-            _state.value = SessionListState(loading = false, error = "Not connected")
+            _state.value = SessionListState(loading = false, error = container.string(R.string.not_connected))
             return
         }
         _serverLabel.value = conn.profile.displayLabel
@@ -83,7 +84,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
                     _state.value = _state.value.copy(sessions = sorted, loading = false)
                     loadPreviews(sorted)
                 }
-                .onFailure { _state.value = SessionListState(loading = false, error = it.message ?: "Failed to load sessions") }
+                .onFailure { _state.value = SessionListState(loading = false, error = it.message ?: container.string(R.string.error_load_sessions)) }
         }
     }
 
@@ -119,7 +120,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             runCatching { conn.repository.createSession() }
                 .onSuccess { onCreated(it.id); refresh() }
-                .onFailure { _state.value = _state.value.copy(error = it.message ?: "Failed to create session") }
+                .onFailure { _state.value = _state.value.copy(error = it.message ?: container.string(R.string.error_create_session)) }
         }
     }
 
@@ -128,7 +129,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             runCatching { conn.repository.deleteSession(session.id) }
                 .onSuccess { refresh() }
-                .onFailure { _state.value = _state.value.copy(error = it.message ?: "Failed to delete session") }
+                .onFailure { _state.value = _state.value.copy(error = it.message ?: container.string(R.string.error_delete_session)) }
         }
     }
 
@@ -139,7 +140,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             runCatching { conn.api.updateSession(session.id, title) }
                 .onSuccess { refresh() }
-                .onFailure { _state.value = _state.value.copy(error = it.message ?: "Failed to rename session") }
+                .onFailure { _state.value = _state.value.copy(error = it.message ?: container.string(R.string.error_rename_session)) }
         }
     }
 
@@ -158,7 +159,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
             result.onSuccess { refresh() }
                 .onFailure {
                     container.disconnect()
-                    _state.value = SessionListState(loading = false, error = it.message ?: "Could not reach ${profile.baseUrl}")
+                    _state.value = SessionListState(loading = false, error = it.message ?: container.string(R.string.error_not_reachable, profile.baseUrl))
                     refresh()
                 }
         }

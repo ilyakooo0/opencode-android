@@ -50,10 +50,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import soy.iko.opencode.data.model.Session
 import soy.iko.opencode.di.AppContainer
+import soy.iko.opencode.R
 import soy.iko.opencode.ui.components.relativeTime
 import soy.iko.opencode.ui.vmFactory
 
@@ -87,7 +89,7 @@ fun SessionListScreen(
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Text(serverLabel, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Icon(Icons.Filled.ArrowDropDown, contentDescription = "Switch server")
+                                Icon(Icons.Filled.ArrowDropDown, contentDescription = stringResource(R.string.switch_server))
                             }
                             DropdownMenu(
                                 expanded = showServerMenu,
@@ -129,16 +131,16 @@ fun SessionListScreen(
                 },
                 actions = {
                     IconButton(onClick = { vm.refresh() }) {
-                        Icon(Icons.Filled.Refresh, contentDescription = "Refresh")
+                        Icon(Icons.Filled.Refresh, contentDescription = stringResource(R.string.refresh))
                     }
                     IconButton(onClick = onOpenFiles) {
-                        Icon(Icons.Filled.Folder, contentDescription = "Files")
+                        Icon(Icons.Filled.Folder, contentDescription = stringResource(R.string.files))
                     }
                     IconButton(onClick = onOpenSettings) {
-                        Icon(Icons.Filled.Settings, contentDescription = "Settings")
+                        Icon(Icons.Filled.Settings, contentDescription = stringResource(R.string.settings))
                     }
                     IconButton(onClick = onDisconnect) {
-                        Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = "Disconnect")
+                        Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = stringResource(R.string.disconnect))
                     }
                 },
             )
@@ -147,7 +149,7 @@ fun SessionListScreen(
             ExtendedFloatingActionButton(
                 onClick = { vm.createSession(onCreated = onOpenSession) },
                 icon = { Icon(Icons.Filled.Add, contentDescription = null) },
-                text = { Text("New session") },
+                text = { Text(stringResource(R.string.new_session)) },
             )
         },
     ) { padding ->
@@ -168,14 +170,14 @@ fun SessionListScreen(
                         value = state.query,
                         onValueChange = vm::setQuery,
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                        placeholder = { Text("Search sessions…") },
+                        placeholder = { Text(stringResource(R.string.search_sessions)) },
                         leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                         singleLine = true,
                     )
                     val sessions = state.filtered
                     if (sessions.isEmpty()) {
                         Text(
-                            "No sessions match “${state.query}”.",
+                            stringResource(R.string.no_sessions_match, state.query),
                             modifier = Modifier.padding(24.dp),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -204,17 +206,17 @@ fun SessionListScreen(
     pendingDelete?.let { session ->
         AlertDialog(
             onDismissRequest = { pendingDelete = null },
-            title = { Text("Delete session?") },
-            text = { Text("“${session.displayTitle}” will be permanently deleted. This cannot be undone.") },
+            title = { Text(stringResource(R.string.delete_session_title)) },
+            text = { Text(stringResource(R.string.delete_session_text, session.displayTitle)) },
             confirmButton = {
                 TextButton(onClick = {
                     haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                     pendingDelete = null
                     vm.deleteSession(session)
-                }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+                }) { Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = {
-                TextButton(onClick = { pendingDelete = null }) { Text("Cancel") }
+                TextButton(onClick = { pendingDelete = null }) { Text(stringResource(R.string.cancel)) }
             },
         )
     }
@@ -243,21 +245,21 @@ private fun RenameSessionDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Rename session") },
+        title = { Text(stringResource(R.string.rename_session)) },
         text = {
             OutlinedTextField(
                 value = title,
                 onValueChange = onTitleChange,
                 modifier = Modifier.fillMaxWidth(),
-                placeholder = { Text("Session title") },
+                placeholder = { Text(stringResource(R.string.session_title_hint)) },
                 singleLine = true,
             )
         },
         confirmButton = {
-            TextButton(onClick = onConfirm, enabled = title.isNotBlank()) { Text("Save") }
+            TextButton(onClick = onConfirm, enabled = title.isNotBlank()) { Text(stringResource(R.string.save)) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
         },
     )
 }
@@ -296,10 +298,10 @@ private fun SessionCard(
                     )
                 }
                 IconButton(onClick = onRename) {
-                    Icon(Icons.Filled.Edit, contentDescription = "Rename")
+                    Icon(Icons.Filled.Edit, contentDescription = stringResource(R.string.rename))
                 }
                 IconButton(onClick = onDelete) {
-                    Icon(Icons.Filled.Delete, contentDescription = "Delete")
+                    Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.delete))
                 }
             }
             if (!preview.isNullOrBlank()) {
@@ -329,17 +331,17 @@ private fun EmptySessions(onCreate: () -> Unit, modifier: Modifier = Modifier) {
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.size(16.dp))
-        Text("No sessions yet", style = MaterialTheme.typography.titleMedium)
+        Text(stringResource(R.string.no_sessions_yet), style = MaterialTheme.typography.titleMedium)
         Spacer(Modifier.size(8.dp))
         Text(
-            "Start a conversation with opencode.",
+            stringResource(R.string.no_sessions_hint),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.size(20.dp))
         Button(onClick = onCreate) {
             Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-            Text("  New session")
+            Text("  " + stringResource(R.string.new_session))
         }
     }
 }

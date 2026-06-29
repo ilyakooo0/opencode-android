@@ -16,9 +16,11 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import soy.iko.opencode.data.model.Command
+import soy.iko.opencode.R
 
 /** Bottom sheet that lists slash-commands; selecting one invokes it. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -30,13 +32,13 @@ fun CommandPickerSheet(
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Text(
-            "Commands",
+            stringResource(R.string.commands),
             style = MaterialTheme.typography.titleMedium,
             modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 8.dp),
         )
         if (commands.isEmpty()) {
             Text(
-                "No commands reported by the server.",
+                stringResource(R.string.no_commands),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp),

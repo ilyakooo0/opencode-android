@@ -22,10 +22,12 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import soy.iko.opencode.di.AppContainer
+import soy.iko.opencode.R
 import soy.iko.opencode.ui.vmFactory
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -42,10 +44,10 @@ fun ServerEditScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(if (state.isNew) "Add server" else "Edit server") },
+                title = { Text(if (state.isNew) stringResource(R.string.add_server) else stringResource(R.string.edit_server)) },
                 navigationIcon = {
                     IconButton(onClick = onDone) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
                     }
                 },
             )
@@ -61,35 +63,34 @@ fun ServerEditScreen(
             OutlinedTextField(
                 value = state.label,
                 onValueChange = { v -> vm.update { it.copy(label = v) } },
-                label = { Text("Label (optional)") },
+                label = { Text(stringResource(R.string.label_optional)) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
             OutlinedTextField(
                 value = state.baseUrl,
                 onValueChange = { v -> vm.update { it.copy(baseUrl = v) } },
-                label = { Text("Base URL") },
-                placeholder = { Text("http://192.168.1.10:4096") },
+                label = { Text(stringResource(R.string.base_url)) },
+                placeholder = { Text(stringResource(R.string.base_url_hint)) },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                 modifier = Modifier.fillMaxWidth(),
             )
             Text(
-                "Auth is optional — only needed if the server runs with OPENCODE_SERVER_PASSWORD. " +
-                    "Username defaults to \"opencode\".",
+                stringResource(R.string.auth_help),
                 style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
             )
             OutlinedTextField(
                 value = state.username,
                 onValueChange = { v -> vm.update { it.copy(username = v) } },
-                label = { Text("Username (optional)") },
+                label = { Text(stringResource(R.string.username_optional)) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
             OutlinedTextField(
                 value = state.password,
                 onValueChange = { v -> vm.update { it.copy(password = v) } },
-                label = { Text("Password (optional)") },
+                label = { Text(stringResource(R.string.password_optional)) },
                 singleLine = true,
                 visualTransformation = PasswordVisualTransformation(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
@@ -100,7 +101,7 @@ fun ServerEditScreen(
                 enabled = state.canSave,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text("Save")
+                Text(stringResource(R.string.save))
             }
         }
     }

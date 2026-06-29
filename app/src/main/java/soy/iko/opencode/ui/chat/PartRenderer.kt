@@ -33,6 +33,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import soy.iko.opencode.data.model.FilePart
 import soy.iko.opencode.data.model.Part
@@ -52,6 +53,7 @@ import soy.iko.opencode.ui.components.DiffView
 import soy.iko.opencode.ui.components.MarkdownText
 import soy.iko.opencode.ui.components.copyToClipboard
 import soy.iko.opencode.ui.components.looksLikeDiff
+import soy.iko.opencode.R
 
 private const val COLLAPSED_LIMIT = 600
 
@@ -99,7 +101,7 @@ private fun ReasoningBlock(text: String, streaming: Boolean, modifier: Modifier)
                 )
             }
             Text(
-                "  ${if (streaming) "Thinking…" else "Thoughts"}",
+                "  ${if (streaming) stringResource(R.string.thinking) else stringResource(R.string.thoughts)}",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -116,7 +118,7 @@ private fun ReasoningBlock(text: String, streaming: Boolean, modifier: Modifier)
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp),
                 ) {
                     Icon(Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(14.dp))
-                    Text("  Copy", style = MaterialTheme.typography.labelSmall)
+                    Text("  " + stringResource(R.string.copy), style = MaterialTheme.typography.labelSmall)
                 }
             }
         }
@@ -171,7 +173,7 @@ private fun ToolCallView(part: ToolPart, modifier: Modifier) {
                         modifier = Modifier.size(16.dp),
                     )
                     Text(
-                        "  ${if (expanded) "Show less" else "Show more"}",
+                        "  ${if (expanded) stringResource(R.string.show_less) else stringResource(R.string.show_more)}",
                         style = MaterialTheme.typography.labelSmall,
                     )
                 }
@@ -181,7 +183,7 @@ private fun ToolCallView(part: ToolPart, modifier: Modifier) {
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp),
             ) {
                 Icon(Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(14.dp))
-                Text("  Copy", style = MaterialTheme.typography.labelSmall)
+                Text("  " + stringResource(R.string.copy), style = MaterialTheme.typography.labelSmall)
             }
         }
     }

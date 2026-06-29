@@ -1,4 +1,127 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">opencode</string>
+
+    <!-- Common -->
+    <string name="back">Back</string>
+    <string name="cancel">Cancel</string>
+    <string name="save">Save</string>
+    <string name="delete">Delete</string>
+    <string name="edit">Edit</string>
+    <string name="remove">Remove</string>
+    <string name="copy">Copy</string>
+    <string name="copied">Copied</string>
+    <string name="retry">Retry</string>
+    <string name="refresh">Refresh</string>
+    <string name="settings">Settings</string>
+    <string name="files">Files</string>
+    <string name="share">Share</string>
+    <string name="send">Send</string>
+    <string name="stop">Stop</string>
+    <string name="rename">Rename</string>
+    <string name="disconnect">Disconnect</string>
+
+    <!-- Theme modes -->
+    <string name="theme_system">System</string>
+    <string name="theme_light">Light</string>
+    <string name="theme_dark">Dark</string>
+
+    <!-- Connection banner -->
+    <string name="connecting">Connecting…</string>
+    <string name="reconnecting">Reconnecting…</string>
+    <string name="not_connected">Not connected.</string>
+
+    <!-- Server list -->
+    <string name="servers_title">opencode servers</string>
+    <string name="add_server">Add server</string>
+    <string name="edit_server">Edit server</string>
+    <string name="connected">Connected</string>
+    <string name="no_servers_yet">No servers yet</string>
+    <string name="no_servers_hint">Add an opencode serve endpoint to connect.</string>
+    <string name="remove_server_title">Remove server?</string>
+    <string name="remove_server_text">“%1$s” will be removed from your saved servers.</string>
+    <string name="server_auth_short">  •  auth</string>
+    <string name="server_auth_basic">  •  Basic auth</string>
+
+    <!-- Server edit -->
+    <string name="label_optional">Label (optional)</string>
+    <string name="base_url">Base URL</string>
+    <string name="base_url_hint">http://192.168.1.10:4096</string>
+    <string name="auth_help">Auth is optional — only needed if the server runs with OPENCODE_SERVER_PASSWORD. Username defaults to \"opencode\".</string>
+    <string name="username_optional">Username (optional)</string>
+    <string name="password_optional">Password (optional)</string>
+
+    <!-- Session list -->
+    <string name="new_session">New session</string>
+    <string name="no_sessions_yet">No sessions yet</string>
+    <string name="no_sessions_hint">Start a conversation with opencode.</string>
+    <string name="search_sessions">Search sessions…</string>
+    <string name="no_sessions_match">No sessions match “%1$s”.</string>
+    <string name="switch_server">Switch server</string>
+    <string name="delete_session_title">Delete session?</string>
+    <string name="delete_session_text">“%1$s” will be permanently deleted. This cannot be undone.</string>
+    <string name="rename_session">Rename session</string>
+    <string name="session_title_hint">Session title</string>
+
+    <!-- Chat -->
+    <string name="session">Session</string>
+    <string name="default_model">default model</string>
+    <string name="message_placeholder">Message opencode…</string>
+    <string name="working">working…</string>
+    <string name="latest">Latest</string>
+    <string name="stop_and_exit_title">Stop and exit?</string>
+    <string name="stop_and_exit_text">The agent is still working. Exit anyway?</string>
+    <string name="stop_and_exit">Stop &amp; exit</string>
+    <string name="stay">Stay</string>
+    <string name="commands">Commands</string>
+    <string name="choose_agent">Choose agent</string>
+    <string name="choose_model">Choose model</string>
+
+    <!-- Errors (view models) -->
+    <string name="error_failed_to_send">Failed to send</string>
+    <string name="error_agent_reported">The agent reported an error.</string>
+    <string name="error_failed_command">Failed to run command</string>
+    <string name="error_not_reachable">Could not reach %1$s</string>
+    <string name="error_load_sessions">Failed to load sessions</string>
+    <string name="error_create_session">Failed to create session</string>
+    <string name="error_delete_session">Failed to delete session</string>
+    <string name="error_rename_session">Failed to rename session</string>
+
+    <!-- Part renderer -->
+    <string name="thinking">Thinking…</string>
+    <string name="thoughts">Thoughts</string>
+    <string name="show_more">Show more</string>
+    <string name="show_less">Show less</string>
+
+    <!-- Permission dialog -->
+    <string name="permission_title">Permission requested</string>
+    <string name="permission_text">Allow this tool to run?</string>
+    <string name="allow_once">Allow once</string>
+    <string name="always_allow">Always allow</string>
+    <string name="reject">Reject</string>
+
+    <!-- Pickers -->
+    <string name="model">Model</string>
+    <string name="no_models">No models reported by the server.</string>
+    <string name="agent">Agent</string>
+    <string name="no_agents">No agents reported by the server.</string>
+    <string name="default_agent">Default</string>
+    <string name="default_agent_desc">Server default agent</string>
+    <string name="no_commands">No commands reported by the server.</string>
+
+    <!-- File browser -->
+    <string name="search_files">Search files…</string>
+    <string name="root">Root</string>
+    <string name="no_matches">No matches.</string>
+    <string name="binary_file">Binary file — preview not supported.</string>
+
+    <!-- Settings -->
+    <string name="appearance">Appearance</string>
+    <string name="dynamic_color">Dynamic color</string>
+    <string name="dynamic_color_desc">Use Material You wallpaper colors (Android 12+)</string>
+    <string name="connection">Connection</string>
+    <string name="manage_servers">Manage servers</string>
+    <string name="about">About</string>
+    <string name="about_version">opencode-android %1$s</string>
+    <string name="about_desc">A native Android client for the opencode serve HTTP API.</string>
 </resources>

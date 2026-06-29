@@ -1,6 +1,7 @@
 package soy.iko.opencode.ui
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -20,7 +21,18 @@ import soy.iko.opencode.ui.settings.SettingsScreen
 @Composable
 fun OpencodeApp(container: AppContainer) {
     val navController = rememberNavController()
-    val active by container.activeConnection.collectAsStateWithLifecycle()
+    val pendingShare by container.pendingShare.collectAsStateWithLifecycle()
+
+    // When text is shared into the app, surface the session list so the user can pick
+    // (or create) a conversation to drop it into. The chosen session's draft is set
+    // in [onOpenSession] below. Fresh launches rely on auto-reconnect to get here.
+    LaunchedEffect(pendingShare) {
+        if (pendingShare == null) return@LaunchedEffect
+        if (container.activeConnection.value == null) return@LaunchedEffect
+        if (!navController.popBackStack(Routes.SESSIONS, inclusive = false)) {
+            navController.navigate(Routes.SESSIONS) { launchSingleTop = true }
+        }
+    }
 
     NavHost(navController = navController, startDestination = Routes.SERVERS) {
 
@@ -47,7 +59,10 @@ fun OpencodeApp(container: AppContainer) {
         composable(Routes.SESSIONS) {
             SessionListScreen(
                 container = container,
-                onOpenSession = { id -> navController.navigate(Routes.chat(id)) },
+                onOpenSession = { id ->
+                    container.consumePendingShare()?.let { container.draftStore.set(id, it) }
+                    navController.navigate(Routes.chat(id))
+                },
                 onDisconnect = {
                     container.disconnect()
                     navController.popBackStack(Routes.SERVERS, inclusive = false)
