@@ -4,10 +4,11 @@ import soy.iko.opencode.data.model.BusEvent
 import android.util.Log
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.sse.sse
+import io.ktor.sse.ServerSentEvent
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.channels.ChannelResult
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -15,10 +16,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.flow.produceIn
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.selects.onTimeout
 import kotlinx.coroutines.selects.select
+import java.io.IOException
 
 /**
  * Owns the single long-lived `GET /event` SSE subscription and exposes it as a hot
@@ -52,22 +55,45 @@ class EventStreamClient(
     fun triggerReconnect() { reconnectSignal.trySend(Unit) }
 
     private fun stream(): Flow<BusEvent> = channelFlow {
+        val scope = this
         var backoffMs = INITIAL_BACKOFF_MS
         while (isActive) {
             _state.value = ConnectionState.Connecting
             try {
                 client.sse("event") {
                     backoffMs = INITIAL_BACKOFF_MS
-                    incoming.collect { sse ->
-                        val data = sse.data ?: return@collect
-                        val event = runCatching { OpencodeJson.decodeFromString(BusEvent.serializer(), data) }
-                            .getOrNull() ?: return@collect
-                        // Any successfully decoded event means the stream is live;
-                        // don't wait for a ServerConnected event to show "Connected".
-                        if (_state.value != ConnectionState.Connected) {
-                            _state.value = ConnectionState.Connected
+                    // `incoming` is a cold Flow; bridge it to a ReceiveChannel so each
+                    // element can be raced against an idle timeout via select.
+                    val events = incoming.produceIn(scope)
+                    try {
+                        while (isActive) {
+                            // The OkHttp engine is configured with readTimeout=0 (the SSE
+                            // stream must never time out on read), so a socket the peer never
+                            // closed would otherwise hang until the OS TCP keepalive kicks in
+                            // — minutes to hours on stock Linux. If nothing arrives within
+                            // IDLE_TIMEOUT_MS, treat the connection as half-open and drop it
+                            // so the outer loop reconnects.
+                            val result: ChannelResult<ServerSentEvent>? = select {
+                                events.onReceiveCatching { it }
+                                onTimeout(IDLE_TIMEOUT_MS) { null }
+                            }
+                            // Timeout: drop and reconnect.
+                            if (result == null) throw IOException("SSE idle timeout, reconnecting")
+                            // Stream closed cleanly: exit to reconnect without a warning log.
+                            val sse = result.getOrNull() ?: break
+                            val data = sse.data ?: continue
+                            val event = runCatching {
+                                OpencodeJson.decodeFromString(BusEvent.serializer(), data)
+                            }.getOrNull() ?: continue
+                            // Any successfully decoded event means the stream is live;
+                            // don't wait for a ServerConnected event to show "Connected".
+                            if (_state.value != ConnectionState.Connected) {
+                                _state.value = ConnectionState.Connected
+                            }
+                            send(event)
                         }
-                        send(event)
+                    } finally {
+                        events.cancel()
                     }
                 }
             } catch (c: CancellationException) {
@@ -91,5 +117,7 @@ class EventStreamClient(
         private const val TAG = "EventStream"
         const val INITIAL_BACKOFF_MS = 500L
         const val MAX_BACKOFF_MS = 10_000L
+        /** Max gap between events before a silent/half-open connection is dropped. */
+        const val IDLE_TIMEOUT_MS = 90_000L
     }
 }

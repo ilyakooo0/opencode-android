@@ -141,14 +141,21 @@ class OpencodeApiClient(private val client: HttpClient) {
     }
 }
 
+private suspend fun <T> withRetry(
+    maxAttempts: Int = 3,
+    initialDelayMs: Long = 500L,
+    block: suspend () -> T,
+): T = withRetryInternal(maxAttempts, initialDelayMs, block)
+
 /**
  * Retry a suspending block up to [maxAttempts] times with exponential backoff.
  * Cancellation exceptions are re-thrown immediately. Client errors (4xx) are
  * non-retryable — a 401 or 404 won't succeed on retry, so they surface immediately
  * instead of wasting up to 3.5 s of backoff. Network failures, timeouts, and 5xx
- * server errors are retried.
+ * server errors are retried. Exposed as `internal` so the retry/skip rules are
+ * unit-testable without an HTTP server.
  */
-private suspend fun <T> withRetry(
+internal suspend fun <T> withRetryInternal(
     maxAttempts: Int = 3,
     initialDelayMs: Long = 500L,
     block: suspend () -> T,

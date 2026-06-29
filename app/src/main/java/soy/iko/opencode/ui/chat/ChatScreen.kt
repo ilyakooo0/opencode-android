@@ -114,6 +114,7 @@ fun ChatScreen(
     val scope = rememberCoroutineScope()
     val shareLauncher = LocalContext.current
     val shareLabel = stringResource(R.string.share)
+    val defaultShareSubject = stringResource(R.string.share_subject)
 
     // Connection profile (with auth) for rendering inline image attachments.
     val imageContext = remember(container.activeConnection.value?.profile) {
@@ -223,7 +224,7 @@ fun ChatScreen(
                             val md = buildConversationMarkdown(messages, sessionTitle)
                             val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
                                 type = "text/markdown"
-                                putExtra(android.content.Intent.EXTRA_SUBJECT, sessionTitle ?: "opencode session")
+                                putExtra(android.content.Intent.EXTRA_SUBJECT, sessionTitle ?: defaultShareSubject)
                                 putExtra(android.content.Intent.EXTRA_TEXT, md)
                             }
                             shareLauncher.startActivity(android.content.Intent.createChooser(send, shareLabel))

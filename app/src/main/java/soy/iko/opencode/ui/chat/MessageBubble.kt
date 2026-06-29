@@ -103,9 +103,12 @@ private fun MessageTimestamp(info: soy.iko.opencode.data.model.MessageInfo) {
 }
 
 private fun formatTokens(tokens: Tokens): String {
-    val dec = java.text.DecimalFormat("#,###")
+    val dec = java.text.DecimalFormat.getNumberInstance(java.util.Locale.US)
     return "${dec.format(tokens.input)} in · ${dec.format(tokens.output)} out"
 }
 
 private fun formatCost(cost: Double): String =
-    if (cost < 0.01) "$%.4f".format(cost) else "$%.2f".format(cost)
+    // Locale.US so the formatting is stable regardless of device locale (avoids
+    // non-ASCII digits or comma decimal separators in a dollar amount).
+    if (cost < 0.01) String.format(java.util.Locale.US, "$%.4f", cost)
+    else String.format(java.util.Locale.US, "$%.2f", cost)

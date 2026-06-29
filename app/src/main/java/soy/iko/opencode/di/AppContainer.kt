@@ -13,6 +13,7 @@ import soy.iko.opencode.data.repo.ErrorKind
 import soy.iko.opencode.data.repo.ProfileStore
 import soy.iko.opencode.data.repo.SettingsStore
 import soy.iko.opencode.data.repo.classifyError
+import soy.iko.opencode.data.repo.responseStatusCode
 import soy.iko.opencode.R
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -91,15 +92,18 @@ class AppContainer(context: Context) {
      * the message reflects what actually went wrong without leaking internal URLs/state.
      */
     fun friendlyError(t: Throwable): String {
-        val msg = t.message.orEmpty()
         val baseUrl = activeConnection.value?.profile?.baseUrl.orEmpty()
         return when (classifyError(t)) {
             ErrorKind.NOT_REACHABLE, ErrorKind.NETWORK ->
                 string(R.string.error_not_reachable, baseUrl)
             ErrorKind.TIMEOUT -> string(R.string.error_timeout)
             ErrorKind.SERVER -> string(R.string.error_server)
-            ErrorKind.CLIENT -> msg.ifBlank { string(R.string.error_generic) }
-            ErrorKind.UNKNOWN -> msg.ifBlank { string(R.string.error_generic) }
+            // Show only the HTTP status (e.g. 401, 404) — never the request URL,
+            // which a ClientRequestException carries in its message and which we
+            // promised not to leak (it can include auth or internal paths).
+            ErrorKind.CLIENT -> responseStatusCode(t)?.let { string(R.string.error_client_status, it) }
+                ?: string(R.string.error_generic)
+            ErrorKind.UNKNOWN -> string(R.string.error_generic)
         }
     }
 
@@ -132,11 +136,7 @@ class AppContainer(context: Context) {
     }
 
     /** Extract the session id an event pertains to, for message-activity events. */
-    private fun sessionOf(event: BusEvent): String? = when (event) {
-        is MessageUpdated -> event.properties.info.sessionID
-        is MessagePartUpdated -> event.properties.part.sessionID ?: event.properties.sessionID
-        else -> null
-    }
+    private fun sessionOf(event: BusEvent): String? = sessionOfEvent(event)
 
     /**
      * On cold start, transparently reconnect to the most recently used server so a
@@ -183,4 +183,17 @@ class AppContainer(context: Context) {
         _activeConnection.value?.close()
         _activeConnection.value = null
     }
+}
+
+/**
+ * Extract the session id a message-activity event pertains to, or null for events that
+ * don't describe message activity. This drives the unread badge: any session that
+ * receives activity while it isn't the currently-viewed one gets badged. Extracted as
+ * a top-level `internal` function so the rule is unit-testable without an Android
+ * [Context] (the surrounding [AppContainer] needs one).
+ */
+internal fun sessionOfEvent(event: BusEvent): String? = when (event) {
+    is MessageUpdated -> event.properties.info.sessionID
+    is MessagePartUpdated -> event.properties.part.sessionID ?: event.properties.sessionID
+    else -> null
 }

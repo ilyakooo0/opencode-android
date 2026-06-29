@@ -99,7 +99,26 @@ internal class MessageStore {
     fun snapshot(): List<MessageWithParts> = messages.values.toList()
 
     fun seed(initial: List<MessageWithParts>) {
-        for (m in initial) messages[m.info.id] = m
+        for (m in initial) {
+            val existing = messages[m.info.id]
+            if (existing == null) {
+                messages[m.info.id] = m
+            } else {
+                // A part streamed in between subscribe and this initial load may already
+                // have populated this message (see observeMessages). Merge instead of
+                // overwriting so that newer streamed part isn't discarded: take the
+                // snapshot's part order, swap in the streamed version where ids overlap,
+                // append any streamed-only parts, and adopt the authoritative REST info.
+                val streamedById = existing.parts.associateBy { it.id }
+                val snapshotIds = m.parts.mapTo(mutableSetOf()) { it.id }
+                val ordered = m.parts.map { p -> streamedById[p.id] ?: p }.toMutableList()
+                for (p in existing.parts) {
+                    if (p.id !in snapshotIds) ordered.add(p)
+                }
+                val info = if (existing.info is UnknownMessage) m.info else existing.info
+                messages[m.info.id] = MessageWithParts(info = info, parts = ordered)
+            }
+        }
     }
 
     /** Returns true if the state changed (and a new snapshot should be published). */

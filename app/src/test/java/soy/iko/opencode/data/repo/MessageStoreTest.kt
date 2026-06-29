@@ -13,6 +13,7 @@ import soy.iko.opencode.data.model.MessageWithParts
 import soy.iko.opencode.data.model.SessionError
 import soy.iko.opencode.data.model.SessionIdle
 import soy.iko.opencode.data.model.TextPart
+import soy.iko.opencode.data.model.UnknownMessage
 import soy.iko.opencode.data.model.UserMessage
 
 class MessageStoreTest {
@@ -51,6 +52,71 @@ class MessageStoreTest {
             ),
         )
         assertEquals(listOf("u1", "a1"), store.snapshot().map { it.info.id })
+    }
+
+    // --- seed merge (race between streamed part and initial load) ---
+
+    @Test
+    fun seedMergesStreamedPartsWithSnapshotInsteadOfOverwriting() {
+        val store = MessageStore()
+        // A part streams in before the initial load completes, creating a synthetic
+        // placeholder message.
+        store.reduce(session, partUpdated("a1", "t1", "streamed"))
+        // The REST snapshot for the same message arrives.
+        store.seed(
+            listOf(
+                MessageWithParts(
+                    AssistantMessage(id = "a1", sessionID = session),
+                    parts = listOf(TextPart(id = "t1", messageID = "a1", sessionID = session, text = "snapshot")),
+                ),
+            ),
+        )
+        val msg = store.snapshot().single()
+        assertTrue("info should be the real one", msg.info is AssistantMessage)
+        // The streamed part (newer) must win over the snapshot's duplicate.
+        assertEquals("streamed", (msg.parts.single() as TextPart).text)
+    }
+
+    @Test
+    fun seedAppendsSnapshotOnlyPartsAfterStreamedOnes() {
+        val store = MessageStore()
+        store.reduce(session, partUpdated("a1", "t2", "streamed-t2"))
+        store.seed(
+            listOf(
+                MessageWithParts(
+                    AssistantMessage(id = "a1", sessionID = session),
+                    parts = listOf(
+                        TextPart(id = "t1", messageID = "a1", sessionID = session, text = "snap-t1"),
+                        TextPart(id = "t2", messageID = "a1", sessionID = session, text = "snap-t2"),
+                    ),
+                ),
+            ),
+        )
+        val msg = store.snapshot().single()
+        val parts = msg.parts
+        assertEquals(listOf("t1", "t2"), parts.map { it.id })
+        assertEquals("snap-t1", (parts[0] as TextPart).text)
+        assertEquals("streamed-t2", (parts[1] as TextPart).text)
+    }
+
+    @Test
+    fun seedKeepsEventResolvedInfoOverSyntheticSnapshot() {
+        val store = MessageStore()
+        // A MessageUpdated event resolved the real info, then a part streamed in.
+        store.reduce(session, msgUpdated("a1"))
+        store.reduce(session, partUpdated("a1", "t1", "streamed"))
+        // A stale snapshot arrives whose info is synthetic; it must not downgrade.
+        store.seed(
+            listOf(
+                MessageWithParts(
+                    UnknownMessage(id = "a1", sessionID = session),
+                    parts = listOf(TextPart(id = "t1", messageID = "a1", sessionID = session, text = "snapshot")),
+                ),
+            ),
+        )
+        val msg = store.snapshot().single()
+        assertTrue("event-resolved info must be kept", msg.info is AssistantMessage)
+        assertEquals("streamed", (msg.parts.first() as TextPart).text)
     }
 
     // --- MessageUpdated ---

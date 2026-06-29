@@ -33,6 +33,19 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    // Release builds are signed when keystore credentials are supplied via env vars
+    // (so CI can publish an installable APK). When the env vars are absent, the
+    // release build falls back to unsigned — same behavior as before — so local
+    // builds keep working without any keystore setup.
+    val releaseSigning = providers.environmentVariable("OPENCODE_STORE_FILE").orNull?.let { path ->
+        signingConfigs.create("release") {
+            storeFile = file(path)
+            storePassword = providers.environmentVariable("OPENCODE_STORE_PASSWORD").orNull
+            keyAlias = providers.environmentVariable("OPENCODE_KEY_ALIAS").orNull
+            keyPassword = providers.environmentVariable("OPENCODE_KEY_PASSWORD").orNull
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
@@ -41,6 +54,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+            releaseSigning?.let { signingConfig = it }
         }
     }
 
@@ -98,4 +112,5 @@ dependencies {
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.ktor.client.mock)
 }
