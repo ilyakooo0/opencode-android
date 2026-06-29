@@ -99,4 +99,63 @@ class WithRetryTest {
         assertEquals("cancellation must not be retried", 1, calls)
         assertTrue("expected CancellationException, got $error", error is CancellationException)
     }
+
+    @Test
+    fun maxAttemptsOneDoesNotRetry() = runTest {
+        var calls = 0
+        val error = runCatching {
+            withRetryInternal(maxAttempts = 1, initialDelayMs = 0) {
+                calls++
+                throw IOException("boom")
+            }
+        }.exceptionOrNull()!!
+        assertEquals("maxAttempts=1 means a single attempt only", 1, calls)
+        assertTrue(error is IOException)
+    }
+
+    @Test
+    fun succeedsOnLastAllowedAttempt() = runTest {
+        var calls = 0
+        val result = withRetryInternal(maxAttempts = 3, initialDelayMs = 0) {
+            calls++
+            if (calls < 3) throw IOException("transient")
+            "ok"
+        }
+        assertEquals("ok", result)
+        assertEquals(3, calls)
+    }
+
+    @Test
+    fun exponentialBackoffDoublesDelayBetweenAttempts() = runTest {
+        var calls = 0
+        val start = testScheduler.currentTime
+        runCatching {
+            withRetryInternal(maxAttempts = 3, initialDelayMs = 100L) {
+                calls++
+                throw IOException("always")
+            }
+        }
+        // Delays: attempt 1→2 waits 100ms (100 * 2^0), attempt 2→3 waits 200ms
+        // (100 * 2^1). Total virtual time elapsed = 300ms.
+        assertEquals(3, calls)
+        assertEquals(300L, testScheduler.currentTime - start)
+    }
+
+    @Test
+    fun backoffDelayFormulaIsInitialTimesTwoToAttemptMinusOne() = runTest {
+        val delays = mutableListOf<Long>()
+        var calls = 0
+        var lastTime = testScheduler.currentTime
+        runCatching {
+            withRetryInternal(maxAttempts = 4, initialDelayMs = 50L) {
+                calls++
+                val now = testScheduler.currentTime
+                if (calls > 1) delays.add(now - lastTime)
+                lastTime = now
+                throw IOException("always")
+            }
+        }
+        // Expected delays: 50, 100, 200 (50 * 2^0, 50 * 2^1, 50 * 2^2)
+        assertEquals(listOf(50L, 100L, 200L), delays)
+    }
 }

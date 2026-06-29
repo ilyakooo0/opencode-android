@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import soy.iko.opencode.data.model.FileNode
 import soy.iko.opencode.data.model.FileStatusEntry
+import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
 import kotlinx.coroutines.Job
@@ -83,7 +84,7 @@ class FileBrowserViewModel(private val container: AppContainer) : ViewModel() {
         }
         val client = api ?: return
         searchJob = viewModelScope.launch {
-            delay(250) // debounce
+            delay(NetworkConfig.fileSearchDebounceMs) // debounce
             _state.value = _state.value.copy(searching = true)
             runCatching { client.findFiles(query) }
                 .onSuccess { _state.value = _state.value.copy(results = it, searching = false) }

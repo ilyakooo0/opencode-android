@@ -7,6 +7,7 @@ import io.ktor.client.plugins.sse.sse
 import io.ktor.sse.ServerSentEvent
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ChannelResult
 import kotlinx.coroutines.flow.Flow
@@ -15,6 +16,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.produceIn
 import kotlinx.coroutines.flow.shareIn
@@ -42,6 +44,10 @@ class EventStreamClient(
     val state: StateFlow<ConnectionState> = _state.asStateFlow()
 
     val events: SharedFlow<BusEvent> = stream()
+        // Buffer so a slow subscriber (e.g. a reducer under lock) can't suspend send()
+        // and stall the SSE read loop. Drop oldest on overflow — the next event carries
+        // the freshest state, so a dropped interim delta is harmless.
+        .buffer(NetworkConfig.sseEventBufferCapacity, BufferOverflow.DROP_OLDEST)
         .shareIn(
             scope = scope,
             started = SharingStarted.WhileSubscribed(stopTimeoutMillis = 5_000),
@@ -56,26 +62,26 @@ class EventStreamClient(
 
     private fun stream(): Flow<BusEvent> = channelFlow {
         val scope = this
-        var backoffMs = INITIAL_BACKOFF_MS
+        var backoffMs = NetworkConfig.sseInitialBackoffMs
         while (isActive) {
             _state.value = ConnectionState.Connecting
             try {
                 client.sse("event") {
-                    backoffMs = INITIAL_BACKOFF_MS
+                    backoffMs = NetworkConfig.sseInitialBackoffMs
                     // `incoming` is a cold Flow; bridge it to a ReceiveChannel so each
                     // element can be raced against an idle timeout via select.
                     val events = incoming.produceIn(scope)
                     try {
                         while (isActive) {
-                            // The OkHttp engine is configured with readTimeout=0 (the SSE
-                            // stream must never time out on read), so a socket the peer never
-                            // closed would otherwise hang until the OS TCP keepalive kicks in
-                            // — minutes to hours on stock Linux. If nothing arrives within
-                            // IDLE_TIMEOUT_MS, treat the connection as half-open and drop it
-                            // so the outer loop reconnects.
+                            // The OkHttp engine has readTimeout=0 (the SSE stream must
+                            // never time out on read), so a socket the peer never closed
+                            // would otherwise hang until OS TCP keepalive kicks in —
+                            // minutes to hours on stock Linux. If nothing arrives within
+                            // the idle timeout, treat the connection as half-open and
+                            // drop it so the outer loop reconnects.
                             val result: ChannelResult<ServerSentEvent>? = select {
                                 events.onReceiveCatching { it }
-                                onTimeout(IDLE_TIMEOUT_MS) { null }
+                                onTimeout(NetworkConfig.sseIdleTimeoutMs) { null }
                             }
                             // Timeout: drop and reconnect.
                             if (result == null) throw IOException("SSE idle timeout, reconnecting")
@@ -99,7 +105,7 @@ class EventStreamClient(
             } catch (c: CancellationException) {
                 throw c
             } catch (t: Throwable) {
-                Log.w(TAG, "SSE stream error, will retry", t)
+                Log.w("EventStream", "SSE stream error, will retry", t)
             }
             _state.value = ConnectionState.Disconnected
             if (!isActive) break
@@ -109,15 +115,7 @@ class EventStreamClient(
                 reconnectSignal.onReceive { signaled = true }
                 onTimeout(backoffMs) { /* normal backoff elapsed */ }
             }
-            backoffMs = if (signaled) INITIAL_BACKOFF_MS else (backoffMs * 2).coerceAtMost(MAX_BACKOFF_MS)
+            backoffMs = if (signaled) NetworkConfig.sseInitialBackoffMs else (backoffMs * 2).coerceAtMost(NetworkConfig.sseMaxBackoffMs)
         }
-    }
-
-    private companion object {
-        private const val TAG = "EventStream"
-        const val INITIAL_BACKOFF_MS = 500L
-        const val MAX_BACKOFF_MS = 10_000L
-        /** Max gap between events before a silent/half-open connection is dropped. */
-        const val IDLE_TIMEOUT_MS = 90_000L
     }
 }

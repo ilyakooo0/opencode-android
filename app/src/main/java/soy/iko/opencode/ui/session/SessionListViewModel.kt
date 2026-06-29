@@ -8,6 +8,7 @@ import soy.iko.opencode.data.model.SessionDeleted
 import soy.iko.opencode.data.model.SessionUpdated
 import soy.iko.opencode.data.model.TextPart
 import soy.iko.opencode.data.network.EventStreamClient
+import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -188,7 +189,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
                     api.listMessages(sessionId).lastOrNull()?.let { msg ->
                         msg.parts.filterIsInstance<TextPart>().lastOrNull()?.text
                     }
-                }.getOrNull()?.takeIf { it.isNotBlank() }?.take(200) ?: return@launch
+                }.getOrNull()?.takeIf { it.isNotBlank() }?.take(NetworkConfig.previewTextMaxLength) ?: return@launch
                 _state.update { s -> s.copy(previews = s.previews + (sessionId to preview)) }
             } finally {
                 livePreviewJobs.remove(sessionId)
@@ -203,8 +204,8 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         val api = conn.api
         _state.update { it.copy(previews = emptyMap()) }
         previewJob = viewModelScope.launch {
-            val semaphore = Semaphore(MAX_CONCURRENT_PREVIEWS)
-            sessions.take(50).map { session ->
+            val semaphore = Semaphore(NetworkConfig.maxConcurrentPreviews)
+            sessions.take(NetworkConfig.maxPreviewSessions).map { session ->
                 launch {
                     semaphore.withPermit {
                         val preview = runCatching {
@@ -217,10 +218,6 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
                 }
             }.joinAll()
         }
-    }
-
-    private companion object {
-        const val MAX_CONCURRENT_PREVIEWS = 8
     }
 
     fun createSession(onCreated: (String) -> Unit) {

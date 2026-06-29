@@ -89,6 +89,16 @@ android {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
+
+    testOptions {
+        unitTests {
+            // Return default values for Android framework stubs (e.g. Log.d, Context.getString)
+            // instead of throwing "not mocked" exceptions, so JVM unit tests that brush
+            // against Android APIs don't need Robolectric.
+            isReturnDefaultValues = true
+            isIncludeAndroidResources = true
+        }
+    }
 }
 
 dependencies {

@@ -142,8 +142,8 @@ class OpencodeApiClient(private val client: HttpClient) {
 }
 
 private suspend fun <T> withRetry(
-    maxAttempts: Int = 3,
-    initialDelayMs: Long = 500L,
+    maxAttempts: Int = NetworkConfig.retryMaxAttempts,
+    initialDelayMs: Long = NetworkConfig.retryInitialDelayMs,
     block: suspend () -> T,
 ): T = withRetryInternal(maxAttempts, initialDelayMs, block)
 
@@ -156,8 +156,8 @@ private suspend fun <T> withRetry(
  * unit-testable without an HTTP server.
  */
 internal suspend fun <T> withRetryInternal(
-    maxAttempts: Int = 3,
-    initialDelayMs: Long = 500L,
+    maxAttempts: Int = NetworkConfig.retryMaxAttempts,
+    initialDelayMs: Long = NetworkConfig.retryInitialDelayMs,
     block: suspend () -> T,
 ): T {
     var lastError: Throwable? = null

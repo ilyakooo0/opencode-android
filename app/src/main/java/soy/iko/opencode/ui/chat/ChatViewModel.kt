@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
@@ -114,8 +115,8 @@ class ChatViewModel(
     init {
         // Watch the bus for run completion / errors / permission asks for this session.
         viewModelScope.launch {
-            container.activeConnection.collect { conn ->
-                if (conn == null) return@collect
+            container.activeConnection.collectLatest { conn ->
+                if (conn == null) return@collectLatest
                 conn.events.events.collect { event ->
                     if (SessionRepository.isIdle(event, sessionId)) _running.value = false
                     if (SessionRepository.isError(event, sessionId)) {
@@ -141,8 +142,8 @@ class ChatViewModel(
         // Load the model catalog; preselect the server default. Failure is non-fatal —
         // sending with no model just uses the server's default agent/model.
         viewModelScope.launch {
-            container.activeConnection.collect { conn ->
-                if (conn == null) return@collect
+            container.activeConnection.collectLatest { conn ->
+                if (conn == null) return@collectLatest
                 runCatching { conn.api.providers() }.getOrNull()?.let { resp ->
                     val options = resp.toOptions()
                     _models.value = options
@@ -152,22 +153,22 @@ class ChatViewModel(
         }
         // Load the agent catalog (non-fatal).
         viewModelScope.launch {
-            container.activeConnection.collect { conn ->
-                if (conn == null) return@collect
+            container.activeConnection.collectLatest { conn ->
+                if (conn == null) return@collectLatest
                 runCatching { conn.api.agents() }.getOrNull()?.let { _agents.value = it }
             }
         }
         // Load the command catalog (non-fatal).
         viewModelScope.launch {
-            container.activeConnection.collect { conn ->
-                if (conn == null) return@collect
+            container.activeConnection.collectLatest { conn ->
+                if (conn == null) return@collectLatest
                 runCatching { conn.api.commands() }.getOrNull()?.let { _commands.value = it }
             }
         }
         // Resolve the human-readable session title for the app bar (non-fatal).
         viewModelScope.launch {
-            container.activeConnection.collect { conn ->
-                if (conn == null) return@collect
+            container.activeConnection.collectLatest { conn ->
+                if (conn == null) return@collectLatest
                 runCatching { conn.repository.listSessions() }
                     .getOrNull()
                     ?.firstOrNull { it.id == sessionId }
@@ -177,8 +178,8 @@ class ChatViewModel(
         // If the SSE stream drops mid-run, the run indicator would spin forever;
         // reset it so the UI doesn't look stuck while the banner shows "Reconnecting…".
         viewModelScope.launch {
-            container.activeConnection.collect { conn ->
-                if (conn == null) return@collect
+            container.activeConnection.collectLatest { conn ->
+                if (conn == null) return@collectLatest
                 conn.events.state.collect { state ->
                     if (state == EventStreamClient.ConnectionState.Disconnected && _running.value) {
                         _running.value = false
@@ -196,7 +197,10 @@ class ChatViewModel(
         _running.value = true
         _error.value = null
         _failedDraft.value = null
-        updateDraft("")
+        // Clear the in-memory draft for the UI immediately, but don't persist the clear
+        // yet — if the send fails and the process dies before we restore, the draft
+        // would be lost forever. The persisted draft is cleared only on success.
+        _draft.value = ""
         viewModelScope.launch {
             val ok = runCatching {
                 conn.repository.sendPrompt(
@@ -212,6 +216,9 @@ class ChatViewModel(
                 // Only restore the draft if the user hasn't typed anything new since.
                 if (_draft.value.isBlank()) updateDraft(trimmed)
                 _error.value = container.string(R.string.error_failed_to_send)
+            } else {
+                // Send succeeded — now it's safe to persist the empty draft.
+                container.draftStore.set(sessionId, "")
             }
         }
         return true
@@ -267,11 +274,16 @@ class ChatViewModel(
 
     fun respondPermission(permission: Permission, response: PermissionResponse) {
         val conn = connection ?: return
-        // Clear optimistically; permission.replied will confirm.
+        // Clear optimistically; permission.replied will confirm. If the call fails we
+        // restore the pending permission so the user can retry instead of being stuck
+        // with a dismissed dialog and a paused tool run.
         _pendingPermission.value = null
         viewModelScope.launch {
             runCatching { conn.api.respondPermission(sessionId, permission.id, response) }
-                .onFailure { _error.value = container.friendlyError(it) }
+                .onFailure {
+                    _error.value = container.friendlyError(it)
+                    _pendingPermission.value = permission
+                }
         }
     }
 }

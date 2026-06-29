@@ -27,11 +27,14 @@ object HttpClientFactory {
 
         engine {
             config {
-                // The SSE stream is long-lived; never time it out on read.
+                // The SSE stream is long-lived; a socket read timeout would kill it
+                // mid-stream. REST calls rely on the connect timeout + withRetry for
+                // resilience instead. The SSE idle-timeout watchdog in EventStreamClient
+                // handles half-open connections.
                 readTimeout(0, TimeUnit.MILLISECONDS)
-                connectTimeout(30, TimeUnit.SECONDS)
+                connectTimeout(NetworkConfig.connectTimeoutSeconds, TimeUnit.SECONDS)
                 retryOnConnectionFailure(true)
-                pingInterval(20, TimeUnit.SECONDS)
+                pingInterval(NetworkConfig.pingIntervalSeconds, TimeUnit.SECONDS)
             }
         }
 
@@ -41,8 +44,12 @@ object HttpClientFactory {
 
         install(SSE)
 
+        // Disable the request-level timeout at the client level — it covers the whole
+        // call including the body stream, so it would kill the long-lived SSE `/event`
+        // connection after 60s (the previous default). The engine's connect timeout
+        // and the SSE idle-timeout watchdog handle stuck connections instead.
         install(HttpTimeout) {
-            requestTimeoutMillis = 60_000
+            requestTimeoutMillis = Long.MAX_VALUE
         }
 
         if (profile.hasAuth) {
