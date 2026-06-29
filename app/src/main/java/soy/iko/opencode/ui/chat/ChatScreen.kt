@@ -212,7 +212,7 @@ fun ChatScreen(
                         Text(
                             buildString {
                                 append(selectedModel?.modelLabel ?: stringResource(R.string.default_model))
-                                selectedAgent?.let { append("  •  $it") }
+                                selectedAgent?.let { append(" · $it") }
                             },
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -305,7 +305,7 @@ fun ChatScreen(
                         item(key = "__typing") {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                                Text("  " + stringResource(R.string.working), style = MaterialTheme.typography.labelMedium)
+                                Text(stringResource(R.string.working), style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 6.dp))
                             }
                         }
                     }

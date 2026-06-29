@@ -80,7 +80,7 @@ class CrashLogger private constructor(private val appContext: Context) {
 
     private fun writeReport(thread: Thread, throwable: Throwable) {
         val now = Date()
-        val stamp = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US).format(now)
+        val stamp = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss-SSS", Locale.US).format(now)
         val file = File(crashDir, "crash-$stamp.txt")
         val sw = StringWriter()
         PrintWriter(sw).use { pw ->

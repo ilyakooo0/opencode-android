@@ -5,6 +5,7 @@
 
     <!-- Common -->
     <string name="back">Back</string>
+    <string name="loading">Loading</string>
     <string name="cancel">Cancel</string>
     <string name="save">Save</string>
     <string name="delete">Delete</string>
@@ -56,6 +57,7 @@
 
     <!-- Session list -->
     <string name="new_session">New session</string>
+    <string name="unread">Unread</string>
     <string name="no_sessions_yet">No sessions yet</string>
     <string name="no_sessions_hint">Start a conversation with opencode.</string>
     <string name="search_sessions">Search sessions…</string>

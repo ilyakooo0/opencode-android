@@ -6,7 +6,7 @@ Application id: `soy.iko.opencode`
 
 ## Status
 
-Milestones M0–M11 complete:
+Milestones M0–M12 complete:
 
 - **M0–M4:** connect to a server → list/create/delete sessions → chat with **live SSE streaming**
   of the assistant's reply. Tool calls, reasoning, and token/cost are rendered.
@@ -96,6 +96,31 @@ Milestones M0–M11 complete:
     `kotlinOptions` DSL was replaced; and the release-artifact upload matches the
     signed-output path. Instrumented tests (androidTest) cover the crash logger and
     app bootstrap.
+
+- **M12:** **Reliability, a11y & test-coverage pass.**
+  - **Diagnostics disk I/O off the main thread** — crash report reads in the
+    Diagnostics screen were moved from synchronous `remember` blocks (composition
+    / main thread) into coroutines with `Dispatchers.IO`, eliminating potential
+    jank on large reports.
+  - **Orphaned coroutine scope fix** — `DraftStore` no longer creates an
+    unscoped `CoroutineScope` that leaks; it now uses the app-scoped
+    `CoroutineScope` from `AppContainer`.
+  - **Predictive back** — `android:enableOnBackInvokedCallback="true"` added to
+    the manifest so the Android 14+ predictive back gesture integrates properly
+    with the app's `BackHandler` usage.
+  - **Crash report filename uniqueness** — crash report timestamps now include
+    milliseconds so two crashes within the same second don't overwrite each other.
+  - **Permission response retry** — `POST /session/:id/permissions/:permissionID`
+    now uses the same retry-with-backoff as other REST calls, so a transient
+    network failure no longer leaves a tool run stuck without automatic retry.
+  - **Accessibility: space-prefix text patterns** — six `"  " + text` patterns
+    that screen readers would announce with extra spaces were replaced with
+    `Modifier.padding(start = ...)` on the Text composables.
+  - **Accessibility: unread badge** — the unread activity dot on session cards
+    now carries a `contentDescription` so TalkBack announces it.
+  - **Test coverage** — added `OpencodeApiClientTest` (3 tests covering the
+    permission-response retry path) and `DraftStoreTest` (instrumented, covering
+    set/get/remove/blank-clears round-trip).
 
 ## Architecture
 

@@ -45,7 +45,7 @@ class AppContainer(context: Context) {
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     val profileStore = ProfileStore(context)
     val settingsStore = SettingsStore(context)
-    val draftStore = DraftStore(context)
+    val draftStore = DraftStore(context, appScope)
 
     private val appContext = context.applicationContext
 

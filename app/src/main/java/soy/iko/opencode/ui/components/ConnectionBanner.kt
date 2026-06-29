@@ -43,9 +43,10 @@ fun ConnectionBanner(
             ) {
                 CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 2.dp)
                 Text(
-                    "  $text",
+                    text,
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onTertiaryContainer,
+                    modifier = Modifier.padding(start = 6.dp),
                 )
             }
         }

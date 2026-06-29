@@ -59,6 +59,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
@@ -345,12 +346,14 @@ private fun SessionCard(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     if (unread) {
+                        val unreadLabel = stringResource(R.string.unread)
                         Box(
                             modifier = Modifier
                                 .padding(end = 8.dp)
                                 .size(8.dp)
                                 .clip(androidx.compose.foundation.shape.CircleShape)
-                                .background(MaterialTheme.colorScheme.primary),
+                                .background(MaterialTheme.colorScheme.primary)
+                                .semantics { contentDescription = unreadLabel },
                         )
                     }
                     Text(
@@ -433,7 +436,7 @@ private fun EmptySessions(onCreate: () -> Unit, modifier: Modifier = Modifier) {
         Spacer(Modifier.size(20.dp))
         Button(onClick = onCreate) {
             Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-            Text("  " + stringResource(R.string.new_session))
+            Text(stringResource(R.string.new_session), modifier = Modifier.padding(start = 6.dp))
         }
     }
 }

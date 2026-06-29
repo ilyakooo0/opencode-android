@@ -28,10 +28,15 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -120,14 +125,19 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
-                            val content = remember(report.fileName) { logger.readReport(report.fileName).orEmpty() }
+                            val shareScope = rememberCoroutineScope()
                             IconButton(onClick = {
-                                val send = Intent(Intent.ACTION_SEND).apply {
-                                    type = "text/plain"
-                                    putExtra(Intent.EXTRA_SUBJECT, shareLabel)
-                                    putExtra(Intent.EXTRA_TEXT, content)
+                                shareScope.launch {
+                                    val content = withContext(Dispatchers.IO) {
+                                        logger.readReport(report.fileName).orEmpty()
+                                    }
+                                    val send = Intent(Intent.ACTION_SEND).apply {
+                                        type = "text/plain"
+                                        putExtra(Intent.EXTRA_SUBJECT, shareLabel)
+                                        putExtra(Intent.EXTRA_TEXT, content)
+                                    }
+                                    context.startActivity(Intent.createChooser(send, shareLabel))
                                 }
-                                context.startActivity(Intent.createChooser(send, shareLabel))
                             }) {
                                 Icon(Icons.Filled.Share, contentDescription = stringResource(R.string.share))
                             }
@@ -141,7 +151,11 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
 
     val reportName = viewing
     if (reportName != null) {
-        val content = remember(reportName) { logger.readReport(reportName) }
+        var reportContent by remember(reportName) { mutableStateOf<String?>(null) }
+        LaunchedEffect(reportName) {
+            reportContent = withContext(Dispatchers.IO) { logger.readReport(reportName) }
+        }
+        val content = reportContent
         AlertDialog(
             onDismissRequest = { viewing = null },
             confirmButton = {

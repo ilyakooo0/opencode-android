@@ -115,7 +115,7 @@ class OpencodeApiClient(private val client: HttpClient) {
         sessionId: String,
         permissionId: String,
         response: PermissionResponse,
-    ) {
+    ) = withRetry {
         client.post("session/$sessionId/permissions/$permissionId") {
             contentType(ContentType.Application.Json)
             setBody(PermissionReplyBody(response.wire))

@@ -2,8 +2,6 @@ package soy.iko.opencode.data.repo
 
 import android.content.Context
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
 /**
@@ -14,7 +12,7 @@ import kotlinx.coroutines.launch
  * The prefs file is loaded on a background thread at construction time so the
  * first [get] call on the main thread doesn't trigger a synchronous disk read.
  */
-class DraftStore(context: Context) {
+class DraftStore(context: Context, scope: CoroutineScope) {
 
     private val appContext = context.applicationContext
     private val prefs by lazy {
@@ -24,7 +22,7 @@ class DraftStore(context: Context) {
     init {
         // Eagerly load the prefs file on a background thread so the first main-thread
         // get() doesn't block on disk I/O. The lazy delegate ensures the same instance.
-        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch { prefs.all }
+        scope.launch { prefs.all }
     }
 
     fun get(sessionId: String): String = prefs.getString(sessionId, "").orEmpty()

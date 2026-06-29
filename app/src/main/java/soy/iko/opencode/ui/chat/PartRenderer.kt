@@ -115,9 +115,10 @@ private fun ReasoningBlock(text: String, streaming: Boolean, modifier: Modifier)
                 )
             }
             Text(
-                "  ${if (streaming) stringResource(R.string.thinking) else stringResource(R.string.thoughts)}",
+                if (streaming) stringResource(R.string.thinking) else stringResource(R.string.thoughts),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 6.dp),
             )
         }
         AnimatedVisibility(visible = expanded) {
@@ -132,7 +133,7 @@ private fun ReasoningBlock(text: String, streaming: Boolean, modifier: Modifier)
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp),
                 ) {
                     Icon(Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(14.dp))
-                    Text("  " + stringResource(R.string.copy), style = MaterialTheme.typography.labelSmall)
+                    Text(stringResource(R.string.copy), style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(start = 4.dp))
                 }
             }
         }
@@ -152,9 +153,10 @@ private fun ToolCallView(part: ToolPart, modifier: Modifier) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             ToolStatusIcon(part.state)
             Text(
-                "  ${part.tool}",
+                part.tool,
                 style = MaterialTheme.typography.labelLarge,
                 fontFamily = FontFamily.Monospace,
+                modifier = Modifier.padding(start = 6.dp),
             )
         }
         val detail = when (val s = part.state) {
@@ -187,8 +189,9 @@ private fun ToolCallView(part: ToolPart, modifier: Modifier) {
                         modifier = Modifier.size(16.dp),
                     )
                     Text(
-                        "  ${if (expanded) stringResource(R.string.show_less) else stringResource(R.string.show_more)}",
+                        if (expanded) stringResource(R.string.show_less) else stringResource(R.string.show_more),
                         style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier.padding(start = 4.dp),
                     )
                 }
             }
@@ -197,7 +200,7 @@ private fun ToolCallView(part: ToolPart, modifier: Modifier) {
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp),
             ) {
                 Icon(Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(14.dp))
-                Text("  " + stringResource(R.string.copy), style = MaterialTheme.typography.labelSmall)
+                Text(stringResource(R.string.copy), style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(start = 4.dp))
             }
         }
     }
@@ -233,8 +236,9 @@ private fun FileChip(part: FilePart, modifier: Modifier) {
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Text(
-            "  ${part.filename ?: part.url ?: stringResource(R.string.file)}",
+            part.filename ?: part.url ?: stringResource(R.string.file),
             style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.padding(start = 6.dp),
         )
     }
 }
