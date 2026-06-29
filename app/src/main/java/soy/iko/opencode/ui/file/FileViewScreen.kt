@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ContentCopy
@@ -103,7 +104,8 @@ fun FileViewScreen(
                             diff = content.diff,
                             modifier = Modifier
                                 .fillMaxSize()
-                                .padding(padding),
+                                .verticalScroll(rememberScrollState())
+                                .padding(8.dp),
                         )
                     } else {
                         val text = content?.content.orEmpty()

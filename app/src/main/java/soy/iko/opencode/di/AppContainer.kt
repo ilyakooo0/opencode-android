@@ -4,18 +4,27 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkRequest
+import soy.iko.opencode.data.model.BusEvent
+import soy.iko.opencode.data.model.MessagePartUpdated
+import soy.iko.opencode.data.model.MessageUpdated
 import soy.iko.opencode.data.model.ServerProfile
 import soy.iko.opencode.data.repo.DraftStore
+import soy.iko.opencode.data.repo.ErrorKind
 import soy.iko.opencode.data.repo.ProfileStore
 import soy.iko.opencode.data.repo.SettingsStore
+import soy.iko.opencode.data.repo.classifyError
 import soy.iko.opencode.R
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -55,34 +64,78 @@ class AppContainer(context: Context) {
     fun setPendingShare(text: String) { _pendingShare.value = text }
     fun consumePendingShare(): String? = _pendingShare.value.also { _pendingShare.value = null }
 
+    /**
+     * The session the user is currently viewing (or null when not in a chat). Drives the
+     * unread tracker: messages arriving for any *other* session mark it unread, and
+     * opening a session clears its unread state.
+     */
+    private val _currentSession = MutableStateFlow<String?>(null)
+    val currentSession: StateFlow<String?> = _currentSession.asStateFlow()
+
+    /** Session ids that received activity while not being viewed. */
+    private val _unread = MutableStateFlow<Set<String>>(emptySet())
+    val unread: StateFlow<Set<String>> = _unread.asStateFlow()
+
+    fun setCurrentSession(id: String?) {
+        _currentSession.value = id
+        if (id != null) _unread.update { it - id }
+    }
+
     /** Resolve a localized string — view models reach resources through the container. */
     fun string(id: Int, vararg formatArgs: Any): String =
         if (formatArgs.isEmpty()) appContext.getString(id) else appContext.getString(id, *formatArgs)
 
     /**
-     * Convert a throwable into a user-facing message. Ktor/OkHttp exceptions expose
-     * developer-oriented detail (URL schemes, internal state) that is not useful to
-     * end users, so we collapse those to a generic "could not reach server" message.
+     * Convert a throwable into a user-facing message. Classifies the error by concrete
+     * type (network, timeout, HTTP status) rather than string-matching class names, so
+     * the message reflects what actually went wrong without leaking internal URLs/state.
      */
     fun friendlyError(t: Throwable): String {
         val msg = t.message.orEmpty()
-        val isNetworkError = t::class.qualifiedName?.let { className ->
-            className.startsWith("io.ktor.") || className.startsWith("okhttp3.") ||
-                className.contains("HttpException", ignoreCase = true) ||
-                className.contains("SocketTimeout", ignoreCase = true) ||
-                className.contains("ConnectException", ignoreCase = true) ||
-                className.contains("UnknownHost", ignoreCase = true)
-        } ?: false
-        return if (isNetworkError) {
-            string(R.string.error_not_reachable, activeConnection.value?.profile?.baseUrl.orEmpty())
-        } else {
-            msg.ifBlank { string(R.string.error_generic) }
+        val baseUrl = activeConnection.value?.profile?.baseUrl.orEmpty()
+        return when (classifyError(t)) {
+            ErrorKind.NOT_REACHABLE, ErrorKind.NETWORK ->
+                string(R.string.error_not_reachable, baseUrl)
+            ErrorKind.TIMEOUT -> string(R.string.error_timeout)
+            ErrorKind.SERVER -> string(R.string.error_server)
+            ErrorKind.CLIENT -> msg.ifBlank { string(R.string.error_generic) }
+            ErrorKind.UNKNOWN -> msg.ifBlank { string(R.string.error_generic) }
         }
     }
 
     init {
         registerNetworkMonitor()
+        observeMessageActivity()
         appScope.launch { autoConnect() }
+    }
+
+    /**
+     * Watch the SSE bus for new message activity and badge any session that isn't
+     * currently open. This powers the unread dot on the session list so the user can
+     * tell which conversations got a reply while they were elsewhere.
+     *
+     * Uses [flatMapLatest] so a server switch (which replaces the active connection)
+     * re-subscribes to the new event stream and drops the old one.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private fun observeMessageActivity() {
+        appScope.launch {
+            activeConnection
+                .flatMapLatest { conn -> conn?.events?.events ?: emptyFlow() }
+                .collect { event ->
+                    val sid = sessionOf(event) ?: return@collect
+                    if (sid != _currentSession.value) {
+                        _unread.update { it + sid }
+                    }
+                }
+        }
+    }
+
+    /** Extract the session id an event pertains to, for message-activity events. */
+    private fun sessionOf(event: BusEvent): String? = when (event) {
+        is MessageUpdated -> event.properties.info.sessionID
+        is MessagePartUpdated -> event.properties.part.sessionID ?: event.properties.sessionID
+        else -> null
     }
 
     /**

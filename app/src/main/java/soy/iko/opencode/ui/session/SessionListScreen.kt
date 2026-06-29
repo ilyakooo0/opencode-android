@@ -1,5 +1,6 @@
 package soy.iko.opencode.ui.session
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -41,10 +42,12 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -53,6 +56,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.role
@@ -66,6 +70,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import soy.iko.opencode.data.model.Session
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
+import soy.iko.opencode.ui.components.ConnectionBanner
 import soy.iko.opencode.ui.components.relativeTime
 import soy.iko.opencode.ui.vmFactory
 
@@ -85,6 +90,8 @@ fun SessionListScreen(
     val serverLabel by vm.serverLabel.collectAsStateWithLifecycle()
     val profiles by vm.profiles.collectAsStateWithLifecycle()
     val switchingId by vm.switchingId.collectAsStateWithLifecycle()
+    val connectionState by vm.connectionState.collectAsStateWithLifecycle()
+    val unread by vm.unread.collectAsStateWithLifecycle()
     val haptics = LocalHapticFeedback.current
     val snackbar = remember { SnackbarHostState() }
     var showServerMenu by remember { mutableStateOf(false) }
@@ -176,6 +183,10 @@ fun SessionListScreen(
         },
     ) { padding ->
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
+            ConnectionBanner(
+                state = connectionState,
+                modifier = Modifier.align(Alignment.TopCenter),
+            )
             when {
                 state.loading -> CircularProgressIndicator(Modifier.align(Alignment.Center))
                 state.sessions.isEmpty() && state.error != null -> Text(
@@ -219,6 +230,7 @@ fun SessionListScreen(
                                     SessionCard(
                                         session = session,
                                         preview = state.previews[session.id],
+                                        unread = unread.contains(session.id),
                                         onClick = { onOpenSession(session.id) },
                                         onRename = { pendingRename = session },
                                         onDelete = { pendingDelete = session },
@@ -296,58 +308,105 @@ private fun RenameSessionDialog(
     )
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SessionCard(
     session: Session,
     preview: String?,
+    unread: Boolean,
     onClick: () -> Unit,
     onRename: () -> Unit,
     onDelete: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Card(
-        modifier = modifier
-            .fillMaxWidth()
-            .clickable { onClick() },
+    // Swipe toward the start reveals a delete affordance; releasing snaps back and opens
+    // the same confirmation dialog the trash icon uses, so the destructive action is
+    // always confirmed.
+    val dismissState = rememberSwipeToDismissBoxState(
+        confirmValueChange = {
+            onDelete()
+            false // snap back; the dialog owns the actual deletion
+        },
+    )
+    SwipeToDismissBox(
+        state = dismissState,
+        backgroundContent = { SwipeDeleteBackground() },
+        enableDismissFromStartToEnd = false,
+        modifier = modifier,
     ) {
-        Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    session.displayTitle,
-                    style = MaterialTheme.typography.titleMedium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
-                val time = relativeTime(session.time?.updated ?: session.time?.created)
-                if (time.isNotEmpty()) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onClick() },
+        ) {
+            Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (unread) {
+                        Box(
+                            modifier = Modifier
+                                .padding(end = 8.dp)
+                                .size(8.dp)
+                                .clip(androidx.compose.foundation.shape.CircleShape)
+                                .background(MaterialTheme.colorScheme.primary),
+                        )
+                    }
                     Text(
-                        time,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        session.displayTitle,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = if (unread) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    val time = relativeTime(session.time?.updated ?: session.time?.created)
+                    if (time.isNotEmpty()) {
+                        Text(
+                            time,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    IconButton(onClick = onRename) {
+                        Icon(Icons.Filled.Edit, contentDescription = stringResource(R.string.rename))
+                    }
+                    IconButton(onClick = onDelete) {
+                        Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.delete))
+                    }
+                }
+                if (!preview.isNullOrBlank()) {
+                    Spacer(Modifier.size(4.dp))
+                    Text(
+                        preview,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (unread) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
-                IconButton(onClick = onRename) {
-                    Icon(Icons.Filled.Edit, contentDescription = stringResource(R.string.rename))
-                }
-                IconButton(onClick = onDelete) {
-                    Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.delete))
-                }
-            }
-            if (!preview.isNullOrBlank()) {
-                Spacer(Modifier.size(4.dp))
-                Text(
-                    preview,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
             }
         }
+    }
+}
+
+/** Red background with a trash icon shown behind a session card as it is swiped away. */
+@Composable
+private fun SwipeDeleteBackground() {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.errorContainer)
+            .padding(horizontal = 20.dp),
+        contentAlignment = Alignment.CenterEnd,
+    ) {
+        Icon(
+            Icons.Filled.Delete,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onErrorContainer,
+        )
     }
 }
 

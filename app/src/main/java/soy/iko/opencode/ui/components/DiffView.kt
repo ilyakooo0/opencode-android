@@ -3,13 +3,12 @@ package soy.iko.opencode.ui.components
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -75,6 +74,13 @@ fun looksLikeDiff(text: String): Boolean {
     return false
 }
 
+/**
+ * Renders a parsed unified diff. Implemented as a plain (non-lazy) [Column] so it is
+ * safe to embed inside another vertically scrolling container (e.g. the chat message
+ * list) — a nested `LazyColumn` would crash with an unbounded-height constraint.
+ * Callers that want the view to scroll on its own (e.g. the file viewer) should pass a
+ * [Modifier.verticalScroll] in [modifier].
+ */
 @Composable
 fun DiffView(diff: String, modifier: Modifier = Modifier) {
     val lines = remember(diff) { parseDiff(diff) }
@@ -85,21 +91,21 @@ fun DiffView(diff: String, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val hScrollState = rememberScrollState()
 
-    LazyColumn(
+    Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant),
     ) {
-        item(key = "__copy") {
-            Row(modifier = Modifier.fillMaxWidth().padding(top = 2.dp, end = 4.dp), horizontalArrangement = Arrangement.End) {
-                IconButton(onClick = { copyToClipboard(context, "diff", diff) }) {
-                    Icon(Icons.Filled.ContentCopy, contentDescription = stringResource(R.string.copy), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(top = 2.dp, end = 4.dp),
+            horizontalArrangement = Arrangement.End,
+        ) {
+            IconButton(onClick = { copyToClipboard(context, "diff", diff) }) {
+                Icon(Icons.Filled.ContentCopy, contentDescription = stringResource(R.string.copy), tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-        itemsIndexed(lines, key = { index, _ -> index }) { _, line ->
+        lines.forEach { line ->
             Row(modifier = Modifier.horizontalScroll(hScrollState).padding(horizontal = 10.dp)) {
                 when (line) {
                     is DiffLine.Hunk -> Text(
@@ -122,7 +128,7 @@ fun DiffView(diff: String, modifier: Modifier = Modifier) {
                 }
             }
         }
-        item(key = "__spacer") { Spacer(Modifier.padding(bottom = 10.dp)) }
+        Spacer(Modifier.padding(bottom = 10.dp))
     }
 }
 

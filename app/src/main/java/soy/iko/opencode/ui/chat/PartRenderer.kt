@@ -54,8 +54,11 @@ import soy.iko.opencode.data.model.ToolState
 import soy.iko.opencode.data.model.ToolUnknown
 import soy.iko.opencode.data.model.UnknownPart
 import soy.iko.opencode.ui.components.DiffView
+import soy.iko.opencode.ui.components.ImageLoadContext
 import soy.iko.opencode.ui.components.MarkdownText
+import soy.iko.opencode.ui.components.RemoteImage
 import soy.iko.opencode.ui.components.copyToClipboard
+import soy.iko.opencode.ui.components.isImage
 import soy.iko.opencode.ui.components.looksLikeDiff
 import soy.iko.opencode.R
 
@@ -66,14 +69,18 @@ private const val COLLAPSED_LIMIT = 600
  * compile-time coverage; the [UnknownPart] arm keeps the UI forward-compatible.
  */
 @Composable
-fun PartView(part: Part, isRunning: Boolean = false, modifier: Modifier = Modifier) {
+fun PartView(part: Part, isRunning: Boolean = false, modifier: Modifier = Modifier, imageContext: ImageLoadContext? = null) {
     when (part) {
         is TextPart -> if (!part.ignored && part.text.isNotEmpty()) {
             MarkdownText(part.text, modifier = modifier)
         }
         is ReasoningPart -> ReasoningBlock(part.text, streaming = isRunning, modifier)
         is ToolPart -> ToolCallView(part, modifier)
-        is FilePart -> FileChip(part, modifier)
+        is FilePart -> if (part.isImage && imageContext != null && (part.source != null || !part.url.isNullOrBlank())) {
+            RemoteImage(part, imageContext, modifier)
+        } else {
+            FileChip(part, modifier)
+        }
         is StepStartPart -> {} // boundary marker — nothing to draw
         is StepFinishPart -> {} // metrics handled at message level
         is UnknownPart -> {} // forward-compat: unknown part types are ignored

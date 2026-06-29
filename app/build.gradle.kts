@@ -5,6 +5,17 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+/**
+ * Monotonically increasing versionCode: the git commit count on HEAD, so each release
+ * ships a strictly higher code (never a "downgrade" block) without manual bookkeeping.
+ * Falls back to 1 when git or the history isn't available (e.g. a plain source export).
+ */
+val gitCommitCount: Int = runCatching {
+    providers.exec {
+        commandLine("git", "rev-list", "--count", "HEAD")
+    }.standardOutput.asText.get().trim().toInt()
+}.getOrDefault(1)
+
 android {
     namespace = "soy.iko.opencode"
     compileSdk = 35
@@ -13,7 +24,11 @@ android {
         applicationId = "soy.iko.opencode"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
+        // Monotonically increasing across builds: derived from the git commit count so
+        // each release ships a strictly higher versionCode without manual bookkeeping
+        // (and never triggers a "downgrade" install block). Falls back to 1 when the
+        // .git history isn't available (e.g. a plain source export).
+        versionCode = gitCommitCount
         versionName = "0.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

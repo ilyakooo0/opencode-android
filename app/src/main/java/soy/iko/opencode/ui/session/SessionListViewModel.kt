@@ -7,13 +7,16 @@ import soy.iko.opencode.data.model.Session
 import soy.iko.opencode.data.model.SessionDeleted
 import soy.iko.opencode.data.model.SessionUpdated
 import soy.iko.opencode.data.model.TextPart
+import soy.iko.opencode.data.network.EventStreamClient
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.joinAll
@@ -41,6 +44,20 @@ data class SessionListState(
 }
 
 class SessionListViewModel(private val container: AppContainer) : ViewModel() {
+
+    /** Live SSE connection state, surfaced so the list can show a reconnect banner. */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val connectionState: StateFlow<EventStreamClient.ConnectionState> =
+        container.activeConnection
+            .flatMapLatest { it?.events?.state ?: MutableStateFlow(EventStreamClient.ConnectionState.Disconnected) }
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5_000),
+                initialValue = EventStreamClient.ConnectionState.Disconnected,
+            )
+
+    /** Sessions with activity that arrived while not being viewed. */
+    val unread: StateFlow<Set<String>> = container.unread
 
     val profiles: StateFlow<List<ServerProfile>> =
         container.profileStore.profiles.stateIn(

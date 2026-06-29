@@ -6,7 +6,7 @@ Application id: `soy.iko.opencode`
 
 ## Status
 
-Milestones M0–M9 complete:
+Milestones M0–M10 complete:
 
 - **M0–M4:** connect to a server → list/create/delete sessions → chat with **live SSE streaming**
   of the assistant's reply. Tool calls, reasoning, and token/cost are rendered.
@@ -54,6 +54,20 @@ Milestones M0–M9 complete:
   mid-run instead of spinning forever; **retry-on-transient-failure** for all read
   endpoints (sessions, messages, files, providers); and **per-code-block copy
   buttons** in rendered markdown.
+
+- **M10:** **Reliability & UX hardening pass.** Fixed a latent crash where a diff in a
+  tool output nested a second `LazyColumn` inside the message list (now a bounded
+  column); **inline image rendering** for `file` parts — attachments are decoded
+  (data URIs) or fetched with Basic auth via the already-present Coil dependency;
+  **connection banner on the session list** so a dropped SSE stream is visible before
+  the list goes stale; **unread activity badges** — background sessions that receive a
+  reply get a dot until opened; **conflated message stream** so per-token snapshots no
+  longer back-pressure the event reducer on long replies; **typed error reporting** —
+  network/timeout/HTTP-status failures are classified by concrete exception type (with
+  a unit-tested classifier) instead of string-matching class names; **swipe-to-delete**
+  on session cards; **conversation export/share** (Markdown via the system share
+  sheet); and an **auto-incrementing `versionCode`** derived from the git commit count
+  so each release is strictly newer.
 
 ## Architecture
 

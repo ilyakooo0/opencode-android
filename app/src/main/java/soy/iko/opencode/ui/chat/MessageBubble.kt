@@ -18,19 +18,25 @@ import soy.iko.opencode.data.model.AssistantMessage
 import soy.iko.opencode.data.model.MessageWithParts
 import soy.iko.opencode.data.model.Tokens
 import soy.iko.opencode.data.model.UserMessage
+import soy.iko.opencode.ui.components.ImageLoadContext
 import soy.iko.opencode.ui.components.relativeTime
 
 /** A single message: user prompts right-aligned in a bubble, assistant output full-width. */
 @Composable
-fun MessageBubble(message: MessageWithParts, isRunning: Boolean = false, modifier: Modifier = Modifier) {
+fun MessageBubble(
+    message: MessageWithParts,
+    isRunning: Boolean = false,
+    modifier: Modifier = Modifier,
+    imageContext: ImageLoadContext? = null,
+) {
     when (message.info) {
-        is UserMessage -> UserBubble(message, modifier)
-        else -> AssistantBlock(message, isRunning, modifier)
+        is UserMessage -> UserBubble(message, imageContext, modifier)
+        else -> AssistantBlock(message, isRunning, imageContext, modifier)
     }
 }
 
 @Composable
-private fun UserBubble(message: MessageWithParts, modifier: Modifier) {
+private fun UserBubble(message: MessageWithParts, imageContext: ImageLoadContext?, modifier: Modifier) {
     Row(modifier = modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
         Column(
             modifier = Modifier
@@ -40,14 +46,14 @@ private fun UserBubble(message: MessageWithParts, modifier: Modifier) {
                 .padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            for (part in message.parts) PartView(part)
+            for (part in message.parts) PartView(part, imageContext = imageContext)
             MessageTimestamp(message.info)
         }
     }
 }
 
 @Composable
-private fun AssistantBlock(message: MessageWithParts, isRunning: Boolean, modifier: Modifier) {
+private fun AssistantBlock(message: MessageWithParts, isRunning: Boolean, imageContext: ImageLoadContext?, modifier: Modifier) {
     Column(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -61,7 +67,7 @@ private fun AssistantBlock(message: MessageWithParts, isRunning: Boolean, modifi
             )
         }
         for (part in message.parts) {
-            PartView(part, isRunning = isRunning, modifier = Modifier.fillMaxWidth())
+            PartView(part, isRunning = isRunning, modifier = Modifier.fillMaxWidth(), imageContext = imageContext)
         }
         if (info is AssistantMessage) {
             val cost = info.cost

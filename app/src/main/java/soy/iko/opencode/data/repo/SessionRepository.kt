@@ -15,6 +15,7 @@ import soy.iko.opencode.data.network.EventStreamClient
 import soy.iko.opencode.data.network.OpencodeApiClient
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -46,7 +47,9 @@ class SessionRepository(
     /**
      * A live, ordered view of [sessionId]'s messages. Begins collecting the event
      * stream before the initial REST load so no streamed part is missed, then reduces
-     * events into the in-memory state.
+     * events into the in-memory state. The flow is conflated so a fast burst of
+     * streaming tokens (each publishing a fresh snapshot) never back-pressures the
+     * event reducer — a slow collector simply sees the most recent snapshot.
      */
     fun observeMessages(sessionId: String): Flow<List<MessageWithParts>> = channelFlow {
         val store = MessageStore()
@@ -73,7 +76,7 @@ class SessionRepository(
 
         // Keep the flow alive until the collector cancels; the launched job is torn down with it.
         job.join()
-    }
+    }.conflate()
 
     companion object {
         /** Convenience: is this event a run-completion signal for [sessionId]? */

@@ -26,6 +26,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Terminal
@@ -66,6 +67,7 @@ import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
@@ -82,6 +84,8 @@ import soy.iko.opencode.data.model.ReasoningPart
 import soy.iko.opencode.data.model.TextPart
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
+import soy.iko.opencode.ui.components.ConnectionBanner
+import soy.iko.opencode.ui.components.toImageContext
 import soy.iko.opencode.ui.vmFactory
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -108,6 +112,20 @@ fun ChatScreen(
     val draft by vm.draft.collectAsStateWithLifecycle()
     val haptics = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
+    val shareLauncher = LocalContext.current
+    val shareLabel = stringResource(R.string.share)
+
+    // Connection profile (with auth) for rendering inline image attachments.
+    val imageContext = remember(container.activeConnection.value?.profile) {
+        container.activeConnection.value?.profile?.toImageContext()
+    }
+
+    // Mark this session as read while the user is viewing it; clear on leave so new
+    // background activity can badge it again.
+    DisposableEffect(sessionId) {
+        container.setCurrentSession(sessionId)
+        onDispose { if (container.currentSession.value == sessionId) container.setCurrentSession(null) }
+    }
 
     val listState = rememberLazyListState()
     val snackbar = remember { SnackbarHostState() }
@@ -194,6 +212,20 @@ fun ChatScreen(
                     }
                 },
                 actions = {
+                    IconButton(
+                        onClick = {
+                            val md = buildConversationMarkdown(messages, sessionTitle)
+                            val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                type = "text/markdown"
+                                putExtra(android.content.Intent.EXTRA_SUBJECT, sessionTitle ?: "opencode session")
+                                putExtra(android.content.Intent.EXTRA_TEXT, md)
+                            }
+                            shareLauncher.startActivity(android.content.Intent.createChooser(send, shareLabel))
+                        },
+                        enabled = messages.isNotEmpty(),
+                    ) {
+                        Icon(Icons.Filled.Share, contentDescription = stringResource(R.string.share_conversation))
+                    }
                     IconButton(onClick = { showCommandPicker = true }, enabled = commands.isNotEmpty()) {
                         Icon(Icons.Filled.Terminal, contentDescription = stringResource(R.string.commands))
                     }
@@ -252,7 +284,7 @@ fun ChatScreen(
                     verticalArrangement = Arrangement.spacedBy(16.dp),
                 ) {
                     items(messages, key = { it.info.id }) { message ->
-                        MessageBubble(message, isRunning = running)
+                        MessageBubble(message, isRunning = running, imageContext = imageContext)
                     }
                     if (running) {
                         item(key = "__typing") {
@@ -333,37 +365,6 @@ fun ChatScreen(
             permission = permission,
             onRespond = { response -> vm.respondPermission(permission, response) },
         )
-    }
-}
-
-@Composable
-private fun ConnectionBanner(
-    state: EventStreamClient.ConnectionState,
-    modifier: Modifier = Modifier,
-) {
-    val text = when (state) {
-        EventStreamClient.ConnectionState.Connecting -> stringResource(R.string.connecting)
-        EventStreamClient.ConnectionState.Disconnected -> stringResource(R.string.reconnecting)
-        EventStreamClient.ConnectionState.Connected -> null
-    }
-    if (text != null) {
-        Surface(
-            modifier = modifier.fillMaxWidth(),
-            color = MaterialTheme.colorScheme.tertiaryContainer,
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 2.dp)
-                Text(
-                    "  $text",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onTertiaryContainer,
-                )
-            }
-        }
     }
 }
 

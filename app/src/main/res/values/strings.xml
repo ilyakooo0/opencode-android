@@ -83,6 +83,7 @@
     <string name="commands">Commands</string>
     <string name="choose_agent">Choose agent</string>
     <string name="choose_model">Choose model</string>
+    <string name="share_conversation">Share conversation</string>
 
     <!-- Errors (view models) -->
     <string name="error_generic">Something went wrong.</string>
@@ -90,6 +91,8 @@
     <string name="error_agent_reported">The agent reported an error.</string>
     <string name="error_failed_command">Failed to run command</string>
     <string name="error_not_reachable">Could not reach %1$s</string>
+    <string name="error_timeout">The request timed out. Check the connection and try again.</string>
+    <string name="error_server">The server reported an error. Try again later.</string>
     <string name="error_load_sessions">Failed to load sessions</string>
     <string name="error_create_session">Failed to create session</string>
     <string name="error_delete_session">Failed to delete session</string>
