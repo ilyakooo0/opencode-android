@@ -166,7 +166,7 @@ internal suspend fun <T> withRetryInternal(
             return block()
         } catch (c: kotlinx.coroutines.CancellationException) {
             throw c
-        } catch (t: Throwable) {
+        } catch (t: Exception) {
             lastError = t
             if (t is ClientRequestException) throw t
             if (attempt < maxAttempts) {

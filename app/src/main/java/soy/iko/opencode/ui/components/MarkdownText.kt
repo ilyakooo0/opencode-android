@@ -26,10 +26,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.role
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
@@ -57,11 +53,8 @@ fun MarkdownText(
     val context = LocalContext.current
     Markdown(
         content = markdown,
-        modifier = modifier.semantics(mergeDescendants = true) {
-            contentDescription = markdown.take(500)
-            role = Role.Button
-        }.combinedClickable(
-            onClick = {},
+        modifier = modifier.combinedClickable(
+            onClick = { copyToClipboard(context, markdown) },
             onLongClick = { copyToClipboard(context, markdown) },
         ),
         components = markdownComponents(

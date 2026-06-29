@@ -58,6 +58,7 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
     val logger = remember { CrashLogger.get(context) }
     val reports by logger.reports.collectAsStateWithLifecycle()
     var viewing by remember { mutableStateOf<String?>(null) }
+    val shareScope = rememberCoroutineScope()
     val shareLabel = stringResource(R.string.share)
 
     Scaffold(
@@ -125,7 +126,6 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
-                            val shareScope = rememberCoroutineScope()
                             IconButton(onClick = {
                                 shareScope.launch {
                                     val content = withContext(Dispatchers.IO) {

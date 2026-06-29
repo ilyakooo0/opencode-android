@@ -71,11 +71,13 @@ private fun FilePart.resolveModel(ctx: ImageLoadContext): Any? {
 fun RemoteImage(part: FilePart, ctx: ImageLoadContext, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val model = remember(part.source, part.url, ctx.baseUrl) { part.resolveModel(ctx) } ?: return
-    val request = ImageRequest.Builder(context)
-        .data(model)
-        .apply { ctx.basicAuthHeader?.let { addHeader("Authorization", it) } }
-        .crossfade(true)
-        .build()
+    val request = remember(part.source, part.url, ctx.baseUrl, ctx.basicAuthHeader) {
+        ImageRequest.Builder(context)
+            .data(model)
+            .apply { ctx.basicAuthHeader?.let { addHeader("Authorization", it) } }
+            .crossfade(true)
+            .build()
+    }
     AsyncImage(
         model = request,
         contentDescription = part.filename ?: stringResource(R.string.image),

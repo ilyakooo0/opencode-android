@@ -63,6 +63,10 @@ class EventStreamClient(
 
     private fun stream(): Flow<BusEvent> = channelFlow {
         val scope = this
+        // Drain any stale reconnect signal from a previous collection cycle so it
+        // doesn't spuriously reset the backoff on startup (WhileSubscribed may have
+        // stopped the upstream while triggerReconnect() queued a signal).
+        while (reconnectSignal.tryReceive().isSuccess) { /* drain */ }
         var backoffMs = NetworkConfig.sseInitialBackoffMs
         while (isActive) {
             _state.value = ConnectionState.Connecting

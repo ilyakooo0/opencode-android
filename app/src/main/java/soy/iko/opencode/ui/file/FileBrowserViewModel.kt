@@ -7,11 +7,13 @@ import soy.iko.opencode.data.model.FileStatusEntry
 import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 data class FileBrowserState(
@@ -27,6 +29,7 @@ data class FileBrowserState(
     val isSearching: Boolean get() = query.isNotBlank()
 }
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class FileBrowserViewModel(private val container: AppContainer) : ViewModel() {
 
     private val api get() = container.activeConnection.value?.api
@@ -42,7 +45,19 @@ class FileBrowserViewModel(private val container: AppContainer) : ViewModel() {
     private var searchJob: Job? = null
     private var openJob: Job? = null
 
-    init { open(""); loadStatus() }
+    init {
+        open("")
+        // Observe the active connection so VCS status loads (or reloads) when a connection
+        // becomes available — including when the view opens during a reconnect window where
+        // activeConnection.value was momentarily null. Without this, loadStatus() would be
+        // called once from init with a null api and never retried.
+        viewModelScope.launch {
+            container.activeConnection.collectLatest { conn ->
+                if (conn == null) return@collectLatest
+                loadStatus()
+            }
+        }
+    }
 
     /** Fetch the repo-wide VCS status once so file rows can show git badges. */
     private fun loadStatus() {

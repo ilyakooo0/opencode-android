@@ -110,6 +110,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             container.activeConnection.collectLatest { conn ->
                 if (conn == null) return@collectLatest
+                _serverLabel.value = conn.profile.displayLabel
                 conn.events.events.collect { event ->
                     when (event) {
                         is SessionUpdated -> {
@@ -188,6 +189,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         val api = conn.api
         livePreviewJobs.remove(sessionId)?.cancel()
         livePreviewJobs[sessionId] = viewModelScope.launch {
+            val job = coroutineContext[kotlinx.coroutines.Job]
             try {
                 val preview = runCatching {
                     api.listMessages(sessionId).lastOrNull()?.let { msg ->
@@ -196,7 +198,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
                 }.getOrNull()?.takeIf { it.isNotBlank() }?.take(NetworkConfig.previewTextMaxLength) ?: return@launch
                 _state.update { s -> s.copy(previews = s.previews + (sessionId to preview)) }
             } finally {
-                livePreviewJobs.remove(sessionId)
+                if (job != null) livePreviewJobs.remove(sessionId, job)
             }
         }
     }

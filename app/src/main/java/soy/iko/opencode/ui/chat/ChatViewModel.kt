@@ -128,7 +128,7 @@ class ChatViewModel(
                         is PermissionUpdated ->
                             if (event.properties.sessionID == sessionId) _pendingPermission.value = event.properties
                         is PermissionReplied ->
-                            if (event.properties.permissionID == _pendingPermission.value?.id) _pendingPermission.value = null
+                            if (event.properties.sessionID == sessionId && event.properties.permissionID == _pendingPermission.value?.id) _pendingPermission.value = null
                         is SessionUpdated ->
                             if (event.properties.info.id == sessionId) _sessionTitle.value = event.properties.info.displayTitle
                         is SessionDeleted ->
@@ -271,6 +271,8 @@ class ChatViewModel(
             runCatching {
                 val conn = container.connect(recent)
                 conn.api.ping()
+            }.onSuccess {
+                _loading.value = false
             }.onFailure {
                 container.disconnect()
                 _error.value = container.friendlyError(it)

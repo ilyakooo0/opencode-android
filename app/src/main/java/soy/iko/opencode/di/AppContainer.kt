@@ -70,7 +70,10 @@ class AppContainer(context: Context) {
     private val _pendingShare = MutableStateFlow<String?>(null)
     val pendingShare: StateFlow<String?> = _pendingShare.asStateFlow()
     fun setPendingShare(text: String) { _pendingShare.value = text }
-    fun consumePendingShare(): String? = _pendingShare.value.also { _pendingShare.value = null }
+    fun consumePendingShare(): String? {
+        val current = _pendingShare.value ?: return null
+        return if (_pendingShare.compareAndSet(current, null)) current else null
+    }
 
     /**
      * A session id to open from an external trigger (a notification tap or a deep link).
@@ -79,7 +82,10 @@ class AppContainer(context: Context) {
     private val _pendingOpenSession = MutableStateFlow<String?>(null)
     val pendingOpenSession: StateFlow<String?> = _pendingOpenSession.asStateFlow()
     fun requestOpenSession(id: String) { _pendingOpenSession.value = id }
-    fun consumePendingOpenSession(): String? = _pendingOpenSession.value.also { _pendingOpenSession.value = null }
+    fun consumePendingOpenSession(): String? {
+        val current = _pendingOpenSession.value ?: return null
+        return if (_pendingOpenSession.compareAndSet(current, null)) current else null
+    }
 
     /**
      * The session the user is currently viewing (or null when not in a chat). Drives the
@@ -134,6 +140,8 @@ class AppContainer(context: Context) {
 
     /** Release resources held for the process lifetime (network callback, app scope). */
     fun shutdown() {
+        _activeConnection.value?.close()
+        _activeConnection.value = null
         val cm = appContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
         networkCallback?.let { runCatching { cm?.unregisterNetworkCallback(it) } }
         appScope.cancel()
