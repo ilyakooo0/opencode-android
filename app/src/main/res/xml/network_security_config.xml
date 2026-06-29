@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  opencode serve speaks plain HTTP. Android blocks cleartext by default on API 28+,
+  so we permit it. This is a developer tool talking to a self-hosted server on a
+  trusted network; cleartext is permitted broadly here.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

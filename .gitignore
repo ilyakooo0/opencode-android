@@ -1,0 +1,30 @@
+# Gradle
+.gradle/
+build/
+
+# Kotlin
+.kotlin/
+
+# Local configuration (signing keys, api keys, etc.)
+local.properties
+*.keystore
+*.jks
+
+# IntelliJ / Android Studio
+*.iml
+.idea/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Eclipse
+.classpath
+.project
+.settings/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Nix
+result

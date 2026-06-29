@@ -1,0 +1,82 @@
+package soy.iko.opencode.ui.chat
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.unit.dp
+import soy.iko.opencode.data.model.AssistantMessage
+import soy.iko.opencode.data.model.MessageWithParts
+import soy.iko.opencode.data.model.UserMessage
+
+/** A single message: user prompts right-aligned in a bubble, assistant output full-width. */
+@Composable
+fun MessageBubble(message: MessageWithParts, modifier: Modifier = Modifier) {
+    when (message.info) {
+        is UserMessage -> UserBubble(message, modifier)
+        else -> AssistantBlock(message, modifier)
+    }
+}
+
+@Composable
+private fun UserBubble(message: MessageWithParts, modifier: Modifier) {
+    Row(modifier = modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+        Column(
+            modifier = Modifier
+                .widthIn(max = 320.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(MaterialTheme.colorScheme.primaryContainer)
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            for (part in message.parts) PartView(part)
+        }
+    }
+}
+
+@Composable
+private fun AssistantBlock(message: MessageWithParts, modifier: Modifier) {
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        val info = message.info
+        if (info is AssistantMessage && info.modelID != null) {
+            Text(
+                info.modelID,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        for (part in message.parts) {
+            PartView(part, modifier = Modifier.fillMaxWidth())
+        }
+        if (info is AssistantMessage) {
+            val cost = info.cost
+            val tokens = info.tokens
+            if (info.isComplete && (cost != null || tokens != null)) {
+                val parts = buildList {
+                    tokens?.let { add("${it.input}→${it.output} tok") }
+                    cost?.takeIf { it > 0 }?.let { add("$%.4f".format(it)) }
+                }
+                if (parts.isNotEmpty()) {
+                    Text(
+                        parts.joinToString("  •  "),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,79 @@
+package soy.iko.opencode.ui.file
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import soy.iko.opencode.data.model.FileNode
+import soy.iko.opencode.di.AppContainer
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+
+data class FileBrowserState(
+    val path: String = "",
+    val entries: List<FileNode> = emptyList(),
+    val query: String = "",
+    val results: List<String> = emptyList(),
+    val searching: Boolean = false,
+    val loading: Boolean = true,
+    val error: String? = null,
+) {
+    val isSearching: Boolean get() = query.isNotBlank()
+}
+
+class FileBrowserViewModel(private val container: AppContainer) : ViewModel() {
+
+    private val api get() = container.activeConnection.value?.api
+
+    private val _state = MutableStateFlow(FileBrowserState())
+    val state: StateFlow<FileBrowserState> = _state.asStateFlow()
+
+    private var searchJob: Job? = null
+
+    init { open("") }
+
+    fun open(path: String) {
+        val client = api ?: run {
+            _state.value = _state.value.copy(loading = false, error = "Not connected")
+            return
+        }
+        _state.value = _state.value.copy(path = path, loading = true, error = null)
+        viewModelScope.launch {
+            runCatching { client.listDirectory(path) }
+                .onSuccess { entries ->
+                    _state.value = _state.value.copy(
+                        entries = entries.sortedWith(compareByDescending<FileNode> { it.isDirectory }.thenBy { it.name.lowercase() }),
+                        loading = false,
+                    )
+                }
+                .onFailure { _state.value = _state.value.copy(loading = false, error = it.message ?: "Failed to list $path") }
+        }
+    }
+
+    /** Navigate up one path segment. */
+    fun up() {
+        val current = _state.value.path
+        if (current.isBlank()) return
+        val parent = current.trimEnd('/').substringBeforeLast('/', missingDelimiterValue = "")
+        open(parent)
+    }
+
+    fun setQuery(query: String) {
+        _state.value = _state.value.copy(query = query)
+        searchJob?.cancel()
+        if (query.isBlank()) {
+            _state.value = _state.value.copy(results = emptyList(), searching = false)
+            return
+        }
+        val client = api ?: return
+        searchJob = viewModelScope.launch {
+            delay(250) // debounce
+            _state.value = _state.value.copy(searching = true)
+            runCatching { client.findFiles(query) }
+                .onSuccess { _state.value = _state.value.copy(results = it, searching = false) }
+                .onFailure { _state.value = _state.value.copy(searching = false, error = it.message) }
+        }
+    }
+}
