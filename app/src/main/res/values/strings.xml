@@ -33,6 +33,7 @@
     <!-- Connection banner -->
     <string name="connecting">Connecting…</string>
     <string name="reconnecting">Reconnecting…</string>
+    <string name="reconnect">Reconnect</string>
     <string name="not_connected">Not connected.</string>
 
     <!-- Server list -->

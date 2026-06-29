@@ -6,7 +6,7 @@ Application id: `soy.iko.opencode`
 
 ## Status
 
-Milestones M0–M8 complete:
+Milestones M0–M9 complete:
 
 - **M0–M4:** connect to a server → list/create/delete sessions → chat with **live SSE streaming**
   of the assistant's reply. Tool calls, reasoning, and token/cost are rendered.
@@ -42,6 +42,18 @@ Milestones M0–M8 complete:
   network; cleaner **token/cost formatting** (`1,234 in · 5,678 out`, precision-aware cost);
   and **bounded preview loading** (concurrency-capped, cancelled on refresh) so the session
   list never floods the server with parallel requests.
+
+- **M9:** **Live session list** — `session.updated` / `session.deleted` SSE events now
+  drive incremental list updates (new sessions, renames, deletions appear without a
+  manual refresh); **pull-to-refresh** on the session list; **keep-screen-on** while an
+  agent is running so long tasks aren't interrupted by screen-off; **chat loading
+  state** — a spinner replaces the empty-conversation flash before the first message
+  load; **reconnect button** when the connection is lost mid-chat; **live session
+  title** in the chat header (updates when the agent renames the session);
+  **connection-aware run indicator** — the spinner resets if the SSE stream drops
+  mid-run instead of spinning forever; **retry-on-transient-failure** for all read
+  endpoints (sessions, messages, files, providers); and **per-code-block copy
+  buttons** in rendered markdown.
 
 ## Architecture
 

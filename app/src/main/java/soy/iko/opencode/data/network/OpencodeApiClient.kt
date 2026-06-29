@@ -39,8 +39,9 @@ class OpencodeApiClient(private val client: HttpClient) {
         client.get("global/health")
     }
 
-    suspend fun listSessions(): List<Session> =
+    suspend fun listSessions(): List<Session> = withRetry {
         client.get("session").body()
+    }
 
     suspend fun createSession(title: String? = null): Session =
         client.post("session") {
@@ -58,8 +59,9 @@ class OpencodeApiClient(private val client: HttpClient) {
         client.delete("session/$id")
     }
 
-    suspend fun listMessages(sessionId: String): List<MessageWithParts> =
+    suspend fun listMessages(sessionId: String): List<MessageWithParts> = withRetry {
         client.get("session/$sessionId/message").body()
+    }
 
     suspend fun sendPrompt(
         sessionId: String,
@@ -95,14 +97,17 @@ class OpencodeApiClient(private val client: HttpClient) {
             setBody(CommandRequest(command = command, arguments = arguments, agent = agent))
         }.body()
 
-    suspend fun providers(): ProvidersResponse =
+    suspend fun providers(): ProvidersResponse = withRetry {
         client.get("config/providers").body()
+    }
 
-    suspend fun agents(): List<Agent> =
+    suspend fun agents(): List<Agent> = withRetry {
         client.get("agent").body()
+    }
 
-    suspend fun commands(): List<Command> =
+    suspend fun commands(): List<Command> = withRetry {
         client.get("command").body()
+    }
 
     /** Respond to a permission request so a paused tool run can proceed. */
     suspend fun respondPermission(
@@ -118,17 +123,21 @@ class OpencodeApiClient(private val client: HttpClient) {
 
     // --- Files ---
 
-    suspend fun findFiles(query: String): List<String> =
+    suspend fun findFiles(query: String): List<String> = withRetry {
         client.get("find/file") { parameter("query", query) }.body()
+    }
 
-    suspend fun listDirectory(path: String): List<FileNode> =
+    suspend fun listDirectory(path: String): List<FileNode> = withRetry {
         client.get("file") { parameter("path", path) }.body()
+    }
 
-    suspend fun readFile(path: String): FileContent =
+    suspend fun readFile(path: String): FileContent = withRetry {
         client.get("file/content") { parameter("path", path) }.body()
+    }
 
-    suspend fun fileStatus(): List<FileStatusEntry> =
+    suspend fun fileStatus(): List<FileStatusEntry> = withRetry {
         client.get("file/status").body()
+    }
 }
 
 /**

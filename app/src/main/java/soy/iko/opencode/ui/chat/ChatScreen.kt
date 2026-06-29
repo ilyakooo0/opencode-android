@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
@@ -47,6 +48,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -65,6 +67,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.role
@@ -92,6 +95,7 @@ fun ChatScreen(
     val messages by vm.messages.collectAsStateWithLifecycle()
     val running by vm.running.collectAsStateWithLifecycle()
     val error by vm.error.collectAsStateWithLifecycle()
+    val loading by vm.loading.collectAsStateWithLifecycle()
     val models by vm.models.collectAsStateWithLifecycle()
     val selectedModel by vm.selectedModel.collectAsStateWithLifecycle()
     val connectionState by vm.connectionState.collectAsStateWithLifecycle()
@@ -111,6 +115,13 @@ fun ChatScreen(
     var showAgentPicker by remember { mutableStateOf(false) }
     var showCommandPicker by remember { mutableStateOf(false) }
     var showExitConfirm by remember { mutableStateOf(false) }
+
+    // Keep the screen awake while the agent is actively working.
+    val currentView = LocalView.current
+    DisposableEffect(running) {
+        currentView.keepScreenOn = running
+        onDispose { currentView.keepScreenOn = false }
+    }
 
     // Track whether the list is pinned to the bottom so streaming auto-scroll
     // doesn't fight a user who scrolled up to read earlier output.
@@ -209,17 +220,27 @@ fun ChatScreen(
     ) { padding ->
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
             if (!vm.connected) {
-                Text(
-                    stringResource(R.string.not_connected),
+                Column(
                     modifier = Modifier.align(Alignment.Center).padding(24.dp),
-                    color = MaterialTheme.colorScheme.error,
-                )
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text(
+                        stringResource(R.string.not_connected),
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    Spacer(Modifier.size(12.dp))
+                    Button(onClick = { vm.reconnect() }) {
+                        Text(stringResource(R.string.reconnect))
+                    }
+                }
             } else {
                 ConnectionBanner(
                     state = connectionState,
                     modifier = Modifier.align(Alignment.TopCenter),
                 )
-                if (messages.isEmpty() && !running) {
+                if (loading && messages.isEmpty()) {
+                    CircularProgressIndicator(Modifier.align(Alignment.Center))
+                } else if (messages.isEmpty() && !running) {
                     EmptyConversation(
                         modifier = Modifier.align(Alignment.Center),
                     )

@@ -10,6 +10,8 @@ import soy.iko.opencode.data.model.Permission
 import soy.iko.opencode.data.model.PermissionReplied
 import soy.iko.opencode.data.model.PermissionResponse
 import soy.iko.opencode.data.model.PermissionUpdated
+import soy.iko.opencode.data.model.SessionDeleted
+import soy.iko.opencode.data.model.SessionUpdated
 import soy.iko.opencode.data.model.TextPart
 import soy.iko.opencode.data.model.defaultOption
 import soy.iko.opencode.data.model.toOptions
@@ -22,8 +24,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -37,11 +41,15 @@ class ChatViewModel(
 
     val connected: Boolean get() = connection != null
 
+    private val _loading = MutableStateFlow(true)
+    val loading: StateFlow<Boolean> = _loading.asStateFlow()
+
     val messages: StateFlow<List<MessageWithParts>> =
         container.activeConnection
             .flatMapLatest { conn ->
                 conn?.repository?.observeMessages(sessionId) ?: flowOf(emptyList())
             }
+            .onEach { _loading.value = false }
             .stateIn(
                 scope = viewModelScope,
                 started = SharingStarted.WhileSubscribed(5_000),
@@ -119,6 +127,12 @@ class ChatViewModel(
                             if (event.properties.sessionID == sessionId) _pendingPermission.value = event.properties
                         is PermissionReplied ->
                             if (event.properties.permissionID == _pendingPermission.value?.id) _pendingPermission.value = null
+                        is SessionUpdated ->
+                            if (event.properties.info.id == sessionId) _sessionTitle.value = event.properties.info.displayTitle
+                        is SessionDeleted ->
+                            if (event.properties.info?.id == sessionId || event.properties.sessionID == sessionId) {
+                                _sessionTitle.value = event.properties.info?.displayTitle
+                            }
                         else -> {}
                     }
                 }
@@ -158,6 +172,18 @@ class ChatViewModel(
                     .getOrNull()
                     ?.firstOrNull { it.id == sessionId }
                     ?.let { _sessionTitle.value = it.displayTitle }
+            }
+        }
+        // If the SSE stream drops mid-run, the run indicator would spin forever;
+        // reset it so the UI doesn't look stuck while the banner shows "Reconnecting…".
+        viewModelScope.launch {
+            container.activeConnection.collect { conn ->
+                if (conn == null) return@collect
+                conn.events.state.collect { state ->
+                    if (state == EventStreamClient.ConnectionState.Disconnected && _running.value) {
+                        _running.value = false
+                    }
+                }
             }
         }
     }
@@ -216,6 +242,25 @@ class ChatViewModel(
         viewModelScope.launch {
             runCatching { conn.repository.abort(sessionId) }
             _running.value = false
+        }
+    }
+
+    /** Reconnect to the most recently used server profile (used when the connection is gone). */
+    fun reconnect() {
+        if (container.activeConnection.value != null) return
+        viewModelScope.launch {
+            _loading.value = true
+            val recent = runCatching { container.profileStore.profiles.first() }
+                .getOrDefault(emptyList())
+                .firstOrNull() ?: run { _loading.value = false; return@launch }
+            runCatching {
+                val conn = container.connect(recent)
+                conn.api.ping()
+            }.onFailure {
+                container.disconnect()
+                _error.value = container.friendlyError(it)
+                _loading.value = false
+            }
         }
     }
 

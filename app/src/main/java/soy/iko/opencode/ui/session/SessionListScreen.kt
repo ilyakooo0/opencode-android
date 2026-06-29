@@ -44,6 +44,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -79,6 +80,7 @@ fun SessionListScreen(
 ) {
     val vm: SessionListViewModel = viewModel(factory = vmFactory { SessionListViewModel(container) })
     val state by vm.state.collectAsStateWithLifecycle()
+    val refreshing by vm.refreshing.collectAsStateWithLifecycle()
     val transientError by vm.transientError.collectAsStateWithLifecycle()
     val serverLabel by vm.serverLabel.collectAsStateWithLifecycle()
     val profiles by vm.profiles.collectAsStateWithLifecycle()
@@ -203,20 +205,26 @@ fun SessionListScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     } else {
-                        LazyColumn(
+                        PullToRefreshBox(
+                            isRefreshing = refreshing,
+                            onRefresh = { vm.refresh() },
                             modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 96.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
-                            items(sessions, key = { it.id }) { session ->
-                                SessionCard(
-                                    session = session,
-                                    preview = state.previews[session.id],
-                                    onClick = { onOpenSession(session.id) },
-                                    onRename = { pendingRename = session },
-                                    onDelete = { pendingDelete = session },
-                                    modifier = Modifier.animateItem(),
-                                )
+                            LazyColumn(
+                                modifier = Modifier.fillMaxSize(),
+                                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 96.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                items(sessions, key = { it.id }) { session ->
+                                    SessionCard(
+                                        session = session,
+                                        preview = state.previews[session.id],
+                                        onClick = { onOpenSession(session.id) },
+                                        onRename = { pendingRename = session },
+                                        onDelete = { pendingDelete = session },
+                                        modifier = Modifier.animateItem(),
+                                    )
+                                }
                             }
                         }
                     }

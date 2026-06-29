@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import soy.iko.opencode.data.model.ServerProfile
 import soy.iko.opencode.data.model.Session
+import soy.iko.opencode.data.model.SessionDeleted
+import soy.iko.opencode.data.model.SessionUpdated
 import soy.iko.opencode.data.model.TextPart
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
@@ -58,6 +60,10 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
     private val _state = MutableStateFlow(SessionListState())
     val state: StateFlow<SessionListState> = _state.asStateFlow()
 
+    /** Tracks an in-flight manual refresh so pull-to-refresh can show its indicator. */
+    private val _refreshing = MutableStateFlow(false)
+    val refreshing: StateFlow<Boolean> = _refreshing.asStateFlow()
+
     /** Transient errors (failed create/delete/rename) surfaced as a snackbar, not by hiding the list. */
     private val _transientError = MutableStateFlow<String?>(null)
     val transientError: StateFlow<String?> = _transientError.asStateFlow()
@@ -68,7 +74,44 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
     private val activeProfileId: String?
         get() = container.activeConnection.value?.profile?.id
 
-    init { refresh() }
+    init { refresh(); observeSessionEvents() }
+
+    /**
+     * Keep the session list live by reacting to SSE session events. New/renamed
+     * sessions upsert and re-sort; deleted sessions drop immediately — no manual
+     * refresh needed when activity happens server-side.
+     */
+    private fun observeSessionEvents() {
+        viewModelScope.launch {
+            container.activeConnection.collect { conn ->
+                if (conn == null) return@collect
+                conn.events.events.collect { event ->
+                    when (event) {
+                        is SessionUpdated -> {
+                            val session = event.properties.info
+                            val current = _state.value.sessions
+                            val updated = (current.filterNot { it.id == session.id } + session)
+                                .sortedByDescending { it.time?.updated ?: it.time?.created ?: 0 }
+                            _state.value = _state.value.copy(sessions = updated)
+                            loadPreview(session.id)
+                        }
+                        is SessionDeleted -> {
+                            val id = event.properties.info?.id ?: event.properties.sessionID
+                            if (id != null) {
+                                _state.update { s ->
+                                    s.copy(
+                                        sessions = s.sessions.filterNot { it.id == id },
+                                        previews = s.previews - id,
+                                    )
+                                }
+                            }
+                        }
+                        else -> {}
+                    }
+                }
+            }
+        }
+    }
 
     fun setQuery(query: String) {
         _state.value = _state.value.copy(query = query)
@@ -87,6 +130,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         }
         _serverLabel.value = conn.profile.displayLabel
         _state.value = _state.value.copy(loading = true, error = null)
+        _refreshing.value = true
         viewModelScope.launch {
             runCatching { conn.repository.listSessions() }
                 .onSuccess { list ->
@@ -102,6 +146,21 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
                         _state.value = SessionListState(loading = false, error = container.friendlyError(it))
                     }
                 }
+            _refreshing.value = false
+        }
+    }
+
+    /** Reload the preview for a single session (used by the live SSE handler). */
+    private fun loadPreview(sessionId: String) {
+        val conn = container.activeConnection.value ?: return
+        val api = conn.api
+        viewModelScope.launch {
+            val preview = runCatching {
+                api.listMessages(sessionId).lastOrNull()?.let { msg ->
+                    msg.parts.filterIsInstance<TextPart>().lastOrNull()?.text
+                }
+            }.getOrNull()?.takeIf { it.isNotBlank() }?.take(200) ?: return@launch
+            _state.update { s -> s.copy(previews = s.previews + (sessionId to preview)) }
         }
     }
 
