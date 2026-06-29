@@ -84,7 +84,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
                     _state.value = _state.value.copy(sessions = sorted, loading = false)
                     loadPreviews(sorted)
                 }
-                .onFailure { _state.value = SessionListState(loading = false, error = it.message ?: container.string(R.string.error_load_sessions)) }
+                .onFailure { _state.value = SessionListState(loading = false, error = container.friendlyError(it)) }
         }
     }
 
@@ -120,7 +120,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             runCatching { conn.repository.createSession() }
                 .onSuccess { onCreated(it.id); refresh() }
-                .onFailure { _state.value = _state.value.copy(error = it.message ?: container.string(R.string.error_create_session)) }
+                .onFailure { _state.value = _state.value.copy(error = container.friendlyError(it)) }
         }
     }
 
@@ -129,7 +129,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             runCatching { conn.repository.deleteSession(session.id) }
                 .onSuccess { refresh() }
-                .onFailure { _state.value = _state.value.copy(error = it.message ?: container.string(R.string.error_delete_session)) }
+                .onFailure { _state.value = _state.value.copy(error = container.friendlyError(it)) }
         }
     }
 
@@ -140,7 +140,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             runCatching { conn.api.updateSession(session.id, title) }
                 .onSuccess { refresh() }
-                .onFailure { _state.value = _state.value.copy(error = it.message ?: container.string(R.string.error_rename_session)) }
+                .onFailure { _state.value = _state.value.copy(error = container.friendlyError(it)) }
         }
     }
 
@@ -159,7 +159,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
             result.onSuccess { refresh() }
                 .onFailure {
                     container.disconnect()
-                    _state.value = SessionListState(loading = false, error = it.message ?: container.string(R.string.error_not_reachable, profile.baseUrl))
+                    _state.value = SessionListState(loading = false, error = container.friendlyError(it))
                     refresh()
                 }
         }

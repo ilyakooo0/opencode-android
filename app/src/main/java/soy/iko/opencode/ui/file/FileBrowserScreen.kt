@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ChevronRight
@@ -34,7 +35,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
@@ -81,13 +85,14 @@ fun FileBrowserScreen(
                 placeholder = { Text(stringResource(R.string.search_files)) },
                 leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                 singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
             )
 
             Box(modifier = Modifier.fillMaxSize()) {
                 when {
                     state.loading || state.searching -> CircularProgressIndicator(Modifier.align(Alignment.Center))
                     state.error != null && !state.isSearching -> Text(
-                        state.error!!,
+                        state.error ?: "",
                         modifier = Modifier.align(Alignment.Center).padding(24.dp),
                         color = MaterialTheme.colorScheme.error,
                     )
@@ -157,6 +162,14 @@ private fun DirectoryListing(
     onUp: () -> Unit,
     onOpenFile: (String) -> Unit,
 ) {
+    if (state.entries.isEmpty() && state.path.isBlank()) {
+        Text(
+            stringResource(R.string.empty_folder),
+            modifier = Modifier.fillMaxWidth().padding(24.dp),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        return
+    }
     LazyColumn(modifier = Modifier.fillMaxSize()) {
         if (state.path.isNotBlank()) {
             item(key = "__up") {
@@ -183,8 +196,15 @@ private fun FileRow(
     onClick: () -> Unit,
     status: FileStatusEntry? = null,
 ) {
+    val desc = if (label == "..") stringResource(R.string.parent_dir)
+        else if (icon) stringResource(R.string.folder, label)
+        else stringResource(R.string.file_label, label)
     Row(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 14.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .semantics(mergeDescendants = true) { contentDescription = desc }
+            .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
@@ -206,24 +226,31 @@ private fun FileRow(
 
 @Composable
 private fun StatusBadge(status: FileStatusEntry) {
-    val (letter, color) = when (status.status) {
-        "added" -> "A" to Color(0xFF4CAF50)
-        "modified" -> "M" to Color(0xFFFFA000)
-        "deleted" -> "D" to MaterialTheme.colorScheme.error
-        else -> "·" to MaterialTheme.colorScheme.onSurfaceVariant
+    val (letter, color, desc) = when (status.status) {
+        "added" -> Triple("A", Color(0xFF4CAF50), stringResource(R.string.git_added))
+        "modified" -> Triple("M", Color(0xFFFFA000), stringResource(R.string.git_modified))
+        "deleted" -> Triple("D", MaterialTheme.colorScheme.error, stringResource(R.string.git_deleted))
+        else -> Triple("·", MaterialTheme.colorScheme.onSurfaceVariant, "")
     }
-    Text(
-        letter,
-        style = MaterialTheme.typography.labelMedium,
-        fontFamily = FontFamily.Monospace,
-        color = color,
-    )
-    if (status.added > 0 || status.removed > 0) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.semantics(mergeDescendants = true) {
+            if (desc.isNotEmpty()) contentDescription = desc
+        },
+    ) {
         Text(
-            "  +${status.added} −${status.removed}",
-            style = MaterialTheme.typography.labelSmall,
+            letter,
+            style = MaterialTheme.typography.labelMedium,
             fontFamily = FontFamily.Monospace,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = color,
         )
+        if (status.added > 0 || status.removed > 0) {
+            Text(
+                "  +${status.added} −${status.removed}",
+                style = MaterialTheme.typography.labelSmall,
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }

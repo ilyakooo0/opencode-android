@@ -9,16 +9,22 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Stop
@@ -48,6 +54,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.key.Key
@@ -58,6 +66,10 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -137,7 +149,10 @@ fun ChatScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Column(modifier = Modifier.clickable(enabled = models.isNotEmpty()) { showModelPicker = true }) {
+                    Column(modifier = Modifier
+                        .clickable(enabled = models.isNotEmpty()) { showModelPicker = true }
+                        .semantics { role = Role.Button }
+                    ) {
                         Text(sessionTitle ?: stringResource(R.string.session))
                         Text(
                             buildString {
@@ -193,6 +208,11 @@ fun ChatScreen(
                     state = connectionState,
                     modifier = Modifier.align(Alignment.TopCenter),
                 )
+                if (messages.isEmpty() && !running) {
+                    EmptyConversation(
+                        modifier = Modifier.align(Alignment.Center),
+                    )
+                } else {
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize(),
@@ -222,10 +242,11 @@ fun ChatScreen(
                                 scope.launch { listState.animateScrollToItem(messages.lastIndex) }
                             }
                         },
-                        icon = { Icon(Icons.Filled.KeyboardArrowDown, contentDescription = null) },
+                        icon = { Icon(Icons.Filled.KeyboardArrowDown, contentDescription = stringResource(R.string.latest)) },
                         text = { Text(stringResource(R.string.latest)) },
                         modifier = Modifier.padding(end = 16.dp, bottom = 16.dp),
                     )
+                }
                 }
             }
         }
@@ -323,9 +344,11 @@ private fun ChatInputBar(
     onSend: () -> Unit,
     onAbort: () -> Unit,
 ) {
-    Surface(tonalElevation = 3.dp) {
+    Surface(tonalElevation = 3.dp, modifier = Modifier.imePadding()) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(8.dp),
+            modifier = Modifier.fillMaxWidth()
+                .windowInsetsPadding(WindowInsets.navigationBars)
+                .padding(8.dp),
             verticalAlignment = Alignment.Bottom,
         ) {
             OutlinedTextField(
@@ -348,6 +371,8 @@ private fun ChatInputBar(
                 placeholder = { Text(stringResource(R.string.message_placeholder)) },
                 enabled = enabled,
                 maxLines = 6,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                keyboardActions = KeyboardActions(onSend = { if (enabled && value.isNotBlank()) onSend() }),
             )
             if (running) {
                 IconButton(onClick = onAbort, modifier = Modifier.padding(start = 4.dp)) {
@@ -363,5 +388,31 @@ private fun ChatInputBar(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun EmptyConversation(modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier.padding(32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Icon(
+            Icons.Filled.AutoAwesome,
+            contentDescription = null,
+            modifier = Modifier.size(48.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.size(16.dp))
+        Text(
+            stringResource(R.string.empty_chat_title),
+            style = MaterialTheme.typography.titleMedium,
+        )
+        Spacer(Modifier.size(8.dp))
+        Text(
+            stringResource(R.string.empty_chat_hint),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }

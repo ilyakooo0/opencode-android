@@ -1,6 +1,5 @@
 package soy.iko.opencode.data.repo
 
-import soy.iko.opencode.data.model.AssistantMessage
 import soy.iko.opencode.data.model.BusEvent
 import soy.iko.opencode.data.model.MessagePartRemoved
 import soy.iko.opencode.data.model.MessagePartUpdated
@@ -11,6 +10,7 @@ import soy.iko.opencode.data.model.ModelRef
 import soy.iko.opencode.data.model.Part
 import soy.iko.opencode.data.model.SessionError
 import soy.iko.opencode.data.model.SessionIdle
+import soy.iko.opencode.data.model.UnknownMessage
 import soy.iko.opencode.data.network.EventStreamClient
 import soy.iko.opencode.data.network.OpencodeApiClient
 import kotlinx.coroutines.flow.Flow
@@ -36,8 +36,12 @@ class SessionRepository(
     suspend fun sendPrompt(sessionId: String, text: String, model: ModelRef?, agent: String? = null) =
         api.sendPrompt(sessionId, text, model, agent)
 
-    suspend fun runCommand(sessionId: String, command: String, agent: String? = null) =
-        api.runCommand(sessionId, command, agent = agent)
+    suspend fun runCommand(
+        sessionId: String,
+        command: String,
+        arguments: String = "",
+        agent: String? = null,
+    ) = api.runCommand(sessionId, command, arguments = arguments, agent = agent)
 
     /**
      * A live, ordered view of [sessionId]'s messages. Begins collecting the event
@@ -48,22 +52,24 @@ class SessionRepository(
         val store = MessageStore()
         val lock = Mutex()
 
-        suspend fun publish() = send(store.snapshot())
+        // Collect the snapshot under the lock, then publish outside it so a slow
+        // downstream collector can't stall event processing.
+        suspend fun publish() {
+            val snapshot = lock.withLock { store.snapshot() }
+            send(snapshot)
+        }
 
         // Subscribe to events first so we don't miss early deltas during the initial load.
         val job = launch {
             eventStream.events.collect { event ->
-                lock.withLock {
-                    if (store.reduce(sessionId, event)) publish()
-                }
+                val changed = lock.withLock { store.reduce(sessionId, event) }
+                if (changed) publish()
             }
         }
 
         val initial = runCatching { api.listMessages(sessionId) }.getOrDefault(emptyList())
-        lock.withLock {
-            store.seed(initial)
-            publish()
-        }
+        lock.withLock { store.seed(initial) }
+        publish()
 
         // Keep the flow alive until the collector cancels; the launched job is torn down with it.
         job.join()
@@ -144,7 +150,7 @@ internal class MessageStore {
         }
         messages[messageId] = current?.copy(parts = newParts)
             ?: MessageWithParts(
-                info = AssistantMessage(id = messageId, sessionID = part.sessionID ?: ""),
+                info = UnknownMessage(id = messageId, sessionID = part.sessionID ?: ""),
                 parts = newParts,
             )
         return true

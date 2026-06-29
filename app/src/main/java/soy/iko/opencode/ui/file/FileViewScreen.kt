@@ -89,7 +89,7 @@ fun FileViewScreen(
             when {
                 state.loading -> CircularProgressIndicator(Modifier.align(Alignment.Center))
                 state.error != null -> Text(
-                    state.error!!,
+                    state.error ?: "",
                     modifier = Modifier.align(Alignment.Center).padding(24.dp),
                     color = MaterialTheme.colorScheme.error,
                 )
@@ -110,6 +110,13 @@ fun FileViewScreen(
                         )
                     } else {
                         val text = content?.content.orEmpty()
+                        if (text.isEmpty()) {
+                            Text(
+                                stringResource(R.string.empty_file),
+                                modifier = Modifier.align(Alignment.Center).padding(24.dp),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        } else {
                         val lines = remember(text) { text.split("\n") }
                         val gutterWidth = remember(lines.size) {
                             (lines.size.toString().length.coerceAtLeast(3) * 10).dp
@@ -141,6 +148,7 @@ fun FileViewScreen(
                                     )
                                 }
                             }
+                        }
                         }
                     }
                 }

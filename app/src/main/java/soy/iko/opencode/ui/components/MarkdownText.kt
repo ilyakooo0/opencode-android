@@ -10,6 +10,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import com.mikepenz.markdown.m3.Markdown
 import soy.iko.opencode.R
@@ -27,9 +31,13 @@ fun MarkdownText(
     style: TextStyle = MaterialTheme.typography.bodyLarge,
 ) {
     val context = LocalContext.current
+    val copyLabel = context.getString(R.string.copy)
     Markdown(
         content = markdown,
-        modifier = modifier.combinedClickable(
+        modifier = modifier.semantics(mergeDescendants = true) {
+            contentDescription = markdown.take(500)
+            role = Role.Image
+        }.combinedClickable(
             onClick = {},
             onLongClick = { copyToClipboard(context, markdown) },
         ),
@@ -38,7 +46,7 @@ fun MarkdownText(
 
 /** Copy [text] to the system clipboard and show a confirmation toast. */
 internal fun copyToClipboard(context: Context, label: String, text: String = label) {
-    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
     clipboard.setPrimaryClip(ClipData.newPlainText(label.take(40), text))
     Toast.makeText(context, context.getString(R.string.copied), Toast.LENGTH_SHORT).show()
 }

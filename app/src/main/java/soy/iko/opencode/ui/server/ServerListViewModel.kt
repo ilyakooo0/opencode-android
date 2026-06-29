@@ -42,7 +42,7 @@ class ServerListViewModel(private val container: AppContainer) : ViewModel() {
             result.onSuccess { onConnected() }
                 .onFailure {
                     container.disconnect()
-                    _error.value = it.message ?: container.string(R.string.error_not_reachable, profile.baseUrl)
+                    _error.value = container.friendlyError(it)
                 }
         }
     }

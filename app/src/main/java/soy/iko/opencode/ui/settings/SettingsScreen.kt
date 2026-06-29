@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -32,6 +33,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
@@ -47,9 +50,10 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onManageServers:
     val dynamicColor by container.settingsStore.dynamicColor.collectAsStateWithLifecycle(initialValue = true)
     val activeProfile = container.activeConnection.collectAsStateWithLifecycle().value?.profile
     val context = LocalContext.current
+    val unknownVersion = stringResource(R.string.unknown_version)
     val versionName = remember {
         runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }
-            .getOrNull() ?: "0.1.0"
+            .getOrNull() ?: unknownVersion
     }
 
     Scaffold(
@@ -64,8 +68,13 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onManageServers:
             )
         },
     ) { padding ->
-        Column(modifier = Modifier.padding(padding).padding(16.dp)) {
-            Text(stringResource(R.string.appearance), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+        Column(modifier = Modifier.padding(padding).widthIn(max = 600.dp).padding(16.dp)) {
+            Text(
+                stringResource(R.string.appearance),
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.semantics { heading() },
+            )
             ThemeMode.entries.forEach { mode ->
                 ThemeRow(
                     mode = mode,
@@ -95,7 +104,12 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onManageServers:
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
 
-            Text(stringResource(R.string.connection), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+            Text(
+                stringResource(R.string.connection),
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.semantics { heading() },
+            )
             if (activeProfile != null) {
                 Text(activeProfile.displayLabel, modifier = Modifier.padding(top = 8.dp))
                 Text(
@@ -125,7 +139,12 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onManageServers:
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
 
-            Text(stringResource(R.string.about), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+            Text(
+                stringResource(R.string.about),
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.semantics { heading() },
+            )
             Text(
                 stringResource(R.string.about_version, versionName),
                 style = MaterialTheme.typography.bodyMedium,

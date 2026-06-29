@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
@@ -48,6 +50,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
@@ -85,7 +91,9 @@ fun SessionListScreen(
                     Column {
                         Box {
                             Row(
-                                modifier = Modifier.clickable { showServerMenu = true },
+                                modifier = Modifier
+                                    .clickable { showServerMenu = true }
+                                    .semantics { role = Role.Button },
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Text(serverLabel, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -157,7 +165,7 @@ fun SessionListScreen(
             when {
                 state.loading -> CircularProgressIndicator(Modifier.align(Alignment.Center))
                 state.error != null -> Text(
-                    state.error!!,
+                    state.error ?: "",
                     modifier = Modifier.align(Alignment.Center).padding(24.dp),
                     color = MaterialTheme.colorScheme.error,
                 )
@@ -173,6 +181,7 @@ fun SessionListScreen(
                         placeholder = { Text(stringResource(R.string.search_sessions)) },
                         leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                         singleLine = true,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                     )
                     val sessions = state.filtered
                     if (sessions.isEmpty()) {
@@ -194,6 +203,7 @@ fun SessionListScreen(
                                     onClick = { onOpenSession(session.id) },
                                     onRename = { pendingRename = session },
                                     onDelete = { pendingDelete = session },
+                                    modifier = Modifier.animateItem(),
                                 )
                             }
                         }
@@ -253,6 +263,8 @@ private fun RenameSessionDialog(
                 modifier = Modifier.fillMaxWidth(),
                 placeholder = { Text(stringResource(R.string.session_title_hint)) },
                 singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { if (title.isNotBlank()) onConfirm() }),
             )
         },
         confirmButton = {
@@ -271,9 +283,10 @@ private fun SessionCard(
     onClick: () -> Unit,
     onRename: () -> Unit,
     onDelete: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     Card(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .clickable { onClick() },
     ) {

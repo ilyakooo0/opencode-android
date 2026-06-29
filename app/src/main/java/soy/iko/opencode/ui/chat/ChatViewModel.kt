@@ -17,25 +17,31 @@ import soy.iko.opencode.data.network.EventStreamClient
 import soy.iko.opencode.data.repo.SessionRepository
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class ChatViewModel(
     private val container: AppContainer,
     private val sessionId: String,
 ) : ViewModel() {
 
-    private val connection = container.activeConnection.value
+    private val connection get() = container.activeConnection.value
 
     val connected: Boolean get() = connection != null
 
     val messages: StateFlow<List<MessageWithParts>> =
-        (connection?.repository?.observeMessages(sessionId) ?: flowOf(emptyList<MessageWithParts>()))
+        container.activeConnection
+            .flatMapLatest { conn ->
+                conn?.repository?.observeMessages(sessionId) ?: flowOf(emptyList())
+            }
             .stateIn(
                 scope = viewModelScope,
                 started = SharingStarted.WhileSubscribed(5_000),
@@ -55,8 +61,13 @@ class ChatViewModel(
     val selectedModel: StateFlow<ModelOption?> = _selectedModel.asStateFlow()
 
     val connectionState: StateFlow<EventStreamClient.ConnectionState> =
-        connection?.events?.state
-            ?: MutableStateFlow(EventStreamClient.ConnectionState.Disconnected).asStateFlow()
+        container.activeConnection
+            .flatMapLatest { it?.events?.state ?: MutableStateFlow(EventStreamClient.ConnectionState.Disconnected) }
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5_000),
+                initialValue = EventStreamClient.ConnectionState.Disconnected,
+            )
 
     private val _pendingPermission = MutableStateFlow<Permission?>(null)
     val pendingPermission: StateFlow<Permission?> = _pendingPermission.asStateFlow()
@@ -94,9 +105,9 @@ class ChatViewModel(
 
     init {
         // Watch the bus for run completion / errors / permission asks for this session.
-        val conn = connection
-        if (conn != null) {
-            viewModelScope.launch {
+        viewModelScope.launch {
+            container.activeConnection.collect { conn ->
+                if (conn == null) return@collect
                 conn.events.events.collect { event ->
                     if (SessionRepository.isIdle(event, sessionId)) _running.value = false
                     if (SessionRepository.isError(event, sessionId)) {
@@ -112,25 +123,37 @@ class ChatViewModel(
                     }
                 }
             }
-            // Load the model catalog; preselect the server default. Failure is non-fatal —
-            // sending with no model just uses the server's default agent/model.
-            viewModelScope.launch {
+        }
+        // Load the model catalog; preselect the server default. Failure is non-fatal —
+        // sending with no model just uses the server's default agent/model.
+        viewModelScope.launch {
+            container.activeConnection.collect { conn ->
+                if (conn == null) return@collect
                 runCatching { conn.api.providers() }.getOrNull()?.let { resp ->
                     val options = resp.toOptions()
                     _models.value = options
                     _selectedModel.value = resp.defaultOption(options)
                 }
             }
-            // Load the agent catalog (non-fatal).
-            viewModelScope.launch {
+        }
+        // Load the agent catalog (non-fatal).
+        viewModelScope.launch {
+            container.activeConnection.collect { conn ->
+                if (conn == null) return@collect
                 runCatching { conn.api.agents() }.getOrNull()?.let { _agents.value = it }
             }
-            // Load the command catalog (non-fatal).
-            viewModelScope.launch {
+        }
+        // Load the command catalog (non-fatal).
+        viewModelScope.launch {
+            container.activeConnection.collect { conn ->
+                if (conn == null) return@collect
                 runCatching { conn.api.commands() }.getOrNull()?.let { _commands.value = it }
             }
-            // Resolve the human-readable session title for the app bar (non-fatal).
-            viewModelScope.launch {
+        }
+        // Resolve the human-readable session title for the app bar (non-fatal).
+        viewModelScope.launch {
+            container.activeConnection.collect { conn ->
+                if (conn == null) return@collect
                 runCatching { conn.repository.listSessions() }
                     .getOrNull()
                     ?.firstOrNull { it.id == sessionId }
@@ -183,7 +206,7 @@ class ChatViewModel(
         viewModelScope.launch {
             runCatching {
                 conn.repository.runCommand(sessionId, command.name, agent = command.agent)
-            }.onFailure { _error.value = it.message ?: container.string(R.string.error_failed_command) }
+            }.onFailure { _error.value = container.friendlyError(it) }
             _running.value = false
         }
     }
@@ -202,7 +225,7 @@ class ChatViewModel(
         _pendingPermission.value = null
         viewModelScope.launch {
             runCatching { conn.api.respondPermission(sessionId, permission.id, response) }
-                .onFailure { _error.value = it.message ?: "Failed to respond to permission" }
+                .onFailure { _error.value = container.friendlyError(it) }
         }
     }
 }

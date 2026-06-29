@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">opencode</string>
+    <string name="untitled_session">Untitled session</string>
+    <string name="custom_agent">Custom agent</string>
+    <string name="unknown_version">0.1.0</string>
+    <string name="error_output">error</string>
 
     <!-- Common -->
     <string name="back">Back</string>
@@ -67,6 +71,8 @@
     <string name="session">Session</string>
     <string name="default_model">default model</string>
     <string name="message_placeholder">Message opencode…</string>
+    <string name="empty_chat_title">Start a conversation</string>
+    <string name="empty_chat_hint">Type a message below to begin.</string>
     <string name="working">working…</string>
     <string name="latest">Latest</string>
     <string name="stop_and_exit_title">Stop and exit?</string>
@@ -78,6 +84,7 @@
     <string name="choose_model">Choose model</string>
 
     <!-- Errors (view models) -->
+    <string name="error_generic">Something went wrong.</string>
     <string name="error_failed_to_send">Failed to send</string>
     <string name="error_agent_reported">The agent reported an error.</string>
     <string name="error_failed_command">Failed to run command</string>
@@ -113,7 +120,16 @@
     <string name="search_files">Search files…</string>
     <string name="root">Root</string>
     <string name="no_matches">No matches.</string>
+    <string name="git_added">Added</string>
+    <string name="git_modified">Modified</string>
+    <string name="git_deleted">Deleted</string>
     <string name="binary_file">Binary file — preview not supported.</string>
+    <string name="empty_folder">This folder is empty</string>
+    <string name="empty_file">This file is empty</string>
+    <string name="parent_dir">Parent directory</string>
+    <string name="folder">Folder: %1$s</string>
+    <string name="file_label">File: %1$s</string>
+    <string name="file">File</string>
 
     <!-- Settings -->
     <string name="appearance">Appearance</string>

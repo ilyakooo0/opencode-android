@@ -106,67 +106,68 @@ fun ServerListScreen(
                     modifier = Modifier.fillMaxSize().padding(padding),
                 )
             } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(padding),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                items(profiles, key = { it.id }) { profile ->
-                    val isActive = profile.id == connectedId
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable(enabled = connectingId == null) {
-                                vm.connect(profile, onConnected)
-                            },
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(16.dp),
-                            verticalAlignment = Alignment.CenterVertically,
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize().padding(padding),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    items(profiles, key = { it.id }) { profile ->
+                        val isActive = profile.id == connectedId
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .animateItem()
+                                .clickable(enabled = connectingId == null) {
+                                    vm.connect(profile, onConnected)
+                                },
                         ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    profile.displayLabel,
-                                    style = MaterialTheme.typography.titleMedium,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                                Text(
-                                    profile.baseUrl + if (profile.hasAuth) stringResource(R.string.server_auth_short) else "",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                                if (isActive) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        stringResource(R.string.connected),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.primary,
+                                        profile.displayLabel,
+                                        style = MaterialTheme.typography.titleMedium,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
                                     )
+                                    Text(
+                                        profile.baseUrl + if (profile.hasAuth) stringResource(R.string.server_auth_short) else "",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    if (isActive) {
+                                        Text(
+                                            stringResource(R.string.connected),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.primary,
+                                        )
+                                    }
                                 }
-                            }
-                            if (isActive) {
-                                Icon(
-                                    Icons.Filled.CheckCircle,
-                                    contentDescription = stringResource(R.string.connected),
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(22.dp),
-                                )
-                            } else if (connectingId == profile.id) {
-                                CircularProgressIndicator(modifier = Modifier.size(24.dp))
-                            } else {
-                                IconButton(onClick = { onEditProfile(profile.id) }) {
-                                    Icon(Icons.Filled.Edit, contentDescription = stringResource(R.string.edit))
-                                }
-                                IconButton(onClick = { pendingDelete = profile }) {
-                                    Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.delete))
+                                if (isActive) {
+                                    Icon(
+                                        Icons.Filled.CheckCircle,
+                                        contentDescription = stringResource(R.string.connected),
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(22.dp),
+                                    )
+                                } else if (connectingId == profile.id) {
+                                    CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                                } else {
+                                    IconButton(onClick = { onEditProfile(profile.id) }) {
+                                        Icon(Icons.Filled.Edit, contentDescription = stringResource(R.string.edit))
+                                    }
+                                    IconButton(onClick = { pendingDelete = profile }) {
+                                        Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.delete))
+                                    }
                                 }
                             }
                         }
                     }
                 }
-            }
             }
         }
     }

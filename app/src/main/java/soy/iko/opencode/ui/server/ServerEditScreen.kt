@@ -2,8 +2,12 @@ package soy.iko.opencode.ui.server
 
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -18,9 +22,9 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -56,6 +60,8 @@ fun ServerEditScreen(
         Column(
             modifier = Modifier
                 .padding(padding)
+                .imePadding()
+                .widthIn(max = 600.dp)
                 .padding(16.dp)
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -65,6 +71,7 @@ fun ServerEditScreen(
                 onValueChange = { v -> vm.update { it.copy(label = v) } },
                 label = { Text(stringResource(R.string.label_optional)) },
                 singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
                 modifier = Modifier.fillMaxWidth(),
             )
             OutlinedTextField(
@@ -73,7 +80,7 @@ fun ServerEditScreen(
                 label = { Text(stringResource(R.string.base_url)) },
                 placeholder = { Text(stringResource(R.string.base_url_hint)) },
                 singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Next),
                 modifier = Modifier.fillMaxWidth(),
             )
             Text(
@@ -85,6 +92,7 @@ fun ServerEditScreen(
                 onValueChange = { v -> vm.update { it.copy(username = v) } },
                 label = { Text(stringResource(R.string.username_optional)) },
                 singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
                 modifier = Modifier.fillMaxWidth(),
             )
             OutlinedTextField(
@@ -93,7 +101,8 @@ fun ServerEditScreen(
                 label = { Text(stringResource(R.string.password_optional)) },
                 singleLine = true,
                 visualTransformation = PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { if (state.canSave) vm.save(onDone) }),
                 modifier = Modifier.fillMaxWidth(),
             )
             Button(

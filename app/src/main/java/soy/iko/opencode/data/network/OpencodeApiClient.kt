@@ -26,6 +26,7 @@ import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
+import kotlinx.coroutines.delay
 
 /**
  * Request/response wrapper over the opencode REST endpoints. The long-lived `/event`
@@ -33,10 +34,9 @@ import io.ktor.http.contentType
  */
 class OpencodeApiClient(private val client: HttpClient) {
 
-    /** Lightweight connectivity check used by the connect screen. */
-    suspend fun ping(): Boolean {
+    /** Lightweight connectivity check. Throws on non-2xx / network failure. */
+    suspend fun ping() {
         client.get("global/health")
-        return true
     }
 
     suspend fun listSessions(): List<Session> =
@@ -66,7 +66,7 @@ class OpencodeApiClient(private val client: HttpClient) {
         text: String,
         model: ModelRef? = null,
         agent: String? = null,
-    ): MessageWithParts =
+    ): MessageWithParts = withRetry {
         client.post("session/$sessionId/message") {
             contentType(ContentType.Application.Json)
             setBody(
@@ -77,6 +77,7 @@ class OpencodeApiClient(private val client: HttpClient) {
                 ),
             )
         }.body()
+    }
 
     suspend fun abort(sessionId: String) {
         client.post("session/$sessionId/abort")
@@ -128,4 +129,28 @@ class OpencodeApiClient(private val client: HttpClient) {
 
     suspend fun fileStatus(): List<FileStatusEntry> =
         client.get("file/status").body()
+}
+
+/**
+ * Retry a suspending block up to [maxAttempts] times with exponential backoff.
+ * Cancellation exceptions are re-thrown immediately. Non-2xx HTTP responses throw
+ * (because [HttpClientFactory] sets `expectSuccess = true`) and are retried.
+ */
+private suspend fun <T> withRetry(
+    maxAttempts: Int = 3,
+    initialDelayMs: Long = 500L,
+    block: suspend () -> T,
+): T {
+    var lastError: Throwable? = null
+    for (attempt in 1..maxAttempts) {
+        try {
+            return block()
+        } catch (c: kotlinx.coroutines.CancellationException) {
+            throw c
+        } catch (t: Throwable) {
+            lastError = t
+            if (attempt < maxAttempts) delay(initialDelayMs * (1 shl (attempt - 1)))
+        }
+    }
+    throw lastError ?: IllegalStateException("withRetry failed without error")
 }

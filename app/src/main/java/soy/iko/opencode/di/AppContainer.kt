@@ -8,6 +8,7 @@ import soy.iko.opencode.data.model.ServerProfile
 import soy.iko.opencode.data.repo.DraftStore
 import soy.iko.opencode.data.repo.ProfileStore
 import soy.iko.opencode.data.repo.SettingsStore
+import soy.iko.opencode.R
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -57,6 +58,27 @@ class AppContainer(context: Context) {
     /** Resolve a localized string — view models reach resources through the container. */
     fun string(id: Int, vararg formatArgs: Any): String =
         if (formatArgs.isEmpty()) appContext.getString(id) else appContext.getString(id, *formatArgs)
+
+    /**
+     * Convert a throwable into a user-facing message. Ktor/OkHttp exceptions expose
+     * developer-oriented detail (URL schemes, internal state) that is not useful to
+     * end users, so we collapse those to a generic "could not reach server" message.
+     */
+    fun friendlyError(t: Throwable): String {
+        val msg = t.message.orEmpty()
+        val isNetworkError = t::class.qualifiedName?.let { className ->
+            className.startsWith("io.ktor.") || className.startsWith("okhttp3.") ||
+                className.contains("HttpException", ignoreCase = true) ||
+                className.contains("SocketTimeout", ignoreCase = true) ||
+                className.contains("ConnectException", ignoreCase = true) ||
+                className.contains("UnknownHost", ignoreCase = true)
+        } ?: false
+        return if (isNetworkError) {
+            string(R.string.error_not_reachable, activeConnection.value?.profile?.baseUrl.orEmpty())
+        } else {
+            msg.ifBlank { string(R.string.error_generic) }
+        }
+    }
 
     init {
         registerNetworkMonitor()

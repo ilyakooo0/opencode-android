@@ -1,6 +1,7 @@
 package soy.iko.opencode.data.network
 
 import soy.iko.opencode.data.model.BusEvent
+import android.util.Log
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.sse.sse
 import kotlinx.coroutines.CancellationException
@@ -72,7 +73,7 @@ class EventStreamClient(
             } catch (c: CancellationException) {
                 throw c
             } catch (t: Throwable) {
-                // transient error — fall through to reconnect
+                Log.w(TAG, "SSE stream error, will retry", t)
             }
             _state.value = ConnectionState.Disconnected
             if (!isActive) break
@@ -87,6 +88,7 @@ class EventStreamClient(
     }
 
     private companion object {
+        private const val TAG = "EventStream"
         const val INITIAL_BACKOFF_MS = 500L
         const val MAX_BACKOFF_MS = 10_000L
     }

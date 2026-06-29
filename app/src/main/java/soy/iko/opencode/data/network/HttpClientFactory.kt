@@ -42,7 +42,6 @@ object HttpClientFactory {
         install(SSE)
 
         install(HttpTimeout) {
-            connectTimeoutMillis = 30_000
             requestTimeoutMillis = 60_000
         }
 

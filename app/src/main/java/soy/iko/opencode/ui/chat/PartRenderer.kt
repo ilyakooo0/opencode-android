@@ -13,6 +13,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
@@ -32,6 +33,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -83,7 +87,10 @@ private fun ReasoningBlock(text: String, streaming: Boolean, modifier: Modifier)
     var expanded by remember { mutableStateOf(false) }
     Column(modifier = modifier.fillMaxWidth()) {
         Row(
-            modifier = Modifier.clickable { expanded = !expanded }.padding(vertical = 4.dp),
+            modifier = Modifier
+                .clickable { expanded = !expanded }
+                .padding(vertical = 4.dp)
+                .semantics { role = Role.Button },
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (streaming) {
@@ -145,13 +152,13 @@ private fun ToolCallView(part: ToolPart, modifier: Modifier) {
         }
         val detail = when (val s = part.state) {
             is ToolCompleted -> s.output?.takeIf { it.isNotBlank() }
-            is ToolError -> s.error ?: "error"
+            is ToolError -> s.error ?: stringResource(R.string.error_generic)
             else -> null
         }
         if (detail != null) {
             val collapsed = remember(detail) { detail.take(COLLAPSED_LIMIT) }
             var expanded by remember(detail) { mutableStateOf(false) }
-            val display = if (expanded || detail.length <= COLLAPSED_LIMIT) detail.take(5000) else collapsed
+            val display = if (expanded || detail.length <= COLLAPSED_LIMIT) detail else collapsed
             if (looksLikeDiff(display)) {
                 DiffView(display)
             } else {
@@ -205,9 +212,22 @@ private fun ToolStatusIcon(state: ToolState) {
 
 @Composable
 private fun FileChip(part: FilePart, modifier: Modifier) {
-    Text(
-        "📎 ${part.filename ?: part.url ?: "file"}",
-        modifier = modifier.padding(vertical = 2.dp),
-        style = MaterialTheme.typography.bodyMedium,
-    )
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            Icons.Filled.Description,
+            contentDescription = null,
+            modifier = Modifier.size(16.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            "  ${part.filename ?: part.url ?: stringResource(R.string.file)}",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+    }
 }

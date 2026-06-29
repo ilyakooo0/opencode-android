@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import soy.iko.opencode.data.model.FileContent
 import soy.iko.opencode.di.AppContainer
+import soy.iko.opencode.R
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -26,12 +27,12 @@ class FileViewModel(
     init {
         val api = container.activeConnection.value?.api
         if (api == null) {
-            _state.value = FileViewState(loading = false, error = "Not connected")
+            _state.value = FileViewState(loading = false, error = container.string(R.string.not_connected))
         } else {
             viewModelScope.launch {
                 runCatching { api.readFile(path) }
                     .onSuccess { _state.value = FileViewState(loading = false, content = it) }
-                    .onFailure { _state.value = FileViewState(loading = false, error = it.message ?: "Failed to read $path") }
+                    .onFailure { _state.value = FileViewState(loading = false, error = container.friendlyError(it)) }
             }
         }
     }

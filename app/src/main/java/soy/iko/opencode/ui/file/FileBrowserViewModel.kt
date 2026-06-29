@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import soy.iko.opencode.data.model.FileNode
 import soy.iko.opencode.data.model.FileStatusEntry
 import soy.iko.opencode.di.AppContainer
+import soy.iko.opencode.R
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -49,7 +50,7 @@ class FileBrowserViewModel(private val container: AppContainer) : ViewModel() {
 
     fun open(path: String) {
         val client = api ?: run {
-            _state.value = _state.value.copy(loading = false, error = "Not connected")
+            _state.value = _state.value.copy(loading = false, error = container.string(R.string.not_connected))
             return
         }
         _state.value = _state.value.copy(path = path, loading = true, error = null)
@@ -61,7 +62,7 @@ class FileBrowserViewModel(private val container: AppContainer) : ViewModel() {
                         loading = false,
                     )
                 }
-                .onFailure { _state.value = _state.value.copy(loading = false, error = it.message ?: "Failed to list $path") }
+                .onFailure { _state.value = _state.value.copy(loading = false, error = container.friendlyError(it)) }
         }
     }
 
@@ -86,7 +87,7 @@ class FileBrowserViewModel(private val container: AppContainer) : ViewModel() {
             _state.value = _state.value.copy(searching = true)
             runCatching { client.findFiles(query) }
                 .onSuccess { _state.value = _state.value.copy(results = it, searching = false) }
-                .onFailure { _state.value = _state.value.copy(searching = false, error = it.message) }
+                .onFailure { _state.value = _state.value.copy(searching = false, error = container.friendlyError(it)) }
         }
     }
 }
