@@ -209,7 +209,8 @@ class ChatViewModel(
             _running.value = false
             if (!ok) {
                 _failedDraft.value = trimmed
-                updateDraft(trimmed)
+                // Only restore the draft if the user hasn't typed anything new since.
+                if (_draft.value.isBlank()) updateDraft(trimmed)
                 _error.value = container.string(R.string.error_failed_to_send)
             }
         }

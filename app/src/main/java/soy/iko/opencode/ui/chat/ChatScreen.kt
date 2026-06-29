@@ -150,6 +150,12 @@ fun ChatScreen(
         }
     }
 
+    // Jump to the latest message when the conversation first loads so the user
+    // lands on recent context, not the oldest.
+    LaunchedEffect(messages.isNotEmpty()) {
+        if (messages.isNotEmpty()) listState.scrollToItem(messages.lastIndex)
+    }
+
     // Keep the newest content in view as parts stream in — only if already at the bottom.
     // Include the growing text length so we follow streaming within a single part, not
     // only when a brand-new message or part is added.
