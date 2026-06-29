@@ -3,6 +3,7 @@ plugins {
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.detekt)
 }
 
 /**
@@ -63,12 +64,24 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
+    // Use the kotlin { compilerOptions {} } block (the kotlinOptions DSL is deprecated
+    // in favor of the type-safe extension exposed by the Kotlin Gradle plugin).
+    kotlin {
+        compilerOptions {
+            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+        }
     }
 
     buildFeatures {
         compose = true
+    }
+
+    lint {
+        // Fail CI on real errors. Warnings are reported but don't break the build so
+        // minor/style issues don't gate development.
+        abortOnError = true
+        // Dependency upgrades are tracked by Renovate, so don't lint for them here.
+        disable += setOf("GradleDependency", "AndroidGradlePluginVersion")
     }
 
     packaging {
@@ -113,4 +126,17 @@ dependencies {
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.ktor.client.mock)
+
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.core)
+    androidTestImplementation(libs.kotlinx.coroutines.test)
+}
+
+detekt {
+    buildUponDefaultConfig = true
+    // Carry forward the current baseline so CI only fails on *new* findings;
+    // existing issues are grandfathered rather than blocking the migration.
+    baseline = file("detekt-baseline.xml")
+    config.setFrom("$rootDir/config/detekt/detekt.yml")
 }

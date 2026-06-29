@@ -1,8 +1,10 @@
 package soy.iko.opencode.ui
 
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.unit.dp
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -16,12 +18,16 @@ import soy.iko.opencode.ui.file.FileViewScreen
 import soy.iko.opencode.ui.server.ServerEditScreen
 import soy.iko.opencode.ui.server.ServerListScreen
 import soy.iko.opencode.ui.session.SessionListScreen
+import soy.iko.opencode.ui.session.TwoPaneSessionChat
+import soy.iko.opencode.ui.settings.DiagnosticsScreen
 import soy.iko.opencode.ui.settings.SettingsScreen
 
 @Composable
 fun OpencodeApp(container: AppContainer) {
     val navController = rememberNavController()
     val pendingShare by container.pendingShare.collectAsStateWithLifecycle()
+    val pendingOpenSession by container.pendingOpenSession.collectAsStateWithLifecycle()
+    val connection by container.activeConnection.collectAsStateWithLifecycle()
 
     // When text is shared into the app, surface the session list so the user can pick
     // (or create) a conversation to drop it into. The chosen session's draft is set
@@ -34,7 +40,21 @@ fun OpencodeApp(container: AppContainer) {
         }
     }
 
-    NavHost(navController = navController, startDestination = Routes.SERVERS) {
+    // Adaptive: on wide screens (tablets / unfolded foldables) show the session list and
+    // the open conversation side by side instead of a single-pane back stack.
+    BoxWithConstraints {
+        val isTwoPane = maxWidth >= 840.dp && connection != null
+
+        // Open a session requested by a notification tap or deep link, once connected.
+        // In two-pane mode the detail pane consumes the request instead of navigating.
+        LaunchedEffect(pendingOpenSession, connection, isTwoPane) {
+            val id = pendingOpenSession ?: return@LaunchedEffect
+            if (connection == null || isTwoPane) return@LaunchedEffect
+            container.consumePendingOpenSession()
+            navController.navigate(Routes.chat(id)) { launchSingleTop = true }
+        }
+
+        NavHost(navController = navController, startDestination = Routes.SERVERS) {
 
         composable(Routes.SERVERS) {
             ServerListScreen(
@@ -57,19 +77,31 @@ fun OpencodeApp(container: AppContainer) {
         }
 
         composable(Routes.SESSIONS) {
-            SessionListScreen(
-                container = container,
-                onOpenSession = { id ->
-                    container.consumePendingShare()?.let { container.draftStore.set(id, it) }
-                    navController.navigate(Routes.chat(id))
-                },
-                onDisconnect = {
-                    container.disconnect()
-                    navController.popBackStack(Routes.SERVERS, inclusive = false)
-                },
-                onOpenFiles = { navController.navigate(Routes.FILES) },
-                onOpenSettings = { navController.navigate(Routes.SETTINGS) },
-            )
+            if (isTwoPane) {
+                TwoPaneSessionChat(
+                    container = container,
+                    onOpenFiles = { navController.navigate(Routes.FILES) },
+                    onOpenSettings = { navController.navigate(Routes.SETTINGS) },
+                    onDisconnect = {
+                        container.disconnect()
+                        navController.popBackStack(Routes.SERVERS, inclusive = false)
+                    },
+                )
+            } else {
+                SessionListScreen(
+                    container = container,
+                    onOpenSession = { id ->
+                        container.consumePendingShare()?.let { container.draftStore.set(id, it) }
+                        navController.navigate(Routes.chat(id))
+                    },
+                    onDisconnect = {
+                        container.disconnect()
+                        navController.popBackStack(Routes.SERVERS, inclusive = false)
+                    },
+                    onOpenFiles = { navController.navigate(Routes.FILES) },
+                    onOpenSettings = { navController.navigate(Routes.SETTINGS) },
+                )
+            }
         }
 
         composable(
@@ -109,7 +141,13 @@ fun OpencodeApp(container: AppContainer) {
                 onManageServers = {
                     navController.popBackStack(Routes.SERVERS, inclusive = false)
                 },
+                onOpenDiagnostics = { navController.navigate(Routes.DIAGNOSTICS) },
             )
+        }
+
+        composable(Routes.DIAGNOSTICS) {
+            DiagnosticsScreen(onBack = { navController.popBackStack() })
+        }
         }
     }
 }

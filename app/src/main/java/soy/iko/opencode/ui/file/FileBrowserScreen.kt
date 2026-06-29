@@ -35,7 +35,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
@@ -135,7 +137,7 @@ private fun Breadcrumbs(path: String, onNavigate: (String) -> Unit, modifier: Mo
                 segment,
                 style = MaterialTheme.typography.bodyMedium,
                 color = if (index == segments.lastIndex) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.primary,
-                modifier = Modifier.clickable { onNavigate(target) }.padding(vertical = 2.dp),
+                modifier = Modifier.clickable(role = Role.Button) { onNavigate(target) }.padding(vertical = 2.dp),
             )
         }
     }

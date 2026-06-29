@@ -1,0 +1,54 @@
+# detekt override config.
+# buildUponDefaultConfig = true, so only the rules below differ from the defaults.
+# The defaults are intentionally strict; this file relaxes rules that fight Jetpack
+# Compose / Android idioms (lots of magic dp numbers, long @Composable functions,
+# long parameter lists) while keeping the potential-bug and correctness rules on.
+build:
+  maxIssues: 0
+  excludeCorrectable: false
+
+complexity:
+  active: true
+  LongMethod:
+    active: false
+  LongParameterList:
+    active: false
+  ComplexCondition:
+    active: true
+  CyclomaticComplexMethod:
+    active: true
+    threshold: 20
+  NestedBlockDepth:
+    active: true
+    threshold: 6
+
+style:
+  active: true
+  MagicNumber:
+    active: false
+  ReturnCount:
+    active: false
+  ThrowsCount:
+    active: false
+  LoopWithTooManyJumpStatements:
+    active: false
+  UseCheckOrError:
+    active: false
+  MaxLineLength:
+    active: false
+  WildcardImport:
+    active: false
+  FunctionOnlyReturningConstant:
+    active: false
+
+exceptions:
+  active: true
+  TooGenericExceptionCaught:
+    active: false  # runCatching { } is idiomatic in this codebase
+
+naming:
+  active: true
+  FunctionNaming:
+    active: false  # @Composable functions use PascalCase
+  TopLevelPropertyNaming:
+    active: false

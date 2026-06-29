@@ -17,6 +17,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import soy.iko.opencode.data.model.Command
@@ -49,7 +51,7 @@ fun CommandPickerSheet(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { onSelect(cmd); onDismiss() }
+                            .clickable(role = Role.Button) { onSelect(cmd); onDismiss() }
                             .padding(horizontal = 24.dp, vertical = 12.dp),
                     ) {
                         androidx.compose.foundation.layout.Row(

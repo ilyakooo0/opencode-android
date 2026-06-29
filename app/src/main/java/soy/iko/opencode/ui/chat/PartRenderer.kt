@@ -69,7 +69,7 @@ private const val COLLAPSED_LIMIT = 600
  * compile-time coverage; the [UnknownPart] arm keeps the UI forward-compatible.
  */
 @Composable
-fun PartView(part: Part, isRunning: Boolean = false, modifier: Modifier = Modifier, imageContext: ImageLoadContext? = null) {
+fun PartView(part: Part, modifier: Modifier = Modifier, isRunning: Boolean = false, imageContext: ImageLoadContext? = null) {
     when (part) {
         is TextPart -> if (!part.ignored && part.text.isNotEmpty()) {
             MarkdownText(part.text, modifier = modifier)

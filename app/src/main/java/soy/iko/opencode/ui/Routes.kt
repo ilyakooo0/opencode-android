@@ -5,6 +5,7 @@ object Routes {
     const val SERVERS = "servers"
     const val SESSIONS = "sessions"
     const val SETTINGS = "settings"
+    const val DIAGNOSTICS = "diagnostics"
     const val FILES = "files"
 
     const val SERVER_EDIT = "server_edit"

@@ -8,12 +8,15 @@ import soy.iko.opencode.data.model.BusEvent
 import soy.iko.opencode.data.model.MessagePartUpdated
 import soy.iko.opencode.data.model.MessageUpdated
 import soy.iko.opencode.data.model.ServerProfile
+import soy.iko.opencode.data.model.SessionIdle
 import soy.iko.opencode.data.repo.DraftStore
 import soy.iko.opencode.data.repo.ErrorKind
 import soy.iko.opencode.data.repo.ProfileStore
 import soy.iko.opencode.data.repo.SettingsStore
 import soy.iko.opencode.data.repo.classifyError
 import soy.iko.opencode.data.repo.responseStatusCode
+import soy.iko.opencode.notification.NotificationChannels
+import soy.iko.opencode.notification.SessionNotifications
 import soy.iko.opencode.R
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -66,6 +69,15 @@ class AppContainer(context: Context) {
     fun consumePendingShare(): String? = _pendingShare.value.also { _pendingShare.value = null }
 
     /**
+     * A session id to open from an external trigger (a notification tap or a deep link).
+     * The nav host consumes it once a connection is active.
+     */
+    private val _pendingOpenSession = MutableStateFlow<String?>(null)
+    val pendingOpenSession: StateFlow<String?> = _pendingOpenSession.asStateFlow()
+    fun requestOpenSession(id: String) { _pendingOpenSession.value = id }
+    fun consumePendingOpenSession(): String? = _pendingOpenSession.value.also { _pendingOpenSession.value = null }
+
+    /**
      * The session the user is currently viewing (or null when not in a chat). Drives the
      * unread tracker: messages arriving for any *other* session mark it unread, and
      * opening a session clears its unread state.
@@ -79,7 +91,10 @@ class AppContainer(context: Context) {
 
     fun setCurrentSession(id: String?) {
         _currentSession.value = id
-        if (id != null) _unread.update { it - id }
+        if (id != null) {
+            _unread.update { it - id }
+            SessionNotifications.cancel(appContext, id)
+        }
     }
 
     /** Resolve a localized string — view models reach resources through the container. */
@@ -108,6 +123,7 @@ class AppContainer(context: Context) {
     }
 
     init {
+        NotificationChannels.create(appContext)
         registerNetworkMonitor()
         observeMessageActivity()
         appScope.launch { autoConnect() }
@@ -131,8 +147,28 @@ class AppContainer(context: Context) {
                     if (sid != _currentSession.value) {
                         _unread.update { it + sid }
                     }
+                    // Track sessions actively streaming so we know which idle events
+                    // represent a finished run worth notifying about.
+                    if (event is MessagePartUpdated || event is MessageUpdated) {
+                        activeRuns.add(sid)
+                    }
+                    if (event is SessionIdle && sid != _currentSession.value && activeRuns.remove(sid)) {
+                        notifySessionCompleted(sid)
+                    }
                 }
         }
+    }
+
+    /** Session ids currently streaming an assistant run (best-effort, in-process). */
+    private val activeRuns: MutableSet<String> = java.util.Collections.synchronizedSet(mutableSetOf())
+
+    /** Resolve the title for [sessionId] (best-effort) and post a completion notification. */
+    private suspend fun notifySessionCompleted(sessionId: String) {
+        val conn = activeConnection.value ?: return
+        val title = runCatching {
+            conn.repository.listSessions().firstOrNull { it.id == sessionId }?.displayTitle
+        }.getOrNull() ?: sessionId
+        SessionNotifications.postCompleted(appContext, sessionId, title)
     }
 
     /** Extract the session id an event pertains to, for message-activity events. */

@@ -1,0 +1,15 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>ComplexCondition:ChatScreen.kt$event.type == KeyEventType.KeyDown &amp;&amp; event.key == Key.Enter &amp;&amp; !event.isShiftPressed &amp;&amp; enabled &amp;&amp; value.isNotBlank()</ID>
+    <ID>ComplexCondition:PartRenderer.kt$part.isImage &amp;&amp; imageContext != null &amp;&amp; (part.source != null || !part.url.isNullOrBlank())</ID>
+    <ID>CyclomaticComplexMethod:ChatScreen.kt$@OptIn(ExperimentalMaterial3Api::class) @Composable fun ChatScreen( container: AppContainer, sessionId: String, onBack: () -&gt; Unit, )</ID>
+    <ID>InstanceOfCheckForException:OpencodeApiClient.kt$t is ClientRequestException</ID>
+    <ID>MatchingDeclarationName:DiffView.kt$DiffLine</ID>
+    <ID>MatchingDeclarationName:RemoteImage.kt$ImageLoadContext</ID>
+    <ID>TooManyFunctions:AppContainer.kt$AppContainer</ID>
+    <ID>TooManyFunctions:OpencodeApiClient.kt$OpencodeApiClient</ID>
+    <ID>UnusedParameter:MarkdownText.kt$style: TextStyle = MaterialTheme.typography.bodyLarge</ID>
+  </CurrentIssues>
+</SmellBaseline>

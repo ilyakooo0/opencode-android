@@ -117,8 +117,10 @@ fun ChatScreen(
     val defaultShareSubject = stringResource(R.string.share_subject)
 
     // Connection profile (with auth) for rendering inline image attachments.
-    val imageContext = remember(container.activeConnection.value?.profile) {
-        container.activeConnection.value?.profile?.toImageContext()
+    // Collect as state so a server switch recomposes the image context.
+    val activeConnection by container.activeConnection.collectAsStateWithLifecycle()
+    val imageContext = remember(activeConnection?.profile) {
+        activeConnection?.profile?.toImageContext()
     }
 
     // Mark this session as read while the user is viewing it; clear on leave so new
@@ -135,11 +137,17 @@ fun ChatScreen(
     var showCommandPicker by remember { mutableStateOf(false) }
     var showExitConfirm by remember { mutableStateOf(false) }
 
-    // Keep the screen awake while the agent is actively working.
+    // Keep the screen awake and hold a foreground priority while the agent is working,
+    // so backgrounding mid-run doesn't let Doze choke the SSE stream.
     val currentView = LocalView.current
+    val appContext = LocalContext.current.applicationContext
     DisposableEffect(running) {
         currentView.keepScreenOn = running
-        onDispose { currentView.keepScreenOn = false }
+        if (running) soy.iko.opencode.notification.RunForegroundService.start(appContext)
+        onDispose {
+            currentView.keepScreenOn = false
+            soy.iko.opencode.notification.RunForegroundService.stop(appContext)
+        }
     }
 
     // Track whether the list is pinned to the bottom so streaming auto-scroll

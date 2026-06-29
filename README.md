@@ -6,7 +6,7 @@ Application id: `soy.iko.opencode`
 
 ## Status
 
-Milestones M0–M10 complete:
+Milestones M0–M11 complete:
 
 - **M0–M4:** connect to a server → list/create/delete sessions → chat with **live SSE streaming**
   of the assistant's reply. Tool calls, reasoning, and token/cost are rendered.
@@ -69,6 +69,34 @@ Milestones M0–M10 complete:
   sheet); and an **auto-incrementing `versionCode`** derived from the git commit count
   so each release is strictly newer.
 
+- **M11:** **Reliability, a11y & tooling pass.**
+  - **Completion notifications** — when a background session finishes a run it posts a
+    system notification; tapping it opens the conversation. POST_NOTIFICATIONS is
+    requested on Android 13+ and respected if denied.
+  - **Foreground SSE service** — while an agent is running a low-priority foreground
+    service holds process priority so Doze can't choke the long-lived `/event` stream
+    mid-run when the app is backgrounded.
+  - **Crash reporting + Diagnostics** — an uncaught-exception handler writes crash
+    reports (stack trace + device/app metadata) to app-private storage, surfaced in a
+    new Settings → Diagnostics screen where they can be viewed, shared, or cleared. No
+    hosted backend required.
+  - **Adaptive large-screen layout** — on wide screens (tablets / unfolded foldables,
+    ≥ 840dp) the session list and the open conversation show side by side; compact
+    widths keep the single-pane back stack.
+  - **Deep linking** — `opencode://session/{id}` opens a conversation from any app, and
+    notification taps / share-in reuse the same open-session path.
+  - **Accessibility** — every clickable row is announced as a button to TalkBack
+    (`role` semantics); all icon buttons carry content descriptions.
+  - **Crash bug fix** — `StateFlow.value` was read inside composition (server switch
+    wouldn't recompose the image context); now collected as state.
+  - **App icon** — an adaptive launcher icon was added (lint flagged its absence).
+  - **Tooling/CI:** Android **Lint** and **detekt** now run in CI (detekt with a
+    baseline so only new findings block); a **Renovate** config keeps dependencies
+    current (grouped, weekly, AndroidX majors held for review); the deprecated
+    `kotlinOptions` DSL was replaced; and the release-artifact upload matches the
+    signed-output path. Instrumented tests (androidTest) cover the crash logger and
+    app bootstrap.
+
 ## Architecture
 
 - **Ktor 3 (OkHttp engine)** for REST + the long-lived `GET /event` SSE stream.
@@ -92,6 +120,9 @@ nix develop              # JDK 17, Gradle 8.14.4, Android SDK 35, aapt2 override
 ./gradlew assembleDebug  # -> app/build/outputs/apk/debug/app-debug.apk
 ./gradlew assembleRelease  # R8-minified + resource-shrunk release APK
 ./gradlew testDebugUnitTest   # JVM tests for the JSON/serialization layer
+./gradlew detekt              # static analysis (config: config/detekt/detekt.yml)
+./gradlew lintDebug           # Android Lint
+./gradlew connectedAndroidTest # device/emulator tests (needs an AVD)
 ```
 
 ## Install & run

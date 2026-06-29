@@ -1,0 +1,32 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "labels": ["dependencies"],
+  "dependencyDashboard": true,
+  "prConcurrentLimit": 5,
+  "commitMessagePrefix": "deps:",
+  "schedule": ["before 6am on Monday"],
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 6am on Monday"]
+  },
+  "packageRules": [
+    {
+      "groupName": "Kotlin and Compose compiler",
+      "matchPackagePatterns": ["^org.jetbrains.kotlin", "^com.android.tools.build"]
+    },
+    {
+      "groupName": "Jetpack Compose",
+      "matchPackagePatterns": ["^androidx.compose"]
+    },
+    {
+      "groupName": "Ktor",
+      "matchPackagePatterns": ["^io.ktor"]
+    },
+    {
+      "description": "Pin AndroidX to the set the app targets (compileSdk 35); review major bumps manually.",
+      "matchPackagePatterns": ["^androidx."],
+      "major": { "enabled": false }
+    }
+  ]
+}

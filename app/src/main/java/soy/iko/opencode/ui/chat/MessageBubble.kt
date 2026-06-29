@@ -25,8 +25,8 @@ import soy.iko.opencode.ui.components.rememberRelativeTime
 @Composable
 fun MessageBubble(
     message: MessageWithParts,
-    isRunning: Boolean = false,
     modifier: Modifier = Modifier,
+    isRunning: Boolean = false,
     imageContext: ImageLoadContext? = null,
 ) {
     when (message.info) {

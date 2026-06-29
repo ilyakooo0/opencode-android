@@ -337,7 +337,7 @@ private fun SessionCard(
         Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable { onClick() },
+                .clickable(role = Role.Button) { onClick() },
         ) {
             Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
                 Row(

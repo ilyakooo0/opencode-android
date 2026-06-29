@@ -1,10 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">opencode</string>
-    <string name="untitled_session">Untitled session</string>
-    <string name="custom_agent">Custom agent</string>
     <string name="unknown_version">0.1.0</string>
-    <string name="error_output">error</string>
 
     <!-- Common -->
     <string name="back">Back</string>
@@ -75,6 +72,7 @@
     <string name="message_placeholder">Message opencode…</string>
     <string name="empty_chat_title">Start a conversation</string>
     <string name="empty_chat_hint">Type a message below to begin.</string>
+    <string name="empty_detail_pane">Select a session to view the conversation.</string>
     <string name="working">working…</string>
     <string name="latest">Latest</string>
     <string name="stop_and_exit_title">Stop and exit?</string>
@@ -91,14 +89,9 @@
     <string name="error_client_status">Request failed (%1$d).</string>
     <string name="error_failed_to_send">Failed to send</string>
     <string name="error_agent_reported">The agent reported an error.</string>
-    <string name="error_failed_command">Failed to run command</string>
     <string name="error_not_reachable">Could not reach %1$s</string>
     <string name="error_timeout">The request timed out. Check the connection and try again.</string>
     <string name="error_server">The server reported an error. Try again later.</string>
-    <string name="error_load_sessions">Failed to load sessions</string>
-    <string name="error_create_session">Failed to create session</string>
-    <string name="error_delete_session">Failed to delete session</string>
-    <string name="error_rename_session">Failed to rename session</string>
 
     <!-- Part renderer -->
     <string name="thinking">Thinking…</string>
@@ -146,4 +139,23 @@
     <string name="about">About</string>
     <string name="about_version">opencode-android %1$s</string>
     <string name="about_desc">A native Android client for the opencode serve HTTP API.</string>
+
+    <!-- Diagnostics -->
+    <string name="diagnostics">Diagnostics</string>
+    <string name="diagnostics_desc">Crash reports are stored locally on this device.</string>
+    <string name="crash_reports">Crash reports</string>
+    <string name="no_crash_reports">No crashes recorded. \ud83d\udc4d</string>
+    <string name="clear_all">Clear all</string>
+    <string name="crash_report">Crash report</string>
+    <string name="diagnostics_share_subject">opencode-android crash report</string>
+
+    <!-- Notifications -->
+    <string name="notif_channel_status">Agent activity</string>
+    <string name="notif_channel_status_desc">Shown while an opencode agent is running.</string>
+    <string name="notif_channel_completed">Session completed</string>
+    <string name="notif_channel_completed_desc">Shown when a background session finishes a run.</string>
+    <string name="notif_running_title">opencode</string>
+    <string name="notif_running_text">Agent is working…</string>
+    <string name="notif_completed_title">Session ready</string>
+    <string name="notif_completed_text">opencode replied in “%1$s”.</string>
 </resources>

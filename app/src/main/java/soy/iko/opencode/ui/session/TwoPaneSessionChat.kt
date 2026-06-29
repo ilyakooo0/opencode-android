@@ -1,0 +1,111 @@
+package soy.iko.opencode.ui.session
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Chat
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import soy.iko.opencode.R
+import soy.iko.opencode.di.AppContainer
+import soy.iko.opencode.ui.chat.ChatScreen
+
+/**
+ * Master–detail layout for wide screens (≥ 840dp, e.g. tablets / unfolded foldables):
+ * the session list on the left, the selected conversation on the right. On compact
+ * widths the app uses the single-pane [androidx.navigation] back stack instead.
+ *
+ * Each side hosts an existing screen (which carries its own Scaffold + app bar), so the
+ * two panes are self-contained. Selecting a session updates the detail pane rather than
+ * pushing a destination; the chat [onBack] clears the selection. The chat composition is
+ * keyed by session id so each conversation gets its own ViewModel.
+ */
+@Composable
+fun TwoPaneSessionChat(
+    container: AppContainer,
+    onOpenFiles: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onDisconnect: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var selected by rememberSaveable { mutableStateOf<String?>(null) }
+    val pendingOpenSession by container.pendingOpenSession.collectAsStateWithLifecycle()
+
+    // A notification tap / deep link requests a session: open it in the detail pane.
+    LaunchedEffect(pendingOpenSession) {
+        pendingOpenSession?.let {
+            selected = it
+            container.consumePendingOpenSession()
+        }
+    }
+
+    Row(modifier = modifier.fillMaxSize()) {
+        Box(
+            modifier = Modifier
+                .weight(0.38f)
+                .widthIn(max = 460.dp),
+        ) {
+            SessionListScreen(
+                container = container,
+                onOpenSession = { id -> selected = id },
+                onDisconnect = onDisconnect,
+                onOpenFiles = onOpenFiles,
+                onOpenSettings = onOpenSettings,
+            )
+        }
+
+        Box(modifier = Modifier.weight(0.62f).fillMaxSize()) {
+            val sessionId = selected
+            if (sessionId == null) {
+                EmptyDetail()
+            } else {
+                key(sessionId) {
+                    ChatScreen(
+                        container = container,
+                        sessionId = sessionId,
+                        onBack = { selected = null },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun EmptyDetail() {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(32.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Icon(
+            Icons.AutoMirrored.Filled.Chat,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.outline,
+        )
+        Text(
+            stringResource(R.string.empty_detail_pane),
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 12.dp),
+        )
+    }
+}
