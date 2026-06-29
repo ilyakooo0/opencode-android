@@ -133,7 +133,7 @@ class ChatViewModel(
         }
     }
 
-    /** Invoke a slash-command: sends the command's template text with the command's agent/model if set. */
+    /** Invoke a slash-command by name via the server's /command endpoint. */
     fun runCommand(command: Command) {
         val conn = connection ?: return
         if (_running.value) return
@@ -141,11 +141,7 @@ class ChatViewModel(
         _error.value = null
         viewModelScope.launch {
             runCatching {
-                conn.api.sendPrompt(
-                    sessionId,
-                    command.template,
-                    agent = command.agent,
-                )
+                conn.repository.runCommand(sessionId, command.name, agent = command.agent)
             }.onFailure { _error.value = it.message ?: "Failed to run command" }
             _running.value = false
         }

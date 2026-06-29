@@ -16,3 +16,11 @@ data class PromptPart(
     val type: String = "text",
     val text: String,
 )
+
+/** Body for `POST /session/:id/command`. */
+@Serializable
+data class CommandRequest(
+    val command: String,
+    val arguments: String = "",
+    val agent: String? = null,
+)

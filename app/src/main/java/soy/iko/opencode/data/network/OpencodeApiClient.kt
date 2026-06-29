@@ -2,6 +2,7 @@ package soy.iko.opencode.data.network
 
 import soy.iko.opencode.data.model.Agent
 import soy.iko.opencode.data.model.Command
+import soy.iko.opencode.data.model.CommandRequest
 import soy.iko.opencode.data.model.CreateSessionRequest
 import soy.iko.opencode.data.model.FileContent
 import soy.iko.opencode.data.model.FileNode
@@ -34,7 +35,7 @@ class OpencodeApiClient(private val client: HttpClient) {
 
     /** Lightweight connectivity check used by the connect screen. */
     suspend fun ping(): Boolean {
-        client.get("app")
+        client.get("global/health")
         return true
     }
 
@@ -80,6 +81,18 @@ class OpencodeApiClient(private val client: HttpClient) {
     suspend fun abort(sessionId: String) {
         client.post("session/$sessionId/abort")
     }
+
+    /** Invoke a slash-command by name via `POST /session/:id/command`. */
+    suspend fun runCommand(
+        sessionId: String,
+        command: String,
+        arguments: String = "",
+        agent: String? = null,
+    ): MessageWithParts =
+        client.post("session/$sessionId/command") {
+            contentType(ContentType.Application.Json)
+            setBody(CommandRequest(command = command, arguments = arguments, agent = agent))
+        }.body()
 
     suspend fun providers(): ProvidersResponse =
         client.get("config/providers").body()

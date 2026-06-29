@@ -36,6 +36,9 @@ class SessionRepository(
     suspend fun sendPrompt(sessionId: String, text: String, model: ModelRef?, agent: String? = null) =
         api.sendPrompt(sessionId, text, model, agent)
 
+    suspend fun runCommand(sessionId: String, command: String, agent: String? = null) =
+        api.runCommand(sessionId, command, agent = agent)
+
     /**
      * A live, ordered view of [sessionId]'s messages. Begins collecting the event
      * stream before the initial REST load so no streamed part is missed, then reduces
