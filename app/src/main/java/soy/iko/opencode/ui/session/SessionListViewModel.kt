@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.joinAll
@@ -51,7 +52,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
     @OptIn(ExperimentalCoroutinesApi::class)
     val connectionState: StateFlow<EventStreamClient.ConnectionState> =
         container.activeConnection
-            .flatMapLatest { it?.events?.state ?: MutableStateFlow(EventStreamClient.ConnectionState.Disconnected) }
+            .flatMapLatest { it?.events?.state ?: flowOf(EventStreamClient.ConnectionState.Disconnected) }
             .stateIn(
                 scope = viewModelScope,
                 started = SharingStarted.WhileSubscribed(5_000),

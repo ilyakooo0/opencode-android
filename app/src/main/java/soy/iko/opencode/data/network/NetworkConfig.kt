@@ -26,6 +26,8 @@ object NetworkConfig {
     const val retryMaxAttempts = 3
     /** Initial backoff delay; doubles on each successive failure (exponential backoff). */
     const val retryInitialDelayMs = 500L
+    /** Jitter factor for retry backoff (0.2 = ±20% random jitter added to each delay). */
+    const val retryJitterFactor = 0.2
 
     // --- SSE stream (EventStreamClient) ---
 

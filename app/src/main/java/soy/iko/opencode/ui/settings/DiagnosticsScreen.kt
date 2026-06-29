@@ -136,7 +136,7 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                                         putExtra(Intent.EXTRA_SUBJECT, shareLabel)
                                         putExtra(Intent.EXTRA_TEXT, content)
                                     }
-                                    context.startActivity(Intent.createChooser(send, shareLabel))
+                                    runCatching { context.startActivity(Intent.createChooser(send, shareLabel)) }
                                 }
                             }) {
                                 Icon(Icons.Filled.Share, contentDescription = stringResource(R.string.share))
@@ -170,7 +170,7 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                             putExtra(Intent.EXTRA_SUBJECT, shareLabel2)
                             putExtra(Intent.EXTRA_TEXT, content.orEmpty())
                         }
-                        context.startActivity(Intent.createChooser(send, shareLabel2))
+                        runCatching { context.startActivity(Intent.createChooser(send, shareLabel2)) }
                     }) { Text(stringResource(R.string.share)) }
                     Spacer(Modifier.size(8.dp))
                     TextButton(onClick = {

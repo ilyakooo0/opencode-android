@@ -59,14 +59,18 @@ class ServerEditViewModel(
         val s = _state.value
         if (!s.canSave) return
         viewModelScope.launch {
+            val existingLastUsed = if (s.id != null) {
+                container.profileStore.profiles.first()
+                    .firstOrNull { it.id == s.id }?.lastUsed ?: 0L
+            } else 0L
             container.profileStore.save(
                 ServerProfile(
                     id = s.id ?: UUID.randomUUID().toString(),
                     label = s.label.trim(),
                     baseUrl = s.baseUrl.trim(),
                     username = s.username.trim().takeIf { it.isNotBlank() },
-                    password = s.password.takeIf { it.isNotEmpty() },
-                    lastUsed = 0,
+                    password = s.password.trim().takeIf { it.isNotEmpty() },
+                    lastUsed = existingLastUsed,
                 ),
             )
             onDone()

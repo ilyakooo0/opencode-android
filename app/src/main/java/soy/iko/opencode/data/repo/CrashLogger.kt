@@ -1,6 +1,7 @@
 package soy.iko.opencode.data.repo
 
 import android.content.Context
+import android.content.pm.PackageManager
 import android.os.Build
 import android.util.Log
 import androidx.core.content.pm.PackageInfoCompat
@@ -61,13 +62,16 @@ class CrashLogger private constructor(private val appContext: Context) {
     }
 
     fun readReport(fileName: String): String? {
-        val file = File(crashDir, fileName)
-        if (!file.isFile) return null
+        val file = File(crashDir, fileName).canonicalFile
+        if (!file.path.startsWith(crashDir.canonicalPath + File.separator) || !file.isFile) return null
         return runCatching { file.readText() }.getOrNull()
     }
 
     fun deleteReport(fileName: String) {
-        File(crashDir, fileName).delete()
+        val file = File(crashDir, fileName).canonicalFile
+        if (file.path.startsWith(crashDir.canonicalPath + File.separator)) {
+            file.delete()
+        }
         refresh()
     }
 
@@ -99,11 +103,20 @@ class CrashLogger private constructor(private val appContext: Context) {
     }
 
     private fun appVersion(): String = runCatching {
-        val pi = appContext.packageManager.getPackageInfo(appContext.packageName, 0)
+        val pi = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            appContext.packageManager.getPackageInfo(
+                appContext.packageName,
+                PackageManager.PackageInfoFlags.of(0),
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            appContext.packageManager.getPackageInfo(appContext.packageName, 0)
+        }
         "${pi.versionName} (${PackageInfoCompat.getLongVersionCode(pi)})"
     }.getOrDefault("unknown")
 
     companion object {
+        @Volatile
         private var instance: CrashLogger? = null
 
         fun get(context: Context): CrashLogger =

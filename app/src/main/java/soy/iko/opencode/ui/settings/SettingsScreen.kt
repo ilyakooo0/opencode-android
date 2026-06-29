@@ -1,5 +1,7 @@
 package soy.iko.opencode.ui.settings
 
+import android.content.pm.PackageManager
+import android.os.Build
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -55,8 +57,17 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onManageServers:
     val context = LocalContext.current
     val unknownVersion = stringResource(R.string.unknown_version)
     val versionName = remember {
-        runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }
-            .getOrNull() ?: unknownVersion
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                context.packageManager.getPackageInfo(
+                    context.packageName,
+                    PackageManager.PackageInfoFlags.of(0),
+                ).versionName
+            } else {
+                @Suppress("DEPRECATION")
+                context.packageManager.getPackageInfo(context.packageName, 0).versionName
+            }
+        }.getOrNull() ?: unknownVersion
     }
 
     Scaffold(

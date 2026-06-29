@@ -72,7 +72,7 @@ class ChatViewModel(
 
     val connectionState: StateFlow<EventStreamClient.ConnectionState> =
         container.activeConnection
-            .flatMapLatest { it?.events?.state ?: MutableStateFlow(EventStreamClient.ConnectionState.Disconnected) }
+            .flatMapLatest { it?.events?.state ?: flowOf(EventStreamClient.ConnectionState.Disconnected) }
             .stateIn(
                 scope = viewModelScope,
                 started = SharingStarted.WhileSubscribed(5_000),
@@ -144,7 +144,7 @@ class ChatViewModel(
         // sending with no model just uses the server's default agent/model.
         viewModelScope.launch {
             container.activeConnection.collectLatest { conn ->
-                if (conn == null) return@collectLatest
+                if (conn == null) { _models.value = emptyList(); _selectedModel.value = null; return@collectLatest }
                 runCatching { conn.api.providers() }
                     .onFailure { Log.w("ChatViewModel", "Failed to load model catalog", it) }
                     .getOrNull()?.let { resp ->
@@ -157,7 +157,7 @@ class ChatViewModel(
         // Load the agent catalog (non-fatal).
         viewModelScope.launch {
             container.activeConnection.collectLatest { conn ->
-                if (conn == null) return@collectLatest
+                if (conn == null) { _agents.value = emptyList(); return@collectLatest }
                 runCatching { conn.api.agents() }
                     .onFailure { Log.w("ChatViewModel", "Failed to load agent catalog", it) }
                     .getOrNull()?.let { _agents.value = it }
@@ -166,7 +166,7 @@ class ChatViewModel(
         // Load the command catalog (non-fatal).
         viewModelScope.launch {
             container.activeConnection.collectLatest { conn ->
-                if (conn == null) return@collectLatest
+                if (conn == null) { _commands.value = emptyList(); return@collectLatest }
                 runCatching { conn.api.commands() }
                     .onFailure { Log.w("ChatViewModel", "Failed to load command catalog", it) }
                     .getOrNull()?.let { _commands.value = it }

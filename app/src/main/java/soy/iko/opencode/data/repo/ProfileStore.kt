@@ -28,16 +28,21 @@ class ProfileStore(context: Context) {
     private val profilesKey = stringPreferencesKey("profiles_json")
 
     private val securePrefs: SharedPreferences by lazy {
-        val masterKey = MasterKey.Builder(appContext)
-            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-            .build()
-        EncryptedSharedPreferences.create(
-            appContext,
-            "server_secrets",
-            masterKey,
-            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
-        )
+        runCatching {
+            val masterKey = MasterKey.Builder(appContext)
+                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                .build()
+            EncryptedSharedPreferences.create(
+                appContext,
+                "server_secrets",
+                masterKey,
+                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+            )
+        }.getOrElse {
+            Log.e("ProfileStore", "Encrypted prefs unavailable, falling back to plaintext", it)
+            appContext.getSharedPreferences("server_secrets_fallback", Context.MODE_PRIVATE)
+        }
     }
 
     /** Stored shape on DataStore (everything except the secret password). */

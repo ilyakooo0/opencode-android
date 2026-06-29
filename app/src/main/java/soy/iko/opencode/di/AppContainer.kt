@@ -153,6 +153,16 @@ class AppContainer(context: Context) {
             activeConnection
                 .flatMapLatest { conn -> conn?.events?.events ?: emptyFlow() }
                 .collect { event ->
+                    // SessionIdle is not "message activity" (don't badge as unread)
+                    // but signals a run finished — fire a completion notification if the
+                    // session isn't currently being viewed and was actively streaming.
+                    if (event is SessionIdle) {
+                        val idleSid = event.properties.sessionID ?: return@collect
+                        if (idleSid != _currentSession.value && activeRuns.remove(idleSid)) {
+                            notifySessionCompleted(idleSid)
+                        }
+                        return@collect
+                    }
                     val sid = sessionOf(event) ?: return@collect
                     if (sid != _currentSession.value) {
                         _unread.update { it + sid }
@@ -161,9 +171,6 @@ class AppContainer(context: Context) {
                     // represent a finished run worth notifying about.
                     if (event is MessagePartUpdated || event is MessageUpdated) {
                         activeRuns.add(sid)
-                    }
-                    if (event is SessionIdle && sid != _currentSession.value && activeRuns.remove(sid)) {
-                        notifySessionCompleted(sid)
                     }
                 }
         }

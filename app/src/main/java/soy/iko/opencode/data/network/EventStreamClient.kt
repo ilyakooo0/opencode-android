@@ -101,9 +101,11 @@ class EventStreamClient(
                             // Stream closed cleanly: exit to reconnect without a warning log.
                             val sse = result.getOrNull() ?: break
                             val data = sse.data ?: continue
-                            val event = runCatching {
+                            val event = try {
                                 OpencodeJson.decodeFromString(BusEvent.serializer(), data)
-                            }.getOrNull() ?: continue
+                            } catch (e: kotlinx.serialization.SerializationException) {
+                                continue
+                            }
                             // Any successfully decoded event means the stream is live;
                             // don't wait for a ServerConnected event to show "Connected".
                             if (_state.value != ConnectionState.Connected) {
@@ -124,9 +126,10 @@ class EventStreamClient(
             if (!isActive) break
             // Wait for the backoff, but allow a reconnect signal to cut it short.
             var signaled = false
+            val jitter = (backoffMs * 0.2 * Math.random()).toLong()
             select {
                 reconnectSignal.onReceive { signaled = true }
-                onTimeout(backoffMs) { /* normal backoff elapsed */ }
+                onTimeout(backoffMs + jitter) { /* normal backoff elapsed */ }
             }
             backoffMs = if (signaled) NetworkConfig.sseInitialBackoffMs else (backoffMs * 2).coerceAtMost(NetworkConfig.sseMaxBackoffMs)
         }

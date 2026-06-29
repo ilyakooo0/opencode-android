@@ -235,7 +235,7 @@ fun ChatScreen(
                                 putExtra(android.content.Intent.EXTRA_SUBJECT, sessionTitle ?: defaultShareSubject)
                                 putExtra(android.content.Intent.EXTRA_TEXT, md)
                             }
-                            shareLauncher.startActivity(android.content.Intent.createChooser(send, shareLabel))
+                            runCatching { shareLauncher.startActivity(android.content.Intent.createChooser(send, shareLabel)) }
                         },
                         enabled = messages.isNotEmpty(),
                     ) {

@@ -59,7 +59,7 @@ fun MarkdownText(
         content = markdown,
         modifier = modifier.semantics(mergeDescendants = true) {
             contentDescription = markdown.take(500)
-            role = Role.Image
+            role = Role.Button
         }.combinedClickable(
             onClick = {},
             onLongClick = { copyToClipboard(context, markdown) },

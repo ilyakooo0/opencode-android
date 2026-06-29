@@ -130,7 +130,7 @@ class WithRetryTest {
         var calls = 0
         val start = testScheduler.currentTime
         runCatching {
-            withRetryInternal(maxAttempts = 3, initialDelayMs = 100L) {
+            withRetryInternal(maxAttempts = 3, initialDelayMs = 100L, jitterFactor = 0.0) {
                 calls++
                 throw IOException("always")
             }
@@ -147,7 +147,7 @@ class WithRetryTest {
         var calls = 0
         var lastTime = testScheduler.currentTime
         runCatching {
-            withRetryInternal(maxAttempts = 4, initialDelayMs = 50L) {
+            withRetryInternal(maxAttempts = 4, initialDelayMs = 50L, jitterFactor = 0.0) {
                 calls++
                 val now = testScheduler.currentTime
                 if (calls > 1) delays.add(now - lastTime)

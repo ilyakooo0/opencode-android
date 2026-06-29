@@ -75,7 +75,7 @@ fun FileViewScreen(
                                 putExtra(Intent.EXTRA_SUBJECT, filename)
                                 putExtra(Intent.EXTRA_TEXT, content)
                             }
-                            context.startActivity(Intent.createChooser(send, shareLabel))
+                            runCatching { context.startActivity(Intent.createChooser(send, shareLabel)) }
                         }) {
                             Icon(Icons.Filled.Share, contentDescription = stringResource(R.string.share))
                         }

@@ -40,6 +40,7 @@ class FileBrowserViewModel(private val container: AppContainer) : ViewModel() {
     fun clearTransientError() { _transientError.value = null }
 
     private var searchJob: Job? = null
+    private var openJob: Job? = null
 
     init { open(""); loadStatus() }
 
@@ -65,7 +66,8 @@ class FileBrowserViewModel(private val container: AppContainer) : ViewModel() {
             return
         }
         _state.value = _state.value.copy(path = path, loading = true, error = null)
-        viewModelScope.launch {
+        openJob?.cancel()
+        openJob = viewModelScope.launch {
             runCatching { client.listDirectory(path) }
                 .onSuccess { entries ->
                     _state.value = _state.value.copy(
