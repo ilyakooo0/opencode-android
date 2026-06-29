@@ -1,13 +1,21 @@
 package soy.iko.opencode.ui.file
 
+import android.content.Intent
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -18,8 +26,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -27,6 +37,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.ui.components.DiffView
+import soy.iko.opencode.ui.components.copyToClipboard
 import soy.iko.opencode.ui.vmFactory
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -38,14 +49,34 @@ fun FileViewScreen(
 ) {
     val vm: FileViewModel = viewModel(factory = vmFactory { FileViewModel(container, path) })
     val state by vm.state.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val filename = remember(path) { path.substringAfterLast('/') }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(path.substringAfterLast('/'), maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                title = { Text(filename, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                actions = {
+                    val content = state.content?.content.orEmpty()
+                    if (content.isNotEmpty()) {
+                        IconButton(onClick = { copyToClipboard(context, filename, content) }) {
+                            Icon(Icons.Filled.ContentCopy, contentDescription = "Copy")
+                        }
+                        IconButton(onClick = {
+                            val send = Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(Intent.EXTRA_SUBJECT, filename)
+                                putExtra(Intent.EXTRA_TEXT, content)
+                            }
+                            context.startActivity(Intent.createChooser(send, "Share $filename"))
+                        }) {
+                            Icon(Icons.Filled.Share, contentDescription = "Share")
+                        }
                     }
                 },
             )
@@ -75,16 +106,39 @@ fun FileViewScreen(
                                 .padding(padding),
                         )
                     } else {
-                        Text(
-                            text = content?.content.orEmpty(),
+                        val text = content?.content.orEmpty()
+                        val lines = remember(text) { text.split("\n") }
+                        val gutterWidth = remember(lines.size) {
+                            (lines.size.toString().length.coerceAtLeast(3) * 10).dp
+                        }
+                        Row(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .verticalScroll(scrollState)
                                 .horizontalScroll(rememberScrollState())
-                                .padding(12.dp),
-                            style = MaterialTheme.typography.bodySmall,
-                            fontFamily = FontFamily.Monospace,
-                        )
+                                .padding(8.dp),
+                        ) {
+                            // Line-number gutter
+                            Column(modifier = Modifier.width(gutterWidth)) {
+                                lines.forEachIndexed { i, _ ->
+                                    Text(
+                                        "${i + 1}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontFamily = FontFamily.Monospace,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                            Column(modifier = Modifier.padding(start = 8.dp)) {
+                                lines.forEach { line ->
+                                    Text(
+                                        line,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontFamily = FontFamily.Monospace,
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }

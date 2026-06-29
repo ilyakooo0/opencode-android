@@ -10,6 +10,7 @@ import soy.iko.opencode.data.model.Permission
 import soy.iko.opencode.data.model.PermissionReplied
 import soy.iko.opencode.data.model.PermissionResponse
 import soy.iko.opencode.data.model.PermissionUpdated
+import soy.iko.opencode.data.model.TextPart
 import soy.iko.opencode.data.model.defaultOption
 import soy.iko.opencode.data.model.toOptions
 import soy.iko.opencode.data.network.EventStreamClient
@@ -68,6 +69,13 @@ class ChatViewModel(
     private val _commands = MutableStateFlow<List<Command>>(emptyList())
     val commands: StateFlow<List<Command>> = _commands.asStateFlow()
 
+    private val _sessionTitle = MutableStateFlow<String?>(null)
+    val sessionTitle: StateFlow<String?> = _sessionTitle.asStateFlow()
+
+    /** The text of the last send that failed, surfaced so the UI can offer a retry. */
+    private val _failedDraft = MutableStateFlow<String?>(null)
+    val failedDraft: StateFlow<String?> = _failedDraft.asStateFlow()
+
     fun clearError() { _error.value = null }
 
     fun selectModel(option: ModelOption) { _selectedModel.value = option }
@@ -111,26 +119,47 @@ class ChatViewModel(
             viewModelScope.launch {
                 runCatching { conn.api.commands() }.getOrNull()?.let { _commands.value = it }
             }
+            // Resolve the human-readable session title for the app bar (non-fatal).
+            viewModelScope.launch {
+                runCatching { conn.repository.listSessions() }
+                    .getOrNull()
+                    ?.firstOrNull { it.id == sessionId }
+                    ?.let { _sessionTitle.value = it.displayTitle }
+            }
         }
     }
 
-    fun send(text: String) {
-        val conn = connection ?: return
+    /** Sends [text]; returns true on success so the caller can clear the draft only then. */
+    fun send(text: String): Boolean {
+        val conn = connection ?: return false
         val trimmed = text.trim()
-        if (trimmed.isEmpty() || _running.value) return
+        if (trimmed.isEmpty() || _running.value) return false
         _running.value = true
         _error.value = null
+        _failedDraft.value = null
         viewModelScope.launch {
-            runCatching {
+            val ok = runCatching {
                 conn.repository.sendPrompt(
                     sessionId,
                     trimmed,
                     model = _selectedModel.value?.ref,
                     agent = _selectedAgent.value,
                 )
-            }.onFailure { _error.value = it.message ?: "Failed to send" }
+            }.isSuccess
             _running.value = false
+            if (!ok) {
+                _failedDraft.value = trimmed
+                _error.value = "Failed to send"
+            }
         }
+        return true
+    }
+
+    /** Re-send the last draft whose send failed, if any. */
+    fun retryFailed() {
+        val draft = _failedDraft.value ?: return
+        _failedDraft.value = null
+        send(draft)
     }
 
     /** Invoke a slash-command by name via the server's /command endpoint. */

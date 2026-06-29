@@ -19,12 +19,14 @@ class MainActivity : ComponentActivity() {
         setContent {
             val themeMode by container.settingsStore.themeMode
                 .collectAsStateWithLifecycle(initialValue = ThemeMode.SYSTEM)
+            val dynamicColor by container.settingsStore.dynamicColor
+                .collectAsStateWithLifecycle(initialValue = true)
             val dark = when (themeMode) {
                 ThemeMode.SYSTEM -> isSystemInDarkTheme()
                 ThemeMode.LIGHT -> false
                 ThemeMode.DARK -> true
             }
-            OpencodeTheme(darkTheme = dark) {
+            OpencodeTheme(darkTheme = dark, dynamicColor = dynamicColor) {
                 OpencodeAppUi(container = container)
             }
         }

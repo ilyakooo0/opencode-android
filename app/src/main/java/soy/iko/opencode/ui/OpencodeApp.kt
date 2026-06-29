@@ -91,6 +91,9 @@ fun OpencodeApp(container: AppContainer) {
             SettingsScreen(
                 container = container,
                 onBack = { navController.popBackStack() },
+                onManageServers = {
+                    navController.popBackStack(Routes.SERVERS, inclusive = false)
+                },
             )
         }
     }

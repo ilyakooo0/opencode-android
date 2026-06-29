@@ -21,10 +21,10 @@ import soy.iko.opencode.data.model.UserMessage
 
 /** A single message: user prompts right-aligned in a bubble, assistant output full-width. */
 @Composable
-fun MessageBubble(message: MessageWithParts, modifier: Modifier = Modifier) {
+fun MessageBubble(message: MessageWithParts, isRunning: Boolean = false, modifier: Modifier = Modifier) {
     when (message.info) {
         is UserMessage -> UserBubble(message, modifier)
-        else -> AssistantBlock(message, modifier)
+        else -> AssistantBlock(message, isRunning, modifier)
     }
 }
 
@@ -45,7 +45,7 @@ private fun UserBubble(message: MessageWithParts, modifier: Modifier) {
 }
 
 @Composable
-private fun AssistantBlock(message: MessageWithParts, modifier: Modifier) {
+private fun AssistantBlock(message: MessageWithParts, isRunning: Boolean, modifier: Modifier) {
     Column(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -59,7 +59,7 @@ private fun AssistantBlock(message: MessageWithParts, modifier: Modifier) {
             )
         }
         for (part in message.parts) {
-            PartView(part, modifier = Modifier.fillMaxWidth())
+            PartView(part, isRunning = isRunning, modifier = Modifier.fillMaxWidth())
         }
         if (info is AssistantMessage) {
             val cost = info.cost

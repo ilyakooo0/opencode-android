@@ -1,6 +1,7 @@
 package soy.iko.opencode.ui.file
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -10,10 +11,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -49,7 +53,7 @@ fun FileBrowserScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(if (state.path.isBlank()) "Files" else state.path, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                title = { Text("Files", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -59,6 +63,12 @@ fun FileBrowserScreen(
         },
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
+            // Tappable breadcrumb trail so deep paths are navigable.
+            Breadcrumbs(
+                path = state.path,
+                onNavigate = vm::open,
+                modifier = Modifier.fillMaxWidth(),
+            )
             OutlinedTextField(
                 value = state.query,
                 onValueChange = vm::setQuery,
@@ -85,6 +95,38 @@ fun FileBrowserScreen(
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun Breadcrumbs(path: String, onNavigate: (String) -> Unit, modifier: Modifier = Modifier) {
+    val segments = if (path.isBlank()) emptyList() else path.trim('/').split('/').filter { it.isNotEmpty() }
+    Row(
+        modifier = modifier
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(onClick = { onNavigate("") }, modifier = Modifier.size(20.dp)) {
+            Icon(Icons.Filled.Home, contentDescription = "Root", modifier = Modifier.size(18.dp))
+        }
+        var acc = ""
+        segments.forEachIndexed { index, segment ->
+            acc = if (acc.isEmpty()) segment else "$acc/$segment"
+            Icon(
+                Icons.Filled.ChevronRight,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            val target = acc
+            Text(
+                segment,
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (index == segments.lastIndex) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.primary,
+                modifier = Modifier.clickable { onNavigate(target) }.padding(vertical = 2.dp),
+            )
         }
     }
 }

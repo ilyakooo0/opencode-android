@@ -2,15 +2,19 @@ package soy.iko.opencode.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -19,6 +23,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 
@@ -74,6 +79,7 @@ fun DiffView(diff: String, modifier: Modifier = Modifier) {
     val removeColor = MaterialTheme.colorScheme.error.copy(alpha = 0.15f)
     val addText = MaterialTheme.colorScheme.primary
     val removeText = MaterialTheme.colorScheme.error
+    val context = LocalContext.current
 
     Column(
         modifier = modifier
@@ -81,29 +87,40 @@ fun DiffView(diff: String, modifier: Modifier = Modifier) {
             .padding(vertical = 4.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant)
-            .verticalScroll(rememberScrollState())
-            .horizontalScroll(rememberScrollState())
-            .padding(10.dp),
+            .padding(top = 2.dp, end = 4.dp),
     ) {
-        for (line in lines) {
-            when (line) {
-                is DiffLine.Hunk -> Text(
-                    line.text,
-                    style = MaterialTheme.typography.bodySmall,
-                    fontFamily = FontFamily.Monospace,
-                    color = MaterialTheme.colorScheme.tertiary,
-                    modifier = Modifier.padding(vertical = 2.dp),
-                )
-                is DiffLine.FileHeader -> Text(
-                    line.text,
-                    style = MaterialTheme.typography.bodySmall,
-                    fontFamily = FontFamily.Monospace,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(vertical = 1.dp),
-                )
-                is DiffLine.Add -> DiffRow(line.text, "+", addColor, addText)
-                is DiffLine.Remove -> DiffRow(line.text, "-", removeColor, removeText)
-                is DiffLine.Context -> DiffRow(line.text, " ", Color.Transparent, MaterialTheme.colorScheme.onSurface)
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            IconButton(onClick = { copyToClipboard(context, "diff", diff) }) {
+                Icon(Icons.Filled.ContentCopy, contentDescription = "Copy", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        Column(
+            modifier = Modifier
+                .horizontalScroll(rememberScrollState())
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 10.dp)
+                .padding(bottom = 10.dp),
+        ) {
+            for (line in lines) {
+                when (line) {
+                    is DiffLine.Hunk -> Text(
+                        line.text,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.tertiary,
+                        modifier = Modifier.padding(vertical = 2.dp),
+                    )
+                    is DiffLine.FileHeader -> Text(
+                        line.text,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(vertical = 1.dp),
+                    )
+                    is DiffLine.Add -> DiffRow(line.text, "+", addColor, addText)
+                    is DiffLine.Remove -> DiffRow(line.text, "-", removeColor, removeText)
+                    is DiffLine.Context -> DiffRow(line.text, " ", Color.Transparent, MaterialTheme.colorScheme.onSurface)
+                }
             }
         }
     }

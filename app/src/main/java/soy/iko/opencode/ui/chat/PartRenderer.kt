@@ -12,12 +12,17 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Error
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -26,6 +31,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import soy.iko.opencode.data.model.FilePart
@@ -44,19 +50,22 @@ import soy.iko.opencode.data.model.ToolUnknown
 import soy.iko.opencode.data.model.UnknownPart
 import soy.iko.opencode.ui.components.DiffView
 import soy.iko.opencode.ui.components.MarkdownText
+import soy.iko.opencode.ui.components.copyToClipboard
 import soy.iko.opencode.ui.components.looksLikeDiff
+
+private const val COLLAPSED_LIMIT = 600
 
 /**
  * Renders a single message [Part]. The exhaustive `when` over the sealed type gives
  * compile-time coverage; the [UnknownPart] arm keeps the UI forward-compatible.
  */
 @Composable
-fun PartView(part: Part, modifier: Modifier = Modifier) {
+fun PartView(part: Part, isRunning: Boolean = false, modifier: Modifier = Modifier) {
     when (part) {
         is TextPart -> if (!part.ignored && part.text.isNotEmpty()) {
             MarkdownText(part.text, modifier = modifier)
         }
-        is ReasoningPart -> ReasoningBlock(part.text, modifier)
+        is ReasoningPart -> ReasoningBlock(part.text, streaming = isRunning, modifier)
         is ToolPart -> ToolCallView(part, modifier)
         is FilePart -> FileChip(part, modifier)
         is StepStartPart -> {} // boundary marker — nothing to draw
@@ -66,38 +75,57 @@ fun PartView(part: Part, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun ReasoningBlock(text: String, modifier: Modifier) {
+private fun ReasoningBlock(text: String, streaming: Boolean, modifier: Modifier) {
     if (text.isBlank()) return
+    val context = LocalContext.current
     var expanded by remember { mutableStateOf(false) }
     Column(modifier = modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier.clickable { expanded = !expanded }.padding(vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(
-                Icons.Filled.Psychology,
-                contentDescription = null,
-                modifier = Modifier.size(16.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            if (streaming) {
+                CircularProgressIndicator(
+                    Modifier.size(14.dp),
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                Icon(
+                    Icons.Filled.Psychology,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             Text(
-                if (expanded) "  Thinking" else "  Thinking…",
+                "  ${if (streaming) "Thinking…" else "Thoughts"}",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
         AnimatedVisibility(visible = expanded) {
-            Text(
-                text,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            Column {
+                Text(
+                    text,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                TextButton(
+                    onClick = { copyToClipboard(context, "reasoning", text) },
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp),
+                ) {
+                    Icon(Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(14.dp))
+                    Text("  Copy", style = MaterialTheme.typography.labelSmall)
+                }
+            }
         }
     }
 }
 
 @Composable
 private fun ToolCallView(part: ToolPart, modifier: Modifier) {
+    val context = LocalContext.current
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -119,16 +147,41 @@ private fun ToolCallView(part: ToolPart, modifier: Modifier) {
             else -> null
         }
         if (detail != null) {
-            val truncated = detail.take(5000)
-            if (looksLikeDiff(truncated)) {
-                DiffView(truncated)
+            val collapsed = remember(detail) { detail.take(COLLAPSED_LIMIT) }
+            var expanded by remember(detail) { mutableStateOf(false) }
+            val display = if (expanded || detail.length <= COLLAPSED_LIMIT) detail.take(5000) else collapsed
+            if (looksLikeDiff(display)) {
+                DiffView(display)
             } else {
                 Text(
-                    truncated.take(2000),
+                    display,
                     style = MaterialTheme.typography.bodySmall,
                     fontFamily = FontFamily.Monospace,
                     modifier = Modifier.padding(top = 6.dp),
                 )
+            }
+            if (detail.length > COLLAPSED_LIMIT) {
+                TextButton(
+                    onClick = { expanded = !expanded },
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp),
+                ) {
+                    Icon(
+                        if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Text(
+                        "  ${if (expanded) "Show less" else "Show more"}",
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
+            }
+            TextButton(
+                onClick = { copyToClipboard(context, "output", detail) },
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp),
+            ) {
+                Icon(Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(14.dp))
+                Text("  Copy", style = MaterialTheme.typography.labelSmall)
             }
         }
     }

@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import soy.iko.opencode.data.model.ServerProfile
 import soy.iko.opencode.data.model.Session
+import soy.iko.opencode.data.model.TextPart
 import soy.iko.opencode.di.AppContainer
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -14,9 +15,22 @@ import kotlinx.coroutines.launch
 
 data class SessionListState(
     val sessions: List<Session> = emptyList(),
+    val query: String = "",
+    val previews: Map<String, String> = emptyMap(),
     val loading: Boolean = true,
     val error: String? = null,
-)
+) {
+    /** Sessions filtered by the current search query (title or preview text). */
+    val filtered: List<Session>
+        get() {
+            val q = query.trim()
+            if (q.isEmpty()) return sessions
+            return sessions.filter { session ->
+                session.displayTitle.contains(q, ignoreCase = true) ||
+                    (previews[session.id]?.contains(q, ignoreCase = true) == true)
+            }
+        }
+}
 
 class SessionListViewModel(private val container: AppContainer) : ViewModel() {
 
@@ -43,6 +57,10 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
 
     init { refresh() }
 
+    fun setQuery(query: String) {
+        _state.value = _state.value.copy(query = query)
+    }
+
     fun refresh() {
         val conn = container.activeConnection.value
         if (conn == null) {
@@ -54,12 +72,28 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             runCatching { conn.repository.listSessions() }
                 .onSuccess { list ->
-                    _state.value = SessionListState(
-                        sessions = list.sortedByDescending { it.time?.updated ?: it.time?.created ?: 0 },
-                        loading = false,
-                    )
+                    val sorted = list.sortedByDescending { it.time?.updated ?: it.time?.created ?: 0 }
+                    _state.value = _state.value.copy(sessions = sorted, loading = false)
+                    loadPreviews(sorted)
                 }
                 .onFailure { _state.value = SessionListState(loading = false, error = it.message ?: "Failed to load sessions") }
+        }
+    }
+
+    /** Fetch the last text part of each session for list previews (best-effort, bounded). */
+    private fun loadPreviews(sessions: List<Session>) {
+        val conn = container.activeConnection.value ?: return
+        val api = conn.api
+        val toLoad = sessions.take(50)
+        toLoad.forEach { session ->
+            viewModelScope.launch {
+                val preview = runCatching {
+                    api.listMessages(session.id).lastOrNull()?.let { msg ->
+                        msg.parts.filterIsInstance<TextPart>().lastOrNull()?.text
+                    }
+                }.getOrNull()?.takeIf { p -> p.isNotBlank() } ?: return@launch
+                _state.value = _state.value.copy(previews = _state.value.previews + (session.id to preview))
+            }
         }
     }
 
