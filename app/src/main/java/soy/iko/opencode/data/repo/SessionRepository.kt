@@ -13,6 +13,7 @@ import soy.iko.opencode.data.model.SessionIdle
 import soy.iko.opencode.data.model.UnknownMessage
 import soy.iko.opencode.data.network.EventStreamClient
 import soy.iko.opencode.data.network.OpencodeApiClient
+import android.util.Log
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.conflate
@@ -70,7 +71,9 @@ class SessionRepository(
             }
         }
 
-        val initial = runCatching { api.listMessages(sessionId) }.getOrDefault(emptyList())
+        val initial = runCatching { api.listMessages(sessionId) }
+            .onFailure { Log.w("SessionRepository", "Initial message load failed for $sessionId; relying on SSE", it) }
+            .getOrDefault(emptyList())
         lock.withLock { store.seed(initial) }
         publish()
 

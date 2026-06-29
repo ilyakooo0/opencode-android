@@ -17,7 +17,7 @@ import kotlinx.coroutines.cancel
  */
 class OpencodeConnection(val profile: ServerProfile) {
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private val client = HttpClientFactory.create(profile)
     val api = OpencodeApiClient(client)

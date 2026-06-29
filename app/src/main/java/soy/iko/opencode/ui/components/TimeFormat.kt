@@ -36,6 +36,8 @@ fun relativeTime(epochMillis: Long?): String {
  */
 @Composable
 fun rememberRelativeTime(epochMillis: Long?, intervalMs: Long = 30_000L): String {
+    // Recompose trigger: incrementing this state causes the composable to re-execute
+    // on each interval, re-evaluating relativeTime() so the label stays fresh.
     var tick by remember { mutableLongStateOf(0L) }
     LaunchedEffect(epochMillis) {
         while (true) {
@@ -43,5 +45,7 @@ fun rememberRelativeTime(epochMillis: Long?, intervalMs: Long = 30_000L): String
             tick++
         }
     }
-    return relativeTime(epochMillis).also { @Suppress("UNUSED_EXPRESSION") tick }
+    // Read tick so Compose tracks it as a dependency and recomposes when it changes.
+    @Suppress("UNUSED_EXPRESSION") tick
+    return relativeTime(epochMillis)
 }

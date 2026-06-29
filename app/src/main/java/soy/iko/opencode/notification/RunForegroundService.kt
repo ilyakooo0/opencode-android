@@ -7,7 +7,9 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
 import soy.iko.opencode.R
 
 /**
@@ -23,11 +25,23 @@ class RunForegroundService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val notification = buildNotification()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(NOTIF_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
-        } else {
-            startForeground(NOTIF_ID, notification)
-        }
+        // startForeground can throw ForegroundServiceStartNotAllowedException on
+        // Android 12+ if the app is in the background when the service starts. Wrap
+        // it so a backgrounded start (e.g. the user navigates away at the wrong
+        // moment) doesn't crash the app — the SSE stream will just continue without
+        // foreground priority and may be killed by the system sooner.
+        runCatching {
+            ServiceCompat.startForeground(
+                this,
+                NOTIF_ID,
+                notification,
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                } else {
+                    0
+                },
+            )
+        }.onFailure { Log.w(TAG, "startForeground failed; running without foreground priority", it) }
         return START_NOT_STICKY
     }
 
@@ -41,9 +55,17 @@ class RunForegroundService : Service() {
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
             .build()
 
+    override fun onDestroy() {
+        // Safety net: if the process is being killed while a run is in progress,
+        // ensure the notification is removed rather than lingering.
+        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+        super.onDestroy()
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     companion object {
+        private const val TAG = "RunForegroundService"
         private const val NOTIF_ID = 1
 
         fun start(context: Context) {

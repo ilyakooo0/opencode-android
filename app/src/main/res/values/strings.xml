@@ -130,6 +130,10 @@
     <string name="file_label">File: %1$s</string>
     <string name="file">File</string>
 
+    <!-- Message metadata -->
+    <string name="image">image</string>
+    <string name="tokens_in_out">%1$s in · %2$s out</string>
+
     <!-- Settings -->
     <string name="appearance">Appearance</string>
     <string name="dynamic_color">Dynamic color</string>

@@ -67,12 +67,18 @@ class MainActivity : ComponentActivity() {
             ?.takeIf { it.host == "session" }
             ?.lastPathSegment
         val id = deepLinkId ?: intent?.getStringExtra(EXTRA_SESSION_ID)?.takeIf { it.isNotBlank() }
-        id?.let { container.requestOpenSession(it) }
+        // Validate: session ids are opaque server-generated identifiers. Reject anything
+        // with path separators or other traversal/control characters so a malicious deep
+        // link can't inject path components into the REST URL path.
+        id?.takeIf { it.isNotBlank() && it.matches(VALID_SESSION_ID) }?.let { container.requestOpenSession(it) }
     }
 
     companion object {
         /** Intent extra carrying a session id to open (notifications / deep links). */
         const val EXTRA_SESSION_ID = "soy.iko.opencode.extra.SESSION_ID"
+
+        /** Session ids are alphanumeric with dashes/underscores. Reject path traversal. */
+        private val VALID_SESSION_ID = Regex("[A-Za-z0-9_-]+")
     }
 
     /** Ask for POST_NOTIFICATIONS once on Android 13+ so run/completion notifications show. */

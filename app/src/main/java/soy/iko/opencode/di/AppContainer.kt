@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkRequest
+import android.util.Log
 import soy.iko.opencode.data.model.BusEvent
 import soy.iko.opencode.data.model.MessagePartUpdated
 import soy.iko.opencode.data.model.MessageUpdated
@@ -22,6 +23,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -30,6 +32,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -38,7 +42,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 class AppContainer(context: Context) {
 
-    val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     val profileStore = ProfileStore(context)
     val settingsStore = SettingsStore(context)
     val draftStore = DraftStore(context)
@@ -124,9 +128,15 @@ class AppContainer(context: Context) {
 
     init {
         NotificationChannels.create(appContext)
-        registerNetworkMonitor()
         observeMessageActivity()
         appScope.launch { autoConnect() }
+    }
+
+    /** Release resources held for the process lifetime (network callback, app scope). */
+    fun shutdown() {
+        val cm = appContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+        networkCallback?.let { runCatching { cm?.unregisterNetworkCallback(it) } }
+        appScope.cancel()
     }
 
     /**
@@ -162,6 +172,15 @@ class AppContainer(context: Context) {
     /** Session ids currently streaming an assistant run (best-effort, in-process). */
     private val activeRuns: MutableSet<String> = java.util.Collections.synchronizedSet(mutableSetOf())
 
+    /** Guards connect/disconnect so concurrent callers can't leak an old connection. */
+    private val connectionMutex = Mutex()
+
+    /** Only persist the `lastUsed` timestamp if it's older than this, to avoid
+     *  a DataStore + encrypted-prefs write on every rapid reconnect. */
+    private companion object {
+        const val LAST_USED_SAVE_THRESHOLD_MS = 60_000L
+    }
+
     /** Resolve the title for [sessionId] (best-effort) and post a completion notification. */
     private suspend fun notifySessionCompleted(sessionId: String) {
         val conn = activeConnection.value ?: return
@@ -195,29 +214,42 @@ class AppContainer(context: Context) {
      * When the device regains connectivity, nudge the active SSE stream to reconnect
      * immediately instead of waiting out the exponential backoff.
      */
-    private fun registerNetworkMonitor() {
+    private val networkCallback: ConnectivityManager.NetworkCallback? = registerNetworkMonitor()
+
+    private fun registerNetworkMonitor(): ConnectivityManager.NetworkCallback? {
         val cm = appContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
-            ?: return
-        runCatching {
-            cm.registerNetworkCallback(NetworkRequest.Builder().build(), object : ConnectivityManager.NetworkCallback() {
-                override fun onAvailable(network: Network) {
-                    activeConnection.value?.events?.triggerReconnect()
-                }
-            })
+            ?: return null
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                activeConnection.value?.events?.triggerReconnect()
+            }
         }
+        runCatching { cm.registerNetworkCallback(NetworkRequest.Builder().build(), callback) }
+            .onFailure { Log.w("AppContainer", "Failed to register network callback", it) }
+        return callback
     }
 
-    /** Open (or re-open) a connection to [profile], replacing any current one. */
-    suspend fun connect(profile: ServerProfile): OpencodeConnection {
-        disconnect()
-        val resolved = profileStore.resolve(profile).copy(lastUsed = System.currentTimeMillis())
-        profileStore.save(resolved)
-        return OpencodeConnection(resolved).also { _activeConnection.value = it }
-    }
+    /** Open (or re-open) a connection to [profile], replacing any current one.
+     *  Only persists the updated `lastUsed` timestamp if it's stale (older than a
+     *  minute), so rapid reconnect storms don't each trigger a DataStore write. */
+    suspend fun connect(profile: ServerProfile): OpencodeConnection =
+        connectionMutex.withLock {
+            _activeConnection.value?.close()
+            _activeConnection.value = null
+            val now = System.currentTimeMillis()
+            val resolved = profileStore.resolve(profile)
+            val needsSave = (now - resolved.lastUsed) > LAST_USED_SAVE_THRESHOLD_MS
+            val finalProfile = if (needsSave) resolved.copy(lastUsed = now) else resolved
+            if (needsSave) profileStore.save(finalProfile)
+            OpencodeConnection(finalProfile).also { _activeConnection.value = it }
+        }
 
     fun disconnect() {
-        _activeConnection.value?.close()
+        // Non-suspending best-effort disconnect; if a connect is in progress under the
+        // mutex, the connection it sets will be closed on the next disconnect/connect.
+        val conn = _activeConnection.value ?: return
         _activeConnection.value = null
+        conn.close()
     }
 }
 

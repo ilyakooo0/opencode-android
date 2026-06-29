@@ -28,10 +28,14 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -60,6 +64,14 @@ fun FileBrowserScreen(
 ) {
     val vm: FileBrowserViewModel = viewModel(factory = vmFactory { FileBrowserViewModel(container) })
     val state by vm.state.collectAsStateWithLifecycle()
+    val transientError by vm.transientError.collectAsStateWithLifecycle()
+    val snackbar = remember { SnackbarHostState() }
+
+    LaunchedEffect(transientError) {
+        val msg = transientError ?: return@LaunchedEffect
+        snackbar.showSnackbar(msg)
+        vm.clearTransientError()
+    }
 
     Scaffold(
         topBar = {
@@ -72,6 +84,7 @@ fun FileBrowserScreen(
                 },
             )
         },
+        snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
             // Tappable breadcrumb trail so deep paths are navigable.

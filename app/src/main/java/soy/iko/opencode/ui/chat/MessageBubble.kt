@@ -13,7 +13,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import soy.iko.opencode.R
 import soy.iko.opencode.data.model.AssistantMessage
 import soy.iko.opencode.data.model.MessageWithParts
 import soy.iko.opencode.data.model.Tokens
@@ -73,8 +75,9 @@ private fun AssistantBlock(message: MessageWithParts, isRunning: Boolean, imageC
             val cost = info.cost
             val tokens = info.tokens
             if (info.isComplete && (cost != null || tokens != null)) {
+                val tokenFormat = stringResource(R.string.tokens_in_out)
                 val parts = buildList {
-                    tokens?.let { add(formatTokens(it)) }
+                    tokens?.let { add(formatTokens(it, tokenFormat)) }
                     cost?.takeIf { it > 0 }?.let { add(formatCost(it)) }
                 }
                 if (parts.isNotEmpty()) {
@@ -102,9 +105,9 @@ private fun MessageTimestamp(info: soy.iko.opencode.data.model.MessageInfo) {
     }
 }
 
-private fun formatTokens(tokens: Tokens): String {
+private fun formatTokens(tokens: Tokens, format: String): String {
     val dec = java.text.DecimalFormat.getNumberInstance(java.util.Locale.US)
-    return "${dec.format(tokens.input)} in · ${dec.format(tokens.output)} out"
+    return format.format(dec.format(tokens.input), dec.format(tokens.output))
 }
 
 private fun formatCost(cost: Double): String =

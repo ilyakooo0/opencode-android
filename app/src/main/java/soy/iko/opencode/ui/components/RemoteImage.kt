@@ -9,9 +9,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import soy.iko.opencode.R
 import soy.iko.opencode.data.model.FilePart
 import soy.iko.opencode.data.model.ServerProfile
 import soy.iko.opencode.data.network.HttpClientFactory
@@ -76,7 +78,7 @@ fun RemoteImage(part: FilePart, ctx: ImageLoadContext, modifier: Modifier = Modi
         .build()
     AsyncImage(
         model = request,
-        contentDescription = part.filename ?: "image",
+        contentDescription = part.filename ?: stringResource(R.string.image),
         contentScale = ContentScale.FillWidth,
         modifier = modifier
             .heightIn(max = 320.dp)

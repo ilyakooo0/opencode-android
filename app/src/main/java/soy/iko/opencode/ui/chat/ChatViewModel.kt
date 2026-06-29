@@ -19,6 +19,7 @@ import soy.iko.opencode.data.network.EventStreamClient
 import soy.iko.opencode.data.repo.SessionRepository
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
+import android.util.Log
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -144,7 +145,9 @@ class ChatViewModel(
         viewModelScope.launch {
             container.activeConnection.collectLatest { conn ->
                 if (conn == null) return@collectLatest
-                runCatching { conn.api.providers() }.getOrNull()?.let { resp ->
+                runCatching { conn.api.providers() }
+                    .onFailure { Log.w("ChatViewModel", "Failed to load model catalog", it) }
+                    .getOrNull()?.let { resp ->
                     val options = resp.toOptions()
                     _models.value = options
                     _selectedModel.value = resp.defaultOption(options)
@@ -155,14 +158,18 @@ class ChatViewModel(
         viewModelScope.launch {
             container.activeConnection.collectLatest { conn ->
                 if (conn == null) return@collectLatest
-                runCatching { conn.api.agents() }.getOrNull()?.let { _agents.value = it }
+                runCatching { conn.api.agents() }
+                    .onFailure { Log.w("ChatViewModel", "Failed to load agent catalog", it) }
+                    .getOrNull()?.let { _agents.value = it }
             }
         }
         // Load the command catalog (non-fatal).
         viewModelScope.launch {
             container.activeConnection.collectLatest { conn ->
                 if (conn == null) return@collectLatest
-                runCatching { conn.api.commands() }.getOrNull()?.let { _commands.value = it }
+                runCatching { conn.api.commands() }
+                    .onFailure { Log.w("ChatViewModel", "Failed to load command catalog", it) }
+                    .getOrNull()?.let { _commands.value = it }
             }
         }
         // Resolve the human-readable session title for the app bar (non-fatal).
@@ -249,6 +256,7 @@ class ChatViewModel(
         val conn = connection ?: return
         viewModelScope.launch {
             runCatching { conn.repository.abort(sessionId) }
+                .onFailure { _error.value = container.friendlyError(it) }
             _running.value = false
         }
     }

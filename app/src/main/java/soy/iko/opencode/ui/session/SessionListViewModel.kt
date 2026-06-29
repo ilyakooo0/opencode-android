@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -90,8 +91,9 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
     private var previewJob: Job? = null
 
     /** Per-session in-flight preview loads, so rapid SSE events for the same session
-     *  coalesce into a single request instead of firing one per event. */
-    private val livePreviewJobs = mutableMapOf<String, Job>()
+     *  coalesce into a single request instead of firing one per event. Accessed from
+     *  multiple coroutines (the SSE event handler and [loadPreview]), so kept concurrent. */
+    private val livePreviewJobs = java.util.concurrent.ConcurrentHashMap<String, Job>()
 
     private val activeProfileId: String?
         get() = container.activeConnection.value?.profile?.id
@@ -105,16 +107,17 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
      */
     private fun observeSessionEvents() {
         viewModelScope.launch {
-            container.activeConnection.collect { conn ->
-                if (conn == null) return@collect
+            container.activeConnection.collectLatest { conn ->
+                if (conn == null) return@collectLatest
                 conn.events.events.collect { event ->
                     when (event) {
                         is SessionUpdated -> {
                             val session = event.properties.info
-                            val current = _state.value.sessions
-                            val updated = (current.filterNot { it.id == session.id } + session)
-                                .sortedByDescending { it.time?.updated ?: it.time?.created ?: 0 }
-                            _state.value = _state.value.copy(sessions = updated)
+                            _state.update { s ->
+                                val updated = (s.sessions.filterNot { it.id == session.id } + session)
+                                    .sortedByDescending { it.time?.updated ?: it.time?.created ?: 0 }
+                                s.copy(sessions = updated)
+                            }
                             loadPreview(session.id)
                         }
                         is SessionDeleted -> {
@@ -138,7 +141,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun setQuery(query: String) {
-        _state.value = _state.value.copy(query = query)
+        _state.update { it.copy(query = query) }
     }
 
     fun refresh() {
@@ -147,24 +150,24 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
             if (_state.value.sessions.isEmpty()) {
                 _state.value = SessionListState(loading = false, error = container.string(R.string.not_connected))
             } else {
-                _state.value = _state.value.copy(loading = false)
+                _state.update { it.copy(loading = false) }
                 _transientError.value = container.string(R.string.not_connected)
             }
             return
         }
         _serverLabel.value = conn.profile.displayLabel
-        _state.value = _state.value.copy(loading = true, error = null)
+        _state.update { it.copy(loading = true, error = null) }
         _refreshing.value = true
         viewModelScope.launch {
             runCatching { conn.repository.listSessions() }
                 .onSuccess { list ->
                     val sorted = list.sortedByDescending { it.time?.updated ?: it.time?.created ?: 0 }
-                    _state.value = _state.value.copy(sessions = sorted, loading = false, error = null)
+                    _state.update { it.copy(sessions = sorted, loading = false, error = null) }
                     loadPreviews(sorted)
                 }
                 .onFailure {
                     if (_state.value.sessions.isNotEmpty()) {
-                        _state.value = _state.value.copy(loading = false)
+                        _state.update { it.copy(loading = false) }
                         _transientError.value = container.friendlyError(it)
                     } else {
                         _state.value = SessionListState(loading = false, error = container.friendlyError(it))
@@ -226,7 +229,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
             runCatching { conn.repository.createSession() }
                 .onSuccess { onCreated(it.id); refresh() }
                 .onFailure {
-                    _state.value = _state.value.copy(error = null)
+                    _state.update { it.copy(error = null) }
                     _transientError.value = container.friendlyError(it)
                 }
         }
@@ -241,7 +244,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
                     refresh()
                 }
                 .onFailure {
-                    _state.value = _state.value.copy(error = null)
+                    _state.update { it.copy(error = null) }
                     _transientError.value = container.friendlyError(it)
                 }
         }
@@ -255,7 +258,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
             runCatching { conn.api.updateSession(session.id, title) }
                 .onSuccess { refresh() }
                 .onFailure {
-                    _state.value = _state.value.copy(error = null)
+                    _state.update { it.copy(error = null) }
                     _transientError.value = container.friendlyError(it)
                 }
         }
@@ -266,7 +269,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         if (profile.id == activeProfileId) return
         if (_switchingId.value != null) return
         _switchingId.value = profile.id
-        _state.value = _state.value.copy(loading = true, error = null)
+        _state.update { it.copy(loading = true, error = null) }
         viewModelScope.launch {
             val result = runCatching {
                 val conn = container.connect(profile)

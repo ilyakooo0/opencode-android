@@ -34,6 +34,11 @@ class FileBrowserViewModel(private val container: AppContainer) : ViewModel() {
     private val _state = MutableStateFlow(FileBrowserState())
     val state: StateFlow<FileBrowserState> = _state.asStateFlow()
 
+    /** Transient errors (failed VCS status fetch, etc.) surfaced without hiding the file list. */
+    private val _transientError = MutableStateFlow<String?>(null)
+    val transientError: StateFlow<String?> = _transientError.asStateFlow()
+    fun clearTransientError() { _transientError.value = null }
+
     private var searchJob: Job? = null
 
     init { open(""); loadStatus() }
@@ -45,6 +50,11 @@ class FileBrowserViewModel(private val container: AppContainer) : ViewModel() {
             runCatching { client.fileStatus() }
                 .onSuccess { entries ->
                     _state.value = _state.value.copy(statusMap = entries.associateBy { it.path })
+                }
+                .onFailure {
+                    // VCS status is best-effort: don't block the file browser, but surface
+                    // a transient error so the user knows why badges are missing.
+                    _transientError.value = container.friendlyError(it)
                 }
         }
     }

@@ -2,6 +2,8 @@ package soy.iko.opencode.data.repo
 
 import android.content.Context
 import android.os.Build
+import android.util.Log
+import androidx.core.content.pm.PackageInfoCompat
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -39,6 +41,7 @@ class CrashLogger private constructor(private val appContext: Context) {
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             runCatching { writeReport(thread, throwable) }
+                .onFailure { Log.e("CrashLogger", "Failed to write crash report", it) }
             previous?.uncaughtException(thread, throwable)
         }
         refresh()
@@ -97,7 +100,7 @@ class CrashLogger private constructor(private val appContext: Context) {
 
     private fun appVersion(): String = runCatching {
         val pi = appContext.packageManager.getPackageInfo(appContext.packageName, 0)
-        "${pi.versionName} (${if (Build.VERSION.SDK_INT >= 28) pi.longVersionCode else @Suppress("DEPRECATION") pi.versionCode})"
+        "${pi.versionName} (${PackageInfoCompat.getLongVersionCode(pi)})"
     }.getOrDefault("unknown")
 
     companion object {

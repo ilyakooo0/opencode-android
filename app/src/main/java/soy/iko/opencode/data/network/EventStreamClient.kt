@@ -3,6 +3,7 @@ package soy.iko.opencode.data.network
 import soy.iko.opencode.data.model.BusEvent
 import android.util.Log
 import io.ktor.client.HttpClient
+import io.ktor.client.plugins.timeout
 import io.ktor.client.plugins.sse.sse
 import io.ktor.sse.ServerSentEvent
 import kotlinx.coroutines.CancellationException
@@ -66,7 +67,19 @@ class EventStreamClient(
         while (isActive) {
             _state.value = ConnectionState.Connecting
             try {
-                client.sse("event") {
+                // The SSE stream is long-lived: disable the request-level and socket
+                // timeouts (the client default is 60s for REST) in the request config
+                // so the connection isn't killed mid-stream. The idle-timeout watchdog
+                // below handles half-open connections instead.
+                client.sse(
+                    "event",
+                    request = {
+                        timeout {
+                            requestTimeoutMillis = Long.MAX_VALUE
+                            socketTimeoutMillis = Long.MAX_VALUE
+                        }
+                    },
+                ) {
                     backoffMs = NetworkConfig.sseInitialBackoffMs
                     // `incoming` is a cold Flow; bridge it to a ReceiveChannel so each
                     // element can be raced against an idle timeout via select.

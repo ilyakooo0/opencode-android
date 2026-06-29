@@ -2,6 +2,7 @@ package soy.iko.opencode.data.repo
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.util.Log
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -53,7 +54,8 @@ class ProfileStore(context: Context) {
         val json = prefs[profilesKey] ?: return@map emptyList()
         runCatching {
             OpencodeJson.decodeFromString(ListSerializer(StoredProfile.serializer()), json)
-        }.getOrDefault(emptyList())
+        }.onFailure { Log.w("ProfileStore", "Failed to decode stored profiles, ignoring", it) }
+            .getOrDefault(emptyList())
             .sortedByDescending { it.lastUsed }
             .map { it.toProfile() }
     }

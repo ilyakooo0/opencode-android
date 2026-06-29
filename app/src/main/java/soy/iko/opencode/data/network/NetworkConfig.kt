@@ -17,6 +17,8 @@ object NetworkConfig {
     const val readTimeoutSeconds = 60L
     /** OkHttp WebSocket/interval ping, keeping the SSE socket alive through proxies. */
     const val pingIntervalSeconds = 20L
+    /** Request-level timeout for REST calls (covers connect + headers + body). The SSE stream overrides this to INFINITE. */
+    const val restRequestTimeoutMs = 60_000L
 
     // --- REST retry (OpencodeApiClient.withRetry) ---
 
