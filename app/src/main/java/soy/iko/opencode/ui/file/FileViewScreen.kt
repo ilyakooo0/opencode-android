@@ -116,37 +116,42 @@ fun FileViewScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         } else {
-                        val lines = remember(text) { text.split("\n") }
-                        val gutterWidth = remember(lines.size) {
-                            (lines.size.toString().length.coerceAtLeast(3) * 10).dp
-                        }
-                        val hScrollState = rememberScrollState()
-                        LazyColumn(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(8.dp),
-                        ) {
-                            itemsIndexed(lines, key = { index, _ -> index }) { index, line ->
-                                Row(modifier = Modifier.horizontalScroll(hScrollState)) {
-                                    Text(
-                                        "${index + 1}",
-                                        modifier = Modifier.width(gutterWidth),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        fontFamily = FontFamily.Monospace,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                    Text(
-                                        line,
-                                        modifier = Modifier.padding(start = 8.dp),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        fontFamily = FontFamily.Monospace,
-                                    )
-                                }
-                            }
-                        }
+                            FileTextContent(text)
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FileTextContent(text: String) {
+    val lines = remember(text) { text.split("\n") }
+    val gutterWidth = remember(lines.size) {
+        (lines.size.toString().length.coerceAtLeast(3) * 10).dp
+    }
+    val hScrollState = rememberScrollState()
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(8.dp),
+    ) {
+        itemsIndexed(lines, key = { index, _ -> index }) { index, line ->
+            Row(modifier = Modifier.horizontalScroll(hScrollState)) {
+                Text(
+                    "${index + 1}",
+                    modifier = Modifier.width(gutterWidth),
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    line,
+                    modifier = Modifier.padding(start = 8.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
+                )
             }
         }
     }

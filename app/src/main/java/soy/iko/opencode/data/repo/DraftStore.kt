@@ -19,4 +19,9 @@ class DraftStore(context: Context) {
             if (text.isBlank()) remove(sessionId) else putString(sessionId, text)
         }.apply()
     }
+
+    /** Remove the draft for a session (call on session deletion to avoid orphaned entries). */
+    fun remove(sessionId: String) {
+        prefs.edit().remove(sessionId).apply()
+    }
 }

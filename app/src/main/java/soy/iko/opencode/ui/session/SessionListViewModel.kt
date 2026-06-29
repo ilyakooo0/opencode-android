@@ -88,6 +88,10 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
 
     private var previewJob: Job? = null
 
+    /** Per-session in-flight preview loads, so rapid SSE events for the same session
+     *  coalesce into a single request instead of firing one per event. */
+    private val livePreviewJobs = mutableMapOf<String, Job>()
+
     private val activeProfileId: String?
         get() = container.activeConnection.value?.profile?.id
 
@@ -115,6 +119,8 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
                         is SessionDeleted -> {
                             val id = event.properties.info?.id ?: event.properties.sessionID
                             if (id != null) {
+                                livePreviewJobs.remove(id)?.cancel()
+                                container.draftStore.remove(id)
                                 _state.update { s ->
                                     s.copy(
                                         sessions = s.sessions.filterNot { it.id == id },
@@ -167,17 +173,26 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    /** Reload the preview for a single session (used by the live SSE handler). */
+    /**
+     * Reload the preview for a single session (used by the live SSE handler).
+     * Cancels any prior in-flight load for the same session so a burst of
+     * [SessionUpdated] events coalesces into a single request.
+     */
     private fun loadPreview(sessionId: String) {
         val conn = container.activeConnection.value ?: return
         val api = conn.api
-        viewModelScope.launch {
-            val preview = runCatching {
-                api.listMessages(sessionId).lastOrNull()?.let { msg ->
-                    msg.parts.filterIsInstance<TextPart>().lastOrNull()?.text
-                }
-            }.getOrNull()?.takeIf { it.isNotBlank() }?.take(200) ?: return@launch
-            _state.update { s -> s.copy(previews = s.previews + (sessionId to preview)) }
+        livePreviewJobs.remove(sessionId)?.cancel()
+        livePreviewJobs[sessionId] = viewModelScope.launch {
+            try {
+                val preview = runCatching {
+                    api.listMessages(sessionId).lastOrNull()?.let { msg ->
+                        msg.parts.filterIsInstance<TextPart>().lastOrNull()?.text
+                    }
+                }.getOrNull()?.takeIf { it.isNotBlank() }?.take(200) ?: return@launch
+                _state.update { s -> s.copy(previews = s.previews + (sessionId to preview)) }
+            } finally {
+                livePreviewJobs.remove(sessionId)
+            }
         }
     }
 
@@ -224,7 +239,10 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         val conn = container.activeConnection.value ?: return
         viewModelScope.launch {
             runCatching { conn.repository.deleteSession(session.id) }
-                .onSuccess { refresh() }
+                .onSuccess {
+                    container.draftStore.remove(session.id)
+                    refresh()
+                }
                 .onFailure {
                     _state.value = _state.value.copy(error = null)
                     _transientError.value = container.friendlyError(it)

@@ -19,7 +19,7 @@ import soy.iko.opencode.data.model.MessageWithParts
 import soy.iko.opencode.data.model.Tokens
 import soy.iko.opencode.data.model.UserMessage
 import soy.iko.opencode.ui.components.ImageLoadContext
-import soy.iko.opencode.ui.components.relativeTime
+import soy.iko.opencode.ui.components.rememberRelativeTime
 
 /** A single message: user prompts right-aligned in a bubble, assistant output full-width. */
 @Composable
@@ -92,7 +92,7 @@ private fun AssistantBlock(message: MessageWithParts, isRunning: Boolean, imageC
 
 @Composable
 private fun MessageTimestamp(info: soy.iko.opencode.data.model.MessageInfo) {
-    val t = relativeTime(info.time?.created)
+    val t = rememberRelativeTime(info.time?.created)
     if (t.isNotEmpty()) {
         Text(
             t,

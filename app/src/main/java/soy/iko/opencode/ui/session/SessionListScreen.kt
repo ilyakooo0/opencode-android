@@ -71,7 +71,7 @@ import soy.iko.opencode.data.model.Session
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
 import soy.iko.opencode.ui.components.ConnectionBanner
-import soy.iko.opencode.ui.components.relativeTime
+import soy.iko.opencode.ui.components.rememberRelativeTime
 import soy.iko.opencode.ui.vmFactory
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -361,7 +361,7 @@ private fun SessionCard(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f),
                     )
-                    val time = relativeTime(session.time?.updated ?: session.time?.created)
+                    val time = rememberRelativeTime(session.time?.updated ?: session.time?.created)
                     if (time.isNotEmpty()) {
                         Text(
                             time,
