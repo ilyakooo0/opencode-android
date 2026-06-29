@@ -6,12 +6,17 @@ import soy.iko.opencode.data.model.ServerProfile
 import soy.iko.opencode.data.model.Session
 import soy.iko.opencode.data.model.TextPart
 import soy.iko.opencode.di.AppContainer
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 
 data class SessionListState(
     val sessions: List<Session> = emptyList(),
@@ -52,6 +57,8 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
     private val _state = MutableStateFlow(SessionListState())
     val state: StateFlow<SessionListState> = _state.asStateFlow()
 
+    private var previewJob: Job? = null
+
     private val activeProfileId: String?
         get() = container.activeConnection.value?.profile?.id
 
@@ -82,19 +89,29 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
 
     /** Fetch the last text part of each session for list previews (best-effort, bounded). */
     private fun loadPreviews(sessions: List<Session>) {
+        previewJob?.cancel()
         val conn = container.activeConnection.value ?: return
         val api = conn.api
-        val toLoad = sessions.take(50)
-        toLoad.forEach { session ->
-            viewModelScope.launch {
-                val preview = runCatching {
-                    api.listMessages(session.id).lastOrNull()?.let { msg ->
-                        msg.parts.filterIsInstance<TextPart>().lastOrNull()?.text
+        _state.update { it.copy(previews = emptyMap()) }
+        previewJob = viewModelScope.launch {
+            val semaphore = Semaphore(MAX_CONCURRENT_PREVIEWS)
+            sessions.take(50).map { session ->
+                launch {
+                    semaphore.withPermit {
+                        val preview = runCatching {
+                            api.listMessages(session.id).lastOrNull()?.let { msg ->
+                                msg.parts.filterIsInstance<TextPart>().lastOrNull()?.text
+                            }
+                        }.getOrNull()?.takeIf { it.isNotBlank() } ?: return@withPermit
+                        _state.update { s -> s.copy(previews = s.previews + (session.id to preview)) }
                     }
-                }.getOrNull()?.takeIf { p -> p.isNotBlank() } ?: return@launch
-                _state.value = _state.value.copy(previews = _state.value.previews + (session.id to preview))
-            }
+                }
+            }.joinAll()
         }
+    }
+
+    private companion object {
+        const val MAX_CONCURRENT_PREVIEWS = 8
     }
 
     fun createSession(onCreated: (String) -> Unit) {

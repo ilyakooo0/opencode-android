@@ -3,6 +3,7 @@ package soy.iko.opencode.ui.file
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import soy.iko.opencode.data.model.FileNode
+import soy.iko.opencode.data.model.FileStatusEntry
 import soy.iko.opencode.di.AppContainer
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -14,6 +15,7 @@ import kotlinx.coroutines.launch
 data class FileBrowserState(
     val path: String = "",
     val entries: List<FileNode> = emptyList(),
+    val statusMap: Map<String, FileStatusEntry> = emptyMap(),
     val query: String = "",
     val results: List<String> = emptyList(),
     val searching: Boolean = false,
@@ -32,7 +34,18 @@ class FileBrowserViewModel(private val container: AppContainer) : ViewModel() {
 
     private var searchJob: Job? = null
 
-    init { open("") }
+    init { open(""); loadStatus() }
+
+    /** Fetch the repo-wide VCS status once so file rows can show git badges. */
+    private fun loadStatus() {
+        val client = api ?: return
+        viewModelScope.launch {
+            runCatching { client.fileStatus() }
+                .onSuccess { entries ->
+                    _state.value = _state.value.copy(statusMap = entries.associateBy { it.path })
+                }
+        }
+    }
 
     fun open(path: String) {
         val client = api ?: run {

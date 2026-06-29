@@ -5,6 +5,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.plugins.sse.sse
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -15,6 +16,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.selects.onTimeout
+import kotlinx.coroutines.selects.select
 
 /**
  * Owns the single long-lived `GET /event` SSE subscription and exposes it as a hot
@@ -24,6 +27,7 @@ import kotlinx.coroutines.isActive
  * Ordering contract: callers that send a prompt must already be collecting [events]
  * (directly or via the repository) so early `message.part.updated` deltas aren't missed.
  */
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class EventStreamClient(
     private val client: HttpClient,
     scope: CoroutineScope,
@@ -39,6 +43,12 @@ class EventStreamClient(
             started = SharingStarted.WhileSubscribed(stopTimeoutMillis = 5_000),
             replay = 0,
         )
+
+    /** Conflated channel used to cut the reconnect backoff short when network returns. */
+    private val reconnectSignal = Channel<Unit>(Channel.CONFLATED)
+
+    /** Request an immediate reconnect, skipping any in-progress backoff. */
+    fun triggerReconnect() { reconnectSignal.trySend(Unit) }
 
     private fun stream(): Flow<BusEvent> = channelFlow {
         var backoffMs = INITIAL_BACKOFF_MS
@@ -66,8 +76,13 @@ class EventStreamClient(
             }
             _state.value = ConnectionState.Disconnected
             if (!isActive) break
-            delay(backoffMs)
-            backoffMs = (backoffMs * 2).coerceAtMost(MAX_BACKOFF_MS)
+            // Wait for the backoff, but allow a reconnect signal to cut it short.
+            var signaled = false
+            select {
+                reconnectSignal.onReceive { signaled = true }
+                onTimeout(backoffMs) { /* normal backoff elapsed */ }
+            }
+            backoffMs = if (signaled) INITIAL_BACKOFF_MS else (backoffMs * 2).coerceAtMost(MAX_BACKOFF_MS)
         }
     }
 

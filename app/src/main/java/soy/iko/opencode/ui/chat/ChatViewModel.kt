@@ -76,11 +76,20 @@ class ChatViewModel(
     private val _failedDraft = MutableStateFlow<String?>(null)
     val failedDraft: StateFlow<String?> = _failedDraft.asStateFlow()
 
+    /** Per-session draft, persisted so it survives navigation/process death. */
+    private val _draft = MutableStateFlow(container.draftStore.get(sessionId))
+    val draft: StateFlow<String> = _draft.asStateFlow()
+
     fun clearError() { _error.value = null }
 
     fun selectModel(option: ModelOption) { _selectedModel.value = option }
 
     fun selectAgent(name: String?) { _selectedAgent.value = name }
+
+    fun updateDraft(text: String) {
+        _draft.value = text
+        container.draftStore.set(sessionId, text)
+    }
 
     init {
         // Watch the bus for run completion / errors / permission asks for this session.
@@ -137,6 +146,7 @@ class ChatViewModel(
         _running.value = true
         _error.value = null
         _failedDraft.value = null
+        updateDraft("")
         viewModelScope.launch {
             val ok = runCatching {
                 conn.repository.sendPrompt(
@@ -149,6 +159,7 @@ class ChatViewModel(
             _running.value = false
             if (!ok) {
                 _failedDraft.value = trimmed
+                updateDraft(trimmed)
                 _error.value = "Failed to send"
             }
         }

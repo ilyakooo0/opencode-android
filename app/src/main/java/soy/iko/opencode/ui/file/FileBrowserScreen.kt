@@ -33,10 +33,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import soy.iko.opencode.data.model.FileStatusEntry
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.ui.vmFactory
 
@@ -164,6 +167,7 @@ private fun DirectoryListing(
                 icon = node.isDirectory,
                 label = node.name,
                 onClick = { if (node.isDirectory) onOpenDir(node.path) else onOpenFile(node.path) },
+                status = state.statusMap[node.path],
             )
             HorizontalDivider()
         }
@@ -171,7 +175,12 @@ private fun DirectoryListing(
 }
 
 @Composable
-private fun FileRow(icon: Boolean, label: String, onClick: () -> Unit) {
+private fun FileRow(
+    icon: Boolean,
+    label: String,
+    onClick: () -> Unit,
+    status: FileStatusEntry? = null,
+) {
     Row(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -187,6 +196,32 @@ private fun FileRow(icon: Boolean, label: String, onClick: () -> Unit) {
             style = MaterialTheme.typography.bodyLarge,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        if (status != null) StatusBadge(status)
+    }
+}
+
+@Composable
+private fun StatusBadge(status: FileStatusEntry) {
+    val (letter, color) = when (status.status) {
+        "added" -> "A" to Color(0xFF4CAF50)
+        "modified" -> "M" to Color(0xFFFFA000)
+        "deleted" -> "D" to MaterialTheme.colorScheme.error
+        else -> "·" to MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Text(
+        letter,
+        style = MaterialTheme.typography.labelMedium,
+        fontFamily = FontFamily.Monospace,
+        color = color,
+    )
+    if (status.added > 0 || status.removed > 0) {
+        Text(
+            "  +${status.added} −${status.removed}",
+            style = MaterialTheme.typography.labelSmall,
+            fontFamily = FontFamily.Monospace,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }

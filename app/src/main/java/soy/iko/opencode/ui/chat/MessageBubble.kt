@@ -17,7 +17,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import soy.iko.opencode.data.model.AssistantMessage
 import soy.iko.opencode.data.model.MessageWithParts
+import soy.iko.opencode.data.model.Tokens
 import soy.iko.opencode.data.model.UserMessage
+import soy.iko.opencode.ui.components.relativeTime
 
 /** A single message: user prompts right-aligned in a bubble, assistant output full-width. */
 @Composable
@@ -40,6 +42,7 @@ private fun UserBubble(message: MessageWithParts, modifier: Modifier) {
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             for (part in message.parts) PartView(part)
+            MessageTimestamp(message.info)
         }
     }
 }
@@ -66,8 +69,8 @@ private fun AssistantBlock(message: MessageWithParts, isRunning: Boolean, modifi
             val tokens = info.tokens
             if (info.isComplete && (cost != null || tokens != null)) {
                 val parts = buildList {
-                    tokens?.let { add("${it.input}→${it.output} tok") }
-                    cost?.takeIf { it > 0 }?.let { add("$%.4f".format(it)) }
+                    tokens?.let { add(formatTokens(it)) }
+                    cost?.takeIf { it > 0 }?.let { add(formatCost(it)) }
                 }
                 if (parts.isNotEmpty()) {
                     Text(
@@ -78,5 +81,26 @@ private fun AssistantBlock(message: MessageWithParts, isRunning: Boolean, modifi
                 }
             }
         }
+        MessageTimestamp(message.info)
     }
 }
+
+@Composable
+private fun MessageTimestamp(info: soy.iko.opencode.data.model.MessageInfo) {
+    val t = relativeTime(info.time?.created)
+    if (t.isNotEmpty()) {
+        Text(
+            t,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+private fun formatTokens(tokens: Tokens): String {
+    val dec = java.text.DecimalFormat("#,###")
+    return "${dec.format(tokens.input)} in · ${dec.format(tokens.output)} out"
+}
+
+private fun formatCost(cost: Double): String =
+    if (cost < 0.01) "$%.4f".format(cost) else "$%.2f".format(cost)

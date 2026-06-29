@@ -6,7 +6,7 @@ Application id: `soy.iko.opencode`
 
 ## Status
 
-Milestones M0–M7 complete:
+Milestones M0–M8 complete:
 
 - **M0–M4:** connect to a server → list/create/delete sessions → chat with **live SSE streaming**
   of the assistant's reply. Tool calls, reasoning, and token/cost are rendered.
@@ -33,6 +33,15 @@ Milestones M0–M7 complete:
   polished empty states; richer **Settings** (Dynamic Color / Material You toggle, version info,
   manage-servers link); haptic feedback; and a file viewer with line numbers, copy, and share.
   The session list also supports **renaming** a session (`PATCH /session/:id`).
+- **M8:** **Enter-to-send** (hardware-keyboard Enter sends, Shift+Enter for newline);
+  **per-session draft persistence** — typed text survives back-navigation and process
+  death; **message timestamps** (relative time on every bubble); **VCS status in the file
+  browser** — `GET /file/status` powers added/modified/deleted badges with `+N/−N` line
+  counts on tracked files; **connectivity-aware SSE reconnect** — a `ConnectivityManager`
+  callback triggers an immediate reconnect (skipping backoff) when the device regains
+  network; cleaner **token/cost formatting** (`1,234 in · 5,678 out`, precision-aware cost);
+  and **bounded preview loading** (concurrency-capped, cancelled on refresh) so the session
+  list never floods the server with parallel requests.
 
 ## Architecture
 

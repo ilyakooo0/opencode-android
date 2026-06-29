@@ -50,6 +50,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -79,12 +85,12 @@ fun ChatScreen(
     val commands by vm.commands.collectAsStateWithLifecycle()
     val sessionTitle by vm.sessionTitle.collectAsStateWithLifecycle()
     val failedDraft by vm.failedDraft.collectAsStateWithLifecycle()
+    val draft by vm.draft.collectAsStateWithLifecycle()
     val haptics = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
 
     val listState = rememberLazyListState()
     val snackbar = remember { SnackbarHostState() }
-    var input by remember { mutableStateOf("") }
     var showModelPicker by remember { mutableStateOf(false) }
     var showAgentPicker by remember { mutableStateOf(false) }
     var showCommandPicker by remember { mutableStateOf(false) }
@@ -117,8 +123,7 @@ fun ChatScreen(
     }
 
     fun doSend() {
-        if (vm.send(input)) {
-            input = ""
+        if (vm.send(draft)) {
             haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
         }
     }
@@ -164,8 +169,8 @@ fun ChatScreen(
         snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
             ChatInputBar(
-                value = input,
-                onValueChange = { input = it },
+                value = draft,
+                onValueChange = vm::updateDraft,
                 running = running,
                 enabled = vm.connected,
                 onSend = ::doSend,
@@ -323,7 +328,20 @@ private fun ChatInputBar(
             OutlinedTextField(
                 value = value,
                 onValueChange = onValueChange,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier
+                    .weight(1f)
+                    .onPreviewKeyEvent { event ->
+                        if (event.type == KeyEventType.KeyDown &&
+                            event.key == Key.Enter &&
+                            !event.isShiftPressed &&
+                            enabled && value.isNotBlank()
+                        ) {
+                            onSend()
+                            true
+                        } else {
+                            false
+                        }
+                    },
                 placeholder = { Text("Message opencode…") },
                 enabled = enabled,
                 maxLines = 6,
