@@ -216,7 +216,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
                             api.listMessages(session.id).lastOrNull()?.let { msg ->
                                 msg.parts.filterIsInstance<TextPart>().lastOrNull()?.text
                             }
-                        }.getOrNull()?.takeIf { it.isNotBlank() } ?: return@withPermit
+                        }.getOrNull()?.takeIf { it.isNotBlank() }?.take(NetworkConfig.previewTextMaxLength) ?: return@withPermit
                         _state.update { s -> s.copy(previews = s.previews + (session.id to preview)) }
                     }
                 }
@@ -281,7 +281,6 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
                 .onFailure {
                     container.disconnect()
                     _state.value = SessionListState(loading = false, error = container.friendlyError(it))
-                    refresh()
                 }
         }
     }

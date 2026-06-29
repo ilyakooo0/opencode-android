@@ -209,24 +209,23 @@ class ChatViewModel(
         // would be lost forever. The persisted draft is cleared only on success.
         _draft.value = ""
         viewModelScope.launch {
-            val ok = runCatching {
+            runCatching {
                 conn.repository.sendPrompt(
                     sessionId,
                     trimmed,
                     model = _selectedModel.value?.ref,
                     agent = _selectedAgent.value,
                 )
-            }.isSuccess
-            _running.value = false
-            if (!ok) {
+            }.onFailure {
                 _failedDraft.value = trimmed
                 // Only restore the draft if the user hasn't typed anything new since.
                 if (_draft.value.isBlank()) updateDraft(trimmed)
-                _error.value = container.string(R.string.error_failed_to_send)
-            } else {
+                _error.value = container.friendlyError(it)
+            }.onSuccess {
                 // Send succeeded — now it's safe to persist the empty draft.
                 container.draftStore.set(sessionId, "")
             }
+            _running.value = false
         }
         return true
     }

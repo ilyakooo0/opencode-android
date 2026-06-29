@@ -104,6 +104,7 @@ class EventStreamClient(
                             val event = try {
                                 OpencodeJson.decodeFromString(BusEvent.serializer(), data)
                             } catch (e: kotlinx.serialization.SerializationException) {
+                                Log.d("EventStream", "Skipping unparseable SSE event", e)
                                 continue
                             }
                             // Any successfully decoded event means the stream is live;

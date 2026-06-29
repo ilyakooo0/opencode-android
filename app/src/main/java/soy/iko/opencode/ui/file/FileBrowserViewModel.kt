@@ -88,7 +88,7 @@ class FileBrowserViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun setQuery(query: String) {
-        _state.value = _state.value.copy(query = query)
+        _state.value = _state.value.copy(query = query, error = null)
         searchJob?.cancel()
         if (query.isBlank()) {
             _state.value = _state.value.copy(results = emptyList(), searching = false)
