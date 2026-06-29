@@ -6,7 +6,7 @@ Application id: `soy.iko.opencode`
 
 ## Status
 
-Milestones M0–M5 complete:
+Milestones M0–M6 complete:
 
 - **M0–M4:** connect to a server → list/create/delete sessions → chat with **live SSE streaming**
   of the assistant's reply. Tool calls, reasoning, and token/cost are rendered.
@@ -15,9 +15,13 @@ Milestones M0–M5 complete:
   `POST /session/:id/permissions/:permissionID`, so tool runs don't stall; **file browser + viewer**
   (`/find/file` fuzzy search, `/file` directory listing, `/file/content` read-only view); **reconnect
   banner** (live SSE connection state) and a real **Settings** screen (theme mode, persisted).
-
-Not yet built: rich diff/patch rendering, agents/commands UI, markdown rendering, multi-server
-quick-switch.
+- **M6:** **markdown rendering** of assistant text (headings, code blocks, lists, blockquotes, inline
+  bold/italic/code/links/strikethrough); **rich diff/patch rendering** — tool outputs and file-viewer
+  content that contain unified diffs are syntax-highlighted (added lines green, removed lines red,
+  hunk headers); **agents & commands UI** — `GET /agent` powers a per-message agent picker (sent via
+  the `agent` field on the prompt body); `GET /command` powers a slash-command runner that sends the
+  command template with its configured agent; **multi-server quick-switch** — the session list title
+  is a dropdown that lists all saved servers and switches instantly without navigating back.
 
 ## Architecture
 

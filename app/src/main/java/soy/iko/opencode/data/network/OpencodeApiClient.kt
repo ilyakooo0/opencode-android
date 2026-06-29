@@ -1,5 +1,7 @@
 package soy.iko.opencode.data.network
 
+import soy.iko.opencode.data.model.Agent
+import soy.iko.opencode.data.model.Command
 import soy.iko.opencode.data.model.CreateSessionRequest
 import soy.iko.opencode.data.model.FileContent
 import soy.iko.opencode.data.model.FileNode
@@ -81,6 +83,12 @@ class OpencodeApiClient(private val client: HttpClient) {
 
     suspend fun providers(): ProvidersResponse =
         client.get("config/providers").body()
+
+    suspend fun agents(): List<Agent> =
+        client.get("agent").body()
+
+    suspend fun commands(): List<Command> =
+        client.get("command").body()
 
     /** Respond to a permission request so a paused tool run can proceed. */
     suspend fun respondPermission(

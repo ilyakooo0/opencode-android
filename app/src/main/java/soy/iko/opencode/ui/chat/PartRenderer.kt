@@ -42,17 +42,19 @@ import soy.iko.opencode.data.model.ToolRunning
 import soy.iko.opencode.data.model.ToolState
 import soy.iko.opencode.data.model.ToolUnknown
 import soy.iko.opencode.data.model.UnknownPart
+import soy.iko.opencode.ui.components.DiffView
+import soy.iko.opencode.ui.components.MarkdownText
+import soy.iko.opencode.ui.components.looksLikeDiff
 
 /**
  * Renders a single message [Part]. The exhaustive `when` over the sealed type gives
  * compile-time coverage; the [UnknownPart] arm keeps the UI forward-compatible.
- * (Markdown rendering is deferred — text is shown as-is for the scaffold.)
  */
 @Composable
 fun PartView(part: Part, modifier: Modifier = Modifier) {
     when (part) {
         is TextPart -> if (!part.ignored && part.text.isNotEmpty()) {
-            Text(part.text, modifier = modifier, style = MaterialTheme.typography.bodyLarge)
+            MarkdownText(part.text, modifier = modifier)
         }
         is ReasoningPart -> ReasoningBlock(part.text, modifier)
         is ToolPart -> ToolCallView(part, modifier)
@@ -117,12 +119,17 @@ private fun ToolCallView(part: ToolPart, modifier: Modifier) {
             else -> null
         }
         if (detail != null) {
-            Text(
-                detail.take(2000),
-                style = MaterialTheme.typography.bodySmall,
-                fontFamily = FontFamily.Monospace,
-                modifier = Modifier.padding(top = 6.dp),
-            )
+            val truncated = detail.take(5000)
+            if (looksLikeDiff(truncated)) {
+                DiffView(truncated)
+            } else {
+                Text(
+                    truncated.take(2000),
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+            }
         }
     }
 }

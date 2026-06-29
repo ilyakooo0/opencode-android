@@ -16,7 +16,9 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -59,11 +61,16 @@ fun ChatScreen(
     val selectedModel by vm.selectedModel.collectAsStateWithLifecycle()
     val connectionState by vm.connectionState.collectAsStateWithLifecycle()
     val pendingPermission by vm.pendingPermission.collectAsStateWithLifecycle()
+    val agents by vm.agents.collectAsStateWithLifecycle()
+    val selectedAgent by vm.selectedAgent.collectAsStateWithLifecycle()
+    val commands by vm.commands.collectAsStateWithLifecycle()
 
     val listState = rememberLazyListState()
     val snackbar = remember { SnackbarHostState() }
     var input by remember { mutableStateOf("") }
     var showModelPicker by remember { mutableStateOf(false) }
+    var showAgentPicker by remember { mutableStateOf(false) }
+    var showCommandPicker by remember { mutableStateOf(false) }
 
     // Keep the newest content in view as parts stream in.
     LaunchedEffect(messages.size, messages.lastOrNull()?.parts?.size) {
@@ -83,7 +90,10 @@ fun ChatScreen(
                     Column(modifier = Modifier.clickable(enabled = models.isNotEmpty()) { showModelPicker = true }) {
                         Text("Session")
                         Text(
-                            selectedModel?.modelLabel ?: "default model",
+                            buildString {
+                                append(selectedModel?.modelLabel ?: "default model")
+                                selectedAgent?.let { append("  •  $it") }
+                            },
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -95,6 +105,12 @@ fun ChatScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = { showCommandPicker = true }, enabled = commands.isNotEmpty()) {
+                        Icon(Icons.Filled.Terminal, contentDescription = "Commands")
+                    }
+                    IconButton(onClick = { showAgentPicker = true }, enabled = agents.isNotEmpty()) {
+                        Icon(Icons.Filled.SmartToy, contentDescription = "Choose agent")
+                    }
                     IconButton(onClick = { showModelPicker = true }, enabled = models.isNotEmpty()) {
                         Icon(Icons.Filled.Tune, contentDescription = "Choose model")
                     }
@@ -156,6 +172,23 @@ fun ChatScreen(
             selected = selectedModel,
             onSelect = { vm.selectModel(it) },
             onDismiss = { showModelPicker = false },
+        )
+    }
+
+    if (showAgentPicker) {
+        AgentPickerSheet(
+            agents = agents,
+            selected = selectedAgent,
+            onSelect = { vm.selectAgent(it?.name) },
+            onDismiss = { showAgentPicker = false },
+        )
+    }
+
+    if (showCommandPicker) {
+        CommandPickerSheet(
+            commands = commands,
+            onSelect = { vm.runCommand(it) },
+            onDismiss = { showCommandPicker = false },
         )
     }
 

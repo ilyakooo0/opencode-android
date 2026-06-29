@@ -33,8 +33,8 @@ class SessionRepository(
     suspend fun deleteSession(id: String) = api.deleteSession(id)
     suspend fun abort(sessionId: String) = api.abort(sessionId)
 
-    suspend fun sendPrompt(sessionId: String, text: String, model: ModelRef?) =
-        api.sendPrompt(sessionId, text, model)
+    suspend fun sendPrompt(sessionId: String, text: String, model: ModelRef?, agent: String? = null) =
+        api.sendPrompt(sessionId, text, model, agent)
 
     /**
      * A live, ordered view of [sessionId]'s messages. Begins collecting the event

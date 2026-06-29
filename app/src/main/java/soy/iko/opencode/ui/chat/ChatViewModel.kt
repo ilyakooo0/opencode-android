@@ -2,6 +2,8 @@ package soy.iko.opencode.ui.chat
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import soy.iko.opencode.data.model.Agent
+import soy.iko.opencode.data.model.Command
 import soy.iko.opencode.data.model.MessageWithParts
 import soy.iko.opencode.data.model.ModelOption
 import soy.iko.opencode.data.model.Permission
@@ -57,9 +59,20 @@ class ChatViewModel(
     private val _pendingPermission = MutableStateFlow<Permission?>(null)
     val pendingPermission: StateFlow<Permission?> = _pendingPermission.asStateFlow()
 
+    private val _agents = MutableStateFlow<List<Agent>>(emptyList())
+    val agents: StateFlow<List<Agent>> = _agents.asStateFlow()
+
+    private val _selectedAgent = MutableStateFlow<String?>(null)
+    val selectedAgent: StateFlow<String?> = _selectedAgent.asStateFlow()
+
+    private val _commands = MutableStateFlow<List<Command>>(emptyList())
+    val commands: StateFlow<List<Command>> = _commands.asStateFlow()
+
     fun clearError() { _error.value = null }
 
     fun selectModel(option: ModelOption) { _selectedModel.value = option }
+
+    fun selectAgent(name: String?) { _selectedAgent.value = name }
 
     init {
         // Watch the bus for run completion / errors / permission asks for this session.
@@ -90,6 +103,14 @@ class ChatViewModel(
                     _selectedModel.value = resp.defaultOption(options)
                 }
             }
+            // Load the agent catalog (non-fatal).
+            viewModelScope.launch {
+                runCatching { conn.api.agents() }.getOrNull()?.let { _agents.value = it }
+            }
+            // Load the command catalog (non-fatal).
+            viewModelScope.launch {
+                runCatching { conn.api.commands() }.getOrNull()?.let { _commands.value = it }
+            }
         }
     }
 
@@ -100,10 +121,32 @@ class ChatViewModel(
         _running.value = true
         _error.value = null
         viewModelScope.launch {
-            runCatching { conn.repository.sendPrompt(sessionId, trimmed, model = _selectedModel.value?.ref) }
-                .onFailure { _error.value = it.message ?: "Failed to send" }
-            // session.idle is the authoritative finalizer; clear here too in case the
-            // POST returns first (idempotent).
+            runCatching {
+                conn.repository.sendPrompt(
+                    sessionId,
+                    trimmed,
+                    model = _selectedModel.value?.ref,
+                    agent = _selectedAgent.value,
+                )
+            }.onFailure { _error.value = it.message ?: "Failed to send" }
+            _running.value = false
+        }
+    }
+
+    /** Invoke a slash-command: sends the command's template text with the command's agent/model if set. */
+    fun runCommand(command: Command) {
+        val conn = connection ?: return
+        if (_running.value) return
+        _running.value = true
+        _error.value = null
+        viewModelScope.launch {
+            runCatching {
+                conn.api.sendPrompt(
+                    sessionId,
+                    command.template,
+                    agent = command.agent,
+                )
+            }.onFailure { _error.value = it.message ?: "Failed to run command" }
             _running.value = false
         }
     }
