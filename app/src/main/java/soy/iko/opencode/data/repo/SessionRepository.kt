@@ -69,83 +69,6 @@ class SessionRepository(
         job.join()
     }
 
-    /** In-memory reduction state for one observed session. Not thread-safe; guard with a Mutex. */
-    private class MessageStore {
-        // messageId -> (info + parts), insertion-ordered.
-        private val messages = LinkedHashMap<String, MessageWithParts>()
-
-        fun snapshot(): List<MessageWithParts> = messages.values.toList()
-
-        fun seed(initial: List<MessageWithParts>) {
-            for (m in initial) messages[m.info.id] = m
-        }
-
-        /** Returns true if the state changed (and a new snapshot should be published). */
-        fun reduce(sessionId: String, event: BusEvent): Boolean {
-            return when (event) {
-                is MessageUpdated -> {
-                    val info = event.properties.info
-                    if (info.sessionID != sessionId) {
-                        false
-                    } else {
-                        val existing = messages[info.id]
-                        messages[info.id] = existing?.copy(info = info) ?: MessageWithParts(info)
-                        true
-                    }
-                }
-
-                is MessagePartUpdated -> {
-                    val part = event.properties.part
-                    val messageId = part.messageID ?: event.properties.messageID
-                    val partSession = part.sessionID ?: event.properties.sessionID
-                    if (messageId == null || (partSession != null && partSession != sessionId)) {
-                        false
-                    } else {
-                        upsertPart(messageId, part)
-                    }
-                }
-
-                is MessagePartRemoved -> {
-                    val messageId = event.properties.messageID
-                    val partId = event.properties.partID
-                    if (messageId == null || partId == null) false else removePart(messageId, partId)
-                }
-
-                is MessageRemoved -> {
-                    val id = event.properties.messageID
-                    if (id == null) false else messages.remove(id) != null
-                }
-
-                else -> false
-            }
-        }
-
-        private fun upsertPart(messageId: String, part: Part): Boolean {
-            val current = messages[messageId]
-            val parts = current?.parts.orEmpty()
-            val idx = parts.indexOfFirst { it.id == part.id }
-            val newParts = if (idx >= 0) {
-                parts.toMutableList().also { it[idx] = part }
-            } else {
-                parts + part
-            }
-            messages[messageId] = current?.copy(parts = newParts)
-                ?: MessageWithParts(
-                    info = AssistantMessage(id = messageId, sessionID = part.sessionID ?: ""),
-                    parts = newParts,
-                )
-            return true
-        }
-
-        private fun removePart(messageId: String, partId: String): Boolean {
-            val current = messages[messageId] ?: return false
-            val newParts = current.parts.filterNot { it.id == partId }
-            if (newParts.size == current.parts.size) return false
-            messages[messageId] = current.copy(parts = newParts)
-            return true
-        }
-    }
-
     companion object {
         /** Convenience: is this event a run-completion signal for [sessionId]? */
         fun isIdle(event: BusEvent, sessionId: String): Boolean =
@@ -153,5 +76,85 @@ class SessionRepository(
 
         fun isError(event: BusEvent, sessionId: String): Boolean =
             event is SessionError && (event.properties.sessionID == null || event.properties.sessionID == sessionId)
+    }
+}
+
+/**
+ * In-memory reduction state for one observed session. Not thread-safe; guard with a Mutex.
+ * Exposed as `internal` so the reducer logic can be unit-tested directly.
+ */
+internal class MessageStore {
+    // messageId -> (info + parts), insertion-ordered.
+    private val messages = LinkedHashMap<String, MessageWithParts>()
+
+    fun snapshot(): List<MessageWithParts> = messages.values.toList()
+
+    fun seed(initial: List<MessageWithParts>) {
+        for (m in initial) messages[m.info.id] = m
+    }
+
+    /** Returns true if the state changed (and a new snapshot should be published). */
+    fun reduce(sessionId: String, event: BusEvent): Boolean {
+        return when (event) {
+            is MessageUpdated -> {
+                val info = event.properties.info
+                if (info.sessionID != sessionId) {
+                    false
+                } else {
+                    val existing = messages[info.id]
+                    messages[info.id] = existing?.copy(info = info) ?: MessageWithParts(info)
+                    true
+                }
+            }
+
+            is MessagePartUpdated -> {
+                val part = event.properties.part
+                val messageId = part.messageID ?: event.properties.messageID
+                val partSession = part.sessionID ?: event.properties.sessionID
+                if (messageId == null || (partSession != null && partSession != sessionId)) {
+                    false
+                } else {
+                    upsertPart(messageId, part)
+                }
+            }
+
+            is MessagePartRemoved -> {
+                val messageId = event.properties.messageID
+                val partId = event.properties.partID
+                if (messageId == null || partId == null) false else removePart(messageId, partId)
+            }
+
+            is MessageRemoved -> {
+                val id = event.properties.messageID
+                if (id == null) false else messages.remove(id) != null
+            }
+
+            else -> false
+        }
+    }
+
+    private fun upsertPart(messageId: String, part: Part): Boolean {
+        val current = messages[messageId]
+        val parts = current?.parts.orEmpty()
+        val idx = parts.indexOfFirst { it.id == part.id }
+        val newParts = if (idx >= 0) {
+            parts.toMutableList().also { it[idx] = part }
+        } else {
+            parts + part
+        }
+        messages[messageId] = current?.copy(parts = newParts)
+            ?: MessageWithParts(
+                info = AssistantMessage(id = messageId, sessionID = part.sessionID ?: ""),
+                parts = newParts,
+            )
+        return true
+    }
+
+    private fun removePart(messageId: String, partId: String): Boolean {
+        val current = messages[messageId] ?: return false
+        val newParts = current.parts.filterNot { it.id == partId }
+        if (newParts.size == current.parts.size) return false
+        messages[messageId] = current.copy(parts = newParts)
+        return true
     }
 }

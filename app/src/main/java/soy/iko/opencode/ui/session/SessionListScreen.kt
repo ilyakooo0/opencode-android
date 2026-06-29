@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.ChatBubbleOutline
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
@@ -73,6 +74,7 @@ fun SessionListScreen(
     val haptics = LocalHapticFeedback.current
     var showServerMenu by remember { mutableStateOf(false) }
     var pendingDelete by remember { mutableStateOf<Session?>(null) }
+    var pendingRename by remember { mutableStateOf<Session?>(null) }
 
     Scaffold(
         topBar = {
@@ -188,6 +190,7 @@ fun SessionListScreen(
                                     session = session,
                                     preview = state.previews[session.id],
                                     onClick = { onOpenSession(session.id) },
+                                    onRename = { pendingRename = session },
                                     onDelete = { pendingDelete = session },
                                 )
                             }
@@ -215,6 +218,48 @@ fun SessionListScreen(
             },
         )
     }
+
+    pendingRename?.let { session ->
+        var title by remember { mutableStateOf(session.title ?: "") }
+        RenameSessionDialog(
+            title = title,
+            onTitleChange = { title = it },
+            onConfirm = {
+                val newName = title.trim()
+                pendingRename = null
+                if (newName.isNotEmpty() && newName != session.title) vm.renameSession(session, newName)
+            },
+            onDismiss = { pendingRename = null },
+        )
+    }
+}
+
+@Composable
+private fun RenameSessionDialog(
+    title: String,
+    onTitleChange: (String) -> Unit,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Rename session") },
+        text = {
+            OutlinedTextField(
+                value = title,
+                onValueChange = onTitleChange,
+                modifier = Modifier.fillMaxWidth(),
+                placeholder = { Text("Session title") },
+                singleLine = true,
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm, enabled = title.isNotBlank()) { Text("Save") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+    )
 }
 
 @Composable
@@ -222,6 +267,7 @@ private fun SessionCard(
     session: Session,
     preview: String?,
     onClick: () -> Unit,
+    onRename: () -> Unit,
     onDelete: () -> Unit,
 ) {
     Card(
@@ -248,6 +294,9 @@ private fun SessionCard(
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                }
+                IconButton(onClick = onRename) {
+                    Icon(Icons.Filled.Edit, contentDescription = "Rename")
                 }
                 IconButton(onClick = onDelete) {
                     Icon(Icons.Filled.Delete, contentDescription = "Delete")

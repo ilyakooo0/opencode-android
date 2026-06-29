@@ -32,6 +32,7 @@ Milestones M0–M7 complete:
   dynamic "Thinking…" → "Thoughts" reasoning label; back-press guard while an agent is running;
   polished empty states; richer **Settings** (Dynamic Color / Material You toggle, version info,
   manage-servers link); haptic feedback; and a file viewer with line numbers, copy, and share.
+  The session list also supports **renaming** a session (`PATCH /session/:id`).
 
 ## Architecture
 
@@ -54,6 +55,7 @@ Source map: `data/network` (Ktor, SSE, JSON), `data/model` (wire models), `data/
 ```bash
 nix develop              # JDK 17, Gradle 8.14.4, Android SDK 35, aapt2 override
 ./gradlew assembleDebug  # -> app/build/outputs/apk/debug/app-debug.apk
+./gradlew assembleRelease  # R8-minified + resource-shrunk release APK
 ./gradlew testDebugUnitTest   # JVM tests for the JSON/serialization layer
 ```
 

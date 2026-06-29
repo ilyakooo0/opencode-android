@@ -115,6 +115,17 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
+    fun renameSession(session: Session, newTitle: String) {
+        val conn = container.activeConnection.value ?: return
+        val title = newTitle.trim()
+        if (title.isEmpty() || title == session.title) return
+        viewModelScope.launch {
+            runCatching { conn.api.updateSession(session.id, title) }
+                .onSuccess { refresh() }
+                .onFailure { _state.value = _state.value.copy(error = it.message ?: "Failed to rename session") }
+        }
+    }
+
     /** Quick-switch to a different saved server without leaving the session list. */
     fun switchServer(profile: ServerProfile) {
         if (profile.id == activeProfileId) return

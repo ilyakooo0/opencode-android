@@ -1,9 +1,9 @@
 package soy.iko.opencode.data.network
 
 import soy.iko.opencode.data.model.BusEvent
-import soy.iko.opencode.data.model.ServerConnected
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.sse.sse
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -51,15 +51,18 @@ class EventStreamClient(
                         val data = sse.data ?: return@collect
                         val event = runCatching { OpencodeJson.decodeFromString(BusEvent.serializer(), data) }
                             .getOrNull() ?: return@collect
-                        if (event is ServerConnected) {
+                        // Any successfully decoded event means the stream is live;
+                        // don't wait for a ServerConnected event to show "Connected".
+                        if (_state.value != ConnectionState.Connected) {
                             _state.value = ConnectionState.Connected
                         }
                         send(event)
                     }
                 }
+            } catch (c: CancellationException) {
+                throw c
             } catch (t: Throwable) {
-                if (!isActive) throw t
-                // fall through to reconnect
+                // transient error — fall through to reconnect
             }
             _state.value = ConnectionState.Disconnected
             if (!isActive) break
