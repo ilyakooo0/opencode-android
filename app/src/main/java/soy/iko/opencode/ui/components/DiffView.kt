@@ -89,7 +89,7 @@ fun looksLikeDiff(text: String): Boolean {
     return false
 }
 
-private const val COLLAPSED_DIFF_LINES = 500
+private const val COLLAPSED_DIFF_LINES = 200
 
 /**
  * Renders a parsed unified diff. Implemented as a plain (non-lazy) [Column] so it is

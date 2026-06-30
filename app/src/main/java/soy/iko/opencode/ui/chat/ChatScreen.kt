@@ -49,6 +49,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -82,7 +83,6 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import soy.iko.opencode.data.model.TextPart
@@ -90,6 +90,8 @@ import soy.iko.opencode.data.network.EventStreamClient
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
 import soy.iko.opencode.ui.components.ConnectionBanner
+import soy.iko.opencode.ui.components.LocalRelativeTimeTick
+import soy.iko.opencode.ui.components.rememberRelativeTimeTick
 import soy.iko.opencode.ui.components.showToast
 import soy.iko.opencode.ui.components.toImageContext
 import soy.iko.opencode.ui.vmFactory
@@ -150,6 +152,10 @@ fun ChatScreen(
     }
 
     val listState = rememberLazyListState()
+    // One shared timer drives every relative-time label in the list (see MessageTimestamp)
+    // instead of each bubble spinning up its own coroutine + lifecycle observer, which
+    // churns as items scroll in and out of the viewport.
+    val timeTick = rememberRelativeTimeTick()
     val snackbar = remember { SnackbarHostState() }
     val retryLabel = stringResource(R.string.retry)
     var showModelPicker by rememberSaveable { mutableStateOf(false) }
@@ -188,8 +194,8 @@ fun ChatScreen(
     // Keep the newest content in view as parts stream in — only if already at the bottom.
     // A single LaunchedEffect(Unit) + snapshotFlow avoids the rapid cancel/re-launch
     // churn that keying on lastPartLen (which changes on every streaming token) caused.
-    // collectLatest cancels the in-flight scroll when a newer snapshot arrives, so
-    // streaming stays smooth without dozens of competing animations per second.
+    // Snapping (not animating) to the bottom keeps the newest content in view: animating
+    // per token cancels/relaunches the spring constantly and stutters (see collect below).
     //
     // The second Triple component tracks the total text length of the last message's
     // parts. When a streaming token updates an existing TextPart (same part ID, longer
@@ -202,11 +208,15 @@ fun ChatScreen(
                 messages.lastOrNull()?.parts?.sumOf { (it as? TextPart)?.text?.length ?: 0 } ?: 0,
                 isPinnedToBottom,
             )
-        }.collectLatest { (_, _, pinned) ->
-                if (messages.isNotEmpty() && pinned) {
-                    listState.animateScrollToItem(messages.lastIndex)
-                }
+        }.collect { (_, _, pinned) ->
+            // Snap (don't animate) to the latest content as it streams in. Animating on
+            // every token cancels and relaunches the spring dozens of times per second,
+            // which never settles and visibly stutters. An instant scroll is one cheap
+            // layout pass per coalesced snapshot and tracks the stream smoothly.
+            if (messages.isNotEmpty() && pinned) {
+                listState.scrollToItem(messages.lastIndex)
             }
+        }
     }
     LaunchedEffect(Unit) {
         vm.errorEvents.collect { msg ->
@@ -296,6 +306,7 @@ fun ChatScreen(
             )
         },
     ) { padding ->
+        CompositionLocalProvider(LocalRelativeTimeTick provides timeTick) {
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
             if (activeConnection == null) {
                 Column(
@@ -378,6 +389,7 @@ fun ChatScreen(
                 }
                 }
             }
+        }
         }
     }
 

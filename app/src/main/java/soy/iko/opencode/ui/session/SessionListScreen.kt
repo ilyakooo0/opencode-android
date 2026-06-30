@@ -50,6 +50,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -74,7 +75,9 @@ import soy.iko.opencode.data.model.Session
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
 import soy.iko.opencode.ui.components.ConnectionBanner
+import soy.iko.opencode.ui.components.LocalRelativeTimeTick
 import soy.iko.opencode.ui.components.rememberRelativeTime
+import soy.iko.opencode.ui.components.rememberRelativeTimeTick
 import soy.iko.opencode.ui.vmFactory
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -96,6 +99,9 @@ fun SessionListScreen(
     val unread by vm.unread.collectAsStateWithLifecycle()
     val haptics = LocalHapticFeedback.current
     val snackbar = remember { SnackbarHostState() }
+    // One shared timer drives every relative-time label in the session list instead of
+    // each card spinning up its own coroutine + lifecycle observer while scrolling.
+    val timeTick = rememberRelativeTimeTick()
     var showServerMenu by rememberSaveable { mutableStateOf(false) }
     var pendingDeleteId by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingRenameId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -194,6 +200,7 @@ fun SessionListScreen(
             )
         },
     ) { padding ->
+        CompositionLocalProvider(LocalRelativeTimeTick provides timeTick) {
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
             ConnectionBanner(
                 state = connectionState,
@@ -262,6 +269,7 @@ fun SessionListScreen(
                     }
                 }
             }
+        }
         }
     }
 

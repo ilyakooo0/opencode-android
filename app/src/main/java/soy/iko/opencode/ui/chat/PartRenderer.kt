@@ -180,7 +180,10 @@ private fun ToolCallView(part: ToolPart, modifier: Modifier) {
             val expandedState = stringResource(R.string.state_expanded)
             val collapsedState = stringResource(R.string.state_collapsed)
             val display = if (expanded || detail.length <= COLLAPSED_LIMIT) detail else collapsed
-            if (looksLikeDiff(display)) {
+            // looksLikeDiff scans the whole string; memoize so a recomposition that doesn't
+            // change `display` (e.g. an unrelated state flip) doesn't re-scan on every pass.
+            val isDiff = remember(display) { looksLikeDiff(display) }
+            if (isDiff) {
                 DiffView(display)
             } else {
                 Text(
