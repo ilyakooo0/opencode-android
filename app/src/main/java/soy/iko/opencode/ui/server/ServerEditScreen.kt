@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
@@ -19,6 +20,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -111,15 +113,24 @@ fun ServerEditScreen(
                 singleLine = true,
                 visualTransformation = PasswordVisualTransformation(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
-                keyboardActions = KeyboardActions(onDone = { if (state.canSave) vm.save(onDone) }),
+                keyboardActions = KeyboardActions(onDone = { if (state.canSave && !state.saving) vm.save(onDone) }),
                 modifier = Modifier.fillMaxWidth(),
             )
             Button(
                 onClick = { vm.save(onDone) },
-                enabled = state.canSave,
+                enabled = state.canSave && !state.saving,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text(stringResource(R.string.save))
+                if (state.saving) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        strokeWidth = 2.dp,
+                    )
+                    Text(stringResource(R.string.saving), modifier = Modifier.padding(start = 8.dp))
+                } else {
+                    Text(stringResource(R.string.save))
+                }
             }
             state.error?.let { message ->
                 Text(

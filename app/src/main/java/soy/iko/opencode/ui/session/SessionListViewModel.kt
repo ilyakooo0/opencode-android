@@ -93,8 +93,10 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
 
     /** Per-session in-flight preview loads, so rapid SSE events for the same session
      *  coalesce into a single request instead of firing one per event. Accessed from
-     *  multiple coroutines (the SSE event handler and [loadPreview]), so kept concurrent. */
+     *  multiple coroutines (the SSE event handler and [loadPreview]), so the
+     *  remove-then-put sequence is guarded by [previewLock] to stay atomic. */
     private val livePreviewJobs = java.util.concurrent.ConcurrentHashMap<String, Job>()
+    private val previewLock = Any()
 
     private val activeProfileId: String?
         get() = container.activeConnection.value?.profile?.id
@@ -191,14 +193,16 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
     private fun loadPreview(sessionId: String) {
         val conn = container.activeConnection.value ?: return
         val api = conn.api
-        livePreviewJobs.remove(sessionId)?.cancel()
-        livePreviewJobs[sessionId] = viewModelScope.launch {
-            val job = coroutineContext[kotlinx.coroutines.Job]
-            try {
-                val preview = fetchSessionPreview(api, sessionId) ?: return@launch
-                _state.update { s -> s.copy(previews = s.previews + (sessionId to preview)) }
-            } finally {
-                if (job != null) livePreviewJobs.remove(sessionId, job)
+        synchronized(previewLock) {
+            livePreviewJobs.remove(sessionId)?.cancel()
+            livePreviewJobs[sessionId] = viewModelScope.launch {
+                val job = coroutineContext[kotlinx.coroutines.Job]
+                try {
+                    val preview = fetchSessionPreview(api, sessionId) ?: return@launch
+                    _state.update { s -> s.copy(previews = s.previews + (sessionId to preview)) }
+                } finally {
+                    if (job != null) synchronized(previewLock) { livePreviewJobs.remove(sessionId, job) }
+                }
             }
         }
     }

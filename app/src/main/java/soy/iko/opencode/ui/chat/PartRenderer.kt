@@ -34,8 +34,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -92,12 +94,17 @@ private fun ReasoningBlock(text: String, streaming: Boolean, modifier: Modifier)
     if (text.isBlank()) return
     val context = LocalContext.current
     var expanded by remember { mutableStateOf(false) }
+    val expandedState = stringResource(R.string.state_expanded)
+    val collapsedState = stringResource(R.string.state_collapsed)
     Column(modifier = modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier
                 .clickable { expanded = !expanded }
                 .padding(vertical = 4.dp)
-                .semantics { role = Role.Button },
+                .semantics {
+                    role = Role.Button
+                    stateDescription = if (expanded) expandedState else collapsedState
+                },
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (streaming) {
@@ -167,6 +174,8 @@ private fun ToolCallView(part: ToolPart, modifier: Modifier) {
         if (detail != null) {
             val collapsed = remember(detail) { detail.take(COLLAPSED_LIMIT) }
             var expanded by remember(detail) { mutableStateOf(false) }
+            val expandedState = stringResource(R.string.state_expanded)
+            val collapsedState = stringResource(R.string.state_collapsed)
             val display = if (expanded || detail.length <= COLLAPSED_LIMIT) detail else collapsed
             if (looksLikeDiff(display)) {
                 DiffView(display)
@@ -182,6 +191,9 @@ private fun ToolCallView(part: ToolPart, modifier: Modifier) {
                 TextButton(
                     onClick = { expanded = !expanded },
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp),
+                    modifier = Modifier.semantics {
+                        stateDescription = if (expanded) expandedState else collapsedState
+                    },
                 ) {
                     Icon(
                         if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
@@ -210,13 +222,26 @@ private fun ToolCallView(part: ToolPart, modifier: Modifier) {
 private fun ToolStatusIcon(state: ToolState) {
     when (state) {
         is ToolPending, is ToolRunning ->
-            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+            CircularProgressIndicator(
+                modifier = Modifier.size(16.dp).semantics { contentDescription = "" },
+                strokeWidth = 2.dp,
+            )
         is ToolCompleted ->
-            Icon(Icons.Filled.CheckCircle, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+            Icon(
+                Icons.Filled.CheckCircle,
+                contentDescription = stringResource(R.string.tool_completed),
+                modifier = Modifier.size(16.dp),
+                tint = MaterialTheme.colorScheme.primary,
+            )
         is ToolError ->
-            Icon(Icons.Filled.Error, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.error)
+            Icon(
+                Icons.Filled.Error,
+                contentDescription = stringResource(R.string.tool_error),
+                modifier = Modifier.size(16.dp),
+                tint = MaterialTheme.colorScheme.error,
+            )
         is ToolUnknown ->
-            Icon(Icons.Filled.Bolt, null, Modifier.size(16.dp))
+            Icon(Icons.Filled.Bolt, contentDescription = null, modifier = Modifier.size(16.dp))
     }
 }
 

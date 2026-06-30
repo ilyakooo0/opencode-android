@@ -96,7 +96,7 @@ private fun CodeWithCopy(model: MarkdownComponentModel) {
         ) {
             IconButton(
                 onClick = { copyToClipboard(context, "code", code) },
-                modifier = Modifier.size(28.dp),
+                modifier = Modifier.size(48.dp),
             ) {
                 Icon(
                     Icons.Filled.ContentCopy,

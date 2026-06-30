@@ -60,8 +60,12 @@ object HttpClientFactory {
                             password = profile.password.orEmpty(),
                         )
                     }
-                    // Send eagerly so opencode doesn't need a 401 challenge round-trip.
-                    sendWithoutRequest { true }
+                    // Send eagerly so opencode doesn't need a 401 challenge round-trip,
+                    // but only over HTTPS — sending credentials over cleartext HTTP
+                    // would expose them on the network.
+                    sendWithoutRequest { request ->
+                        request.url.protocol.name == "https"
+                    }
                 }
             }
         }
@@ -71,13 +75,15 @@ object HttpClientFactory {
         }
     }
 
-    /** Ensure a scheme and a single trailing slash so relative paths resolve correctly. */
+    /** Ensure a scheme and a single trailing slash so relative paths resolve correctly.
+     *  Defaults to [https] when no scheme is given so credentials aren't accidentally
+     *  sent over cleartext. Users who need plain HTTP must type the scheme explicitly. */
     fun normalizeBaseUrl(raw: String): String {
         val trimmed = raw.trim()
         val withScheme = if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
             trimmed
         } else {
-            "http://$trimmed"
+            "https://$trimmed"
         }
         return if (withScheme.endsWith("/")) withScheme else "$withScheme/"
     }

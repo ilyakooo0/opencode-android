@@ -133,8 +133,8 @@ private fun Breadcrumbs(path: String, onNavigate: (String) -> Unit, modifier: Mo
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        IconButton(onClick = { onNavigate("") }, modifier = Modifier.size(20.dp)) {
-            Icon(Icons.Filled.Home, contentDescription = stringResource(R.string.root), modifier = Modifier.size(18.dp))
+        IconButton(onClick = { onNavigate("") }) {
+            Icon(Icons.Filled.Home, contentDescription = stringResource(R.string.root), modifier = Modifier.size(24.dp))
         }
         var acc = ""
         segments.forEachIndexed { index, segment ->
@@ -150,7 +150,9 @@ private fun Breadcrumbs(path: String, onNavigate: (String) -> Unit, modifier: Mo
                 segment,
                 style = MaterialTheme.typography.bodyMedium,
                 color = if (index == segments.lastIndex) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.primary,
-                modifier = Modifier.clickable(role = Role.Button) { onNavigate(target) }.padding(vertical = 2.dp),
+                modifier = Modifier
+                    .clickable(role = Role.Button) { onNavigate(target) }
+                    .padding(horizontal = 6.dp, vertical = 14.dp),
             )
         }
     }

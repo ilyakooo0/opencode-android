@@ -9,18 +9,21 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.PlaylistPlay
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.Box
 import soy.iko.opencode.data.model.Command
 import soy.iko.opencode.R
 
@@ -29,6 +32,7 @@ import soy.iko.opencode.R
 @Composable
 fun CommandPickerSheet(
     commands: List<Command>,
+    loading: Boolean,
     onSelect: (Command) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -38,7 +42,14 @@ fun CommandPickerSheet(
             style = MaterialTheme.typography.titleMedium,
             modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 8.dp),
         )
-        if (commands.isEmpty()) {
+        if (loading) {
+            Box(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                CircularProgressIndicator()
+            }
+        } else if (commands.isEmpty()) {
             Text(
                 stringResource(R.string.no_commands),
                 style = MaterialTheme.typography.bodyMedium,

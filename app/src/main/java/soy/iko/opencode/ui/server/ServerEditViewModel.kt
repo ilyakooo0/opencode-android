@@ -19,6 +19,7 @@ data class ServerEditState(
     val username: String = "",
     val password: String = "",
     val loaded: Boolean = false,
+    val saving: Boolean = false,
     val error: String? = null,
 ) {
     val canSave: Boolean get() = baseUrl.isNotBlank()
@@ -61,7 +62,8 @@ class ServerEditViewModel(
 
     fun save(onDone: () -> Unit) {
         val s = _state.value
-        if (!s.canSave) return
+        if (!s.canSave || s.saving) return
+        _state.value = s.copy(saving = true)
         viewModelScope.launch {
             val result = runCatching {
                 val existingLastUsed = if (s.id != null) {
@@ -82,7 +84,7 @@ class ServerEditViewModel(
                 )
             }
             result.onSuccess { onDone() }
-                .onFailure { _state.value = _state.value.copy(error = it.message ?: "Failed to save") }
+                .onFailure { _state.value = _state.value.copy(error = it.message ?: "Failed to save", saving = false) }
         }
     }
 }

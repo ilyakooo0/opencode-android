@@ -101,12 +101,15 @@ fun ChatScreen(
     val error by vm.error.collectAsStateWithLifecycle()
     val loading by vm.loading.collectAsStateWithLifecycle()
     val models by vm.models.collectAsStateWithLifecycle()
+    val modelsLoading by vm.modelsLoading.collectAsStateWithLifecycle()
     val selectedModel by vm.selectedModel.collectAsStateWithLifecycle()
     val connectionState by vm.connectionState.collectAsStateWithLifecycle()
     val pendingPermission by vm.pendingPermission.collectAsStateWithLifecycle()
     val agents by vm.agents.collectAsStateWithLifecycle()
+    val agentsLoading by vm.agentsLoading.collectAsStateWithLifecycle()
     val selectedAgent by vm.selectedAgent.collectAsStateWithLifecycle()
     val commands by vm.commands.collectAsStateWithLifecycle()
+    val commandsLoading by vm.commandsLoading.collectAsStateWithLifecycle()
     val sessionTitle by vm.sessionTitle.collectAsStateWithLifecycle()
     val failedDraft by vm.failedDraft.collectAsStateWithLifecycle()
     val draft by vm.draft.collectAsStateWithLifecycle()
@@ -353,6 +356,7 @@ fun ChatScreen(
         ModelPickerSheet(
             options = models,
             selected = selectedModel,
+            loading = modelsLoading,
             onSelect = { vm.selectModel(it) },
             onDismiss = { showModelPicker = false },
         )
@@ -362,6 +366,7 @@ fun ChatScreen(
         AgentPickerSheet(
             agents = agents,
             selected = selectedAgent,
+            loading = agentsLoading,
             onSelect = { vm.selectAgent(it?.name) },
             onDismiss = { showAgentPicker = false },
         )
@@ -370,6 +375,7 @@ fun ChatScreen(
     if (showCommandPicker) {
         CommandPickerSheet(
             commands = commands,
+            loading = commandsLoading,
             onSelect = { vm.runCommand(it) },
             onDismiss = { showCommandPicker = false },
         )

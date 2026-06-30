@@ -7,7 +7,7 @@ class NormalizeBaseUrlTest {
 
     @Test
     fun addsHttpSchemeWhenAbsent() {
-        assertEquals("http://192.168.1.10:4096/", HttpClientFactory.normalizeBaseUrl("192.168.1.10:4096"))
+        assertEquals("https://192.168.1.10:4096/", HttpClientFactory.normalizeBaseUrl("192.168.1.10:4096"))
     }
 
     @Test
@@ -22,7 +22,7 @@ class NormalizeBaseUrlTest {
 
     @Test
     fun appendsTrailingSlash() {
-        assertEquals("http://host/", HttpClientFactory.normalizeBaseUrl("host"))
+        assertEquals("https://host/", HttpClientFactory.normalizeBaseUrl("host"))
     }
 
     @Test
@@ -37,6 +37,6 @@ class NormalizeBaseUrlTest {
 
     @Test
     fun keepsPathAfterHost() {
-        assertEquals("http://host:4096/opencode/", HttpClientFactory.normalizeBaseUrl("host:4096/opencode"))
+        assertEquals("https://host:4096/opencode/", HttpClientFactory.normalizeBaseUrl("host:4096/opencode"))
     }
 }

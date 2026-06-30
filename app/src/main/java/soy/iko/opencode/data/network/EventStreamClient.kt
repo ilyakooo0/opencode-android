@@ -139,11 +139,10 @@ class EventStreamClient(
                 throw c
             } catch (e: Exception) {
                 if (isSseAuthFailure(e)) {
-                    Log.w("EventStream", "SSE auth failed, stopping reconnect", e)
-                    _state.value = ConnectionState.Disconnected
-                    throw e
+                    Log.w("EventStream", "SSE auth failed, will retry with backoff", e)
+                } else {
+                    Log.w("EventStream", "SSE stream error, will retry", e)
                 }
-                Log.w("EventStream", "SSE stream error, will retry", e)
             }
             _state.value = ConnectionState.Disconnected
             if (!isActive) break

@@ -1,18 +1,26 @@
 package soy.iko.opencode.ui.components
 
 import android.util.Base64
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import coil.compose.AsyncImage
+import coil.compose.SubcomposeAsyncImage
 import coil.request.ImageRequest
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BrokenImage
 import soy.iko.opencode.R
 import soy.iko.opencode.data.model.FilePart
 import soy.iko.opencode.data.model.ServerProfile
@@ -88,12 +96,32 @@ fun RemoteImage(part: FilePart, ctx: ImageLoadContext, modifier: Modifier = Modi
             .crossfade(true)
             .build()
     }
-    AsyncImage(
+    SubcomposeAsyncImage(
         model = request,
         contentDescription = part.filename ?: stringResource(R.string.image),
         contentScale = ContentScale.FillWidth,
         modifier = modifier
             .heightIn(max = 320.dp)
             .clip(RoundedCornerShape(12.dp)),
+        loading = {
+            Box(
+                modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                CircularProgressIndicator()
+            }
+        },
+        error = {
+            Box(
+                modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Filled.BrokenImage,
+                    contentDescription = stringResource(R.string.image_failed),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
     )
 }

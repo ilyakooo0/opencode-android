@@ -100,6 +100,11 @@
     <string name="thoughts">Thoughts</string>
     <string name="show_more">Show more</string>
     <string name="show_less">Show less</string>
+    <string name="tool_completed">Completed</string>
+    <string name="tool_error">Error</string>
+    <string name="tool_running">In progress</string>
+    <string name="state_expanded">Expanded</string>
+    <string name="state_collapsed">Collapsed</string>
 
     <!-- Permission dialog -->
     <string name="permission_title">Permission requested</string>
@@ -116,6 +121,11 @@
     <string name="default_agent">Default</string>
     <string name="default_agent_desc">Server default agent</string>
     <string name="no_commands">No commands reported by the server.</string>
+    <string name="loading_models">Loading models…</string>
+    <string name="loading_agents">Loading agents…</string>
+    <string name="loading_commands">Loading commands…</string>
+    <string name="saving">Saving…</string>
+    <string name="image_failed">Failed to load image</string>
 
     <!-- File browser -->
     <string name="search_files">Search files…</string>

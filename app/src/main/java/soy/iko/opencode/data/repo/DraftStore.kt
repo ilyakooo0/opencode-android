@@ -1,6 +1,8 @@
 package soy.iko.opencode.data.repo
 
 import android.content.Context
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
@@ -15,19 +17,28 @@ import kotlinx.coroutines.launch
 class DraftStore(context: Context, scope: CoroutineScope) {
 
     private val appContext = context.applicationContext
+    private val prefsReady = CountDownLatch(1)
     private val prefs by lazy {
         appContext.getSharedPreferences("drafts", Context.MODE_PRIVATE)
     }
 
     init {
         // Eagerly load the prefs file on a background thread so the first main-thread
-        // get() doesn't block on disk I/O. The lazy delegate ensures the same instance.
-        scope.launch { prefs.all }
+        // get() doesn't block on disk I/O. The latch ensures get() waits for this
+        // background load instead of triggering its own lazy load on the main thread.
+        scope.launch {
+            prefs.all
+            prefsReady.countDown()
+        }
     }
 
-    fun get(sessionId: String): String = prefs.getString(sessionId, "").orEmpty()
+    fun get(sessionId: String): String {
+        prefsReady.await(2, TimeUnit.SECONDS)
+        return prefs.getString(sessionId, "").orEmpty()
+    }
 
     fun set(sessionId: String, text: String) {
+        prefsReady.await(2, TimeUnit.SECONDS)
         prefs.edit().apply {
             if (text.isBlank()) remove(sessionId) else putString(sessionId, text)
         }.apply()
@@ -35,6 +46,7 @@ class DraftStore(context: Context, scope: CoroutineScope) {
 
     /** Remove the draft for a session (call on session deletion to avoid orphaned entries). */
     fun remove(sessionId: String) {
+        prefsReady.await(2, TimeUnit.SECONDS)
         prefs.edit().remove(sessionId).apply()
     }
 }

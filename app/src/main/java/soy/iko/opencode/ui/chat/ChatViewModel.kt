@@ -67,6 +67,9 @@ class ChatViewModel(
     private val _models = MutableStateFlow<List<ModelOption>>(emptyList())
     val models: StateFlow<List<ModelOption>> = _models.asStateFlow()
 
+    private val _modelsLoading = MutableStateFlow(true)
+    val modelsLoading: StateFlow<Boolean> = _modelsLoading.asStateFlow()
+
     private val _selectedModel = MutableStateFlow<ModelOption?>(null)
     val selectedModel: StateFlow<ModelOption?> = _selectedModel.asStateFlow()
 
@@ -85,11 +88,17 @@ class ChatViewModel(
     private val _agents = MutableStateFlow<List<Agent>>(emptyList())
     val agents: StateFlow<List<Agent>> = _agents.asStateFlow()
 
+    private val _agentsLoading = MutableStateFlow(true)
+    val agentsLoading: StateFlow<Boolean> = _agentsLoading.asStateFlow()
+
     private val _selectedAgent = MutableStateFlow<String?>(null)
     val selectedAgent: StateFlow<String?> = _selectedAgent.asStateFlow()
 
     private val _commands = MutableStateFlow<List<Command>>(emptyList())
     val commands: StateFlow<List<Command>> = _commands.asStateFlow()
+
+    private val _commandsLoading = MutableStateFlow(true)
+    val commandsLoading: StateFlow<Boolean> = _commandsLoading.asStateFlow()
 
     private val _sessionTitle = MutableStateFlow<String?>(null)
     val sessionTitle: StateFlow<String?> = _sessionTitle.asStateFlow()
@@ -144,7 +153,8 @@ class ChatViewModel(
         // sending with no model just uses the server's default agent/model.
         viewModelScope.launch {
             container.activeConnection.collectLatest { conn ->
-                if (conn == null) { _models.value = emptyList(); _selectedModel.value = null; return@collectLatest }
+                if (conn == null) { _models.value = emptyList(); _selectedModel.value = null; _modelsLoading.value = false; return@collectLatest }
+                _modelsLoading.value = true
                 runCatching { conn.api.providers() }
                     .onFailure { Log.w("ChatViewModel", "Failed to load model catalog", it) }
                     .getOrNull()?.let { resp ->
@@ -152,24 +162,29 @@ class ChatViewModel(
                     _models.value = options
                     _selectedModel.value = resp.defaultOption(options)
                 }
+                _modelsLoading.value = false
             }
         }
         // Load the agent catalog (non-fatal).
         viewModelScope.launch {
             container.activeConnection.collectLatest { conn ->
-                if (conn == null) { _agents.value = emptyList(); return@collectLatest }
+                if (conn == null) { _agents.value = emptyList(); _agentsLoading.value = false; return@collectLatest }
+                _agentsLoading.value = true
                 runCatching { conn.api.agents() }
                     .onFailure { Log.w("ChatViewModel", "Failed to load agent catalog", it) }
                     .getOrNull()?.let { _agents.value = it }
+                _agentsLoading.value = false
             }
         }
         // Load the command catalog (non-fatal).
         viewModelScope.launch {
             container.activeConnection.collectLatest { conn ->
-                if (conn == null) { _commands.value = emptyList(); return@collectLatest }
+                if (conn == null) { _commands.value = emptyList(); _commandsLoading.value = false; return@collectLatest }
+                _commandsLoading.value = true
                 runCatching { conn.api.commands() }
                     .onFailure { Log.w("ChatViewModel", "Failed to load command catalog", it) }
                     .getOrNull()?.let { _commands.value = it }
+                _commandsLoading.value = false
             }
         }
         // Resolve the human-readable session title for the app bar (non-fatal).
