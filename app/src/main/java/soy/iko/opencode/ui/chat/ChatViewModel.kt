@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.drop
@@ -266,25 +267,31 @@ class ChatViewModel(
                 _error.value = null
                 _failedDraft.value = null
                 _selectedAgent.value = null
-                conn.events.events.collect { event ->
-                    if (SessionRepository.isIdle(event, sessionId)) _running.value = false
-                    if (SessionRepository.isError(event, sessionId)) {
-                        _running.value = false
-                        _error.value = container.string(R.string.error_agent_reported)
+                try {
+                    conn.events.events.collect { event ->
+                        if (SessionRepository.isIdle(event, sessionId)) _running.value = false
+                        if (SessionRepository.isError(event, sessionId)) {
+                            _running.value = false
+                            _error.value = container.string(R.string.error_agent_reported)
+                        }
+                        when (event) {
+                            is PermissionUpdated ->
+                                if (event.properties.sessionID == sessionId) _pendingPermission.value = event.properties
+                            is PermissionReplied ->
+                                if (event.properties.sessionID == sessionId && event.properties.permissionID == _pendingPermission.value?.id) _pendingPermission.value = null
+                            is SessionUpdated ->
+                                if (event.properties.info.id == sessionId) _sessionTitle.value = event.properties.info.displayTitle
+                            is SessionDeleted ->
+                                if (event.properties.info?.id == sessionId || event.properties.sessionID == sessionId) {
+                                    _sessionDeleted.value = true
+                                }
+                            else -> {}
+                        }
                     }
-                    when (event) {
-                        is PermissionUpdated ->
-                            if (event.properties.sessionID == sessionId) _pendingPermission.value = event.properties
-                        is PermissionReplied ->
-                            if (event.properties.sessionID == sessionId && event.properties.permissionID == _pendingPermission.value?.id) _pendingPermission.value = null
-                        is SessionUpdated ->
-                            if (event.properties.info.id == sessionId) _sessionTitle.value = event.properties.info.displayTitle
-                        is SessionDeleted ->
-                            if (event.properties.info?.id == sessionId || event.properties.sessionID == sessionId) {
-                                _sessionDeleted.value = true
-                            }
-                        else -> {}
-                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w("ChatViewModel", "SSE event collector error", e)
                 }
             }
         }
@@ -335,11 +342,17 @@ class ChatViewModel(
         viewModelScope.launch {
             container.activeConnection.collectLatest { conn ->
                 if (conn == null) return@collectLatest
-                conn.events.state.collect { state ->
-                    if ((state == EventStreamClient.ConnectionState.Disconnected ||
-                         state == EventStreamClient.ConnectionState.Failed) && _running.value) {
-                        _running.value = false
+                try {
+                    conn.events.state.collect { state ->
+                        if ((state == EventStreamClient.ConnectionState.Disconnected ||
+                             state == EventStreamClient.ConnectionState.Failed) && _running.value) {
+                            _running.value = false
+                        }
                     }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w("ChatViewModel", "SSE state collector error", e)
                 }
             }
         }

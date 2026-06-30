@@ -7,11 +7,13 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -100,7 +102,14 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onManageServers:
 
             Spacer(Modifier.size(8.dp))
             Row(
-                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .toggleable(
+                        value = dynamicColor,
+                        onValueChange = { scope.launch { runCatchingCancellable { container.settingsStore.setDynamicColor(it) } } },
+                        role = Role.Switch,
+                    )
+                    .padding(vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(modifier = Modifier.weight(1f)) {
@@ -113,7 +122,7 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onManageServers:
                 }
                 Switch(
                     checked = dynamicColor,
-                    onCheckedChange = { scope.launch { runCatchingCancellable { container.settingsStore.setDynamicColor(it) } } },
+                    onCheckedChange = null,
                 )
             }
 
@@ -142,6 +151,7 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onManageServers:
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .defaultMinSize(minHeight = 48.dp)
                     .padding(top = 8.dp)
                     .clickable(role = Role.Button) { onManageServers() }
                     .padding(vertical = 8.dp),
@@ -176,6 +186,7 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onManageServers:
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .defaultMinSize(minHeight = 48.dp)
                     .clickable(role = Role.Button) { onOpenDiagnostics() }
                     .padding(vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -198,7 +209,7 @@ private fun ThemeRow(mode: ThemeMode, selected: Boolean, onSelect: () -> Unit) {
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        RadioButton(selected = selected, onClick = onSelect)
+        RadioButton(selected = selected, onClick = null)
         Text(
             when (mode) {
                 ThemeMode.SYSTEM -> stringResource(R.string.theme_system)

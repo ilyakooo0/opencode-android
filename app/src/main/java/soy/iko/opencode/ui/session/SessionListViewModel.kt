@@ -13,6 +13,8 @@ import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
 import soy.iko.opencode.util.runCatchingCancellable
+import android.util.Log
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -121,18 +123,19 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
                 // initial load (which may have run before auto-reconnect finished and
                 // found no connection) doesn't leave a stale "not connected" error.
                 refresh()
-                conn.events.events.collect { event ->
-                    when (event) {
-                        is SessionUpdated -> {
-                            val session = event.properties.info
-                            _state.update { s ->
-                                val updated = (s.sessions.filterNot { it.id == session.id } + session)
-                                    .sortedByDescending { it.time?.updated ?: it.time?.created ?: 0 }
-                                s.copy(sessions = updated)
+                try {
+                    conn.events.events.collect { event ->
+                        when (event) {
+                            is SessionUpdated -> {
+                                val session = event.properties.info
+                                _state.update { s ->
+                                    val updated = (s.sessions.filterNot { it.id == session.id } + session)
+                                        .sortedByDescending { it.time?.updated ?: it.time?.created ?: 0 }
+                                    s.copy(sessions = updated)
+                                }
+                                loadPreview(session.id)
                             }
-                            loadPreview(session.id)
-                        }
-                        is SessionDeleted -> {
+                            is SessionDeleted -> {
                             val id = event.properties.info?.id ?: event.properties.sessionID
                             if (id != null) {
                                 synchronized(previewLock) { livePreviewJobs.remove(id)?.cancel() }
@@ -145,8 +148,13 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
                                 }
                             }
                         }
-                        else -> {}
+                            else -> {}
+                        }
                     }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w("SessionListVM", "SSE event collector error", e)
                 }
             }
         }
@@ -209,6 +217,10 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
                 try {
                     val preview = fetchSessionPreview(api, sessionId) ?: return@launch
                     _state.update { s -> s.copy(previews = s.previews + (sessionId to preview)) }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w("SessionListVM", "Preview load failed for $sessionId", e)
                 } finally {
                     if (job != null) synchronized(previewLock) { livePreviewJobs.remove(sessionId, job) }
                 }

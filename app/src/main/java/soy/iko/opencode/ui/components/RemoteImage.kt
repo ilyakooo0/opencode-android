@@ -14,6 +14,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import coil.compose.SubcomposeAsyncImage
 import coil.request.ImageRequest
@@ -111,7 +113,10 @@ fun RemoteImage(part: FilePart, ctx: ImageLoadContext, modifier: Modifier = Modi
                 modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp),
                 contentAlignment = Alignment.Center,
             ) {
-                CircularProgressIndicator()
+                val loadingLabel = stringResource(R.string.loading)
+                CircularProgressIndicator(
+                    modifier = Modifier.semantics { contentDescription = loadingLabel },
+                )
             }
         },
         error = {

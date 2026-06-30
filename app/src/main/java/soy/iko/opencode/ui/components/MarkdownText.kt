@@ -159,5 +159,12 @@ private fun extractCode(content: String, node: ASTNode): String {
 internal fun copyToClipboard(context: Context, label: String, text: String = label) {
     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
     clipboard.setPrimaryClip(ClipData.newPlainText(label.take(40), text))
-    Toast.makeText(context, context.getString(R.string.copied), Toast.LENGTH_SHORT).show()
+    showToast(context, context.getString(R.string.copied))
+}
+
+private var lastToast: Toast? = null
+
+internal fun showToast(context: Context, message: String) {
+    lastToast?.cancel()
+    lastToast = Toast.makeText(context, message, Toast.LENGTH_SHORT).also { it.show() }
 }

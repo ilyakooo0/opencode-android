@@ -441,9 +441,10 @@ private fun SwipeDeleteBackground() {
             .padding(horizontal = 20.dp),
         contentAlignment = Alignment.CenterEnd,
     ) {
+        val deleteLabel = stringResource(R.string.delete)
         Icon(
             Icons.Filled.Delete,
-            contentDescription = null,
+            contentDescription = deleteLabel,
             tint = MaterialTheme.colorScheme.onErrorContainer,
         )
     }
