@@ -440,7 +440,11 @@ class ChatViewModel(
             try {
                 val recent = runCatchingCancellable { container.profileStore.profiles.first() }
                     .getOrDefault(emptyList())
-                    .firstOrNull() ?: return@launch
+                    .firstOrNull()
+                if (recent == null) {
+                    _error.value = container.string(R.string.no_servers_to_reconnect)
+                    return@launch
+                }
                 runCatchingCancellable {
                     val conn = container.connect(recent)
                     conn.api.ping()

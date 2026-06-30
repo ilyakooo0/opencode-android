@@ -36,6 +36,7 @@
     <string name="connection_failed">Connection failed — check credentials</string>
     <string name="reconnect">Reconnect</string>
     <string name="not_connected">Not connected.</string>
+    <string name="no_servers_to_reconnect">No saved server to reconnect to.</string>
 
     <!-- Server list -->
     <string name="servers_title">opencode servers</string>

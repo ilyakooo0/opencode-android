@@ -43,6 +43,7 @@ import soy.iko.opencode.R
 import soy.iko.opencode.ui.components.DiffView
 import soy.iko.opencode.ui.components.copyToClipboard
 import soy.iko.opencode.ui.vmFactory
+import soy.iko.opencode.util.runCatchingCancellable
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -78,7 +79,7 @@ fun FileViewScreen(
                                 putExtra(Intent.EXTRA_SUBJECT, filename)
                                 putExtra(Intent.EXTRA_TEXT, content)
                             }
-                            runCatching { context.startActivity(Intent.createChooser(send, shareLabel)) }
+                            runCatchingCancellable { context.startActivity(Intent.createChooser(send, shareLabel)) }
                                 .onFailure {
                                     showToast(context, context.getString(R.string.no_share_app))
                                 }

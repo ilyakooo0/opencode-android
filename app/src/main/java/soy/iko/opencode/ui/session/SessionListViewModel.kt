@@ -317,7 +317,17 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
                         // user doesn't lose unread badges on a failed server switch.
                         savedUnread.forEach { container.restoreUnread(it) }
                         if (restored.isSuccess) {
-                            _state.update { it.copy(loading = false, error = container.friendlyError(error)) }
+                            // Clear stale sessions from the old server; the SSE observer
+                            // will reload from the restored connection via refresh().
+                            _state.update {
+                                SessionListState(
+                                    sessions = emptyList(),
+                                    previews = emptyMap(),
+                                    loading = false,
+                                    error = container.friendlyError(error),
+                                )
+                            }
+                            refresh()
                         } else {
                             // Restore also failed — the user is now disconnected from
                             // both servers. Surface both failures so the user understands

@@ -123,6 +123,7 @@ fun ChatScreen(
     val sessionDeleted by vm.sessionDeleted.collectAsStateWithLifecycle()
     val failedDraft by vm.failedDraft.collectAsStateWithLifecycle()
     val draft by vm.draft.collectAsStateWithLifecycle()
+    val reconnecting by vm.reconnecting.collectAsStateWithLifecycle()
     val haptics = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
     val shareContext = LocalContext.current
@@ -309,8 +310,16 @@ fun ChatScreen(
                         color = MaterialTheme.colorScheme.error,
                     )
                     Spacer(Modifier.size(12.dp))
-                    Button(onClick = { vm.reconnect() }) {
-                        Text(stringResource(R.string.reconnect))
+                    Button(onClick = { vm.reconnect() }, enabled = !reconnecting) {
+                        if (reconnecting) {
+                            CircularProgressIndicator(
+                                Modifier.size(20.dp),
+                                color = MaterialTheme.colorScheme.onPrimary,
+                                strokeWidth = 2.dp,
+                            )
+                        } else {
+                            Text(stringResource(R.string.reconnect))
+                        }
                     }
                 }
             } else {

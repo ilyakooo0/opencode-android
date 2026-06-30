@@ -181,7 +181,7 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                             putExtra(Intent.EXTRA_SUBJECT, shareLabel2)
                             putExtra(Intent.EXTRA_TEXT, content.orEmpty())
                         }
-                        runCatching { context.startActivity(Intent.createChooser(send, shareLabel2)) }
+                        runCatchingCancellable { context.startActivity(Intent.createChooser(send, shareLabel2)) }
                             .onFailure { Log.w("Diagnostics", "Failed to share crash report", it) }
                     }) { Text(stringResource(R.string.share)) }
                     Spacer(Modifier.size(8.dp))
