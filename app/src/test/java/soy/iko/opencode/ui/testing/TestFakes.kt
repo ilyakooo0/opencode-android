@@ -294,6 +294,8 @@ class FakeAppContainer : AppContainer() {
     override val unread: StateFlow<Set<String>> = fakeUnread.asStateFlow()
 
     var connectResult: OpencodeConnection? = null
+    /** When non-null, [connect] throws this instead of returning a connection. */
+    var connectException: Throwable? = null
     var connectCalls: List<ServerProfile> = emptyList()
         private set
     var disconnectCalls = 0
@@ -313,12 +315,18 @@ class FakeAppContainer : AppContainer() {
 
     override suspend fun connect(profile: ServerProfile): OpencodeConnection {
         connectCalls = connectCalls + profile
-        connectResult?.let { return it }
-        // Create a fake connection on the fly if none pre-configured
-        val api = FakeOpencodeApiClient()
-        val events = FakeEventStreamClient()
-        val repo = FakeSessionRepository(api, events)
-        return FakeOpencodeConnection(api, events, repo, profile)
+        connectException?.let { throw it }
+        // Mirror the real AppContainer: connect() publishes the new connection so
+        // collectors (SSE observer, refresh) see it immediately. This lets the
+        // switchServer failure/restore paths be exercised end-to-end.
+        val conn = connectResult ?: run {
+            val api = FakeOpencodeApiClient()
+            val events = FakeEventStreamClient()
+            val repo = FakeSessionRepository(api, events)
+            FakeOpencodeConnection(api, events, repo, profile)
+        }
+        fakeActiveConnection.value = conn
+        return conn
     }
 
     override suspend fun disconnect() {

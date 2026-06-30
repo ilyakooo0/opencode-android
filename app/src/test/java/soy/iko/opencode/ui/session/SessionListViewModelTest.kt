@@ -225,6 +225,79 @@ class SessionListViewModelTest {
         assertNull(vm.switchingId.value)
     }
 
+    @Test
+    fun switchServer_failure_restoresPreviousAndShowsTransientError() = testScope.runTest {
+        val repo = FakeSessionRepository(FakeOpencodeApiClient(), FakeEventStreamClient())
+        repo.sessions = listOf(Session(id = "s1-chat", title = "Original"))
+        val container = makeContainer(repo = repo)
+        val vm = makeVm(container)
+
+        // connect() succeeds but the new server's ping fails.
+        val newApi = FakeOpencodeApiClient().apply { pingThrows = IOException("switch failed") }
+        val newRepo = FakeSessionRepository(newApi, FakeEventStreamClient())
+        newRepo.sessions = listOf(Session(id = "restored", title = "Restored"))
+        container.connectResult = FakeOpencodeConnection(
+            newApi, FakeEventStreamClient(), newRepo,
+            ServerProfile(id = "s2", label = "Server 2", baseUrl = "http://other"),
+        )
+
+        vm.switchServer(ServerProfile(id = "s2", label = "Server 2", baseUrl = "http://other"))
+        testScheduler.advanceUntilIdle()
+
+        // connect attempted for the new server, then again to restore the previous one.
+        assertEquals(2, container.connectCalls.size)
+        assertEquals("s2", container.connectCalls[0].id)
+        assertEquals("s1", container.connectCalls[1].id)
+        // The switch failure is surfaced as a transient error, not a list-replacing error.
+        assertNotNull(vm.transientError.value)
+        assertNull(vm.state.value.error)
+        assertEquals(1, container.disconnectCalls)
+        assertNull(vm.switchingId.value)
+    }
+
+    @Test
+    fun switchServer_failure_whenNoPreviousShowsErrorState() = testScope.runTest {
+        // No active connection — there's no previous profile to restore to.
+        val container = FakeAppContainer()
+        val vm = makeVm(container)
+
+        val newApi = FakeOpencodeApiClient().apply { pingThrows = IOException("nope") }
+        container.connectResult = FakeOpencodeConnection(
+            newApi, FakeEventStreamClient(),
+            FakeSessionRepository(newApi, FakeEventStreamClient()),
+            ServerProfile(id = "s2", label = "Server 2", baseUrl = "http://other"),
+        )
+
+        vm.switchServer(ServerProfile(id = "s2", label = "Server 2", baseUrl = "http://other"))
+        testScheduler.advanceUntilIdle()
+
+        // No previous profile to restore — the error replaces the list state.
+        assertNotNull(vm.state.value.error)
+        assertFalse(vm.state.value.loading)
+        assertNull(vm.switchingId.value)
+    }
+
+    @Test
+    fun switchServer_failure_restoreAlsoFailsShowsCombinedError() = testScope.runTest {
+        val repo = FakeSessionRepository(FakeOpencodeApiClient(), FakeEventStreamClient())
+        repo.sessions = listOf(Session(id = "s1-chat", title = "Original"))
+        val container = makeContainer(repo = repo)
+        val vm = makeVm(container)
+
+        // Both the new connect and the restore connect fail.
+        container.connectException = IOException("unreachable")
+
+        vm.switchServer(ServerProfile(id = "s2", label = "Server 2", baseUrl = "http://other"))
+        testScheduler.advanceUntilIdle()
+
+        // connect attempted for the new server, then again to restore the previous one.
+        assertEquals(2, container.connectCalls.size)
+        // Both failed — the combined error replaces the list state.
+        assertNotNull(vm.state.value.error)
+        assertFalse(vm.state.value.loading)
+        assertNull(vm.switchingId.value)
+    }
+
     // --- setQuery / filtering ---
 
     @Test

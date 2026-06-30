@@ -76,6 +76,23 @@ class WithRetryTest {
     }
 
     @Test
+    fun tooManyRequestsIsRetried() = runTest {
+        // 429 (Too Many Requests) is the only 4xx that should retry — all other 4xx
+        // surface immediately. Verify the special case isn't silently lost.
+        val rateLimited = httpError(HttpStatusCode.TooManyRequests)
+        assertTrue("expected ClientRequestException, got $rateLimited", rateLimited is ClientRequestException)
+        assertEquals(429, (rateLimited as ClientRequestException).response.status.value)
+        var calls = 0
+        runCatching {
+            withRetryInternal(maxAttempts = 3, initialDelayMs = 0) {
+                calls++
+                throw rateLimited
+            }
+        }
+        assertEquals("429 must be retried like a transient failure", 3, calls)
+    }
+
+    @Test
     fun serverErrorIsRetried() = runTest {
         val serverError = httpError(HttpStatusCode.InternalServerError)
         assertTrue("expected ServerResponseException, got $serverError", serverError is ServerResponseException)
