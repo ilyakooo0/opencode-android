@@ -18,6 +18,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -42,7 +43,7 @@ fun PermissionDialog(
     val haptics = LocalHapticFeedback.current
     // Guard against double-respond: back press + button tap, or rapid double-tap,
     // could call onRespond twice. Once a response is sent, subsequent calls are no-ops.
-    var responded by remember { mutableStateOf(false) }
+    var responded by rememberSaveable { mutableStateOf(false) }
     val respond: (PermissionResponse) -> Unit = { response ->
         if (!responded) {
             responded = true

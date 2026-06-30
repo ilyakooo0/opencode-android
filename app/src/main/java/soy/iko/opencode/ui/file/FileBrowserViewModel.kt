@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 @Immutable
@@ -76,7 +77,7 @@ class FileBrowserViewModel(private val container: AppContainer) : ViewModel() {
         statusJob = viewModelScope.launch {
             runCatchingCancellable { client.fileStatus() }
                 .onSuccess { entries ->
-                    _state.value = _state.value.copy(statusMap = entries.associateBy { it.path })
+                    _state.update { it.copy(statusMap = entries.associateBy { it.path }) }
                 }
                 .onFailure {
                     // VCS status is best-effort: don't block the file browser, but surface
@@ -88,32 +89,32 @@ class FileBrowserViewModel(private val container: AppContainer) : ViewModel() {
 
     fun open(path: String) {
         val client = api ?: run {
-            _state.value = _state.value.copy(
+            _state.update { it.copy(
                 path = path,
                 loading = false,
                 error = container.string(R.string.not_connected),
-            )
+            ) }
             return
         }
-        _state.value = _state.value.copy(
+        _state.update { it.copy(
             path = path,
             query = "",
             results = emptyList(),
             searching = false,
             loading = true,
             error = null,
-        )
+        ) }
         openJob?.cancel()
         searchJob?.cancel()
         openJob = viewModelScope.launch {
             runCatchingCancellable { client.listDirectory(path) }
                 .onSuccess { entries ->
-                    _state.value = _state.value.copy(
+                    _state.update { it.copy(
                         entries = entries.sortedWith(compareByDescending<FileNode> { it.isDirectory }.thenBy { it.name.lowercase() }),
                         loading = false,
-                    )
+                    ) }
                 }
-                .onFailure { _state.value = _state.value.copy(loading = false, error = container.friendlyError(it)) }
+                .onFailure { e -> _state.update { it.copy(loading = false, error = container.friendlyError(e)) } }
         }
     }
 
@@ -126,23 +127,23 @@ class FileBrowserViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun setQuery(query: String) {
-        _state.value = _state.value.copy(query = query, error = null)
+        _state.update { it.copy(query = query, error = null) }
         searchJob?.cancel()
         openJob?.cancel()
         if (query.isBlank()) {
-            _state.value = _state.value.copy(results = emptyList(), searching = false)
+            _state.update { it.copy(results = emptyList(), searching = false) }
             return
         }
         val client = api ?: run {
-            _state.value = _state.value.copy(searching = false, error = container.string(R.string.not_connected))
+            _state.update { it.copy(searching = false, error = container.string(R.string.not_connected)) }
             return
         }
         searchJob = viewModelScope.launch {
             delay(NetworkConfig.fileSearchDebounceMs) // debounce
-            _state.value = _state.value.copy(searching = true)
+            _state.update { it.copy(searching = true) }
             runCatchingCancellable { client.findFiles(query) }
-                .onSuccess { _state.value = _state.value.copy(results = it, searching = false) }
-                .onFailure { _state.value = _state.value.copy(searching = false, error = container.friendlyError(it)) }
+                .onSuccess { results -> _state.update { it.copy(results = results, searching = false) } }
+                .onFailure { e -> _state.update { it.copy(searching = false, error = container.friendlyError(e)) } }
         }
     }
 }

@@ -82,8 +82,10 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import soy.iko.opencode.data.network.EventStreamClient
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
@@ -244,13 +246,17 @@ fun ChatScreen(
                 actions = {
                     IconButton(
                         onClick = {
-                            val md = buildConversationMarkdown(messages, sessionTitle)
-                            val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-                                type = "text/markdown"
-                                putExtra(android.content.Intent.EXTRA_SUBJECT, sessionTitle ?: defaultShareSubject)
-                                putExtra(android.content.Intent.EXTRA_TEXT, md)
+                            scope.launch {
+                                val md = withContext(Dispatchers.Default) {
+                                    buildConversationMarkdown(messages, sessionTitle)
+                                }
+                                val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                    type = "text/markdown"
+                                    putExtra(android.content.Intent.EXTRA_SUBJECT, sessionTitle ?: defaultShareSubject)
+                                    putExtra(android.content.Intent.EXTRA_TEXT, md)
+                                }
+                                runCatching { shareContext.startActivity(android.content.Intent.createChooser(send, shareLabel)) }
                             }
-                            runCatching { shareContext.startActivity(android.content.Intent.createChooser(send, shareLabel)) }
                         },
                         enabled = messages.isNotEmpty(),
                     ) {

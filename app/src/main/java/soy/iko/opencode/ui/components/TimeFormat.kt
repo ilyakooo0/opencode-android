@@ -2,6 +2,7 @@ package soy.iko.opencode.ui.components
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
@@ -59,7 +60,16 @@ fun rememberRelativeTime(epochMillis: Long?, intervalMs: Long = 30_000L): String
             lifecycleOwner.lifecycle.removeObserver(observer)
         }
     }
-    // Read tick so Compose tracks it as a dependency and recomposes when it changes.
-    @Suppress("UNUSED_EXPRESSION") tick
-    return relativeTime(epochMillis)
+    // derivedStateOf reads tick so Compose recomposes when it changes, and recomputes
+    // the relative-time string from the current wall clock on each tick.
+    // Keying remember on epochMillis ensures a new derivedStateOf is created when the
+    // timestamp changes, so the new value is reflected immediately.
+    val formatted by remember(epochMillis) {
+        derivedStateOf {
+            // Read tick to create a recomposition dependency on the timer.
+            tick
+            relativeTime(epochMillis)
+        }
+    }
+    return formatted
 }

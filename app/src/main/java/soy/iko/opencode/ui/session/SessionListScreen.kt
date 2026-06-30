@@ -287,7 +287,7 @@ fun SessionListScreen(
     }
 
     pendingRename?.let { session ->
-        var title by remember(session.id) { mutableStateOf(session.title ?: "") }
+        var title by rememberSaveable(session.id) { mutableStateOf(session.title ?: "") }
         RenameSessionDialog(
             title = title,
             onTitleChange = { title = it },
