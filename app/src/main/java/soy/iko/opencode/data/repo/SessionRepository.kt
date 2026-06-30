@@ -99,7 +99,13 @@ open class SessionRepository(
                             .getOrDefault(emptyList())
                         lock.withLock {
                             if (generation == seedGeneration) {
-                                store.seed(fresh, prune = true)
+                                // Merge without pruning: SSE events arriving during the
+                                // REST fetch may have added messages not yet indexed by
+                                // the REST endpoint. Pruning would silently delete them.
+                                // Stale messages from deletions during the disconnect
+                                // gap are eventually removed via MessageRemoved events
+                                // or on the next app restart.
+                                store.seed(fresh, prune = false)
                             }
                         }
                         publish()

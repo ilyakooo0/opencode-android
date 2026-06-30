@@ -41,6 +41,7 @@ import androidx.compose.runtime.setValue
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import soy.iko.opencode.util.runCatchingCancellable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -143,7 +144,7 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                                         putExtra(Intent.EXTRA_SUBJECT, shareLabel)
                                         putExtra(Intent.EXTRA_TEXT, content)
                                     }
-                                    runCatching { context.startActivity(Intent.createChooser(send, shareLabel)) }
+                                    runCatchingCancellable { context.startActivity(Intent.createChooser(send, shareLabel)) }
                                         .onFailure { Log.w("Diagnostics", "Failed to share crash report", it) }
                                 }
                             }) {

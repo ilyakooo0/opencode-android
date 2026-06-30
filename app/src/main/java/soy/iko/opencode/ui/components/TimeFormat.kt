@@ -1,13 +1,15 @@
 package soy.iko.opencode.ui.components
 
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.LifecycleResumeEffect
+import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.delay
 import java.util.concurrent.TimeUnit
 
@@ -42,24 +44,27 @@ fun relativeTime(epochMillis: Long?): String {
 fun rememberRelativeTime(epochMillis: Long?, intervalMs: Long = 30_000L): String {
     var tick by remember { mutableLongStateOf(0L) }
     val lifecycleOwner = LocalLifecycleOwner.current
-    LaunchedEffect(epochMillis, lifecycleOwner) {
+
+    // Tick immediately on resume so a stale label is refreshed without waiting for
+    // the first delay interval to elapse.
+    LifecycleResumeEffect(epochMillis, lifecycleOwner) {
+        tick++
+        onPauseOrDispose { /* nothing to clean up */ }
+    }
+
+    // Drive the periodic refresh with repeatOnLifecycle so the delay loop is
+    // suspended (not running) when the screen isn't at least resumed. This avoids
+    // unnecessary CPU usage from timer coroutines while the app is backgrounded.
+    androidx.compose.runtime.LaunchedEffect(epochMillis, lifecycleOwner) {
         if (epochMillis == null) return@LaunchedEffect
-        // Observe lifecycle to pause the timer when the screen isn't visible.
-        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
-            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
-                tick++
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        try {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             while (true) {
                 delay(intervalMs)
                 tick++
             }
-        } finally {
-            lifecycleOwner.lifecycle.removeObserver(observer)
         }
     }
+
     // derivedStateOf reads tick so Compose recomposes when it changes, and recomputes
     // the relative-time string from the current wall clock on each tick.
     // Keying remember on epochMillis ensures a new derivedStateOf is created when the

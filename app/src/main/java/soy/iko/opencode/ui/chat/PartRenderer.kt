@@ -176,7 +176,7 @@ private fun ToolCallView(part: ToolPart, modifier: Modifier) {
         }
         if (detail != null) {
             val collapsed = remember(detail) { detail.take(COLLAPSED_LIMIT) }
-            var expanded by rememberSaveable(detail) { mutableStateOf(false) }
+            var expanded by rememberSaveable(part.id) { mutableStateOf(false) }
             val expandedState = stringResource(R.string.state_expanded)
             val collapsedState = stringResource(R.string.state_collapsed)
             val display = if (expanded || detail.length <= COLLAPSED_LIMIT) detail else collapsed

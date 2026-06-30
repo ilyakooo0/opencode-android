@@ -18,8 +18,13 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -84,12 +89,18 @@ fun looksLikeDiff(text: String): Boolean {
     return false
 }
 
+private const val COLLAPSED_DIFF_LINES = 500
+
 /**
  * Renders a parsed unified diff. Implemented as a plain (non-lazy) [Column] so it is
  * safe to embed inside another vertically scrolling container (e.g. the chat message
  * list) — a nested `LazyColumn` would crash with an unbounded-height constraint.
  * Callers that want the view to scroll on its own (e.g. the file viewer) should pass a
  * [Modifier.verticalScroll] in [modifier].
+ *
+ * To avoid composing thousands of [Text] nodes at once (which can ANR/OOM on large
+ * diffs), only the first [COLLAPSED_DIFF_LINES] lines are rendered unless the user
+ * expands the view.
  */
 @Composable
 fun DiffView(diff: String, modifier: Modifier = Modifier) {
@@ -100,6 +111,7 @@ fun DiffView(diff: String, modifier: Modifier = Modifier) {
     val removeText = MaterialTheme.colorScheme.error
     val context = LocalContext.current
     val hScrollState = rememberScrollState()
+    var expanded by rememberSaveable(diff) { mutableStateOf(false) }
 
     Column(
         modifier = modifier
@@ -115,7 +127,9 @@ fun DiffView(diff: String, modifier: Modifier = Modifier) {
                 Icon(Icons.Filled.ContentCopy, contentDescription = stringResource(R.string.copy), tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-        lines.forEach { line ->
+        val visibleLines = if (lines.size <= COLLAPSED_DIFF_LINES || expanded) lines
+            else lines.subList(0, COLLAPSED_DIFF_LINES)
+        visibleLines.forEach { line ->
             Row(modifier = Modifier.horizontalScroll(hScrollState).padding(horizontal = 10.dp)) {
                 when (line) {
                     is DiffLine.Hunk -> Text(
@@ -143,6 +157,14 @@ fun DiffView(diff: String, modifier: Modifier = Modifier) {
                     is DiffLine.Remove -> DiffRow(line.text, "-", removeColor, removeText)
                     is DiffLine.Context -> DiffRow(line.text, " ", Color.Transparent, MaterialTheme.colorScheme.onSurface)
                 }
+            }
+        }
+        if (lines.size > COLLAPSED_DIFF_LINES && !expanded) {
+            TextButton(
+                onClick = { expanded = true },
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp),
+            ) {
+                Text(stringResource(R.string.show_more))
             }
         }
         Spacer(Modifier.height(10.dp))

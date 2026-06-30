@@ -4,6 +4,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
 import io.ktor.client.plugins.ClientRequestException
+import io.ktor.client.plugins.RedirectResponseException
 import io.ktor.client.plugins.ServerResponseException
 import io.ktor.client.request.get
 import io.ktor.http.HttpStatusCode
@@ -175,5 +176,45 @@ class WithRetryTest {
             assertTrue("elapsed $elapsed should be >= 80", elapsed >= 80)
             assertTrue("elapsed $elapsed should be <= 120", elapsed <= 120)
         }
+    }
+
+    @Test
+    fun redirectErrorIsNotRetried() = runTest {
+        // RedirectResponseException is thrown when expectSuccess=true and the status is 3xx.
+        // We use 300 (MultipleChoices) since MockEngine follows 301/302 by default.
+        val client = HttpClient(MockEngine {
+            respond("", HttpStatusCode.MultipleChoices, headersOf("Content-Length", "0"))
+        }) {
+            expectSuccess = true
+            followRedirects = false
+        }
+        val redirectError = client.use { runCatching { it.get("test") }.exceptionOrNull()!! }
+        assertTrue("expected RedirectResponseException, got $redirectError", redirectError is RedirectResponseException)
+        var calls = 0
+        val error = runCatching {
+            withRetryInternal(initialDelayMs = 0) {
+                calls++
+                throw redirectError
+            }
+        }.exceptionOrNull()!!
+        assertEquals("3xx must not be retried", 1, calls)
+        assertTrue(error is RedirectResponseException)
+    }
+
+    @Test
+    fun jitteredBackoffDoublesWithAttempt() {
+        // With no jitter, backoff = initial * 2^(attempt-1)
+        assertEquals(100L, jitteredBackoff(1, 100L, 0.0))
+        assertEquals(200L, jitteredBackoff(2, 100L, 0.0))
+        assertEquals(400L, jitteredBackoff(3, 100L, 0.0))
+        assertEquals(800L, jitteredBackoff(4, 100L, 0.0))
+    }
+
+    @Test
+    fun jitteredBackoffClampsToMaxDelay() {
+        // At high attempts, the delay should be clamped to the configured max.
+        val maxDelay = NetworkConfig.retryMaxDelayMs
+        val delay = jitteredBackoff(40, 100L, 0.0)
+        assertTrue("delay $delay should be clamped to max $maxDelay", delay <= maxDelay)
     }
 }

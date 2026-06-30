@@ -228,7 +228,7 @@ fun ChatScreen(
         }
     }
 
-    BackHandler(enabled = running) { showExitConfirm = true }
+    BackHandler(enabled = running && !showModelPicker && !showAgentPicker && !showCommandPicker) { showExitConfirm = true }
 
     Scaffold(
         topBar = {
@@ -267,7 +267,7 @@ fun ChatScreen(
                                     putExtra(android.content.Intent.EXTRA_SUBJECT, sessionTitle ?: defaultShareSubject)
                                     putExtra(android.content.Intent.EXTRA_TEXT, md)
                                 }
-                                runCatching { shareContext.startActivity(android.content.Intent.createChooser(send, shareLabel)) }
+                                runCatchingCancellable { shareContext.startActivity(android.content.Intent.createChooser(send, shareLabel)) }
                             }
                         },
                         enabled = messages.isNotEmpty(),
@@ -292,14 +292,14 @@ fun ChatScreen(
                 value = draft,
                 onValueChange = vm::updateDraft,
                 running = running,
-                enabled = vm.connected,
+                enabled = activeConnection != null,
                 onSend = ::doSend,
                 onAbort = { vm.abort() },
             )
         },
     ) { padding ->
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
-            if (!vm.connected) {
+            if (activeConnection == null) {
                 Column(
                     modifier = Modifier.align(Alignment.Center).padding(24.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,

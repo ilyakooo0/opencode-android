@@ -19,6 +19,8 @@ import soy.iko.opencode.data.model.UpdateSessionRequest
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.plugins.ClientRequestException
+import io.ktor.client.plugins.ResponseException
+import io.ktor.client.plugins.ServerResponseException
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.header
@@ -238,26 +240,49 @@ internal suspend fun <T> withRetryInternal(
             return block()
         } catch (c: kotlinx.coroutines.CancellationException) {
             throw c
+        } catch (t: ClientRequestException) {
+            // 429 (Too Many Requests) is transient — retry with backoff.
+            // All other 4xx are non-retryable.
+            if (t.response.status.value != 429) throw t
+            lastError = t
+            if (attempt < maxAttempts) {
+                delay(jitteredBackoff(attempt, initialDelayMs, jitterFactor))
+            }
+        } catch (t: ServerResponseException) {
+            // 5xx server errors are retryable with backoff.
+            lastError = t
+            if (attempt < maxAttempts) {
+                delay(jitteredBackoff(attempt, initialDelayMs, jitterFactor))
+            }
+        } catch (t: ResponseException) {
+            // 3xx (redirect limit exceeded) is non-retryable.
+            throw t
         } catch (t: Exception) {
             lastError = t
-            if (t is ClientRequestException) {
-                // 429 (Too Many Requests) is transient — retry with backoff.
-                if (t.response.status.value != 429) throw t
-            }
             if (attempt < maxAttempts) {
-                // Guard against Int overflow from the shift and Long overflow from
-                // the multiplication at high attempt counts.
-                val shift = (attempt - 1).coerceAtMost(30)
-                val baseDelay = (initialDelayMs * (1L shl shift)).coerceAtMost(NetworkConfig.retryMaxDelayMs)
-                // Symmetric jitter: vary by ±jitterFactor so the delay is sometimes
-                // shorter, sometimes longer — spreads concurrent client retries and
-                // prevents thundering-herd reconnection storms.
-                val jitter = ((baseDelay * jitterFactor) * (Random.nextDouble() * 2 - 1)).toLong()
-                delay((baseDelay + jitter).coerceAtLeast(0))
+                delay(jitteredBackoff(attempt, initialDelayMs, jitterFactor))
             }
         }
     }
     throw lastError ?: IllegalStateException("withRetry failed without error")
+}
+
+/** Computes an exponential backoff delay with symmetric jitter. Exposed as `internal`
+ *  so the backoff formula is unit-testable without an HTTP server. */
+internal fun jitteredBackoff(
+    attempt: Int,
+    initialDelayMs: Long,
+    jitterFactor: Double,
+): Long {
+    // Guard against Int overflow from the shift and Long overflow from
+    // the multiplication at high attempt counts.
+    val shift = (attempt - 1).coerceAtMost(30)
+    val baseDelay = (initialDelayMs * (1L shl shift)).coerceAtMost(NetworkConfig.retryMaxDelayMs)
+    // Symmetric jitter: vary by ±jitterFactor so the delay is sometimes
+    // shorter, sometimes longer — spreads concurrent client retries and
+    // prevents thundering-herd reconnection storms.
+    val jitter = ((baseDelay * jitterFactor) * (Random.nextDouble() * 2 - 1)).toLong()
+    return (baseDelay + jitter).coerceAtLeast(0)
 }
 
 /** URL-encode a path segment, replacing + with %20 (URLEncoder uses query-param encoding). */

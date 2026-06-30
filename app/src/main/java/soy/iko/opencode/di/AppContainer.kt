@@ -181,7 +181,7 @@ open class AppContainer private constructor(
         }
         val cm = appContext?.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
         networkCallback?.let { runCatching { cm?.unregisterNetworkCallback(it) } }
-        soy.iko.opencode.data.repo.CrashLogger.get(appContext!!).shutdown()
+        if (!skipInit) soy.iko.opencode.data.repo.CrashLogger.get(appContext!!).shutdown()
         draftStore.let { if (!skipInit) it.shutdown() }
     }
 

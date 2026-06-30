@@ -23,6 +23,13 @@ inline fun <T> runCatchingCancellable(block: () -> T): Result<T> = try {
  * from a Ktor HTTP call.
  */
 fun safeExceptionSummary(e: Throwable): String {
-    val status = (e as? io.ktor.client.plugins.ClientRequestException)?.response?.status?.value
-    return if (status != null) "${e.javaClass.simpleName}($status)" else e.javaClass.simpleName
+    var current: Throwable? = e
+    var hops = 0
+    while (current != null && hops < 8) {
+        val status = (current as? io.ktor.client.plugins.ClientRequestException)?.response?.status?.value
+        if (status != null) return "${current.javaClass.simpleName}($status)"
+        current = current.cause
+        hops++
+    }
+    return e.javaClass.simpleName
 }
