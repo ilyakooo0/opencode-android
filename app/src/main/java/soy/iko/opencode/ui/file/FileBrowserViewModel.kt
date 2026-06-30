@@ -55,6 +55,10 @@ class FileBrowserViewModel(private val container: AppContainer) : ViewModel() {
             container.activeConnection.collectLatest { conn ->
                 if (conn == null) return@collectLatest
                 loadStatus()
+                // Re-open the current directory when a connection becomes available
+                // so the initial open("") (which may have run before auto-reconnect
+                // finished and found no connection) doesn't leave a stale error.
+                open(_state.value.path)
             }
         }
     }

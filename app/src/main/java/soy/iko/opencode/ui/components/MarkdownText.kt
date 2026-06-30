@@ -54,7 +54,7 @@ fun MarkdownText(
     Markdown(
         content = markdown,
         modifier = modifier.combinedClickable(
-            onClick = { copyToClipboard(context, markdown) },
+            onClick = {},
             onLongClick = { copyToClipboard(context, markdown) },
         ),
         components = markdownComponents(

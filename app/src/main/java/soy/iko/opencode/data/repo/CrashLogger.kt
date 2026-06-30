@@ -76,7 +76,7 @@ class CrashLogger private constructor(private val appContext: Context) {
     }
 
     fun clearAll() {
-        crashDir.listFiles()?.forEach { it.delete() }
+        crashDir.listFiles { f -> f.isFile && f.name.endsWith(".txt") }?.forEach { it.delete() }
         refresh()
     }
 

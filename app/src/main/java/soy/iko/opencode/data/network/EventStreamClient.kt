@@ -25,6 +25,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.selects.onTimeout
 import kotlinx.coroutines.selects.select
 import java.io.IOException
+import kotlin.random.Random
 
 /**
  * Owns the single long-lived `GET /event` SSE subscription and exposes it as a hot
@@ -131,7 +132,7 @@ class EventStreamClient(
             if (!isActive) break
             // Wait for the backoff, but allow a reconnect signal to cut it short.
             var signaled = false
-            val jitter = (backoffMs * 0.2 * Math.random()).toLong()
+            val jitter = (backoffMs * 0.2 * Random.nextDouble()).toLong()
             select {
                 reconnectSignal.onReceive { signaled = true }
                 onTimeout(backoffMs + jitter) { /* normal backoff elapsed */ }

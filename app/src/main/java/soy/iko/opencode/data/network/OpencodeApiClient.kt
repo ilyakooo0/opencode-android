@@ -28,6 +28,7 @@ import io.ktor.client.request.setBody
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
 import kotlinx.coroutines.delay
+import kotlin.random.Random
 
 /**
  * Request/response wrapper over the opencode REST endpoints. The long-lived `/event`
@@ -171,7 +172,7 @@ internal suspend fun <T> withRetryInternal(
             if (t is ClientRequestException) throw t
             if (attempt < maxAttempts) {
                 val baseDelay = initialDelayMs * (1 shl (attempt - 1))
-                val jitter = (baseDelay * jitterFactor * Math.random()).toLong()
+                val jitter = (baseDelay * jitterFactor * Random.nextDouble()).toLong()
                 delay(baseDelay + jitter)
             }
         }

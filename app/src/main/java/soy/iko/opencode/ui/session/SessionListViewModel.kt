@@ -111,6 +111,10 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
             container.activeConnection.collectLatest { conn ->
                 if (conn == null) return@collectLatest
                 _serverLabel.value = conn.profile.displayLabel
+                // Reload the session list when a connection becomes available so the
+                // initial load (which may have run before auto-reconnect finished and
+                // found no connection) doesn't leave a stale "not connected" error.
+                refresh()
                 conn.events.events.collect { event ->
                     when (event) {
                         is SessionUpdated -> {
