@@ -4,9 +4,12 @@ import android.content.Intent
 import soy.iko.opencode.ui.components.showToast
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -23,6 +26,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -99,11 +103,19 @@ fun FileViewScreen(
                         Modifier.align(Alignment.Center).semantics { contentDescription = loadingLabel },
                     )
                 }
-                state.error != null -> Text(
-                    state.error ?: "",
+                state.error != null -> Column(
                     modifier = Modifier.align(Alignment.Center).padding(24.dp),
-                    color = MaterialTheme.colorScheme.error,
-                )
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text(
+                        state.error ?: "",
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    Spacer(Modifier.size(12.dp))
+                    TextButton(onClick = { vm.reload() }) {
+                        Text(stringResource(R.string.retry))
+                    }
+                }
                 state.content?.isBinary == true -> Text(
                     stringResource(R.string.binary_file),
                     modifier = Modifier.align(Alignment.Center).padding(24.dp),

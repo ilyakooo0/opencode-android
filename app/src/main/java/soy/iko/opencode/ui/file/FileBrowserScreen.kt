@@ -116,11 +116,19 @@ fun FileBrowserScreen(
                             Modifier.align(Alignment.Center).semantics { contentDescription = loadingLabel },
                         )
                     }
-                    state.error != null -> Text(
-                        state.error ?: "",
+                    state.error != null -> Column(
                         modifier = Modifier.align(Alignment.Center).padding(24.dp),
-                        color = MaterialTheme.colorScheme.error,
-                    )
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Text(
+                            state.error ?: "",
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                        androidx.compose.foundation.layout.Spacer(Modifier.size(12.dp))
+                        androidx.compose.material3.TextButton(onClick = { vm.open(state.path) }) {
+                            Text(stringResource(R.string.retry))
+                        }
+                    }
                     state.isSearching -> SearchResults(state.results, onOpenFile)
                     else -> DirectoryListing(
                         state = state,

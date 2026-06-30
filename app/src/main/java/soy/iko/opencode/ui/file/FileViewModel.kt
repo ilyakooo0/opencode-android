@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.launch
 import soy.iko.opencode.util.runCatchingCancellable
 
@@ -30,13 +31,20 @@ class FileViewModel(
     private val _state = MutableStateFlow(FileViewState())
     val state: StateFlow<FileViewState> = _state.asStateFlow()
 
+    /** Incremented by [reload] to trigger a fresh fetch without waiting for a connection change. */
+    private val _reload = MutableStateFlow(0)
+
+    fun reload() { _reload.value++ }
+
     init {
         // Observe the active connection so the file loads (or reloads) when a connection
         // becomes available — including when the view opens during a reconnect window
         // where activeConnection.value was momentarily null. collectLatest cancels the
-        // in-flight load if the connection is replaced mid-read.
+        // in-flight load if the connection is replaced mid-read. The reload trigger is
+        // merged in so a manual retry (e.g. after a transient error) re-fetches.
         viewModelScope.launch {
-            container.activeConnection.collectLatest { conn ->
+            merge(container.activeConnection, _reload).collectLatest {
+                val conn = container.activeConnection.value
                 if (conn == null) {
                     _state.value = FileViewState(loading = false, error = container.string(R.string.not_connected))
                     return@collectLatest

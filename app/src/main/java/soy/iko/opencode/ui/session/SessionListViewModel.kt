@@ -324,9 +324,11 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
                                     sessions = emptyList(),
                                     previews = emptyMap(),
                                     loading = false,
-                                    error = container.friendlyError(error),
                                 )
                             }
+                            // Surface the switch failure as a transient snackbar — refresh()
+                            // would clear a state.error, so use _transientError which survives it.
+                            _transientError.value = container.friendlyError(error)
                             refresh()
                         } else {
                             // Restore also failed — the user is now disconnected from

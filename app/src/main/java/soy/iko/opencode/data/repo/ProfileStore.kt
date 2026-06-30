@@ -33,6 +33,9 @@ open class ProfileStore private constructor(
 
     private val profilesKey = stringPreferencesKey("profiles_json")
 
+    /** Guards [migrateFallbackPasswords] so it runs at most once per process, not on every DataStore emission. */
+    private val migrationDone = java.util.concurrent.atomic.AtomicBoolean(false)
+
     private val securePrefs: SharedPreferences? by lazy {
         val ctx = appContext ?: return@lazy null
         runCatching {
@@ -65,8 +68,10 @@ open class ProfileStore private constructor(
         securePrefs ?: fallbackPrefs
 
     /** Migrate any plaintext passwords from the fallback prefs to secure prefs,
-     *  then clear the fallback. Called lazily once when secure prefs are available. */
+     *  then clear the fallback. Runs at most once per process — subsequent calls
+     *  are no-ops — so DataStore re-emissions don't repeatedly scan SharedPreferences. */
     private suspend fun migrateFallbackPasswords() {
+        if (!migrationDone.compareAndSet(false, true)) return
         val secure = securePrefs ?: return
         withContext(Dispatchers.IO) {
             val fallbackKeys = fallbackPrefs.all.keys.filter { it.startsWith("pw_") }
