@@ -4,6 +4,7 @@ import androidx.compose.runtime.Immutable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import soy.iko.opencode.data.model.ServerProfile
+import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.di.AppContainer
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -50,7 +51,7 @@ class ServerEditViewModel(
             if (profileId != null) {
                 // Wait for a non-empty profile list before searching, so DataStore
                 // emitting an empty list during loading doesn't cause a false timeout.
-                val existing = withTimeoutOrNull(5_000) {
+                val existing = withTimeoutOrNull(NetworkConfig.profileLoadTimeoutMs) {
                     container.profileStore.profiles
                         .first { it.isNotEmpty() || it.none { p -> p.id == profileId } }
                         .firstOrNull { it.id == profileId }
@@ -90,7 +91,7 @@ class ServerEditViewModel(
         viewModelScope.launch {
             val result = runCatchingCancellable {
                 val existingLastUsed = if (s.id != null) {
-                    withTimeoutOrNull(5_000) {
+                    withTimeoutOrNull(NetworkConfig.profileLoadTimeoutMs) {
                         container.profileStore.profiles.first()
                             .firstOrNull { it.id == s.id }?.lastUsed
                     } ?: 0L

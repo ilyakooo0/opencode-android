@@ -63,4 +63,42 @@ object NetworkConfig {
 
     /** Debounce delay before firing a file-search request after the user stops typing. */
     const val fileSearchDebounceMs = 250L
+
+    // --- StateFlow sharing (WhileSubscribed) ---
+
+    /** Grace period before a cold StateFlow is stopped after its last subscriber leaves. */
+    const val stateFlowSubscriptionTimeoutMs = 5_000L
+
+    // --- Draft persistence (ChatViewModel) ---
+
+    /** Debounce delay before persisting a draft to disk after the user stops typing. */
+    const val draftDebounceMs = 500L
+
+    // --- Profile store (ServerEditViewModel) ---
+
+    /** Timeout for loading a profile from DataStore before giving up. */
+    const val profileLoadTimeoutMs = 5_000L
+
+    // --- SSE stream (EventStreamClient, AppContainer) ---
+
+    /** Delay before retrying the message-activity observer after a failure. */
+    const val observerRetryDelayMs = 5_000L
+    /** Max concurrent assistant runs to track for completion notifications. */
+    const val activeRunsLimit = 200
+
+    // --- Markdown rendering (MarkdownText) ---
+
+    /** Throttle delay (~60fps frame) to coalesce streaming tokens into one re-parse. */
+    const val streamingThrottleMs = 16L
+
+    // --- UI layout constants ---
+
+    /** Minimum window width (dp) for two-pane layout on tablets / unfolded foldables. */
+    const val twoPaneWidthThresholdDp = 840
+    /** Maximum width fraction a user message bubble can occupy (keeps it readable). */
+    const val userBubbleWidthFraction = 0.85f
+    /** Left pane weight in the two-pane layout (session list). */
+    const val twoPaneLeftWeight = 0.38f
+    /** Right pane weight in the two-pane layout (chat detail). */
+    const val twoPaneRightWeight = 0.62f
 }

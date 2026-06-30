@@ -25,6 +25,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import soy.iko.opencode.R
+import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.ui.chat.ChatScreen
 
@@ -74,7 +75,7 @@ fun TwoPaneSessionChat(
     Row(modifier = modifier.fillMaxSize()) {
         Box(
             modifier = Modifier
-                .weight(0.38f)
+                .weight(NetworkConfig.twoPaneLeftWeight)
                 .widthIn(max = 460.dp),
         ) {
             SessionListScreen(
@@ -88,7 +89,7 @@ fun TwoPaneSessionChat(
             )
         }
 
-        Box(modifier = Modifier.weight(0.62f).fillMaxSize()) {
+        Box(modifier = Modifier.weight(NetworkConfig.twoPaneRightWeight).fillMaxSize()) {
             val sessionId = selected
             if (sessionId == null) {
                 EmptyDetail()

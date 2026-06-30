@@ -7,7 +7,6 @@ import soy.iko.opencode.data.network.OpencodeApiClient
 import soy.iko.opencode.data.repo.SessionRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 
@@ -18,8 +17,8 @@ import kotlinx.coroutines.cancel
  */
 class OpencodeConnection(val profile: ServerProfile) {
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val scopeJob: Job get() = scope.coroutineContext[Job]!!
+    private val scopeJob = SupervisorJob()
+    private val scope = CoroutineScope(scopeJob + Dispatchers.IO)
 
     private val client = HttpClientFactory.create(profile)
     val api = OpencodeApiClient(client)

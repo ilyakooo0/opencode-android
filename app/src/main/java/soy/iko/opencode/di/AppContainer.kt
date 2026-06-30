@@ -16,6 +16,7 @@ import soy.iko.opencode.data.repo.ProfileStore
 import soy.iko.opencode.data.repo.SettingsStore
 import soy.iko.opencode.data.repo.classifyError
 import soy.iko.opencode.data.repo.responseStatusCode
+import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.notification.NotificationChannels
 import soy.iko.opencode.notification.SessionNotifications
 import soy.iko.opencode.R
@@ -37,6 +38,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -155,11 +157,18 @@ class AppContainer(context: Context) {
         // mutex. Otherwise the runBlocking below would deadlock waiting for a coroutine
         // that can't be cancelled until after the runBlocking completes.
         appScope.cancel()
+        // Bounded runBlocking so a stuck mutex or a slow close() can't ANR the app.
+        // 2 seconds is generous: appScope.cancel() already triggered cancellation of
+        // any coroutine holding the mutex; we're just waiting for it to unwind.
         kotlinx.coroutines.runBlocking {
-            connectionMutex.withLock {
-                runCatching { _activeConnection.value?.close() }
-                _activeConnection.value = null
+            withTimeoutOrNull(2_000) {
+                connectionMutex.withLock {
+                    runCatching { _activeConnection.value?.close() }
+                    _activeConnection.value = null
+                }
             }
+            // If the timeout fired, force-clear the connection so it isn't left dangling.
+            _activeConnection.value = null
         }
         val cm = appContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
         networkCallback?.let { runCatching { cm?.unregisterNetworkCallback(it) } }
@@ -214,7 +223,7 @@ class AppContainer(context: Context) {
                     }
                 } }.onFailure { Log.w("AppContainer", "Message activity observer failed, will retry", it) }
                 if (!isActive) break
-                delay(5_000)
+                delay(NetworkConfig.observerRetryDelayMs)
             }
         }
     }
@@ -223,7 +232,7 @@ class AppContainer(context: Context) {
     private val activeRuns: MutableSet<String> = java.util.Collections.synchronizedSet(mutableSetOf())
 
     /** Upper bound on [activeRuns] to prevent unbounded growth if SessionIdle never arrives. */
-    private val activeRunsLimit = 200
+    private val activeRunsLimit = NetworkConfig.activeRunsLimit
 
     /** Guards connect/disconnect so concurrent callers can't leak an old connection. */
     private val connectionMutex = Mutex()

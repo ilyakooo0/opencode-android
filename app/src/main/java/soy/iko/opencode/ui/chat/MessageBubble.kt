@@ -20,6 +20,7 @@ import soy.iko.opencode.data.model.AssistantMessage
 import soy.iko.opencode.data.model.MessageWithParts
 import soy.iko.opencode.data.model.Tokens
 import soy.iko.opencode.data.model.UserMessage
+import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.ui.components.ImageLoadContext
 import soy.iko.opencode.ui.components.rememberRelativeTime
 
@@ -42,7 +43,7 @@ private fun UserBubble(message: MessageWithParts, imageContext: ImageLoadContext
     Row(modifier = modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
         Column(
             modifier = Modifier
-                .fillMaxWidth(0.85f)
+                .fillMaxWidth(NetworkConfig.userBubbleWidthFraction)
                 .clip(RoundedCornerShape(16.dp))
                 .background(MaterialTheme.colorScheme.primaryContainer)
                 .padding(12.dp),

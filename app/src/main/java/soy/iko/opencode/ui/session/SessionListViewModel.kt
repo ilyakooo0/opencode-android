@@ -58,7 +58,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
             .flatMapLatest { it?.events?.state ?: flowOf(EventStreamClient.ConnectionState.Disconnected) }
             .stateIn(
                 scope = viewModelScope,
-                started = SharingStarted.WhileSubscribed(5_000),
+                started = SharingStarted.WhileSubscribed(NetworkConfig.stateFlowSubscriptionTimeoutMs),
                 initialValue = EventStreamClient.ConnectionState.Disconnected,
             )
 
@@ -68,7 +68,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
     val profiles: StateFlow<List<ServerProfile>> =
         container.profileStore.profiles.stateIn(
             scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5_000),
+            started = SharingStarted.WhileSubscribed(NetworkConfig.stateFlowSubscriptionTimeoutMs),
             initialValue = emptyList(),
         )
 

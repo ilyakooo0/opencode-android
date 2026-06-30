@@ -16,6 +16,7 @@ import soy.iko.opencode.data.model.TextPart
 import soy.iko.opencode.data.model.defaultOption
 import soy.iko.opencode.data.model.toOptions
 import soy.iko.opencode.data.network.EventStreamClient
+import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.data.repo.SessionRepository
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
@@ -62,7 +63,7 @@ class ChatViewModel(
             }
             .stateIn(
                 scope = viewModelScope,
-                started = SharingStarted.WhileSubscribed(5_000),
+                started = SharingStarted.WhileSubscribed(NetworkConfig.stateFlowSubscriptionTimeoutMs),
                 initialValue = emptyList(),
             )
 
@@ -89,7 +90,7 @@ class ChatViewModel(
             .flatMapLatest { it?.events?.state ?: flowOf(EventStreamClient.ConnectionState.Disconnected) }
             .stateIn(
                 scope = viewModelScope,
-                started = SharingStarted.WhileSubscribed(5_000),
+                started = SharingStarted.WhileSubscribed(NetworkConfig.stateFlowSubscriptionTimeoutMs),
                 initialValue = EventStreamClient.ConnectionState.Disconnected,
             )
 
@@ -153,44 +154,92 @@ class ChatViewModel(
 
     fun reloadModels() {
         val conn = connection ?: return
-        viewModelScope.launch {
-            conn.api.invalidateCache()
-            _modelsLoading.value = true
-            _modelsError.value = false
-            runCatchingCancellable { conn.api.providers() }
-                .onFailure { Log.w("ChatViewModel", "Failed to reload model catalog", it); _modelsError.value = true }
-                .getOrNull()?.let { resp ->
-                    val options = resp.toOptions()
-                    _models.value = options
-                    _selectedModel.value = resp.defaultOption(options)
-                }
-            _modelsLoading.value = false
-        }
+        reloadCatalog(
+            conn = conn,
+            tag = "model catalog",
+            loading = _modelsLoading,
+            error = _modelsError,
+            fetch = { it.providers() },
+            onSuccess = { resp ->
+                val options = resp.toOptions()
+                _models.value = options
+                _selectedModel.value = resp.defaultOption(options)
+            },
+        )
     }
 
     fun reloadAgents() {
         val conn = connection ?: return
-        viewModelScope.launch {
-            conn.api.invalidateCache()
-            _agentsLoading.value = true
-            _agentsError.value = false
-            runCatchingCancellable { conn.api.agents() }
-                .onFailure { Log.w("ChatViewModel", "Failed to reload agent catalog", it); _agentsError.value = true }
-                .getOrNull()?.let { _agents.value = it }
-            _agentsLoading.value = false
-        }
+        reloadCatalog(
+            conn = conn,
+            tag = "agent catalog",
+            loading = _agentsLoading,
+            error = _agentsError,
+            fetch = { it.agents() },
+            onSuccess = { _agents.value = it },
+        )
     }
 
     fun reloadCommands() {
         val conn = connection ?: return
+        reloadCatalog(
+            conn = conn,
+            tag = "command catalog",
+            loading = _commandsLoading,
+            error = _commandsError,
+            fetch = { it.commands() },
+            onSuccess = { _commands.value = it },
+        )
+    }
+
+    /**
+     * Shared helper for reloadXxx(): invalidates the API cache, sets loading/error
+     * state, and applies [onSuccess] to the fetched result. Reduces triplicated
+     * boilerplate that was easy to get out of sync.
+     */
+    private fun <T> reloadCatalog(
+        conn: soy.iko.opencode.di.OpencodeConnection,
+        tag: String,
+        loading: MutableStateFlow<Boolean>,
+        error: MutableStateFlow<Boolean>,
+        fetch: suspend (soy.iko.opencode.data.network.OpencodeApiClient) -> T,
+        onSuccess: (T) -> Unit,
+    ) {
         viewModelScope.launch {
             conn.api.invalidateCache()
-            _commandsLoading.value = true
-            _commandsError.value = false
-            runCatchingCancellable { conn.api.commands() }
-                .onFailure { Log.w("ChatViewModel", "Failed to reload command catalog", it); _commandsError.value = true }
-                .getOrNull()?.let { _commands.value = it }
-            _commandsLoading.value = false
+            loading.value = true
+            error.value = false
+            runCatchingCancellable { fetch(conn.api) }
+                .onFailure { Log.w("ChatViewModel", "Failed to reload $tag", it); error.value = true }
+                .getOrNull()?.let(onSuccess)
+            loading.value = false
+        }
+    }
+
+    /**
+     * Shared helper for init-block catalog observers: re-fetches whenever the active
+     * connection changes, invoking [onNull] to clear state on null so stale data from
+     * the old server doesn't persist. Failure is non-fatal — the error flag is surfaced
+     * to the UI.
+     */
+    private fun <T> observeCatalog(
+        tag: String,
+        loading: MutableStateFlow<Boolean>,
+        error: MutableStateFlow<Boolean>,
+        fetch: suspend (soy.iko.opencode.data.network.OpencodeApiClient) -> T,
+        onSuccess: (T) -> Unit,
+        onNull: () -> Unit,
+    ) {
+        viewModelScope.launch {
+            container.activeConnection.collectLatest { conn ->
+                if (conn == null) { onNull(); loading.value = false; error.value = false; return@collectLatest }
+                loading.value = true
+                error.value = false
+                runCatchingCancellable { fetch(conn.api) }
+                    .onFailure { Log.w("ChatViewModel", "Failed to load $tag", it); error.value = true }
+                    .getOrNull()?.let(onSuccess)
+                loading.value = false
+            }
         }
     }
 
@@ -201,7 +250,7 @@ class ChatViewModel(
     init {
         // Debounce draft persistence so we don't write to disk on every keystroke.
         viewModelScope.launch {
-            _draft.drop(1).debounce(500).collect { text ->
+            _draft.drop(1).debounce(NetworkConfig.draftDebounceMs).collect { text ->
                 runCatchingCancellable { container.draftStore.set(sessionId, text) }
                     .onFailure { Log.w("ChatViewModel", "Failed to persist draft", it) }
             }
@@ -241,45 +290,36 @@ class ChatViewModel(
         }
         // Load the model catalog; preselect the server default. Failure is non-fatal —
         // sending with no model just uses the server's default agent/model.
-        viewModelScope.launch {
-            container.activeConnection.collectLatest { conn ->
-                if (conn == null) { _models.value = emptyList(); _selectedModel.value = null; _modelsLoading.value = false; _modelsError.value = false; return@collectLatest }
-                _modelsLoading.value = true
-                _modelsError.value = false
-                runCatchingCancellable { conn.api.providers() }
-                    .onFailure { Log.w("ChatViewModel", "Failed to load model catalog", it); _modelsError.value = true }
-                    .getOrNull()?.let { resp ->
-                    val options = resp.toOptions()
-                    _models.value = options
-                    _selectedModel.value = resp.defaultOption(options)
-                }
-                _modelsLoading.value = false
-            }
-        }
+        observeCatalog(
+            tag = "model catalog",
+            loading = _modelsLoading,
+            error = _modelsError,
+            fetch = { it.providers() },
+            onSuccess = { resp ->
+                val options = resp.toOptions()
+                _models.value = options
+                _selectedModel.value = resp.defaultOption(options)
+            },
+            onNull = { _models.value = emptyList(); _selectedModel.value = null },
+        )
         // Load the agent catalog (non-fatal).
-        viewModelScope.launch {
-            container.activeConnection.collectLatest { conn ->
-                if (conn == null) { _agents.value = emptyList(); _agentsLoading.value = false; _agentsError.value = false; return@collectLatest }
-                _agentsLoading.value = true
-                _agentsError.value = false
-                runCatchingCancellable { conn.api.agents() }
-                    .onFailure { Log.w("ChatViewModel", "Failed to load agent catalog", it); _agentsError.value = true }
-                    .getOrNull()?.let { _agents.value = it }
-                _agentsLoading.value = false
-            }
-        }
+        observeCatalog(
+            tag = "agent catalog",
+            loading = _agentsLoading,
+            error = _agentsError,
+            fetch = { it.agents() },
+            onSuccess = { _agents.value = it },
+            onNull = { _agents.value = emptyList() },
+        )
         // Load the command catalog (non-fatal).
-        viewModelScope.launch {
-            container.activeConnection.collectLatest { conn ->
-                if (conn == null) { _commands.value = emptyList(); _commandsLoading.value = false; _commandsError.value = false; return@collectLatest }
-                _commandsLoading.value = true
-                _commandsError.value = false
-                runCatchingCancellable { conn.api.commands() }
-                    .onFailure { Log.w("ChatViewModel", "Failed to load command catalog", it); _commandsError.value = true }
-                    .getOrNull()?.let { _commands.value = it }
-                _commandsLoading.value = false
-            }
-        }
+        observeCatalog(
+            tag = "command catalog",
+            loading = _commandsLoading,
+            error = _commandsError,
+            fetch = { it.commands() },
+            onSuccess = { _commands.value = it },
+            onNull = { _commands.value = emptyList() },
+        )
         // Resolve the human-readable session title for the app bar (non-fatal).
         viewModelScope.launch {
             container.activeConnection.collectLatest { conn ->

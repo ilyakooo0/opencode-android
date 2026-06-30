@@ -56,7 +56,7 @@ class EventStreamClient(
         .buffer(bufferCapacity, BufferOverflow.DROP_OLDEST)
         .shareIn(
             scope = scope,
-            started = SharingStarted.WhileSubscribed(stopTimeoutMillis = 5_000),
+            started = SharingStarted.WhileSubscribed(stopTimeoutMillis = NetworkConfig.stateFlowSubscriptionTimeoutMs),
             replay = 0,
         )
 

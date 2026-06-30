@@ -14,6 +14,7 @@ import androidx.navigation.navArgument
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
 import soy.iko.opencode.di.AppContainer
+import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.ui.chat.ChatScreen
 import soy.iko.opencode.ui.file.FileBrowserScreen
 import soy.iko.opencode.ui.file.FileViewScreen
@@ -48,7 +49,7 @@ fun OpencodeApp(container: AppContainer) {
     // Adaptive: on wide screens (tablets / unfolded foldables) show the session list and
     // the open conversation side by side instead of a single-pane back stack.
     BoxWithConstraints {
-        val isTwoPane = maxWidth >= 840.dp && connection != null
+        val isTwoPane = maxWidth >= NetworkConfig.twoPaneWidthThresholdDp.dp && connection != null
 
         // Open a session requested by a notification tap or deep link, once connected.
         // In two-pane mode the detail pane consumes the request instead of navigating.

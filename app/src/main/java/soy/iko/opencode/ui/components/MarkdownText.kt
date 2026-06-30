@@ -43,6 +43,7 @@ import org.intellij.markdown.MarkdownElementTypes
 import org.intellij.markdown.ast.ASTNode
 import org.intellij.markdown.ast.getTextInNode
 import soy.iko.opencode.R
+import soy.iko.opencode.data.network.NetworkConfig
 
 /**
  * Renders markdown using [multiplatform-markdown-renderer](https://github.com/mikepenz/multiplatform-markdown-renderer)
@@ -67,13 +68,15 @@ fun MarkdownText(
     // into a single markdown re-parse per frame instead of one per token. The delay
     // is only applied when the content is growing incrementally (streaming) — a
     // content switch or initial render proceeds immediately.
-    var renderedContent by remember { mutableStateOf(markdown) }
+    // Keyed to a content-prefix so switching to a different message resets
+    // immediately instead of showing the old message for one frame.
+    var renderedContent by remember(markdown.take(32)) { mutableStateOf(markdown) }
     LaunchedEffect(markdown) {
         if (renderedContent.isNotEmpty() &&
             markdown.startsWith(renderedContent) &&
             markdown != renderedContent
         ) {
-            delay(16)
+            delay(NetworkConfig.streamingThrottleMs)
         }
         renderedContent = markdown
     }

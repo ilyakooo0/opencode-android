@@ -27,7 +27,7 @@ data class Permission(
         get() = when (val p = pattern) {
             null -> null
             is JsonPrimitive -> p.content
-            else -> runCatching { p.jsonArray.joinToString(", ") { (it as JsonPrimitive).content } }.getOrNull()
+            else -> p.jsonArray.mapNotNull { (it as? JsonPrimitive)?.content }.joinToString(", ").ifEmpty { null }
         }
 }
 

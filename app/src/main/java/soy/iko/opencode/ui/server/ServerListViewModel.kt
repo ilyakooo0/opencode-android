@@ -3,6 +3,7 @@ package soy.iko.opencode.ui.server
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import soy.iko.opencode.data.model.ServerProfile
+import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
 import soy.iko.opencode.util.runCatchingCancellable
@@ -18,7 +19,7 @@ class ServerListViewModel(private val container: AppContainer) : ViewModel() {
     val profiles: StateFlow<List<ServerProfile>> =
         container.profileStore.profiles.stateIn(
             scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5_000),
+            started = SharingStarted.WhileSubscribed(NetworkConfig.stateFlowSubscriptionTimeoutMs),
             initialValue = emptyList(),
         )
 
