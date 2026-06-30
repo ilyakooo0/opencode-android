@@ -23,6 +23,7 @@ import soy.iko.opencode.ui.session.SessionListScreen
 import soy.iko.opencode.ui.session.TwoPaneSessionChat
 import soy.iko.opencode.ui.settings.DiagnosticsScreen
 import soy.iko.opencode.ui.settings.SettingsScreen
+import soy.iko.opencode.util.runCatchingCancellable
 
 @Composable
 fun OpencodeApp(container: AppContainer) {
@@ -86,7 +87,7 @@ fun OpencodeApp(container: AppContainer) {
                     onOpenFiles = { navController.navigate(Routes.FILES) },
                     onOpenSettings = { navController.navigate(Routes.SETTINGS) },
                     onDisconnect = {
-                        scope.launch { container.disconnect() }
+                        scope.launch { runCatchingCancellable { container.disconnect() } }
                         navController.popBackStack(Routes.SERVERS, inclusive = false)
                     },
                 )
@@ -94,11 +95,11 @@ fun OpencodeApp(container: AppContainer) {
                 SessionListScreen(
                     container = container,
                     onOpenSession = { id ->
-                        container.consumePendingShare()?.let { scope.launch { container.draftStore.set(id, it) } }
+                        container.consumePendingShare()?.let { scope.launch { runCatchingCancellable { container.draftStore.set(id, it) } } }
                         navController.navigate(Routes.chat(id))
                     },
                     onDisconnect = {
-                        scope.launch { container.disconnect() }
+                        scope.launch { runCatchingCancellable { container.disconnect() } }
                         navController.popBackStack(Routes.SERVERS, inclusive = false)
                     },
                     onOpenFiles = { navController.navigate(Routes.FILES) },

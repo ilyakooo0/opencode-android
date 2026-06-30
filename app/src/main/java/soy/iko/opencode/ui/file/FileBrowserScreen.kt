@@ -39,6 +39,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
@@ -96,8 +97,9 @@ fun FileBrowserScreen(
             OutlinedTextField(
                 value = state.query,
                 onValueChange = vm::setQuery,
-                modifier = Modifier.fillMaxWidth().padding(12.dp),
+                modifier = Modifier.fillMaxWidth().padding(12.dp).testTag("file_search"),
                 placeholder = { Text(stringResource(R.string.search_files)) },
+                label = { Text(stringResource(R.string.search_files)) },
                 leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
@@ -105,7 +107,12 @@ fun FileBrowserScreen(
 
             Box(modifier = Modifier.fillMaxSize()) {
                 when {
-                    state.loading || state.searching -> CircularProgressIndicator(Modifier.align(Alignment.Center))
+                    state.loading || state.searching -> {
+                        val loadingLabel = stringResource(R.string.loading)
+                        CircularProgressIndicator(
+                            Modifier.align(Alignment.Center).semantics { contentDescription = loadingLabel },
+                        )
+                    }
                     state.error != null && !state.isSearching -> Text(
                         state.error ?: "",
                         modifier = Modifier.align(Alignment.Center).padding(24.dp),

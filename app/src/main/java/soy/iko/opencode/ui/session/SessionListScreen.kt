@@ -59,6 +59,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
@@ -219,8 +220,9 @@ fun SessionListScreen(
                     OutlinedTextField(
                         value = state.query,
                         onValueChange = vm::setQuery,
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).testTag("session_search"),
                         placeholder = { Text(stringResource(R.string.search_sessions)) },
+                        label = { Text(stringResource(R.string.search_sessions)) },
                         leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
@@ -251,7 +253,7 @@ fun SessionListScreen(
                                         onClick = { onOpenSession(session.id) },
                                         onRename = { pendingRenameId = session.id },
                                         onDelete = { pendingDeleteId = session.id },
-                                        modifier = Modifier.animateItem(),
+                                        modifier = Modifier.animateItem().testTag("session_card"),
                                     )
                                 }
                             }
@@ -311,6 +313,7 @@ private fun RenameSessionDialog(
                 onValueChange = onTitleChange,
                 modifier = Modifier.fillMaxWidth(),
                 placeholder = { Text(stringResource(R.string.session_title_hint)) },
+                label = { Text(stringResource(R.string.rename_session)) },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                 keyboardActions = KeyboardActions(onDone = { if (title.isNotBlank()) onConfirm() }),
@@ -412,7 +415,7 @@ private fun SessionCard(
                         color = if (unread) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.clickable { onClick() },
+                        modifier = Modifier.clickable(role = Role.Button) { onClick() },
                     )
                 }
             }

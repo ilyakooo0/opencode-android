@@ -10,6 +10,7 @@ import io.ktor.client.plugins.auth.providers.basic
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.defaultRequest
 import io.ktor.client.plugins.sse.SSE
+import io.ktor.client.request.header
 import io.ktor.http.URLBuilder
 import io.ktor.http.takeFrom
 import io.ktor.serialization.kotlinx.json.json
@@ -52,26 +53,44 @@ object HttpClientFactory {
         }
 
         if (profile.hasAuth) {
-            install(Auth) {
-                basic {
-                    credentials {
-                        BasicAuthCredentials(
-                            username = profile.username.orEmpty(),
-                            password = profile.password.orEmpty(),
-                        )
-                    }
-                    // Send eagerly so opencode doesn't need a 401 challenge round-trip,
-                    // but only over HTTPS — sending credentials over cleartext HTTP
-                    // would expose them on the network.
-                    sendWithoutRequest { request ->
-                        request.url.protocol.name == "https"
+            val isHttps = normalizeBaseUrl(profile.baseUrl).startsWith("https://")
+            if (isHttps) {
+                install(Auth) {
+                    basic {
+                        credentials {
+                            BasicAuthCredentials(
+                                username = profile.username.orEmpty(),
+                                password = profile.password.orEmpty(),
+                            )
+                        }
+                        // Send eagerly so opencode doesn't need a 401 challenge round-trip.
+                        // The Auth plugin is only installed for HTTPS profiles — over HTTP,
+                        // even reactive (401-challenge) credential sending would leak
+                        // passwords in cleartext, so we don't install it at all.
+                        sendWithoutRequest { true }
                     }
                 }
+            } else {
+                // For HTTP profiles with auth, send credentials proactively in the
+                // Authorization header via defaultRequest (below) so the user's intent
+                // to connect over cleartext is honored, but we never install the Auth
+                // plugin's reactive challenge-response which would silently re-send
+                // credentials on any 401 without checking the protocol.
             }
         }
 
         defaultRequest {
             url.takeFrom(URLBuilder().takeFrom(normalizeBaseUrl(profile.baseUrl)))
+            // For HTTP profiles with auth, attach the Basic auth header proactively on
+            // every request (the Auth plugin is skipped for non-HTTPS). The user chose
+            // cleartext explicitly, so we honor that — but without the reactive challenge
+            // logic that could re-send credentials silently.
+            if (profile.hasAuth && !normalizeBaseUrl(profile.baseUrl).startsWith("https://")) {
+                val credentials = java.util.Base64.getEncoder().encodeToString(
+                    "${profile.username.orEmpty()}:${profile.password.orEmpty()}".toByteArray(),
+                )
+                header("Authorization", "Basic $credentials")
+            }
         }
     }
 

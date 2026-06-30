@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import android.util.Log
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 
 /**
@@ -25,8 +26,15 @@ class DraftStore(context: Context, scope: CoroutineScope) {
 
     private val appContext = context.applicationContext
     private val prefs by lazy {
+        prefsInitialized.set(true)
         appContext.getSharedPreferences("drafts", Context.MODE_PRIVATE)
     }
+
+    /** Tracks whether the [prefs] lazy has been resolved (i.e. the file has been
+     *  opened from disk). Accessed from [flushDraft] to decide whether a synchronous
+     *  write on the main thread is safe or whether the write must be deferred to a
+     *  background thread to avoid blocking on first-time disk I/O. */
+    private val prefsInitialized = java.util.concurrent.atomic.AtomicBoolean(false)
 
     private val _drafts = MutableStateFlow<Map<String, String>>(emptyMap())
     /** The full in-memory snapshot of all drafts, updated when prefs finish loading. */
@@ -84,9 +92,15 @@ class DraftStore(context: Context, scope: CoroutineScope) {
     /**
      * Synchronously persist a draft. Intended for [ViewModel.onCleared] where the
      * viewModelScope is already cancelled and a suspending write can't be used.
-     * Uses [apply] (asynchronous) rather than [commit] (synchronous) to avoid
-     * blocking the main thread — Android's SharedPreferences framework guarantees
-     * pending `apply()` writes are flushed to disk before the process exits.
+     *
+     * If the SharedPreferences file has already been opened (the normal case — the
+     * background init load touches it shortly after construction), the write uses
+     * [apply] (asynchronous) and returns immediately without blocking the main thread.
+     *
+     * If the prefs file has NOT been opened yet (a rare race where onCleared fires
+     * before the background init), accessing the lazy would synchronously load and
+     * parse the XML on the main thread. To avoid this, the write is deferred to a
+     * blocking call on the IO dispatcher instead.
      */
     fun flushDraft(sessionId: String, text: String) {
         _drafts.update { current ->
@@ -94,10 +108,24 @@ class DraftStore(context: Context, scope: CoroutineScope) {
             if (text.isBlank()) updated.remove(sessionId) else updated[sessionId] = text
             updated
         }
-        runCatching {
-            prefs.edit().apply {
-                if (text.isBlank()) remove(sessionId) else putString(sessionId, text)
-            }.apply()
-        }.onFailure { Log.w("DraftStore", "Failed to flush draft for $sessionId", it) }
+        if (prefsInitialized.get()) {
+            // Prefs already opened — the lazy resolves instantly and apply() is async.
+            runCatching {
+                prefs.edit().apply {
+                    if (text.isBlank()) remove(sessionId) else putString(sessionId, text)
+                }.apply()
+            }.onFailure { Log.w("DraftStore", "Failed to flush draft for $sessionId", it) }
+        } else {
+            // Prefs not yet opened — avoid a synchronous disk read on the main thread
+            // by blocking on IO instead. This is acceptable in onCleared() because the
+            // viewModelScope is already dead and there's no suspending alternative.
+            runCatching {
+                runBlocking(Dispatchers.IO) {
+                    prefs.edit().apply {
+                        if (text.isBlank()) remove(sessionId) else putString(sessionId, text)
+                    }.apply()
+                }
+            }.onFailure { Log.w("DraftStore", "Failed to flush draft for $sessionId", it) }
+        }
     }
 }

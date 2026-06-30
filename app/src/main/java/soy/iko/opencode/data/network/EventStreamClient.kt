@@ -68,6 +68,13 @@ class EventStreamClient(
         e is io.ktor.client.plugins.ClientRequestException &&
             (e.response.status.value == 401 || e.response.status.value == 403)
 
+    /** A log-safe exception summary that avoids leaking the request URL (which
+     *  ClientRequestException embeds in its message and may contain auth or paths). */
+    private fun safeExceptionSummary(e: Throwable): String {
+        val status = (e as? io.ktor.client.plugins.ClientRequestException)?.response?.status?.value
+        return if (status != null) "${e.javaClass.simpleName}($status)" else e.javaClass.simpleName
+    }
+
     /** Request an immediate reconnect, skipping any in-progress backoff. */
     fun triggerReconnect() { reconnectSignal.trySend(Unit) }
 
@@ -162,12 +169,14 @@ class EventStreamClient(
                 // If the scope was cancelled (e.g. connection close), the closed-client
                 // exception is expected — don't log a spurious "stream error" warning.
                 if (isSseAuthFailure(e)) {
-                    // Credentials are wrong — retrying won't help. Log and stop.
-                    Log.w("EventStream", "SSE auth failed (401/403), stopping retries", e)
+                    // Credentials are wrong — retrying won't help. Log a scrubbed
+                    // summary (class + status) instead of the full exception, whose
+                    // message carries the request URL and may include auth or paths.
+                    Log.w("EventStream", "SSE auth failed (401/403), stopping retries: ${safeExceptionSummary(e)}")
                     _state.value = ConnectionState.Failed
                     break
                 } else if (isActive) {
-                    Log.w("EventStream", "SSE stream error, will retry", e)
+                    Log.w("EventStream", "SSE stream error, will retry: ${safeExceptionSummary(e)}")
                 }
             }
             _state.value = ConnectionState.Disconnected

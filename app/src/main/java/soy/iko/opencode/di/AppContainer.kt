@@ -152,6 +152,7 @@ class AppContainer(context: Context) {
         }
         val cm = appContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
         networkCallback?.let { runCatching { cm?.unregisterNetworkCallback(it) } }
+        soy.iko.opencode.data.repo.CrashLogger.get(appContext).shutdown()
         appScope.cancel()
     }
 
@@ -166,9 +167,10 @@ class AppContainer(context: Context) {
     @OptIn(ExperimentalCoroutinesApi::class)
     private fun observeMessageActivity() {
         appScope.launch {
-            activeConnection
-                .flatMapLatest { conn -> conn?.events?.events ?: emptyFlow() }
-                .collect { event ->
+            runCatchingCancellable {
+                activeConnection
+                    .flatMapLatest { conn -> conn?.events?.events ?: emptyFlow() }
+                    .collect { event ->
                     // SessionIdle is not "message activity" (don't badge as unread)
                     // but signals a run finished — fire a completion notification if the
                     // session isn't currently being viewed and was actively streaming.
@@ -197,6 +199,7 @@ class AppContainer(context: Context) {
                         }
                     }
                 }
+            }.onFailure { Log.w("AppContainer", "Message activity observer failed", it) }
         }
     }
 

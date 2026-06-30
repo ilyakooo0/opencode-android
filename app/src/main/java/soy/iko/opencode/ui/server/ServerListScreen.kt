@@ -43,6 +43,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
@@ -120,7 +124,8 @@ fun ServerListScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .animateItem()
-                                .clickable(enabled = connectingId == null) {
+                                .testTag("server_card")
+                                .clickable(enabled = connectingId == null, role = Role.Button) {
                                     vm.connect(profile, onConnected)
                                 },
                         ) {
@@ -158,7 +163,10 @@ fun ServerListScreen(
                                         modifier = Modifier.size(22.dp),
                                     )
                                 } else if (connectingId == profile.id) {
-                                    CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                                    val connectingLabel = stringResource(R.string.connecting)
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(24.dp).semantics { contentDescription = connectingLabel },
+                                    )
                                 } else {
                                     IconButton(onClick = { onEditProfile(profile.id) }) {
                                         Icon(Icons.Filled.Edit, contentDescription = stringResource(R.string.edit))

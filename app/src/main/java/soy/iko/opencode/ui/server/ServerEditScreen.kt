@@ -29,6 +29,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -64,8 +67,9 @@ fun ServerEditScreen(
         },
     ) { padding ->
         if (!state.loaded) {
+            val loadingLabel = stringResource(R.string.loading)
             Box(modifier = Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator()
+                CircularProgressIndicator(Modifier.semantics { contentDescription = loadingLabel })
             }
         } else {
         Column(
@@ -83,7 +87,7 @@ fun ServerEditScreen(
                 label = { Text(stringResource(R.string.label_optional)) },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().testTag("server_label"),
             )
             OutlinedTextField(
                 value = state.baseUrl,
@@ -92,7 +96,7 @@ fun ServerEditScreen(
                 placeholder = { Text(stringResource(R.string.base_url_hint)) },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Next),
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().testTag("server_url"),
             )
             Text(
                 stringResource(R.string.auth_help),
@@ -104,7 +108,7 @@ fun ServerEditScreen(
                 label = { Text(stringResource(R.string.username_optional)) },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().testTag("server_username"),
             )
             OutlinedTextField(
                 value = state.password,
@@ -114,7 +118,7 @@ fun ServerEditScreen(
                 visualTransformation = PasswordVisualTransformation(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
                 keyboardActions = KeyboardActions(onDone = { if (state.canSave && !state.saving) vm.save(onDone) }),
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().testTag("server_password"),
             )
             Button(
                 onClick = { vm.save(onDone) },

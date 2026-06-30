@@ -198,7 +198,8 @@ class ChatViewModel(
         // Debounce draft persistence so we don't write to disk on every keystroke.
         viewModelScope.launch {
             _draft.drop(1).debounce(500).collect { text ->
-                container.draftStore.set(sessionId, text)
+                runCatchingCancellable { container.draftStore.set(sessionId, text) }
+                    .onFailure { Log.w("ChatViewModel", "Failed to persist draft", it) }
             }
         }
         // Reset per-connection state when the active server changes so stale spinners,

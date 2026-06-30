@@ -103,6 +103,8 @@
     <string name="show_less">Show less</string>
     <string name="tool_completed">Completed</string>
     <string name="tool_error">Error</string>
+    <string name="tool_running">Running</string>
+    <string name="tool_unknown">Unknown tool state</string>
     <string name="state_expanded">Expanded</string>
     <string name="state_collapsed">Collapsed</string>
 

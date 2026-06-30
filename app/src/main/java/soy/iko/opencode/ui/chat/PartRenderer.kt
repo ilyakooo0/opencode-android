@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -99,6 +100,8 @@ private fun ReasoningBlock(text: String, streaming: Boolean, modifier: Modifier)
     Column(modifier = modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier
+                .fillMaxWidth()
+                .defaultMinSize(minHeight = 48.dp)
                 .clickable { expanded = !expanded }
                 .padding(vertical = 4.dp)
                 .semantics {
@@ -108,8 +111,9 @@ private fun ReasoningBlock(text: String, streaming: Boolean, modifier: Modifier)
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (streaming) {
+                val thinkingLabel = stringResource(R.string.thinking)
                 CircularProgressIndicator(
-                    Modifier.size(14.dp),
+                    Modifier.size(14.dp).semantics { contentDescription = thinkingLabel },
                     strokeWidth = 2.dp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -221,11 +225,13 @@ private fun ToolCallView(part: ToolPart, modifier: Modifier) {
 @Composable
 private fun ToolStatusIcon(state: ToolState) {
     when (state) {
-        is ToolPending, is ToolRunning ->
+        is ToolPending, is ToolRunning -> {
+            val label = stringResource(R.string.tool_running)
             CircularProgressIndicator(
-                modifier = Modifier.size(16.dp),
+                modifier = Modifier.size(16.dp).semantics { contentDescription = label },
                 strokeWidth = 2.dp,
             )
+        }
         is ToolCompleted ->
             Icon(
                 Icons.Filled.CheckCircle,
@@ -241,7 +247,11 @@ private fun ToolStatusIcon(state: ToolState) {
                 tint = MaterialTheme.colorScheme.error,
             )
         is ToolUnknown ->
-            Icon(Icons.Filled.Bolt, contentDescription = null, modifier = Modifier.size(16.dp))
+            Icon(
+                Icons.Filled.Bolt,
+                contentDescription = stringResource(R.string.tool_unknown),
+                modifier = Modifier.size(16.dp),
+            )
     }
 }
 

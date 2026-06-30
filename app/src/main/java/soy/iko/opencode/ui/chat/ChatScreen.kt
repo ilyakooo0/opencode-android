@@ -58,6 +58,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.Alignment
@@ -71,6 +72,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -80,15 +82,15 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import soy.iko.opencode.data.network.EventStreamClient
-import soy.iko.opencode.data.model.ReasoningPart
-import soy.iko.opencode.data.model.TextPart
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
 import soy.iko.opencode.ui.components.ConnectionBanner
 import soy.iko.opencode.ui.components.toImageContext
 import soy.iko.opencode.ui.vmFactory
+import soy.iko.opencode.util.runCatchingCancellable
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -174,19 +176,17 @@ fun ChatScreen(
     }
 
     // Keep the newest content in view as parts stream in — only if already at the bottom.
-    // Include the growing text length so we follow streaming within a single part, not
-    // only when a brand-new message or part is added.
-    val lastPartLen = messages.lastOrNull()?.parts?.lastOrNull()?.let { part ->
-        when (part) {
-            is TextPart -> part.text.length
-            is ReasoningPart -> part.text.length
-            else -> 0
-        }
-    } ?: 0
-    LaunchedEffect(messages.size, messages.lastOrNull()?.parts?.size, lastPartLen) {
-        if (messages.isNotEmpty() && isPinnedToBottom) {
-            listState.animateScrollToItem(messages.lastIndex)
-        }
+    // A single LaunchedEffect(Unit) + snapshotFlow avoids the rapid cancel/re-launch
+    // churn that keying on lastPartLen (which changes on every streaming token) caused.
+    // collectLatest cancels the in-flight scroll when a newer snapshot arrives, so
+    // streaming stays smooth without dozens of competing animations per second.
+    LaunchedEffect(Unit) {
+        snapshotFlow { Triple(messages.size, messages.lastOrNull()?.parts?.size, isPinnedToBottom) }
+            .collectLatest { (_, _, pinned) ->
+                if (messages.isNotEmpty() && pinned) {
+                    listState.animateScrollToItem(messages.lastIndex)
+                }
+            }
     }
     val retryLabel = stringResource(R.string.retry)
     LaunchedEffect(error) {
@@ -337,7 +337,7 @@ fun ChatScreen(
                     ExtendedFloatingActionButton(
                         onClick = {
                             if (messages.isNotEmpty()) {
-                                scope.launch { listState.animateScrollToItem(messages.lastIndex) }
+                                scope.launch { runCatchingCancellable { listState.animateScrollToItem(messages.lastIndex) } }
                             }
                         },
                         icon = { Icon(Icons.Filled.KeyboardArrowDown, contentDescription = stringResource(R.string.latest)) },
@@ -432,6 +432,7 @@ private fun ChatInputBar(
                 onValueChange = onValueChange,
                 modifier = Modifier
                     .weight(1f)
+                    .testTag("chat_input")
                     .onPreviewKeyEvent { event ->
                         if (event.type == KeyEventType.KeyDown &&
                             event.key == Key.Enter &&
@@ -445,20 +446,21 @@ private fun ChatInputBar(
                         }
                     },
                 placeholder = { Text(stringResource(R.string.message_placeholder)) },
+                label = { Text(stringResource(R.string.message_placeholder)) },
                 enabled = enabled,
                 maxLines = 6,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                 keyboardActions = KeyboardActions(onSend = { if (enabled && value.isNotBlank()) onSend() }),
             )
             if (running) {
-                IconButton(onClick = onAbort, modifier = Modifier.padding(start = 4.dp)) {
+                IconButton(onClick = onAbort, modifier = Modifier.padding(start = 4.dp).testTag("stop_button")) {
                     Icon(Icons.Filled.Stop, contentDescription = stringResource(R.string.stop))
                 }
             } else {
                 IconButton(
                     onClick = onSend,
                     enabled = enabled && value.isNotBlank(),
-                    modifier = Modifier.padding(start = 4.dp),
+                    modifier = Modifier.padding(start = 4.dp).testTag("send_button"),
                 ) {
                     Icon(Icons.AutoMirrored.Filled.Send, contentDescription = stringResource(R.string.send))
                 }

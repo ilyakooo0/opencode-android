@@ -20,7 +20,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.Box
@@ -45,11 +47,12 @@ fun CommandPickerSheet(
             modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 8.dp),
         )
         if (loading) {
+            val loadingLabel = stringResource(R.string.loading)
             Box(
                 modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
                 contentAlignment = Alignment.Center,
             ) {
-                CircularProgressIndicator()
+                CircularProgressIndicator(Modifier.semantics { contentDescription = loadingLabel })
             }
         } else if (error && commands.isEmpty()) {
             Text(
@@ -58,7 +61,7 @@ fun CommandPickerSheet(
                 color = MaterialTheme.colorScheme.error,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { onRetry() }
+                    .clickable(role = Role.Button) { onRetry() }
                     .padding(horizontal = 24.dp, vertical = 16.dp),
             )
         } else if (commands.isEmpty()) {

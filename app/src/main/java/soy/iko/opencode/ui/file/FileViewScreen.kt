@@ -29,6 +29,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -86,7 +88,12 @@ fun FileViewScreen(
     ) { padding ->
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
             when {
-                state.loading -> CircularProgressIndicator(Modifier.align(Alignment.Center))
+                state.loading -> {
+                    val loadingLabel = stringResource(R.string.loading)
+                    CircularProgressIndicator(
+                        Modifier.align(Alignment.Center).semantics { contentDescription = loadingLabel },
+                    )
+                }
                 state.error != null -> Text(
                     state.error ?: "",
                     modifier = Modifier.align(Alignment.Center).padding(24.dp),

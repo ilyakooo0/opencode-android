@@ -22,6 +22,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
@@ -49,11 +50,12 @@ fun ModelPickerSheet(
             modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 8.dp),
         )
         if (loading) {
+            val loadingLabel = stringResource(R.string.loading)
             Box(
                 modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
                 contentAlignment = Alignment.Center,
             ) {
-                CircularProgressIndicator()
+                CircularProgressIndicator(Modifier.semantics { contentDescription = loadingLabel })
             }
         } else if (error && options.isEmpty()) {
             Text(
@@ -62,7 +64,7 @@ fun ModelPickerSheet(
                 color = MaterialTheme.colorScheme.error,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { onRetry() }
+                    .clickable(role = Role.Button) { onRetry() }
                     .padding(horizontal = 24.dp, vertical = 16.dp),
             )
         } else if (options.isEmpty()) {
@@ -81,10 +83,9 @@ fun ModelPickerSheet(
                         modifier = Modifier
                             .fillMaxWidth()
                             .semantics(mergeDescendants = true) {
-                                role = Role.RadioButton
                                 if (isSelected) this.selected = true
                             }
-                            .clickable {
+                            .clickable(role = Role.RadioButton) {
                                 onSelect(option)
                                 onDismiss()
                             }

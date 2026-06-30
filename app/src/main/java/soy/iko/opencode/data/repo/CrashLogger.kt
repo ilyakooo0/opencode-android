@@ -8,6 +8,7 @@ import androidx.core.content.pm.PackageInfoCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -18,6 +19,7 @@ import java.io.StringWriter
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import soy.iko.opencode.util.runCatchingCancellable
 
 /**
  * A self-contained crash reporter with no network or third-party backend. An uncaught
@@ -37,6 +39,9 @@ class CrashLogger private constructor(private val appContext: Context) {
         val preview: String,
     )
 
+    /** Matches http(s) URLs so they can be redacted from crash report exception messages. */
+    private val urlScrubRegex = Regex("https?://[^\\s\"']+")
+
     private val crashDir = File(appContext.filesDir, "crashes").apply { mkdirs() }
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
@@ -53,7 +58,7 @@ class CrashLogger private constructor(private val appContext: Context) {
         // Load crash reports off the main thread so startup isn't blocked by file I/O
         // (listFiles + reading the first line of each report). The StateFlow updates
         // whenever the scan completes, so the Diagnostics screen reflects the result.
-        scope.launch { runCatching { refresh() } }
+        scope.launch { runCatchingCancellable { refresh() } }
     }
 
     fun refresh() {
@@ -90,6 +95,13 @@ class CrashLogger private constructor(private val appContext: Context) {
 
     fun reportCount(): Int = _reports.value.size
 
+    /** Cancel the internal coroutine scope so background work doesn't outlive the
+     *  process. Called from [AppContainer.shutdown]. The UncaughtExceptionHandler is
+     *  intentionally left installed — a crash during shutdown still needs to be logged. */
+    fun shutdown() {
+        scope.cancel()
+    }
+
     private fun writeReport(thread: Thread, throwable: Throwable) {
         val now = Date()
         val stamp = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss-SSS", Locale.US).format(now)
@@ -107,7 +119,11 @@ class CrashLogger private constructor(private val appContext: Context) {
             pw.println("Android: ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
             pw.println("ABI: ${Build.SUPPORTED_ABIS.joinToString()}")
             pw.println()
-            pw.println(throwable.javaClass.name + ": " + throwable.message)
+            // Scrub URLs from the exception message — Ktor/OkHttp embed the full request
+            // URL in ClientRequestException messages, which may contain auth or internal
+            // paths. The stack trace itself (class names + line numbers) is kept.
+            val safeMessage = throwable.message?.let { urlScrubRegex.replace(it, "[url]") }
+            pw.println(throwable.javaClass.name + ": " + safeMessage)
             throwable.printStackTrace(pw)
         }
         file.writeText(sw.toString())

@@ -31,6 +31,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
@@ -81,6 +82,7 @@ fun MarkdownText(
         modifier = modifier.combinedClickable(
             onClick = {},
             onLongClick = { copyToClipboard(context, markdown) },
+            role = Role.Button,
         ),
         components = markdownComponents(
             codeFence = { CodeWithCopy(it) },
