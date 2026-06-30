@@ -106,8 +106,17 @@ private fun MessageTimestamp(info: soy.iko.opencode.data.model.MessageInfo) {
     }
 }
 
+// NumberFormat.getNumberInstance performs an expensive ICU locale lookup + object
+// construction on every call. Reuse a thread-local instance so repeated calls (e.g.
+// when the message list re-seeds after a reconnect and every visible assistant bubble
+// recomposes at once) don't each pay that cost. Thread-local because NumberFormat is
+// not thread-safe.
+private val tokenNumberFormat: ThreadLocal<java.text.NumberFormat> = ThreadLocal.withInitial {
+    java.text.NumberFormat.getNumberInstance(java.util.Locale.US)
+}
+
 private fun formatTokens(tokens: Tokens, format: String): String {
-    val nf = java.text.DecimalFormat.getNumberInstance(java.util.Locale.US)
+    val nf = tokenNumberFormat.get()!!
     return format.format(nf.format(tokens.input), nf.format(tokens.output))
 }
 

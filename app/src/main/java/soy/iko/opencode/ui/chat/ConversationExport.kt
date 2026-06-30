@@ -40,10 +40,14 @@ fun buildConversationMarkdown(messages: List<MessageWithParts>, title: String?):
 }
 
 /** Escape markdown special characters so user/model text doesn't produce malformed markdown. */
-private fun escapeMarkdown(text: String): String =
-    text.replace("\\", "\\\\")
-        .replace("*", "\\*")
-        .replace("_", "\\_")
-        .replace("#", "\\#")
-        .replace("`", "\\`")
-        .replace(">", "\\>")
+private fun escapeMarkdown(text: String): String {
+    if (text.isEmpty()) return text
+    val sb = StringBuilder(text.length + 16)
+    for (c in text) {
+        when (c) {
+            '\\', '*', '_', '#', '`', '>' -> sb.append('\\')
+        }
+        sb.append(c)
+    }
+    return sb.toString()
+}
