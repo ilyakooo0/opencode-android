@@ -76,12 +76,20 @@ open class ProfileStore private constructor(
         withContext(Dispatchers.IO) {
             val fallbackKeys = fallbackPrefs.all.keys.filter { it.startsWith("pw_") }
             if (fallbackKeys.isEmpty()) return@withContext
+            // Write passwords to the secure store FIRST, then remove them from the
+            // plaintext fallback. SharedPreferences.apply() persists to disk
+            // asynchronously, so removing from fallback before the secure batch lands
+            // could lose the password if the process dies between the two writes.
+            // Writing secure first makes the worst case a harmless duplicate (both
+            // stores hold it; the migration is idempotent) rather than data loss.
             secure.edit().apply {
                 for (key in fallbackKeys) {
                     val pw = fallbackPrefs.getString(key, null) ?: continue
                     putString(key, pw)
-                    fallbackPrefs.edit().remove(key).apply()
                 }
+            }.apply()
+            fallbackPrefs.edit().apply {
+                for (key in fallbackKeys) remove(key)
             }.apply()
         }
     }

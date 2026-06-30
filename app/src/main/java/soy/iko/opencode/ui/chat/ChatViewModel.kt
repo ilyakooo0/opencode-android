@@ -21,11 +21,16 @@ import soy.iko.opencode.data.repo.SessionRepository
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
 import soy.iko.opencode.util.runCatchingCancellable
+import soy.iko.opencode.util.safeExceptionSummary
 import android.util.Log
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.collectLatest
@@ -78,14 +83,10 @@ class ChatViewModel(
             }
             .onEach {
                 _loading.value = false
-                // Clear a stale error from a previous failed attempt now that
-                // messages are flowing again. Without this, the error snackbar
-                // persists after a transient failure that was retried successfully.
-                if (_error.value != null) _error.value = null
             }
             .retryWhen { cause, _ ->
                 _loading.value = false
-                _error.value = container.friendlyError(cause)
+                _errorEvents.tryEmit(container.friendlyError(cause))
                 // Delay before retrying to avoid a tight loop on persistent errors.
                 delay(NetworkConfig.retryInitialDelayMs)
                 true
@@ -99,8 +100,14 @@ class ChatViewModel(
     private val _running = MutableStateFlow(false)
     val running: StateFlow<Boolean> = _running.asStateFlow()
 
-    private val _error = MutableStateFlow<String?>(null)
-    val error: StateFlow<String?> = _error.asStateFlow()
+    /** One-shot error events surfaced as snackbars. A SharedFlow (not StateFlow) so each
+     *  emission is delivered independently — two rapid failures both get a snackbar
+     *  instead of the second silently overwriting the first. */
+    private val _errorEvents = MutableSharedFlow<String>(
+        extraBufferCapacity = NetworkConfig.snackbarEventBufferCapacity,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+    val errorEvents: SharedFlow<String> = _errorEvents.asSharedFlow()
 
     private val _models = MutableStateFlow<List<ModelOption>>(emptyList())
     val models: StateFlow<List<ModelOption>> = _models.asStateFlow()
@@ -175,8 +182,6 @@ class ChatViewModel(
         }
     }
 
-    fun clearError() { _error.value = null }
-
     fun selectModel(option: ModelOption) { _selectedModel.value = option }
 
     fun selectAgent(name: String?) { _selectedAgent.value = name }
@@ -230,7 +235,10 @@ class ChatViewModel(
                 loading.value = true
                 error.value = false
                 runCatchingCancellable { fetch(conn.api) }
-                    .onFailure { Log.w("ChatViewModel", "Failed to load $tag", it); error.value = true }
+                    // fetch() does HTTP via withRetry, so the failure can be a
+                    // ClientRequestException whose message embeds the full request URL
+                    // (may contain auth/paths). Log only a scrubbed summary.
+                    .onFailure { Log.w("ChatViewModel", "Failed to load $tag: ${safeExceptionSummary(it)}"); error.value = true }
                     .getOrNull()?.let(onSuccess)
                 loading.value = false
             }
@@ -262,7 +270,6 @@ class ChatViewModel(
                 if (conn == null) return@collectLatest
                 _running.value = false
                 _pendingPermission.value = null
-                _error.value = null
                 _failedDraft.value = null
                 _selectedAgent.value = null
                 _sessionTitle.value = null
@@ -271,7 +278,7 @@ class ChatViewModel(
                         if (SessionRepository.isIdle(event, sessionId)) _running.value = false
                         if (SessionRepository.isError(event, sessionId)) {
                             _running.value = false
-                            _error.value = container.string(R.string.error_agent_reported)
+                            _errorEvents.tryEmit(container.string(R.string.error_agent_reported))
                         }
                         when (event) {
                             is PermissionUpdated ->
@@ -365,7 +372,6 @@ class ChatViewModel(
         val conn = connection ?: return false
         val trimmed = text.trim()
         if (trimmed.isEmpty() || !_running.compareAndSet(false, true)) return false
-        _error.value = null
         _failedDraft.value = null
         // Clear the in-memory draft for the UI immediately, but don't persist the clear
         // yet — if the send fails and the process dies before we restore, the draft
@@ -387,7 +393,7 @@ class ChatViewModel(
                 _failedDraft.value = trimmed
                 // Only restore the draft if the user hasn't typed anything new since.
                 if (_draft.value.isBlank()) updateDraft(trimmed)
-                _error.value = container.friendlyError(it)
+                _errorEvents.tryEmit(container.friendlyError(it))
                 _running.value = false
             }.onSuccess {
                 suppressDraftPersist.set(false)
@@ -415,12 +421,11 @@ class ChatViewModel(
     fun runCommand(command: Command) {
         val conn = connection ?: return
         if (!_running.compareAndSet(false, true)) return
-        _error.value = null
         viewModelScope.launch {
             runCatchingCancellable {
                 conn.repository.runCommand(sessionId, command.name, agent = command.agent)
             }.onFailure {
-                _error.value = container.friendlyError(it)
+                _errorEvents.tryEmit(container.friendlyError(it))
                 _running.value = false
             }
         }
@@ -431,7 +436,7 @@ class ChatViewModel(
         viewModelScope.launch {
             runCatchingCancellable { conn.repository.abort(sessionId) }
                 .onSuccess { _running.value = false }
-                .onFailure { _error.value = container.friendlyError(it) }
+                .onFailure { _errorEvents.tryEmit(container.friendlyError(it)) }
         }
     }
 
@@ -449,7 +454,7 @@ class ChatViewModel(
                     .getOrDefault(emptyList())
                     .firstOrNull()
                 if (recent == null) {
-                    _error.value = container.string(R.string.no_servers_to_reconnect)
+                    _errorEvents.tryEmit(container.string(R.string.no_servers_to_reconnect))
                     return@launch
                 }
                 runCatchingCancellable {
@@ -457,7 +462,7 @@ class ChatViewModel(
                     conn.api.ping()
                 }.onFailure {
                     container.disconnect()
-                    _error.value = container.friendlyError(it)
+                    _errorEvents.tryEmit(container.friendlyError(it))
                 }
             } finally {
                 _reconnecting.value = false
@@ -474,7 +479,7 @@ class ChatViewModel(
         viewModelScope.launch {
             runCatchingCancellable { conn.api.respondPermission(sessionId, permission.id, response) }
                 .onFailure {
-                    _error.value = container.friendlyError(it)
+                    _errorEvents.tryEmit(container.friendlyError(it))
                     // Only restore if no new permission has arrived in the meantime.
                     if (_pendingPermission.value == null) _pendingPermission.value = permission
                 }

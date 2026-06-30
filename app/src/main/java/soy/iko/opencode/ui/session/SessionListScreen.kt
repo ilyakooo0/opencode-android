@@ -89,7 +89,6 @@ fun SessionListScreen(
     val vm: SessionListViewModel = viewModel(factory = vmFactory { SessionListViewModel(container) })
     val state by vm.state.collectAsStateWithLifecycle()
     val refreshing by vm.refreshing.collectAsStateWithLifecycle()
-    val transientError by vm.transientError.collectAsStateWithLifecycle()
     val serverLabel by vm.serverLabel.collectAsStateWithLifecycle()
     val profiles by vm.profiles.collectAsStateWithLifecycle()
     val switchingId by vm.switchingId.collectAsStateWithLifecycle()
@@ -106,12 +105,9 @@ fun SessionListScreen(
     // Close the server dropdown on back press instead of navigating away.
     BackHandler(enabled = showServerMenu) { showServerMenu = false }
 
-    LaunchedEffect(transientError) {
-        val msg = transientError ?: return@LaunchedEffect
-        try {
+    LaunchedEffect(Unit) {
+        vm.transientErrors.collect { msg ->
             snackbar.showSnackbar(msg)
-        } finally {
-            vm.clearTransientError()
         }
     }
 

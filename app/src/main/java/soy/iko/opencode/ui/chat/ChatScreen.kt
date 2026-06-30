@@ -90,6 +90,7 @@ import soy.iko.opencode.data.network.EventStreamClient
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
 import soy.iko.opencode.ui.components.ConnectionBanner
+import soy.iko.opencode.ui.components.showToast
 import soy.iko.opencode.ui.components.toImageContext
 import soy.iko.opencode.ui.vmFactory
 import soy.iko.opencode.util.runCatchingCancellable
@@ -104,7 +105,6 @@ fun ChatScreen(
     val vm: ChatViewModel = viewModel(key = sessionId, factory = vmFactory { ChatViewModel(container, sessionId) })
     val messages by vm.messages.collectAsStateWithLifecycle()
     val running by vm.running.collectAsStateWithLifecycle()
-    val error by vm.error.collectAsStateWithLifecycle()
     val loading by vm.loading.collectAsStateWithLifecycle()
     val models by vm.models.collectAsStateWithLifecycle()
     val modelsLoading by vm.modelsLoading.collectAsStateWithLifecycle()
@@ -121,7 +121,6 @@ fun ChatScreen(
     val commandsError by vm.commandsError.collectAsStateWithLifecycle()
     val sessionTitle by vm.sessionTitle.collectAsStateWithLifecycle()
     val sessionDeleted by vm.sessionDeleted.collectAsStateWithLifecycle()
-    val failedDraft by vm.failedDraft.collectAsStateWithLifecycle()
     val draft by vm.draft.collectAsStateWithLifecycle()
     val reconnecting by vm.reconnecting.collectAsStateWithLifecycle()
     val haptics = LocalHapticFeedback.current
@@ -152,6 +151,7 @@ fun ChatScreen(
 
     val listState = rememberLazyListState()
     val snackbar = remember { SnackbarHostState() }
+    val retryLabel = stringResource(R.string.retry)
     var showModelPicker by rememberSaveable { mutableStateOf(false) }
     var showAgentPicker by rememberSaveable { mutableStateOf(false) }
     var showCommandPicker by rememberSaveable { mutableStateOf(false) }
@@ -208,18 +208,14 @@ fun ChatScreen(
                 }
             }
     }
-    val retryLabel = stringResource(R.string.retry)
-    LaunchedEffect(error) {
-        val msg = error ?: return@LaunchedEffect
-        try {
-            val result = if (failedDraft != null) {
+    LaunchedEffect(Unit) {
+        vm.errorEvents.collect { msg ->
+            val result = if (vm.failedDraft.value != null) {
                 snackbar.showSnackbar(message = msg, actionLabel = retryLabel)
             } else {
                 snackbar.showSnackbar(msg)
             }
             if (result == androidx.compose.material3.SnackbarResult.ActionPerformed) vm.retryFailed()
-        } finally {
-            vm.clearError()
         }
     }
 
@@ -269,6 +265,7 @@ fun ChatScreen(
                                     putExtra(android.content.Intent.EXTRA_TEXT, md)
                                 }
                                 runCatchingCancellable { shareContext.startActivity(android.content.Intent.createChooser(send, shareLabel)) }
+                                    .onFailure { showToast(shareContext, shareContext.getString(R.string.no_share_app)) }
                             }
                         },
                         enabled = messages.isNotEmpty(),

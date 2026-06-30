@@ -12,8 +12,12 @@ import soy.iko.opencode.util.runCatchingCancellable
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
@@ -41,10 +45,13 @@ class FileBrowserViewModel(private val container: AppContainer) : ViewModel() {
     private val _state = MutableStateFlow(FileBrowserState())
     val state: StateFlow<FileBrowserState> = _state.asStateFlow()
 
-    /** Transient errors (failed VCS status fetch, etc.) surfaced without hiding the file list. */
-    private val _transientError = MutableStateFlow<String?>(null)
-    val transientError: StateFlow<String?> = _transientError.asStateFlow()
-    fun clearTransientError() { _transientError.value = null }
+    /** One-shot transient errors (failed VCS status fetch, etc.) surfaced as snackbars without
+     *  hiding the file list. A SharedFlow (not StateFlow) so each emission is delivered independently. */
+    private val _transientErrors = MutableSharedFlow<String>(
+        extraBufferCapacity = NetworkConfig.snackbarEventBufferCapacity,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+    val transientErrors: SharedFlow<String> = _transientErrors.asSharedFlow()
 
     private var searchJob: Job? = null
     private var openJob: Job? = null
@@ -82,7 +89,7 @@ class FileBrowserViewModel(private val container: AppContainer) : ViewModel() {
                 .onFailure {
                     // VCS status is best-effort: don't block the file browser, but surface
                     // a transient error so the user knows why badges are missing.
-                    _transientError.value = container.friendlyError(it)
+                    _transientErrors.tryEmit(container.friendlyError(it))
                 }
         }
     }

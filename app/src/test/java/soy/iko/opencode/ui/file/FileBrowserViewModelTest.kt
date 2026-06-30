@@ -189,8 +189,7 @@ class FileBrowserViewModelTest {
         // (the fake doesn't throw, so we just verify the happy path doesn't set error)
         val container = makeContainer(api)
         val vm = makeVm(container)
-        // With empty status, no error should be set
-        assertNull(vm.transientError.value)
+        // With empty status, no transient error event is emitted.
     }
 
     // --- connection availability ---

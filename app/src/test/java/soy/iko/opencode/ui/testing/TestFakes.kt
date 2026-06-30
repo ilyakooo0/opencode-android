@@ -224,6 +224,8 @@ class FakeSessionRepository(
     var messages: List<MessageWithParts> = emptyList()
     var sendPromptThrows: Throwable? = null
     var listSessionsThrows: Throwable? = null
+    /** Optional gate that [listSessions] awaits before returning, so tests can hold a refresh in flight. */
+    var listSessionsGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
     var abortCalls: List<String> = emptyList()
         private set
 
@@ -231,6 +233,7 @@ class FakeSessionRepository(
     var observeMessagesOverride: kotlinx.coroutines.flow.Flow<List<MessageWithParts>>? = null
 
     override suspend fun listSessions(): List<Session> {
+        listSessionsGate?.await()
         listSessionsThrows?.let { throw it }
         return sessions
     }

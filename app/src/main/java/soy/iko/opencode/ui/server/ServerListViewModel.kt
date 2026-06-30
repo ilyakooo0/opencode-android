@@ -7,9 +7,13 @@ import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
 import soy.iko.opencode.util.runCatchingCancellable
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -26,15 +30,17 @@ class ServerListViewModel(private val container: AppContainer) : ViewModel() {
     private val _connecting = MutableStateFlow<String?>(null)
     val connectingId: StateFlow<String?> = _connecting.asStateFlow()
 
-    private val _error = MutableStateFlow<String?>(null)
-    val error: StateFlow<String?> = _error.asStateFlow()
-
-    fun clearError() { _error.value = null }
+    /** One-shot error events surfaced as snackbars. A SharedFlow (not StateFlow) so each
+     *  emission is delivered independently. */
+    private val _errorEvents = MutableSharedFlow<String>(
+        extraBufferCapacity = NetworkConfig.snackbarEventBufferCapacity,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+    val errorEvents: SharedFlow<String> = _errorEvents.asSharedFlow()
 
     fun connect(profile: ServerProfile, onConnected: () -> Unit) {
         if (_connecting.value != null) return
         _connecting.value = profile.id
-        _error.value = null
         viewModelScope.launch {
             try {
                 val result = runCatchingCancellable {
@@ -44,7 +50,7 @@ class ServerListViewModel(private val container: AppContainer) : ViewModel() {
                 result.onSuccess { onConnected() }
                     .onFailure {
                         container.disconnect()
-                        _error.value = container.friendlyError(it)
+                        _errorEvents.tryEmit(container.friendlyError(it))
                     }
             } finally {
                 _connecting.value = null
@@ -60,7 +66,7 @@ class ServerListViewModel(private val container: AppContainer) : ViewModel() {
                 container.disconnect()
             }
             runCatchingCancellable { container.profileStore.delete(profile.id) }
-                .onFailure { _error.value = container.friendlyError(it) }
+                .onFailure { _errorEvents.tryEmit(container.friendlyError(it)) }
         }
     }
 }

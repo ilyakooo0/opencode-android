@@ -65,15 +65,11 @@ fun FileBrowserScreen(
 ) {
     val vm: FileBrowserViewModel = viewModel(factory = vmFactory { FileBrowserViewModel(container) })
     val state by vm.state.collectAsStateWithLifecycle()
-    val transientError by vm.transientError.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
 
-    LaunchedEffect(transientError) {
-        val msg = transientError ?: return@LaunchedEffect
-        try {
+    LaunchedEffect(Unit) {
+        vm.transientErrors.collect { msg ->
             snackbar.showSnackbar(msg)
-        } finally {
-            vm.clearTransientError()
         }
     }
 

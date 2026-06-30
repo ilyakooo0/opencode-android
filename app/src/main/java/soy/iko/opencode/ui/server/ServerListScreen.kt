@@ -68,7 +68,6 @@ fun ServerListScreen(
     val vm: ServerListViewModel = viewModel(factory = vmFactory { ServerListViewModel(container) })
     val profiles by vm.profiles.collectAsStateWithLifecycle()
     val connectingId by vm.connectingId.collectAsStateWithLifecycle()
-    val error by vm.error.collectAsStateWithLifecycle()
     val activeConnection by container.activeConnection.collectAsStateWithLifecycle()
     val reconnecting by container.reconnecting.collectAsStateWithLifecycle()
     val haptics = LocalHapticFeedback.current
@@ -76,12 +75,9 @@ fun ServerListScreen(
     var pendingDeleteId by rememberSaveable { mutableStateOf<String?>(null) }
     val connectedId = activeConnection?.profile?.id
 
-    LaunchedEffect(error) {
-        val msg = error ?: return@LaunchedEffect
-        try {
+    LaunchedEffect(Unit) {
+        vm.errorEvents.collect { msg ->
             snackbar.showSnackbar(msg)
-        } finally {
-            vm.clearError()
         }
     }
 

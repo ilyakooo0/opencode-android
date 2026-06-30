@@ -39,9 +39,6 @@ class CrashLogger private constructor(private val appContext: Context) {
         val preview: String,
     )
 
-    /** Matches http(s) URLs so they can be redacted from crash report exception messages. */
-    private val urlScrubRegex = Regex("https?://[^\\s\"']+")
-
     private val crashDir = File(appContext.filesDir, "crashes").apply { mkdirs() }
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
@@ -123,14 +120,15 @@ class CrashLogger private constructor(private val appContext: Context) {
             pw.println("Android: ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
             pw.println("ABI: ${Build.SUPPORTED_ABIS.joinToString()}")
             pw.println()
-            // Scrub URLs from the exception message — Ktor/OkHttp embed the full request
-            // URL in ClientRequestException messages, which may contain auth or internal
-            // paths. The stack trace itself (class names + line numbers) is kept.
-            val safeMessage = throwable.message?.let { urlScrubRegex.replace(it, "[url]") }
-            pw.println(throwable.javaClass.name + ": " + safeMessage)
+            pw.println(throwable.javaClass.name + ": " + throwable.message)
             throwable.printStackTrace(pw)
         }
-        file.writeText(sw.toString())
+        // Scrub URLs from the *entire* report. printStackTrace re-emits the exception
+        // message (and every "Caused by:" message) verbatim, so scrubbing only the
+        // top-level message above is futile — Ktor/OkHttp embed the full request URL
+        // in those messages, which may contain auth or internal paths. Scrubbing the
+        // assembled text guarantees no URL survives anywhere in the stored report.
+        file.writeText(scrubUrls(sw.toString()))
     }
 
     private fun appVersion(): String = runCatching {
@@ -147,6 +145,16 @@ class CrashLogger private constructor(private val appContext: Context) {
     }.getOrDefault("unknown")
 
     companion object {
+        /** Regex matching http(s) URLs, shared by report writing and [scrubUrls]. */
+        internal val SCRUB_URL_REGEX = Regex("https?://[^\\s\"']+")
+
+        /**
+         * Replace every http(s) URL in [text] with `[url]`. Exposed as `internal` so the
+         * redaction (used on the whole crash report, including exception messages and
+         * stack traces produced by printStackTrace) can be unit-tested in isolation.
+         */
+        internal fun scrubUrls(text: String): String = SCRUB_URL_REGEX.replace(text, "[url]")
+
         @Volatile
         private var instance: CrashLogger? = null
 

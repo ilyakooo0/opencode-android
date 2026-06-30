@@ -91,6 +91,11 @@ object NetworkConfig {
     /** Throttle delay (~60fps frame) to coalesce streaming tokens into one re-parse. */
     const val streamingThrottleMs = 16L
 
+    // --- Snackbar one-shot events (ViewModels) ---
+
+    /** Buffer capacity for transient error SharedFlows that drive snackbars. */
+    const val snackbarEventBufferCapacity = 16
+
     // --- UI layout constants ---
 
     /** Minimum window width (dp) for two-pane layout on tablets / unfolded foldables. */

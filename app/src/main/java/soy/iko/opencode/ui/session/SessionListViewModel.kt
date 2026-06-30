@@ -17,9 +17,13 @@ import android.util.Log
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.flatMapLatest
@@ -90,9 +94,14 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
     val refreshing: StateFlow<Boolean> = _refreshing.asStateFlow()
 
     /** Transient errors (failed create/delete/rename) surfaced as a snackbar, not by hiding the list. */
-    private val _transientError = MutableStateFlow<String?>(null)
-    val transientError: StateFlow<String?> = _transientError.asStateFlow()
-    fun clearTransientError() { _transientError.value = null }
+    /** One-shot transient errors surfaced as snackbars. A SharedFlow (not StateFlow) so
+     *  each emission is delivered independently — two rapid failures both get a snackbar
+     *  instead of the second silently overwriting the first. */
+    private val _transientErrors = MutableSharedFlow<String>(
+        extraBufferCapacity = NetworkConfig.snackbarEventBufferCapacity,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+    val transientErrors: SharedFlow<String> = _transientErrors.asSharedFlow()
 
     private var previewJob: Job? = null
     private var refreshJob: Job? = null
@@ -180,7 +189,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
                 _state.value = SessionListState(loading = false, error = container.string(R.string.not_connected))
             } else {
                 _state.update { it.copy(loading = false) }
-                _transientError.value = container.string(R.string.not_connected)
+                _transientErrors.tryEmit(container.string(R.string.not_connected))
             }
             _refreshing.value = false
             return
@@ -190,6 +199,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         _refreshing.value = true
         refreshJob?.cancel()
         refreshJob = viewModelScope.launch {
+            val self = coroutineContext[Job]
             try {
                 runCatchingCancellable { conn.repository.listSessions() }
                     .onSuccess { list ->
@@ -200,13 +210,17 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
                     .onFailure {
                         if (_state.value.sessions.isNotEmpty()) {
                             _state.update { it.copy(loading = false) }
-                            _transientError.value = container.friendlyError(it)
+                            _transientErrors.tryEmit(container.friendlyError(it))
                         } else {
                             _state.value = SessionListState(loading = false, error = container.friendlyError(it))
                         }
                     }
             } finally {
-                _refreshing.value = false
+                // Only clear the spinner if we're still the active refresh job. When a
+                // newer refresh() cancels this one, its finally runs asynchronously on
+                // the Main dispatcher and would otherwise clobber _refreshing back to
+                // false while the newer refresh is still in flight.
+                if (refreshJob === self) _refreshing.value = false
             }
         }
     }
@@ -266,7 +280,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
                 .onSuccess { onCreated(it.id); refresh() }
                 .onFailure {
                     _state.update { it.copy(error = null) }
-                    _transientError.value = container.friendlyError(it)
+                    _transientErrors.tryEmit(container.friendlyError(it))
                 }
         }
     }
@@ -281,7 +295,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
                 }
                 .onFailure {
                     _state.update { it.copy(error = null) }
-                    _transientError.value = container.friendlyError(it)
+                    _transientErrors.tryEmit(container.friendlyError(it))
                 }
         }
     }
@@ -295,7 +309,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
                 .onSuccess { refresh() }
                 .onFailure {
                     _state.update { it.copy(error = null) }
-                    _transientError.value = container.friendlyError(it)
+                    _transientErrors.tryEmit(container.friendlyError(it))
                 }
         }
     }
@@ -336,8 +350,8 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
                                 )
                             }
                             // Surface the switch failure as a transient snackbar — refresh()
-                            // would clear a state.error, so use _transientError which survives it.
-                            _transientError.value = container.friendlyError(error)
+                            // would clear a state.error, so use transientErrors which survives it.
+                            _transientErrors.tryEmit(container.friendlyError(error))
                             refresh()
                         } else {
                             // Restore also failed — the user is now disconnected from

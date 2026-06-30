@@ -3,8 +3,11 @@
 package soy.iko.opencode.ui.session
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.resetMain
@@ -99,12 +102,15 @@ class SessionListViewModelTest {
 
         // Now make listSessions fail — the existing list should remain and a
         // transient error should be surfaced (not replace the whole list).
+        val errors = mutableListOf<String>()
+        val collectJob = launch { vm.transientErrors.toList(errors) }
         repo.listSessionsThrows = IOException("network error")
         vm.refresh()
         testScheduler.advanceUntilIdle()
+        collectJob.cancel()
         assertTrue(vm.state.value.sessions.isNotEmpty())
         assertFalse(vm.state.value.loading)
-        assertNotNull(vm.transientError.value)
+        assertTrue(errors.isNotEmpty())
     }
 
     @Test
@@ -119,6 +125,34 @@ class SessionListViewModelTest {
         assertFalse(vm.state.value.loading)
         assertNotNull(vm.state.value.error)
         assertTrue(vm.state.value.sessions.isEmpty())
+    }
+
+    @Test
+    fun refresh_whileInFlight_doesNotClearSpinnerPrematurely() = testScope.runTest {
+        // Regression: a refresh() that cancels an in-flight refresh must not have the
+        // cancelled job's `finally` clobber _refreshing back to false while the newer
+        // refresh is still running (which would hide the pull-to-refresh spinner).
+        val repo = FakeSessionRepository(FakeOpencodeApiClient(), FakeEventStreamClient())
+        repo.sessions = listOf(Session(id = "s1", title = "Chat"))
+        val container = makeContainer(repo = repo)
+        val vm = makeVm(container) // init completes with no gate; sessions loaded
+        assertFalse(vm.refreshing.value)
+
+        // Hold subsequent listSessions() calls in flight via a gate.
+        val gate = CompletableDeferred<Unit>()
+        repo.listSessionsGate = gate
+        vm.refresh() // #A: hangs on the gate
+        testScheduler.advanceUntilIdle()
+        assertTrue(vm.refreshing.value)
+
+        vm.refresh() // #B: cancels #A, also hangs on the gate
+        testScheduler.advanceUntilIdle() // #A's finally runs here
+        // #A's cancellation must NOT clear the spinner while #B is still in flight.
+        assertTrue("spinner cleared while a refresh is still in flight", vm.refreshing.value)
+
+        gate.complete(Unit)
+        testScheduler.advanceUntilIdle()
+        assertFalse(vm.refreshing.value)
     }
 
     // --- SSE events ---
@@ -241,15 +275,18 @@ class SessionListViewModelTest {
             ServerProfile(id = "s2", label = "Server 2", baseUrl = "http://other"),
         )
 
+        // The switch failure is surfaced as a transient error, not a list-replacing error.
+        val errors = mutableListOf<String>()
+        val collectJob = launch { vm.transientErrors.toList(errors) }
         vm.switchServer(ServerProfile(id = "s2", label = "Server 2", baseUrl = "http://other"))
         testScheduler.advanceUntilIdle()
+        collectJob.cancel()
 
         // connect attempted for the new server, then again to restore the previous one.
         assertEquals(2, container.connectCalls.size)
         assertEquals("s2", container.connectCalls[0].id)
         assertEquals("s1", container.connectCalls[1].id)
-        // The switch failure is surfaced as a transient error, not a list-replacing error.
-        assertNotNull(vm.transientError.value)
+        assertTrue(errors.isNotEmpty())
         assertNull(vm.state.value.error)
         assertEquals(1, container.disconnectCalls)
         assertNull(vm.switchingId.value)

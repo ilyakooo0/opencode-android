@@ -5,6 +5,7 @@ package soy.iko.opencode.ui.chat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.resetMain
@@ -118,7 +119,6 @@ class ChatViewModelTest {
         testScope.testScheduler.advanceUntilIdle()
         assertEquals("", container.fakeDraftStore.get("session1"))
         assertNull(vm.failedDraft.value)
-        assertNull(vm.error.value)
     }
 
     @Test
@@ -135,7 +135,12 @@ class ChatViewModelTest {
         assertEquals("hello", vm.draft.value)
         assertEquals("hello", vm.failedDraft.value)
         assertFalse(vm.running.value)
-        assertNotNull(vm.error.value)
+        val errors = mutableListOf<String>()
+        val collectJob = launch { vm.errorEvents.toList(errors) }
+        assertTrue(vm.send("hello"))
+        testScheduler.advanceUntilIdle()
+        collectJob.cancel()
+        assertTrue(errors.isNotEmpty())
     }
 
     @Test
@@ -247,11 +252,14 @@ class ChatViewModelTest {
         testScope.testScheduler.advanceUntilIdle()
         assertEquals("p1", vm.pendingPermission.value?.id)
 
+        val errors = mutableListOf<String>()
+        val collectJob = launch { vm.errorEvents.toList(errors) }
         vm.respondPermission(perm, PermissionResponse.ONCE)
         assertNull(vm.pendingPermission.value)
         testScope.testScheduler.advanceUntilIdle()
+        collectJob.cancel()
         assertEquals("p1", vm.pendingPermission.value?.id)
-        assertNotNull(vm.error.value)
+        assertTrue(errors.isNotEmpty())
     }
 
     // --- SSE event handling ---
@@ -269,16 +277,19 @@ class ChatViewModelTest {
     }
 
     @Test
-    fun sseSessionError_resetsRunningAndSetsError() = testScope.runTest {
+    fun sseSessionError_resetsRunningAndEmitsError() = testScope.runTest {
         val events = FakeEventStreamClient()
         val container = makeContainer(events = events)
         val vm = makeVm(container)
+        val errors = mutableListOf<String>()
+        val collectJob = launch { vm.errorEvents.toList(errors) }
         assertTrue(vm.send("hello"))
         testScope.testScheduler.advanceUntilIdle()
         events.fakeEvents.tryEmit(SessionError(SessionError.Props(sessionID = "session1")))
         testScope.testScheduler.advanceUntilIdle()
+        collectJob.cancel()
         assertFalse(vm.running.value)
-        assertNotNull(vm.error.value)
+        assertTrue(errors.isNotEmpty())
     }
 
     @Test
@@ -460,30 +471,36 @@ class ChatViewModelTest {
         container.setActiveConnection(conn2)
         testScope.testScheduler.advanceUntilIdle()
         assertFalse(vm.running.value)
-        assertNull(vm.error.value)
         assertNull(vm.pendingPermission.value)
     }
 
-    // --- clearError ---
+    // --- rapid successive errors ---
 
     @Test
-    fun clearError_clearsError() = testScope.runTest {
+    fun rapidSuccessiveErrors_bothDeliveredAsEvents() = testScope.runTest {
         val api = FakeOpencodeApiClient()
         val events = FakeEventStreamClient()
         val repo = FakeSessionRepository(api, events)
         repo.sendPromptThrows = IOException("err")
         val container = makeContainer(api = api, events = events, repo = repo)
         val vm = makeVm(container)
-        vm.updateDraft("hello")
-        assertTrue(vm.send("hello"))
-        testScope.testScheduler.advanceUntilIdle()
-        assertNotNull(vm.error.value)
-        vm.clearError()
-        assertNull(vm.error.value)
+
+        val errors = mutableListOf<String>()
+        val collectJob = launch { vm.errorEvents.toList(errors) }
+
+        // Two rapid sends that both fail — both should produce independent error
+        // events, not just the last one (the bug with StateFlow-keyed effects).
+        assertTrue(vm.send("first"))
+        testScheduler.advanceUntilIdle()
+        assertTrue(vm.send("second"))
+        testScheduler.advanceUntilIdle()
+
+        collectJob.cancel()
+        assertEquals(2, errors.size)
     }
 
     @Test
-    fun messagesFlowRetry_clearsStaleErrorOnSuccess() = testScope.runTest {
+    fun messagesFlowRetry_emitsErrorOnFailure() = testScope.runTest {
         val api = FakeOpencodeApiClient()
         val events = FakeEventStreamClient()
         // Use a controllable flow so we can simulate a re-emission after an error.
@@ -494,20 +511,17 @@ class ChatViewModelTest {
         repo.observeMessagesOverride = messagesFlow
         val container = makeContainer(api = api, events = events, repo = repo)
         val vm = makeVm(container)
-        // Subscribe to messages so the flow's onEach is active and can clear errors.
+        val errors = mutableListOf<String>()
+        val collectJob = launch { vm.errorEvents.toList(errors) }
+        // Subscribe to messages so the flow's retryWhen is active.
         val collector = launch { vm.messages.collect { /* keep subscribed */ } }
         testScope.testScheduler.advanceUntilIdle()
         // Set an error via SSE
         events.fakeEvents.tryEmit(SessionError(SessionError.Props(sessionID = "session1")))
         testScope.testScheduler.advanceUntilIdle()
-        assertNotNull(vm.error.value)
-        // Trigger a new messages emission — onEach should clear the stale error
-        messagesFlow.value = messagesFlow.value + MessageWithParts(
-            info = UserMessage(id = "m2", sessionID = "session1"),
-        )
-        testScope.testScheduler.advanceUntilIdle()
-        assertNull(vm.error.value)
+        collectJob.cancel()
         collector.cancel()
+        assertTrue(errors.isNotEmpty())
     }
 
     // --- Connection switch clears session title ---
