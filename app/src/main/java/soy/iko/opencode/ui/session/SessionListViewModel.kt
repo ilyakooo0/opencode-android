@@ -136,18 +136,18 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
                                 loadPreview(session.id)
                             }
                             is SessionDeleted -> {
-                            val id = event.properties.info?.id ?: event.properties.sessionID
-                            if (id != null) {
-                                synchronized(previewLock) { livePreviewJobs.remove(id)?.cancel() }
-                                container.draftStore.remove(id)
-                                _state.update { s ->
-                                    s.copy(
-                                        sessions = s.sessions.filterNot { it.id == id },
-                                        previews = s.previews - id,
-                                    )
+                                val id = event.properties.info?.id ?: event.properties.sessionID
+                                if (id != null) {
+                                    synchronized(previewLock) { livePreviewJobs.remove(id)?.cancel() }
+                                    container.draftStore.remove(id)
+                                    _state.update { s ->
+                                        s.copy(
+                                            sessions = s.sessions.filterNot { it.id == id },
+                                            previews = s.previews - id,
+                                        )
+                                    }
                                 }
                             }
-                        }
                             else -> {}
                         }
                     }

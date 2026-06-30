@@ -140,14 +140,16 @@ class FileBrowserViewModel(private val container: AppContainer) : ViewModel() {
         }
         // The search view replaces the directory listing; clear loading so the spinner
         // from a cancelled open() doesn't persist into the search results view.
-        _state.update { it.copy(loading = false) }
+        // Set searching=true immediately (not after the debounce) so the spinner shows
+        // during the debounce delay — otherwise the UI briefly renders SearchResults
+        // with an empty list, flashing "no matches" before the search even starts.
+        _state.update { it.copy(loading = false, searching = true) }
         val client = api ?: run {
             _state.update { it.copy(searching = false, error = container.string(R.string.not_connected)) }
             return
         }
         searchJob = viewModelScope.launch {
             delay(NetworkConfig.fileSearchDebounceMs) // debounce
-            _state.update { it.copy(searching = true) }
             runCatchingCancellable { client.findFiles(query) }
                 .onSuccess { results -> _state.update { it.copy(results = results, searching = false) } }
                 .onFailure { e -> _state.update { it.copy(searching = false, error = container.friendlyError(e)) } }
