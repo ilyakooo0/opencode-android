@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import soy.iko.opencode.data.model.ServerProfile
 import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.di.AppContainer
+import soy.iko.opencode.di.ProbeResult
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -27,6 +28,10 @@ data class ServerEditState(
     val loaded: Boolean = false,
     val saving: Boolean = false,
     val error: String? = null,
+    /** Whether the auth (username/password) fields are shown. */
+    val authFieldsVisible: Boolean = false,
+    /** Whether a connectivity/auth probe is in progress. */
+    val probing: Boolean = false,
 ) {
     val canSave: Boolean get() = baseUrl.isNotBlank() && isValidUrl(baseUrl)
     val isNew: Boolean get() = id == null
@@ -65,6 +70,9 @@ class ServerEditViewModel(
                         username = existing.username.orEmpty(),
                         password = existing.password.orEmpty(),
                         loaded = true,
+                        // An existing profile that already has credentials saved should
+                        // show the auth fields immediately — the user may want to edit them.
+                        authFieldsVisible = existing.hasAuth,
                     )
                     return@launch
                 }
@@ -83,6 +91,45 @@ class ServerEditViewModel(
 
     fun update(transform: (ServerEditState) -> ServerEditState) {
         _state.update(transform)
+    }
+
+    /**
+     * Probe the server at [baseUrl] to check reachability and detect whether
+     * authentication is required. On success the auth fields are shown only if the
+     * server returned an auth error (401/403); on failure the error is surfaced.
+     * Editing the base URL after a probe resets the auth-visibility so the next
+     * save re-probes against the new URL.
+     */
+    fun probe() {
+        val s = _state.value
+        if (!s.canSave || s.probing) return
+        _state.update { it.copy(probing = true, error = null) }
+        viewModelScope.launch {
+            val result = runCatchingCancellable { container.probeServer(s.baseUrl) }
+            result.onSuccess { pr ->
+                _state.update {
+                    when (pr) {
+                        is ProbeResult.Reachable -> it.copy(
+                            probing = false,
+                            authFieldsVisible = false,
+                            error = null,
+                        )
+                        is ProbeResult.NeedsAuth -> it.copy(
+                            probing = false,
+                            authFieldsVisible = true,
+                            error = null,
+                        )
+                        is ProbeResult.Unreachable -> it.copy(
+                            probing = false,
+                            authFieldsVisible = false,
+                            error = pr.error,
+                        )
+                    }
+                }
+            }.onFailure { e ->
+                _state.update { it.copy(probing = false, error = container.friendlyError(e)) }
+            }
+        }
     }
 
     fun save(onDone: () -> Unit) {

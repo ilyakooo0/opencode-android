@@ -29,6 +29,7 @@ import soy.iko.opencode.data.repo.ProfileStore
 import soy.iko.opencode.data.repo.SessionRepository
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.di.OpencodeConnection
+import soy.iko.opencode.di.ProbeResult
 
 // ---------------------------------------------------------------------------
 // FakeDraftStore
@@ -298,9 +299,17 @@ class FakeAppContainer : AppContainer() {
     var disconnectCalls = 0
         private set
 
+    /** When non-null, [probeServer] returns this instead of building a real client. */
+    var probeResult: ProbeResult? = null
+    var probeCalls: List<String> = emptyList()
+        private set
+
     override fun string(id: Int, vararg formatArgs: Any): String = "test-string-$id"
 
     override fun friendlyError(t: Throwable): String = "test-error: ${t.message ?: t::class.simpleName}"
+
+    override fun friendlyErrorFor(t: Throwable, baseUrl: String): String =
+        "test-error: ${t.message ?: t::class.simpleName}"
 
     override suspend fun connect(profile: ServerProfile): OpencodeConnection {
         connectCalls = connectCalls + profile
@@ -315,6 +324,11 @@ class FakeAppContainer : AppContainer() {
     override suspend fun disconnect() {
         disconnectCalls++
         fakeActiveConnection.value = null
+    }
+
+    override suspend fun probeServer(baseUrl: String): ProbeResult {
+        probeCalls = probeCalls + baseUrl
+        return probeResult ?: ProbeResult.Reachable
     }
 
     fun setActiveConnection(conn: OpencodeConnection?) {

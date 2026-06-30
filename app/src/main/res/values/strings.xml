@@ -54,7 +54,10 @@
     <string name="label_optional">Label (optional)</string>
     <string name="base_url">Base URL</string>
     <string name="base_url_hint">http://192.168.1.10:4096</string>
-    <string name="auth_help">Auth is optional — only needed if the server runs with OPENCODE_SERVER_PASSWORD. Username defaults to \"opencode\".</string>
+    <string name="check_connectivity">Check connectivity</string>
+    <string name="checking">Checking…</string>
+    <string name="auth_required">This server requires authentication.</string>
+    <string name="auth_help">Tap "Check connectivity" to test the server. Authentication fields appear automatically only if the server requires them.</string>
     <string name="username_optional">Username (optional)</string>
     <string name="password_optional">Password (optional)</string>
 

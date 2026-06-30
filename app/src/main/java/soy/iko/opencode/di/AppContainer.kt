@@ -16,7 +16,9 @@ import soy.iko.opencode.data.repo.ProfileStore
 import soy.iko.opencode.data.repo.SettingsStore
 import soy.iko.opencode.data.repo.classifyError
 import soy.iko.opencode.data.repo.responseStatusCode
+import soy.iko.opencode.data.network.HttpClientFactory
 import soy.iko.opencode.data.network.NetworkConfig
+import soy.iko.opencode.data.network.OpencodeApiClient
 import soy.iko.opencode.notification.NotificationChannels
 import soy.iko.opencode.util.safeExceptionSummary
 import soy.iko.opencode.notification.SessionNotifications
@@ -41,6 +43,21 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.atomic.AtomicBoolean
+
+/**
+ * Result of probing a server URL to check connectivity and whether authentication
+ * is required, without persisting a profile or opening a long-lived connection.
+ */
+sealed class ProbeResult {
+    /** Server is reachable and accepts unauthenticated requests. */
+    object Reachable : ProbeResult()
+
+    /** Server is reachable but rejected the probe with an authentication error. */
+    object NeedsAuth : ProbeResult()
+
+    /** Server could not be reached (host unresolved, connection refused, timeout, etc.). */
+    data class Unreachable(val error: String) : ProbeResult()
+}
 
 /**
  * Hand-written service locator held by [soy.iko.opencode.OpencodeApp]. Owns the
@@ -135,9 +152,16 @@ open class AppContainer private constructor(
      * type (network, timeout, HTTP status) rather than string-matching class names, so
      * the message reflects what actually went wrong without leaking internal URLs/state.
      */
-    open fun friendlyError(t: Throwable): String {
-        val baseUrl = activeConnection.value?.profile?.baseUrl.orEmpty()
-        return when (classifyError(t)) {
+    open fun friendlyError(t: Throwable): String =
+        friendlyErrorFor(t, activeConnection.value?.profile?.baseUrl.orEmpty())
+
+    /**
+     * Same classification as [friendlyError] but accepts an explicit base URL, so callers
+     * that aren't operating on the active connection (e.g. [probeServer]) can still
+     * produce a user-facing message with the right server address.
+     */
+    open fun friendlyErrorFor(t: Throwable, baseUrl: String): String =
+        when (classifyError(t)) {
             ErrorKind.NOT_REACHABLE, ErrorKind.NETWORK ->
                 string(R.string.error_not_reachable, baseUrl)
             ErrorKind.TIMEOUT -> string(R.string.error_timeout)
@@ -149,7 +173,6 @@ open class AppContainer private constructor(
                 ?: string(R.string.error_generic)
             ErrorKind.UNKNOWN -> string(R.string.error_generic)
         }
-    }
 
     init {
         if (!skipInit) {
@@ -327,6 +350,44 @@ open class AppContainer private constructor(
         connectionMutex.withLock {
             _activeConnection.value?.close()
             _activeConnection.value = null
+        }
+    }
+
+    /**
+     * Probe a server URL (without credentials) to check reachability and detect whether
+     * the server requires authentication. Builds a short-lived HTTP client with the same
+     * base URL normalization as [connect] but no auth, calls the health endpoint, and
+     * classifies the outcome:
+     *
+     * - 2xx → [ProbeResult.Reachable] (no auth needed)
+     * - 401/403 → [ProbeResult.NeedsAuth]
+     * - anything else → [ProbeResult.Unreachable] with a user-facing message
+     *
+     * The probe client is always closed afterwards so no resources linger. This does not
+     * touch the active connection or the profile store.
+     */
+    open suspend fun probeServer(baseUrl: String): ProbeResult {
+        val probeProfile = ServerProfile(
+            id = "probe",
+            label = "",
+            baseUrl = baseUrl.trim(),
+            username = null,
+            password = null,
+        )
+        val client = HttpClientFactory.create(probeProfile)
+        return try {
+            val api = OpencodeApiClient(client)
+            api.ping()
+            ProbeResult.Reachable
+        } catch (e: Exception) {
+            val status = responseStatusCode(e)
+            if (status == 401 || status == 403) {
+                ProbeResult.NeedsAuth
+            } else {
+                ProbeResult.Unreachable(friendlyErrorFor(e, baseUrl))
+            }
+        } finally {
+            runCatching { client.close() }
         }
     }
 }

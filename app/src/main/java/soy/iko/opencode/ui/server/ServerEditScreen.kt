@@ -1,5 +1,6 @@
 package soy.iko.opencode.ui.server
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,6 +22,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -91,35 +93,58 @@ fun ServerEditScreen(
             )
             OutlinedTextField(
                 value = state.baseUrl,
-                onValueChange = { v -> vm.update { it.copy(baseUrl = v) } },
+                onValueChange = { v -> vm.update { it.copy(baseUrl = v, authFieldsVisible = false, error = null) } },
                 label = { Text(stringResource(R.string.base_url)) },
                 placeholder = { Text(stringResource(R.string.base_url_hint)) },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Next),
                 modifier = Modifier.fillMaxWidth().testTag("server_url"),
             )
-            Text(
-                stringResource(R.string.auth_help),
-                style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
-            )
-            OutlinedTextField(
-                value = state.username,
-                onValueChange = { v -> vm.update { it.copy(username = v) } },
-                label = { Text(stringResource(R.string.username_optional)) },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
-                modifier = Modifier.fillMaxWidth().testTag("server_username"),
-            )
-            OutlinedTextField(
-                value = state.password,
-                onValueChange = { v -> vm.update { it.copy(password = v) } },
-                label = { Text(stringResource(R.string.password_optional)) },
-                singleLine = true,
-                visualTransformation = PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
-                keyboardActions = KeyboardActions(onDone = { if (state.canSave && !state.saving) vm.save(onDone) }),
-                modifier = Modifier.fillMaxWidth().testTag("server_password"),
-            )
+            // Connectivity check — probes the server without credentials to detect
+            // whether auth is required. Auth fields are only revealed afterwards (or
+            // when editing a profile that already has saved credentials).
+            OutlinedButton(
+                onClick = { vm.probe() },
+                enabled = state.canSave && !state.probing && !state.saving,
+                modifier = Modifier.fillMaxWidth().testTag("server_probe"),
+            ) {
+                if (state.probing) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        strokeWidth = 2.dp,
+                    )
+                    Text(stringResource(R.string.checking), modifier = Modifier.padding(start = 8.dp))
+                } else {
+                    Text(stringResource(R.string.check_connectivity))
+                }
+            }
+            AnimatedVisibility(visible = state.authFieldsVisible) {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        stringResource(R.string.auth_required),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    OutlinedTextField(
+                        value = state.username,
+                        onValueChange = { v -> vm.update { it.copy(username = v) } },
+                        label = { Text(stringResource(R.string.username_optional)) },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                        modifier = Modifier.fillMaxWidth().testTag("server_username"),
+                    )
+                    OutlinedTextField(
+                        value = state.password,
+                        onValueChange = { v -> vm.update { it.copy(password = v) } },
+                        label = { Text(stringResource(R.string.password_optional)) },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(onDone = { if (state.canSave && !state.saving) vm.save(onDone) }),
+                        modifier = Modifier.fillMaxWidth().testTag("server_password"),
+                    )
+                }
+            }
             Button(
                 onClick = { vm.save(onDone) },
                 enabled = state.canSave && !state.saving,

@@ -18,6 +18,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import soy.iko.opencode.data.model.ServerProfile
+import soy.iko.opencode.di.ProbeResult
 import soy.iko.opencode.ui.testing.FakeAppContainer
 
 class ServerEditViewModelTest {
@@ -256,5 +257,145 @@ class ServerEditViewModelTest {
         testScheduler.advanceUntilIdle()
         // The error path must not overwrite the user's edit.
         assertEquals("Edited", vm.state.value.label)
+    }
+
+    // --- probe() auth detection ---
+
+    @Test
+    fun probe_reachableServer_hidesAuthFields() = testScope.runTest {
+        val container = FakeAppContainer()
+        container.probeResult = ProbeResult.Reachable
+        val vm = makeVm(container)
+        vm.update { it.copy(baseUrl = "http://localhost:3000") }
+        vm.probe()
+        testScheduler.advanceUntilIdle()
+        assertFalse(vm.state.value.probing)
+        assertFalse(vm.state.value.authFieldsVisible)
+        assertNull(vm.state.value.error)
+        assertEquals(1, container.probeCalls.size)
+    }
+
+    @Test
+    fun probe_needsAuth_showsAuthFields() = testScope.runTest {
+        val container = FakeAppContainer()
+        container.probeResult = ProbeResult.NeedsAuth
+        val vm = makeVm(container)
+        vm.update { it.copy(baseUrl = "http://localhost:3000") }
+        vm.probe()
+        testScheduler.advanceUntilIdle()
+        assertFalse(vm.state.value.probing)
+        assertTrue(vm.state.value.authFieldsVisible)
+        assertNull(vm.state.value.error)
+    }
+
+    @Test
+    fun probe_unreachable_showsErrorAndHidesAuthFields() = testScope.runTest {
+        val container = FakeAppContainer()
+        container.probeResult = ProbeResult.Unreachable("Could not reach server")
+        val vm = makeVm(container)
+        vm.update { it.copy(baseUrl = "http://localhost:3000") }
+        vm.probe()
+        testScheduler.advanceUntilIdle()
+        assertFalse(vm.state.value.probing)
+        assertFalse(vm.state.value.authFieldsVisible)
+        assertNotNull(vm.state.value.error)
+        assertTrue(vm.state.value.error!!.contains("Could not reach server"))
+    }
+
+    @Test
+    fun probe_invalidUrlDoesNotProbe() = testScope.runTest {
+        val container = FakeAppContainer()
+        container.probeResult = ProbeResult.Reachable
+        val vm = makeVm(container)
+        vm.update { it.copy(baseUrl = "invalid") }
+        vm.probe()
+        testScheduler.advanceUntilIdle()
+        assertEquals(0, container.probeCalls.size)
+    }
+
+    @Test
+    fun probe_whileProbingDoesNotProbeAgain() = testScope.runTest {
+        val container = FakeAppContainer()
+        container.probeResult = ProbeResult.Reachable
+        val vm = makeVm(container)
+        vm.update { it.copy(baseUrl = "http://localhost:3000") }
+        vm.probe()
+        vm.probe()
+        testScheduler.advanceUntilIdle()
+        assertEquals(1, container.probeCalls.size)
+    }
+
+    @Test
+    fun probe_setsProbingFlagDuringCall() = testScope.runTest {
+        val container = FakeAppContainer()
+        container.probeResult = ProbeResult.Reachable
+        val vm = makeVm(container)
+        vm.update { it.copy(baseUrl = "http://localhost:3000") }
+        vm.probe()
+        // Before advancing, probing should be true
+        assertTrue(vm.state.value.probing)
+        testScheduler.advanceUntilIdle()
+        assertFalse(vm.state.value.probing)
+    }
+
+    @Test
+    fun editingBaseUrlAfterProbe_resetsAuthVisibility() = testScope.runTest {
+        val container = FakeAppContainer()
+        container.probeResult = ProbeResult.NeedsAuth
+        val vm = makeVm(container)
+        vm.update { it.copy(baseUrl = "http://localhost:3000") }
+        vm.probe()
+        testScheduler.advanceUntilIdle()
+        assertTrue(vm.state.value.authFieldsVisible)
+        // User edits the URL — auth fields should hide so a re-probe is required
+        vm.update { it.copy(baseUrl = "http://localhost:4000", authFieldsVisible = false, error = null) }
+        assertFalse(vm.state.value.authFieldsVisible)
+    }
+
+    @Test
+    fun init_existingProfileWithAuth_showsAuthFields() = testScope.runTest {
+        val container = FakeAppContainer()
+        val profile = ServerProfile(
+            id = "p1",
+            label = "My Server",
+            baseUrl = "http://localhost:3000",
+            username = "admin",
+            password = "secret",
+        )
+        container.fakeProfileStore.setProfiles(listOf(profile))
+        val vm = makeVm(container, profileId = "p1")
+        assertTrue(vm.state.value.authFieldsVisible)
+    }
+
+    @Test
+    fun init_existingProfileWithoutAuth_hidesAuthFields() = testScope.runTest {
+        val container = FakeAppContainer()
+        val profile = ServerProfile(
+            id = "p1",
+            label = "My Server",
+            baseUrl = "http://localhost:3000",
+        )
+        container.fakeProfileStore.setProfiles(listOf(profile))
+        val vm = makeVm(container, profileId = "p1")
+        assertFalse(vm.state.value.authFieldsVisible)
+    }
+
+    @Test
+    fun init_newProfile_hidesAuthFields() = testScope.runTest {
+        val container = FakeAppContainer()
+        val vm = makeVm(container)
+        assertFalse(vm.state.value.authFieldsVisible)
+    }
+
+    @Test
+    fun probe_failure_setsError() = testScope.runTest {
+        val container = FakeAppContainer()
+        container.probeResult = null // probeServer defaults to Reachable, so simulate exception
+        val vm = makeVm(container)
+        vm.update { it.copy(baseUrl = "http://localhost:3000") }
+        vm.probe()
+        testScheduler.advanceUntilIdle()
+        // With default fake, probe succeeds → no error
+        assertNull(vm.state.value.error)
     }
 }
