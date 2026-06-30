@@ -195,11 +195,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         livePreviewJobs[sessionId] = viewModelScope.launch {
             val job = coroutineContext[kotlinx.coroutines.Job]
             try {
-                val preview = runCatching {
-                    api.listMessages(sessionId).lastOrNull()?.let { msg ->
-                        msg.parts.filterIsInstance<TextPart>().lastOrNull()?.text
-                    }
-                }.getOrNull()?.takeIf { it.isNotBlank() }?.take(NetworkConfig.previewTextMaxLength) ?: return@launch
+                val preview = fetchSessionPreview(api, sessionId) ?: return@launch
                 _state.update { s -> s.copy(previews = s.previews + (sessionId to preview)) }
             } finally {
                 if (job != null) livePreviewJobs.remove(sessionId, job)
@@ -218,11 +214,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
             sessions.take(NetworkConfig.maxPreviewSessions).map { session ->
                 launch {
                     semaphore.withPermit {
-                        val preview = runCatching {
-                            api.listMessages(session.id).lastOrNull()?.let { msg ->
-                                msg.parts.filterIsInstance<TextPart>().lastOrNull()?.text
-                            }
-                        }.getOrNull()?.takeIf { it.isNotBlank() }?.take(NetworkConfig.previewTextMaxLength) ?: return@withPermit
+                        val preview = fetchSessionPreview(api, session.id) ?: return@withPermit
                         _state.update { s -> s.copy(previews = s.previews + (session.id to preview)) }
                     }
                 }
@@ -291,3 +283,17 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 }
+
+/**
+ * Fetch the last text part of a session's most recent message, truncated to
+ * [NetworkConfig.previewTextMaxLength]. Returns null on failure or when the
+ * last message has no text part.
+ */
+private suspend fun fetchSessionPreview(
+    api: soy.iko.opencode.data.network.OpencodeApiClient,
+    sessionId: String,
+): String? = runCatching {
+    api.listMessages(sessionId).lastOrNull()?.let { msg ->
+        msg.parts.filterIsInstance<TextPart>().lastOrNull()?.text
+    }
+}.getOrNull()?.takeIf { it.isNotBlank() }?.take(NetworkConfig.previewTextMaxLength)

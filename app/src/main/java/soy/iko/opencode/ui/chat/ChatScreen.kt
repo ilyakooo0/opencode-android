@@ -112,7 +112,7 @@ fun ChatScreen(
     val draft by vm.draft.collectAsStateWithLifecycle()
     val haptics = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
-    val shareLauncher = LocalContext.current
+    val shareContext = LocalContext.current
     val shareLabel = stringResource(R.string.share)
     val defaultShareSubject = stringResource(R.string.share_subject)
 
@@ -235,7 +235,7 @@ fun ChatScreen(
                                 putExtra(android.content.Intent.EXTRA_SUBJECT, sessionTitle ?: defaultShareSubject)
                                 putExtra(android.content.Intent.EXTRA_TEXT, md)
                             }
-                            runCatching { shareLauncher.startActivity(android.content.Intent.createChooser(send, shareLabel)) }
+                            runCatching { shareContext.startActivity(android.content.Intent.createChooser(send, shareLabel)) }
                         },
                         enabled = messages.isNotEmpty(),
                     ) {

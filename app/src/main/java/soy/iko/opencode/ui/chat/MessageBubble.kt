@@ -105,10 +105,11 @@ private fun MessageTimestamp(info: soy.iko.opencode.data.model.MessageInfo) {
     }
 }
 
-private fun formatTokens(tokens: Tokens, format: String): String {
-    val dec = java.text.DecimalFormat.getNumberInstance(java.util.Locale.US)
-    return format.format(dec.format(tokens.input), dec.format(tokens.output))
-}
+private val tokenNumberFormat: java.text.NumberFormat =
+    java.text.DecimalFormat.getNumberInstance(java.util.Locale.US)
+
+private fun formatTokens(tokens: Tokens, format: String): String =
+    format.format(tokenNumberFormat.format(tokens.input), tokenNumberFormat.format(tokens.output))
 
 private fun formatCost(cost: Double): String =
     // Locale.US so the formatting is stable regardless of device locale (avoids

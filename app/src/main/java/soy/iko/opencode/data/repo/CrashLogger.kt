@@ -45,7 +45,10 @@ class CrashLogger private constructor(private val appContext: Context) {
                 .onFailure { Log.e("CrashLogger", "Failed to write crash report", it) }
             previous?.uncaughtException(thread, throwable)
         }
-        refresh()
+        // Load crash reports off the main thread so startup isn't blocked by file I/O
+        // (listFiles + reading the first line of each report). The StateFlow updates
+        // whenever the scan completes, so the Diagnostics screen reflects the result.
+        Thread { refresh() }.start()
     }
 
     fun refresh() {

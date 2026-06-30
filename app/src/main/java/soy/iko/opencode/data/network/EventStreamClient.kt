@@ -125,8 +125,8 @@ class EventStreamClient(
                 }
             } catch (c: CancellationException) {
                 throw c
-            } catch (t: Throwable) {
-                Log.w("EventStream", "SSE stream error, will retry", t)
+            } catch (e: Exception) {
+                Log.w("EventStream", "SSE stream error, will retry", e)
             }
             _state.value = ConnectionState.Disconnected
             if (!isActive) break
