@@ -24,13 +24,16 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.RequestPermission(),
     ) { /* Result is best-effort; notifications are silently skipped if denied. */ }
 
+    private var shareIntentHandled = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        savedInstanceState?.let { shareIntentHandled = it.getBoolean(KEY_SHARE_HANDLED, false) }
         val container = (application as OpencodeApp).container
-        if (savedInstanceState == null) handleIntent(intent)
-        maybeRequestNotificationPermission()
+        handleIntent(intent)
+        if (savedInstanceState == null) maybeRequestNotificationPermission()
         setContent {
             val themeMode by container.settingsStore.themeMode
                 .collectAsStateWithLifecycle(initialValue = ThemeMode.SYSTEM)
@@ -50,6 +53,7 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        shareIntentHandled = false
         handleIntent(intent)
     }
 
@@ -57,9 +61,14 @@ class MainActivity : ComponentActivity() {
      *  and session ids from notification taps / deep links so we can open them. */
     private fun handleIntent(intent: Intent?) {
         val container = (application as OpencodeApp).container
-        if (intent?.action == Intent.ACTION_SEND) {
-            val text = intent.getStringExtra(Intent.EXTRA_TEXT)?.takeIf { it.isNotBlank() }
-            if (text != null) container.setPendingShare(text)
+        if (intent?.action == Intent.ACTION_SEND && !shareIntentHandled) {
+            val text = intent.getStringExtra(Intent.EXTRA_TEXT)
+                ?.takeIf { it.isNotBlank() }
+                ?.take(10_000) // cap to prevent unbounded memory usage from malicious shares
+            if (text != null) {
+                container.setPendingShare(text)
+                shareIntentHandled = true
+            }
         }
         // Deep link: opencode://session/{sessionId}  (or the EXTRA_SESSION_ID extra).
         val deepLinkId = intent?.takeIf { it.action == Intent.ACTION_VIEW }
@@ -79,6 +88,13 @@ class MainActivity : ComponentActivity() {
 
         /** Session ids are alphanumeric with dashes/underscores. Reject path traversal. */
         private val VALID_SESSION_ID = Regex("[A-Za-z0-9_-]+")
+
+        private const val KEY_SHARE_HANDLED = "shareIntentHandled"
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putBoolean(KEY_SHARE_HANDLED, shareIntentHandled)
     }
 
     /** Ask for POST_NOTIFICATIONS once on Android 13+ so run/completion notifications show. */

@@ -29,6 +29,7 @@ import io.ktor.http.ContentType
 import io.ktor.http.contentType
 import kotlinx.coroutines.delay
 import kotlin.random.Random
+import java.net.URLEncoder
 
 /**
  * Request/response wrapper over the opencode REST endpoints. The long-lived `/event`
@@ -52,17 +53,17 @@ class OpencodeApiClient(private val client: HttpClient) {
         }.body()
 
     suspend fun updateSession(id: String, title: String): Session =
-        client.patch("session/$id") {
+        client.patch("session/${encode(id)}") {
             contentType(ContentType.Application.Json)
             setBody(UpdateSessionRequest(title = title))
         }.body()
 
     suspend fun deleteSession(id: String) {
-        client.delete("session/$id")
+        client.delete("session/${encode(id)}")
     }
 
     suspend fun listMessages(sessionId: String): List<MessageWithParts> = withRetry {
-        client.get("session/$sessionId/message").body()
+        client.get("session/${encode(sessionId)}/message").body()
     }
 
     suspend fun sendPrompt(
@@ -71,7 +72,7 @@ class OpencodeApiClient(private val client: HttpClient) {
         model: ModelRef? = null,
         agent: String? = null,
     ): MessageWithParts =
-        client.post("session/$sessionId/message") {
+        client.post("session/${encode(sessionId)}/message") {
             contentType(ContentType.Application.Json)
             setBody(
                 PromptRequest(
@@ -83,7 +84,7 @@ class OpencodeApiClient(private val client: HttpClient) {
         }.body()
 
     suspend fun abort(sessionId: String) {
-        client.post("session/$sessionId/abort")
+        client.post("session/${encode(sessionId)}/abort")
     }
 
     /** Invoke a slash-command by name via `POST /session/:id/command`. */
@@ -93,7 +94,7 @@ class OpencodeApiClient(private val client: HttpClient) {
         arguments: String = "",
         agent: String? = null,
     ): MessageWithParts =
-        client.post("session/$sessionId/command") {
+        client.post("session/${encode(sessionId)}/command") {
             contentType(ContentType.Application.Json)
             setBody(CommandRequest(command = command, arguments = arguments, agent = agent))
         }.body()
@@ -116,7 +117,7 @@ class OpencodeApiClient(private val client: HttpClient) {
         permissionId: String,
         response: PermissionResponse,
     ) = withRetry {
-        client.post("session/$sessionId/permissions/$permissionId") {
+        client.post("session/${encode(sessionId)}/permissions/${encode(permissionId)}") {
             contentType(ContentType.Application.Json)
             setBody(PermissionReplyBody(response.wire))
         }
@@ -169,7 +170,10 @@ internal suspend fun <T> withRetryInternal(
             throw c
         } catch (t: Exception) {
             lastError = t
-            if (t is ClientRequestException) throw t
+            if (t is ClientRequestException) {
+                // 429 (Too Many Requests) is transient — retry with backoff.
+                if (t.response.status.value != 429) throw t
+            }
             if (attempt < maxAttempts) {
                 val baseDelay = initialDelayMs * (1 shl (attempt - 1))
                 val jitter = (baseDelay * jitterFactor * Random.nextDouble()).toLong()
@@ -179,3 +183,7 @@ internal suspend fun <T> withRetryInternal(
     }
     throw lastError ?: IllegalStateException("withRetry failed without error")
 }
+
+/** URL-encode a path segment, replacing + with %20 (URLEncoder uses query-param encoding). */
+private fun encode(segment: String): String =
+    URLEncoder.encode(segment, "UTF-8").replace("+", "%20")

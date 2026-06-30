@@ -53,6 +53,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -96,8 +97,10 @@ fun SessionListScreen(
     val haptics = LocalHapticFeedback.current
     val snackbar = remember { SnackbarHostState() }
     var showServerMenu by remember { mutableStateOf(false) }
-    var pendingDelete by remember { mutableStateOf<Session?>(null) }
-    var pendingRename by remember { mutableStateOf<Session?>(null) }
+    var pendingDeleteId by rememberSaveable { mutableStateOf<String?>(null) }
+    var pendingRenameId by rememberSaveable { mutableStateOf<String?>(null) }
+    val pendingDelete = pendingDeleteId?.let { id -> state.sessions.firstOrNull { it.id == id } }
+    val pendingRename = pendingRenameId?.let { id -> state.sessions.firstOrNull { it.id == id } }
 
     LaunchedEffect(transientError) {
         val msg = transientError ?: return@LaunchedEffect
@@ -233,8 +236,8 @@ fun SessionListScreen(
                                         preview = state.previews[session.id],
                                         unread = unread.contains(session.id),
                                         onClick = { onOpenSession(session.id) },
-                                        onRename = { pendingRename = session },
-                                        onDelete = { pendingDelete = session },
+                                        onRename = { pendingRenameId = session.id },
+                                        onDelete = { pendingDeleteId = session.id },
                                         modifier = Modifier.animateItem(),
                                     )
                                 }
@@ -248,18 +251,18 @@ fun SessionListScreen(
 
     pendingDelete?.let { session ->
         AlertDialog(
-            onDismissRequest = { pendingDelete = null },
+            onDismissRequest = { pendingDeleteId = null },
             title = { Text(stringResource(R.string.delete_session_title)) },
             text = { Text(stringResource(R.string.delete_session_text, session.displayTitle)) },
             confirmButton = {
                 TextButton(onClick = {
                     haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                    pendingDelete = null
+                    pendingDeleteId = null
                     vm.deleteSession(session)
                 }) { Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = {
-                TextButton(onClick = { pendingDelete = null }) { Text(stringResource(R.string.cancel)) }
+                TextButton(onClick = { pendingDeleteId = null }) { Text(stringResource(R.string.cancel)) }
             },
         )
     }
@@ -271,10 +274,10 @@ fun SessionListScreen(
             onTitleChange = { title = it },
             onConfirm = {
                 val newName = title.trim()
-                pendingRename = null
+                pendingRenameId = null
                 if (newName.isNotEmpty() && newName != session.title) vm.renameSession(session, newName)
             },
-            onDismiss = { pendingRename = null },
+            onDismiss = { pendingRenameId = null },
         )
     }
 }

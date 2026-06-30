@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
+import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material3.Icon
@@ -65,7 +66,10 @@ fun TwoPaneSessionChat(
         ) {
             SessionListScreen(
                 container = container,
-                onOpenSession = { id -> selected = id },
+                onOpenSession = { id ->
+                    container.consumePendingShare()?.let { container.draftStore.set(id, it) }
+                    selected = id
+                },
                 onDisconnect = onDisconnect,
                 onOpenFiles = onOpenFiles,
                 onOpenSettings = onOpenSettings,
@@ -77,6 +81,7 @@ fun TwoPaneSessionChat(
             if (sessionId == null) {
                 EmptyDetail()
             } else {
+                BackHandler { selected = null }
                 key(sessionId) {
                     ChatScreen(
                         container = container,

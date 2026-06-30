@@ -41,7 +41,10 @@ class RunForegroundService : Service() {
                     0
                 },
             )
-        }.onFailure { Log.w(TAG, "startForeground failed; running without foreground priority", it) }
+        }.onFailure {
+            Log.w(TAG, "startForeground failed; running without foreground priority", it)
+            stopSelf()
+        }
         return START_NOT_STICKY
     }
 

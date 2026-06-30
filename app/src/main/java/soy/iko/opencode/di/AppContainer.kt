@@ -251,6 +251,7 @@ class AppContainer(context: Context) {
         connectionMutex.withLock {
             _activeConnection.value?.close()
             _activeConnection.value = null
+            activeRuns.clear()
             val now = System.currentTimeMillis()
             val resolved = profileStore.resolve(profile)
             val needsSave = (now - resolved.lastUsed) > LAST_USED_SAVE_THRESHOLD_MS
@@ -260,11 +261,15 @@ class AppContainer(context: Context) {
         }
 
     fun disconnect() {
-        // Non-suspending best-effort disconnect; if a connect is in progress under the
-        // mutex, the connection it sets will be closed on the next disconnect/connect.
-        val conn = _activeConnection.value ?: return
-        _activeConnection.value = null
-        conn.close()
+        // Launch on appScope so disconnect acquires the connection mutex, preventing
+        // a race where a concurrent connect() sets a new connection after disconnect
+        // reads null — which would leak the just-created connection.
+        appScope.launch {
+            connectionMutex.withLock {
+                _activeConnection.value?.close()
+                _activeConnection.value = null
+            }
+        }
     }
 }
 

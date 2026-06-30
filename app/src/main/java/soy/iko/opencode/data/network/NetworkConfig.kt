@@ -1,7 +1,5 @@
 package soy.iko.opencode.data.network
 
-import java.util.concurrent.TimeUnit
-
 /**
  * Centralized tuning parameters for the network and presentation layers. Keeping these
  * in one place makes them easy to find and adjust without hunting through source files,
@@ -39,6 +37,8 @@ object NetworkConfig {
     const val sseIdleTimeoutMs = 90_000L
     /** Buffer capacity for the SSE events SharedFlow; prevents a slow subscriber stalling the read loop. */
     const val sseEventBufferCapacity = 64
+    /** Max time to wait for the first SSE event before treating the connection as stale. */
+    const val sseHandshakeTimeoutMs = 30_000L
 
     // --- Session list (SessionListViewModel) ---
 

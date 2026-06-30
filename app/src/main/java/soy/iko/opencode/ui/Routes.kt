@@ -10,10 +10,10 @@ object Routes {
 
     const val SERVER_EDIT = "server_edit"
     fun serverEdit(id: String? = null) =
-        if (id.isNullOrEmpty()) SERVER_EDIT else "$SERVER_EDIT?id=$id"
+        if (id.isNullOrEmpty()) SERVER_EDIT else "$SERVER_EDIT?id=${android.net.Uri.encode(id)}"
 
     const val CHAT = "chat"
-    fun chat(sessionId: String) = "$CHAT/$sessionId"
+    fun chat(sessionId: String) = "$CHAT/${android.net.Uri.encode(sessionId)}"
 
     const val FILE_VIEW = "file_view"
     fun fileView(path: String) = "$FILE_VIEW?path=${android.net.Uri.encode(path)}"

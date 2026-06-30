@@ -59,6 +59,11 @@ class EventStreamClient(
     /** Conflated channel used to cut the reconnect backoff short when network returns. */
     private val reconnectSignal = Channel<Unit>(Channel.CONFLATED)
 
+    /** Returns true if the exception is an SSE auth failure (401/403) that should stop retrying. */
+    private fun isSseAuthFailure(e: Throwable): Boolean =
+        e is io.ktor.client.plugins.ClientRequestException &&
+            (e.response.status.value == 401 || e.response.status.value == 403)
+
     /** Request an immediate reconnect, skipping any in-progress backoff. */
     fun triggerReconnect() { reconnectSignal.trySend(Unit) }
 
@@ -81,11 +86,18 @@ class EventStreamClient(
                     request = {
                         timeout {
                             requestTimeoutMillis = Long.MAX_VALUE
-                            socketTimeoutMillis = Long.MAX_VALUE
+                            // Use a finite socket timeout so a server that accepts TCP but
+                            // never sends SSE headers doesn't hang indefinitely. Once events
+                            // are flowing, the idle-timeout watchdog handles half-open detection.
+                            socketTimeoutMillis = NetworkConfig.sseHandshakeTimeoutMs
                         }
                     },
                 ) {
                     backoffMs = NetworkConfig.sseInitialBackoffMs
+                    // Clear any stale reconnect signal from a triggerReconnect() call
+                    // made while the previous stream was healthy, so it doesn't suppress
+                    // the next legitimate backoff.
+                    while (reconnectSignal.tryReceive().isSuccess) { /* drain */ }
                     // `incoming` is a cold Flow; bridge it to a ReceiveChannel so each
                     // element can be raced against an idle timeout via select.
                     val events = incoming.produceIn(scope)
@@ -126,6 +138,11 @@ class EventStreamClient(
             } catch (c: CancellationException) {
                 throw c
             } catch (e: Exception) {
+                if (isSseAuthFailure(e)) {
+                    Log.w("EventStream", "SSE auth failed, stopping reconnect", e)
+                    _state.value = ConnectionState.Disconnected
+                    throw e
+                }
                 Log.w("EventStream", "SSE stream error, will retry", e)
             }
             _state.value = ConnectionState.Disconnected

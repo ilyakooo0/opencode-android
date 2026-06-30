@@ -58,7 +58,12 @@ private fun FilePart.resolveModel(ctx: ImageLoadContext): Any? {
     return if (url.startsWith("http://") || url.startsWith("https://")) {
         url
     } else {
-        HttpClientFactory.normalizeBaseUrl(ctx.baseUrl) + url.trimStart('/')
+        // Resolve relative URL against the base. Collapse any ../ segments to
+        // prevent path traversal from escaping the server's base path.
+        val base = HttpClientFactory.normalizeBaseUrl(ctx.baseUrl)
+        val resolved = java.net.URI(base).resolve(url).normalize().toString()
+        // Guard: if normalization escaped the base path, fall back to the base.
+        if (!resolved.startsWith(base)) base else resolved
     }
 }
 
@@ -74,7 +79,12 @@ fun RemoteImage(part: FilePart, ctx: ImageLoadContext, modifier: Modifier = Modi
     val request = remember(part.source, part.url, ctx.baseUrl, ctx.basicAuthHeader) {
         ImageRequest.Builder(context)
             .data(model)
-            .apply { ctx.basicAuthHeader?.let { addHeader("Authorization", it) } }
+            .apply {
+                // Only send Basic auth over HTTPS; sending credentials over
+                // cleartext HTTP would expose them on the network.
+                val isHttps = (model as? String)?.startsWith("https://") == true
+                if (isHttps) ctx.basicAuthHeader?.let { addHeader("Authorization", it) }
+            }
             .crossfade(true)
             .build()
     }

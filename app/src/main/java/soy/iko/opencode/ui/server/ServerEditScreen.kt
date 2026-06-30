@@ -121,6 +121,14 @@ fun ServerEditScreen(
             ) {
                 Text(stringResource(R.string.save))
             }
+            state.error?.let { message ->
+                Text(
+                    message,
+                    color = androidx.compose.material3.MaterialTheme.colorScheme.error,
+                    style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
         }
         }
     }

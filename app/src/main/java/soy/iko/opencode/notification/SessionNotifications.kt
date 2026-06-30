@@ -30,10 +30,14 @@ object SessionNotifications {
     private fun notifIdFor(sessionId: String): Int {
         val digest = MessageDigest.getInstance("SHA-256").digest(sessionId.toByteArray())
         // Take the first 4 bytes, mask to 31 bits (always positive) to fit an Int id.
-        return (NOTIF_ID_PREFIX + ((digest[0].toInt() and 0xFF) shl 24 or
+        val hash = ((digest[0].toInt() and 0xFF) shl 24 or
             (digest[1].toInt() and 0xFF) shl 16 or
             (digest[2].toInt() and 0xFF) shl 8 or
-            (digest[3].toInt() and 0xFF))).and(0x7FFFFFFF)
+            (digest[3].toInt() and 0xFF)).and(0x7FFFFFFF)
+        // Offset by NOTIF_ID_PREFIX, wrapping within the positive Int range so the
+        // prefix is preserved (not masked away) and ids don't collide with the
+        // foreground service's NOTIF_ID = 1.
+        return (NOTIF_ID_PREFIX + hash).and(0x7FFFFFFF)
     }
 
     fun postCompleted(context: Context, sessionId: String, title: String) {

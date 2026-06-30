@@ -113,7 +113,10 @@ class FileBrowserViewModel(private val container: AppContainer) : ViewModel() {
             _state.value = _state.value.copy(results = emptyList(), searching = false)
             return
         }
-        val client = api ?: return
+        val client = api ?: run {
+            _state.value = _state.value.copy(searching = false, error = container.string(R.string.not_connected))
+            return
+        }
         searchJob = viewModelScope.launch {
             delay(NetworkConfig.fileSearchDebounceMs) // debounce
             _state.value = _state.value.copy(searching = true)

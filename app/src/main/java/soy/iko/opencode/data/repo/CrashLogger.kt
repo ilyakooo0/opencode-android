@@ -5,9 +5,13 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.util.Log
 import androidx.core.content.pm.PackageInfoCompat
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import java.io.File
 import java.io.PrintWriter
 import java.io.StringWriter
@@ -34,6 +38,7 @@ class CrashLogger private constructor(private val appContext: Context) {
     )
 
     private val crashDir = File(appContext.filesDir, "crashes").apply { mkdirs() }
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     private val _reports = MutableStateFlow<List<CrashReport>>(emptyList())
     val reports: StateFlow<List<CrashReport>> = _reports.asStateFlow()
@@ -48,7 +53,7 @@ class CrashLogger private constructor(private val appContext: Context) {
         // Load crash reports off the main thread so startup isn't blocked by file I/O
         // (listFiles + reading the first line of each report). The StateFlow updates
         // whenever the scan completes, so the Diagnostics screen reflects the result.
-        Thread { refresh() }.start()
+        scope.launch { refresh() }
     }
 
     fun refresh() {

@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.UUID
 
 data class ServerEditState(
@@ -18,6 +19,7 @@ data class ServerEditState(
     val username: String = "",
     val password: String = "",
     val loaded: Boolean = false,
+    val error: String? = null,
 ) {
     val canSave: Boolean get() = baseUrl.isNotBlank()
     val isNew: Boolean get() = id == null
@@ -34,7 +36,9 @@ class ServerEditViewModel(
     init {
         viewModelScope.launch {
             if (profileId != null) {
-                val existing = container.profileStore.profiles.first().firstOrNull { it.id == profileId }
+                val existing = withTimeoutOrNull(5_000) {
+                    container.profileStore.profiles.first().firstOrNull { it.id == profileId }
+                }
                 if (existing != null) {
                     _state.value = ServerEditState(
                         id = existing.id,
@@ -59,21 +63,26 @@ class ServerEditViewModel(
         val s = _state.value
         if (!s.canSave) return
         viewModelScope.launch {
-            val existingLastUsed = if (s.id != null) {
-                container.profileStore.profiles.first()
-                    .firstOrNull { it.id == s.id }?.lastUsed ?: 0L
-            } else 0L
-            container.profileStore.save(
-                ServerProfile(
-                    id = s.id ?: UUID.randomUUID().toString(),
-                    label = s.label.trim(),
-                    baseUrl = s.baseUrl.trim(),
-                    username = s.username.trim().takeIf { it.isNotBlank() },
-                    password = s.password.trim().takeIf { it.isNotEmpty() },
-                    lastUsed = existingLastUsed,
-                ),
-            )
-            onDone()
+            val result = runCatching {
+                val existingLastUsed = if (s.id != null) {
+                    withTimeoutOrNull(5_000) {
+                        container.profileStore.profiles.first()
+                            .firstOrNull { it.id == s.id }?.lastUsed
+                    } ?: 0L
+                } else 0L
+                container.profileStore.save(
+                    ServerProfile(
+                        id = s.id ?: UUID.randomUUID().toString(),
+                        label = s.label.trim(),
+                        baseUrl = s.baseUrl.trim(),
+                        username = s.username.trim().takeIf { it.isNotBlank() },
+                        password = s.password.trim().takeIf { it.isNotEmpty() },
+                        lastUsed = existingLastUsed,
+                    ),
+                )
+            }
+            result.onSuccess { onDone() }
+                .onFailure { _state.value = _state.value.copy(error = it.message ?: "Failed to save") }
         }
     }
 }

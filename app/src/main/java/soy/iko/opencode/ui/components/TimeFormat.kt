@@ -40,6 +40,7 @@ fun rememberRelativeTime(epochMillis: Long?, intervalMs: Long = 30_000L): String
     // on each interval, re-evaluating relativeTime() so the label stays fresh.
     var tick by remember { mutableLongStateOf(0L) }
     LaunchedEffect(epochMillis) {
+        if (epochMillis == null) return@LaunchedEffect
         while (true) {
             delay(intervalMs)
             tick++

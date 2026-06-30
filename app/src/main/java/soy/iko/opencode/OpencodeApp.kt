@@ -13,4 +13,9 @@ class OpencodeApp : Application() {
         CrashLogger.get(this).install()
         container = AppContainer(this)
     }
+
+    override fun onTerminate() {
+        super.onTerminate()
+        container.shutdown()
+    }
 }

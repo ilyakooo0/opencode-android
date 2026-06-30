@@ -48,6 +48,9 @@ class ServerListViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun delete(profile: ServerProfile) {
-        viewModelScope.launch { container.profileStore.delete(profile.id) }
+        viewModelScope.launch {
+            runCatching { container.profileStore.delete(profile.id) }
+                .onFailure { _error.value = container.friendlyError(it) }
+        }
     }
 }
