@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -34,11 +35,19 @@ sealed interface DiffLine {
     val text: String
 
     data class Hunk(override val text: String) : DiffLine          // @@ ... @@
-    data class FileHeader(override val text: String) : DiffLine    // --- / +++
+    data class FileHeader(override val text: String) : DiffLine    // --- / +++ / diff / index
     data class Context(override val text: String) : DiffLine
     data class Add(override val text: String) : DiffLine
     data class Remove(override val text: String) : DiffLine
+    data class Meta(override val text: String) : DiffLine          // git metadata (new file mode, etc.)
 }
+
+/** Git metadata line prefixes that aren't part of the diff content. */
+private val gitMetaPrefixes = listOf(
+    "new file mode ", "deleted file mode ", "old mode ", "new mode ",
+    "similarity index ", "dissimilarity index ", "rename from ", "rename to ",
+    "copy from ", "copy to ", "Binary files ", "\\ No newline",
+)
 
 /** Parse a unified diff string into typed [DiffLine]s. */
 fun parseDiff(diff: String): List<DiffLine> {
@@ -51,6 +60,7 @@ fun parseDiff(diff: String): List<DiffLine> {
             raw.startsWith("-") -> result.add(DiffLine.Remove(raw.removePrefix("-")))
             raw.startsWith(" ") -> result.add(DiffLine.Context(raw.removePrefix(" ")))
             raw.startsWith("diff ") || raw.startsWith("index ") -> result.add(DiffLine.FileHeader(raw))
+            gitMetaPrefixes.any { raw.startsWith(it) } -> result.add(DiffLine.Meta(raw))
             raw.isNotBlank() -> result.add(DiffLine.Context(raw))
         }
     }
@@ -122,13 +132,20 @@ fun DiffView(diff: String, modifier: Modifier = Modifier) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(vertical = 1.dp),
                     )
+                    is DiffLine.Meta -> Text(
+                        line.text,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                        modifier = Modifier.padding(vertical = 1.dp),
+                    )
                     is DiffLine.Add -> DiffRow(line.text, "+", addColor, addText)
                     is DiffLine.Remove -> DiffRow(line.text, "-", removeColor, removeText)
                     is DiffLine.Context -> DiffRow(line.text, " ", Color.Transparent, MaterialTheme.colorScheme.onSurface)
                 }
             }
         }
-        Spacer(Modifier.padding(bottom = 10.dp))
+        Spacer(Modifier.height(10.dp))
     }
 }
 

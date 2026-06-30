@@ -124,40 +124,43 @@ class OpencodeApiClient(private val client: HttpClient) {
         }.body()
     }
 
-    suspend fun providers(): ProvidersResponse = cacheMutex.withLock {
+    suspend fun providers(): ProvidersResponse {
         val now = System.currentTimeMillis()
-        val cached = cachedProviders
-        if (cached != null && now - cached.fetchedAt < NetworkConfig.catalogCacheTtlMs) {
-            cached.value
-        } else {
-            val value = withRetry { client.get("config/providers").body<ProvidersResponse>() }
-            cachedProviders = CachedEntry(value, now)
-            value
+        cacheMutex.withLock {
+            val cached = cachedProviders
+            if (cached != null && now - cached.fetchedAt < NetworkConfig.catalogCacheTtlMs) {
+                return cached.value
+            }
         }
+        val value = withRetry { client.get("config/providers").body<ProvidersResponse>() }
+        cacheMutex.withLock { cachedProviders = CachedEntry(value, System.currentTimeMillis()) }
+        return value
     }
 
-    suspend fun agents(): List<Agent> = cacheMutex.withLock {
+    suspend fun agents(): List<Agent> {
         val now = System.currentTimeMillis()
-        val cached = cachedAgents
-        if (cached != null && now - cached.fetchedAt < NetworkConfig.catalogCacheTtlMs) {
-            cached.value
-        } else {
-            val value = withRetry { client.get("agent").body<List<Agent>>() }
-            cachedAgents = CachedEntry(value, now)
-            value
+        cacheMutex.withLock {
+            val cached = cachedAgents
+            if (cached != null && now - cached.fetchedAt < NetworkConfig.catalogCacheTtlMs) {
+                return cached.value
+            }
         }
+        val value = withRetry { client.get("agent").body<List<Agent>>() }
+        cacheMutex.withLock { cachedAgents = CachedEntry(value, System.currentTimeMillis()) }
+        return value
     }
 
-    suspend fun commands(): List<Command> = cacheMutex.withLock {
+    suspend fun commands(): List<Command> {
         val now = System.currentTimeMillis()
-        val cached = cachedCommands
-        if (cached != null && now - cached.fetchedAt < NetworkConfig.catalogCacheTtlMs) {
-            cached.value
-        } else {
-            val value = withRetry { client.get("command").body<List<Command>>() }
-            cachedCommands = CachedEntry(value, now)
-            value
+        cacheMutex.withLock {
+            val cached = cachedCommands
+            if (cached != null && now - cached.fetchedAt < NetworkConfig.catalogCacheTtlMs) {
+                return cached.value
+            }
         }
+        val value = withRetry { client.get("command").body<List<Command>>() }
+        cacheMutex.withLock { cachedCommands = CachedEntry(value, System.currentTimeMillis()) }
+        return value
     }
 
     /** Invalidate the catalog cache (e.g. on server switch). */
@@ -231,7 +234,10 @@ internal suspend fun <T> withRetryInternal(
                 if (t.response.status.value != 429) throw t
             }
             if (attempt < maxAttempts) {
-                val baseDelay = initialDelayMs * (1 shl (attempt - 1))
+                // Guard against Int overflow from the shift and Long overflow from
+                // the multiplication at high attempt counts.
+                val shift = (attempt - 1).coerceAtMost(30)
+                val baseDelay = (initialDelayMs * (1L shl shift)).coerceAtMost(NetworkConfig.retryMaxDelayMs)
                 // Symmetric jitter: vary by ±jitterFactor so the delay is sometimes
                 // shorter, sometimes longer — spreads concurrent client retries and
                 // prevents thundering-herd reconnection storms.

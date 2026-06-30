@@ -201,7 +201,7 @@ private fun DirectoryListing(
                 HorizontalDivider()
             }
         }
-        items(state.entries, key = { it.path }) { node ->
+        items(state.entries, key = { it.path + "_" + it.name }) { node ->
             FileRow(
                 icon = node.isDirectory,
                 label = node.name,
@@ -251,8 +251,8 @@ private fun FileRow(
 @Composable
 private fun StatusBadge(status: FileStatusEntry) {
     val (letter, color, desc) = when (status.status) {
-        "added" -> Triple("A", Color(0xFF4CAF50), stringResource(R.string.git_added))
-        "modified" -> Triple("M", Color(0xFFFFA000), stringResource(R.string.git_modified))
+        "added" -> Triple("A", MaterialTheme.colorScheme.primary, stringResource(R.string.git_added))
+        "modified" -> Triple("M", MaterialTheme.colorScheme.tertiary, stringResource(R.string.git_modified))
         "deleted" -> Triple("D", MaterialTheme.colorScheme.error, stringResource(R.string.git_deleted))
         else -> Triple("·", MaterialTheme.colorScheme.onSurfaceVariant, "")
     }

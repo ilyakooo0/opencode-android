@@ -150,6 +150,12 @@ class EventStreamClient(
                     },
                 ) {
                     backoffMs = initialBackoffMs
+                    // The SSE block is open — the connection is established. Mark as
+                    // Connected immediately so downstream re-seed logic fires even when
+                    // the server only sends keep-alive comments (no data events).
+                    if (_state.value != ConnectionState.Connected) {
+                        _state.value = ConnectionState.Connected
+                    }
                     // Clear any stale reconnect signal from a triggerReconnect() call
                     // made while the previous stream was healthy, so it doesn't suppress
                     // the next legitimate backoff.

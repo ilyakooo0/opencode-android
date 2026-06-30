@@ -9,8 +9,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import android.util.Log
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import java.util.concurrent.Executors
 
 /**
  * Persists the in-progress message draft for each session so it survives
@@ -36,6 +36,12 @@ class DraftStore(context: Context, scope: CoroutineScope) {
      *  background thread to avoid blocking on first-time disk I/O. */
     private val prefsInitialized = java.util.concurrent.atomic.AtomicBoolean(false)
 
+    /** Single-thread executor for flushDraft when prefs aren't initialized yet,
+     *  so the main thread is never blocked on disk I/O. */
+    private val flushExecutor = Executors.newSingleThreadExecutor { r ->
+        Thread(r, "DraftStore-flush").apply { isDaemon = true }
+    }
+
     private val _drafts = MutableStateFlow<Map<String, String>>(emptyMap())
     /** The full in-memory snapshot of all drafts, updated when prefs finish loading. */
     val drafts: StateFlow<Map<String, String>> = _drafts.asStateFlow()
@@ -59,6 +65,17 @@ class DraftStore(context: Context, scope: CoroutineScope) {
 
     /** Returns the draft for [sessionId], or "" if not found or still loading. */
     fun get(sessionId: String): String = _drafts.value[sessionId].orEmpty()
+
+    /** Update the in-memory draft immediately without persisting to disk.
+     *  Used when navigation must see the new value synchronously (e.g. share-intent
+     *  injection before ChatScreen composes). Call [set] afterwards to persist. */
+    fun setImmediate(sessionId: String, text: String) {
+        _drafts.update { current ->
+            val updated = current.toMutableMap()
+            if (text.isBlank()) updated.remove(sessionId) else updated[sessionId] = text
+            updated
+        }
+    }
 
     suspend fun set(sessionId: String, text: String) {
         _drafts.update { current ->
@@ -98,9 +115,10 @@ class DraftStore(context: Context, scope: CoroutineScope) {
      * [apply] (asynchronous) and returns immediately without blocking the main thread.
      *
      * If the prefs file has NOT been opened yet (a rare race where onCleared fires
-     * before the background init), accessing the lazy would synchronously load and
-     * parse the XML on the main thread. To avoid this, the write is deferred to a
-     * blocking call on the IO dispatcher instead.
+     * before the background init), the write is dispatched to a background thread
+     * instead of blocking the main thread on a synchronous disk read. The draft
+     * may be lost if the process exits before the write completes, but this is
+     * preferable to an ANR.
      */
     fun flushDraft(sessionId: String, text: String) {
         _drafts.update { current ->
@@ -116,16 +134,16 @@ class DraftStore(context: Context, scope: CoroutineScope) {
                 }.apply()
             }.onFailure { Log.w("DraftStore", "Failed to flush draft for $sessionId", it) }
         } else {
-            // Prefs not yet opened — avoid a synchronous disk read on the main thread
-            // by blocking on IO instead. This is acceptable in onCleared() because the
-            // viewModelScope is already dead and there's no suspending alternative.
-            runCatching {
-                runBlocking(Dispatchers.IO) {
+            // Prefs not yet opened — dispatch to a background thread to avoid a
+            // synchronous disk read on the main thread (which would ANR). The draft
+            // may be lost if the process exits before the write completes.
+            flushExecutor.execute {
+                runCatching {
                     prefs.edit().apply {
                         if (text.isBlank()) remove(sessionId) else putString(sessionId, text)
                     }.apply()
-                }
-            }.onFailure { Log.w("DraftStore", "Failed to flush draft for $sessionId", it) }
+                }.onFailure { Log.w("DraftStore", "Failed to flush draft for $sessionId", it) }
+            }
         }
     }
 }

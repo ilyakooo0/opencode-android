@@ -53,6 +53,11 @@ class ServerListViewModel(private val container: AppContainer) : ViewModel() {
 
     fun delete(profile: ServerProfile) {
         viewModelScope.launch {
+            // If the user is deleting the currently-connected profile, disconnect
+            // first so the active connection doesn't linger pointing at a deleted server.
+            if (container.activeConnection.value?.profile?.id == profile.id) {
+                container.disconnect()
+            }
             runCatchingCancellable { container.profileStore.delete(profile.id) }
                 .onFailure { _error.value = container.friendlyError(it) }
         }

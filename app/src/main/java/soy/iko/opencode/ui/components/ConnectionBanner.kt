@@ -14,6 +14,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import soy.iko.opencode.R
@@ -36,7 +38,14 @@ fun ConnectionBanner(
     }
     if (text != null) {
         Surface(
-            modifier = modifier.fillMaxWidth(),
+            modifier = modifier
+                .fillMaxWidth()
+                .semantics {
+                    // Announce connection state changes to TalkBack users so they're
+                    // aware the stream dropped/reconnecting without visual cues.
+                    liveRegion = LiveRegionMode.Polite
+                    contentDescription = text
+                },
             color = MaterialTheme.colorScheme.tertiaryContainer,
         ) {
             Row(
@@ -45,7 +54,7 @@ fun ConnectionBanner(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 CircularProgressIndicator(
-                    Modifier.size(12.dp).semantics { contentDescription = text },
+                    Modifier.size(12.dp),
                     strokeWidth = 2.dp,
                 )
                 Text(

@@ -118,6 +118,7 @@ fun ChatScreen(
     val commandsLoading by vm.commandsLoading.collectAsStateWithLifecycle()
     val commandsError by vm.commandsError.collectAsStateWithLifecycle()
     val sessionTitle by vm.sessionTitle.collectAsStateWithLifecycle()
+    val sessionDeleted by vm.sessionDeleted.collectAsStateWithLifecycle()
     val failedDraft by vm.failedDraft.collectAsStateWithLifecycle()
     val draft by vm.draft.collectAsStateWithLifecycle()
     val haptics = LocalHapticFeedback.current
@@ -138,6 +139,12 @@ fun ChatScreen(
     DisposableEffect(sessionId) {
         container.setCurrentSession(sessionId)
         onDispose { if (container.currentSession.value == sessionId) container.setCurrentSession(null) }
+    }
+
+    // Navigate away when the session is deleted via SSE so the user isn't left
+    // on a zombie screen showing a conversation that no longer exists.
+    LaunchedEffect(sessionDeleted) {
+        if (sessionDeleted) onBack()
     }
 
     val listState = rememberLazyListState()

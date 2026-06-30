@@ -1,6 +1,7 @@
 package soy.iko.opencode.notification
 
 import android.app.Notification
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -10,6 +11,7 @@ import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
+import soy.iko.opencode.MainActivity
 import soy.iko.opencode.R
 
 /**
@@ -48,15 +50,25 @@ class RunForegroundService : Service() {
         return START_NOT_STICKY
     }
 
-    private fun buildNotification(): Notification =
-        NotificationCompat.Builder(this, NotificationChannels.STATUS)
+    private fun buildNotification(): Notification {
+        // Tapping the notification opens the app so the user can see the running session.
+        val openIntent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            this, 0, openIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        return NotificationCompat.Builder(this, NotificationChannels.STATUS)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle(getString(R.string.notif_running_title))
             .setContentText(getString(R.string.notif_running_text))
+            .setContentIntent(pendingIntent)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
             .build()
+    }
 
     override fun onDestroy() {
         // Safety net: if the process is being killed while a run is in progress,

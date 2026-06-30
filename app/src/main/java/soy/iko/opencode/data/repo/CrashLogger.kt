@@ -81,16 +81,20 @@ class CrashLogger private constructor(private val appContext: Context) {
     }
 
     fun deleteReport(fileName: String) {
-        val file = File(crashDir, fileName).canonicalFile
-        if (file.path.startsWith(crashDir.canonicalPath + File.separator)) {
-            file.delete()
+        scope.launch {
+            val file = File(crashDir, fileName).canonicalFile
+            if (file.path.startsWith(crashDir.canonicalPath + File.separator)) {
+                file.delete()
+            }
+            refresh()
         }
-        refresh()
     }
 
     fun clearAll() {
-        crashDir.listFiles { f -> f.isFile && f.name.endsWith(".txt") }?.forEach { it.delete() }
-        refresh()
+        scope.launch {
+            crashDir.listFiles { f -> f.isFile && f.name.endsWith(".txt") }?.forEach { it.delete() }
+            refresh()
+        }
     }
 
     fun reportCount(): Int = _reports.value.size
@@ -107,7 +111,7 @@ class CrashLogger private constructor(private val appContext: Context) {
         val stamp = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss-SSS", Locale.US).format(now)
         // Append a short random suffix so two crashes in the same millisecond don't
         // overwrite each other.
-        val suffix = Integer.toHexString(System.nanoTime().toInt())
+        val suffix = java.lang.Long.toHexString(System.nanoTime())
         val file = File(crashDir, "crash-$stamp-$suffix.txt")
         val sw = StringWriter()
         PrintWriter(sw).use { pw ->

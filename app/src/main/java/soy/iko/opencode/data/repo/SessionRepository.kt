@@ -78,20 +78,20 @@ class SessionRepository(
         // re-fetching the current snapshot fills those holes. The seed merge logic
         // (see MessageStore.seed) handles interleaving with concurrently-arrived events.
         //
-        // Both the REST fetch and the seed are performed under the lock so that events
-        // arriving via SSE between the fetch and the seed are not incorrectly pruned
-        // by the prune=true pass.
+        // The REST fetch is performed *outside* the lock so events arriving via SSE
+        // during the fetch are not blocked — holding the lock during a network call
+        // would stall the event reducer and overflow the SharedFlow buffer (DROP_OLDEST),
+        // silently losing events. The seed itself is under the lock; an interim seed
+        // token is checked so a concurrent re-seed doesn't clobber a newer fetch.
         launch {
             var wasConnected = false
             eventStream.state.collect { state ->
                 if (state == EventStreamClient.ConnectionState.Connected) {
                     if (wasConnected) {
-                        lock.withLock {
-                            val fresh = runCatchingCancellable { api.listMessages(sessionId) }
-                                .onFailure { Log.w("SessionRepository", "Re-seed message load failed for $sessionId; relying on SSE", it) }
-                                .getOrDefault(emptyList())
-                            store.seed(fresh, prune = true)
-                        }
+                        val fresh = runCatchingCancellable { api.listMessages(sessionId) }
+                            .onFailure { Log.w("SessionRepository", "Re-seed message load failed for $sessionId; relying on SSE", it) }
+                            .getOrDefault(emptyList())
+                        lock.withLock { store.seed(fresh, prune = true) }
                         publish()
                     }
                     wasConnected = true
@@ -113,12 +113,14 @@ class SessionRepository(
     }.conflate()
 
     companion object {
-        /** Convenience: is this event a run-completion signal for [sessionId]? */
+        /** Convenience: is this event a run-completion signal for [sessionId]?
+         *  A null sessionID is NOT treated as a wildcard — an idle event with no
+         *  session id must not reset the running state of every open chat. */
         fun isIdle(event: BusEvent, sessionId: String): Boolean =
-            event is SessionIdle && (event.properties.sessionID == null || event.properties.sessionID == sessionId)
+            event is SessionIdle && event.properties.sessionID == sessionId
 
         fun isError(event: BusEvent, sessionId: String): Boolean =
-            event is SessionError && (event.properties.sessionID == null || event.properties.sessionID == sessionId)
+            event is SessionError && event.properties.sessionID == sessionId
     }
 }
 
@@ -177,8 +179,17 @@ internal class MessageStore {
                 if (info.sessionID != sessionId) {
                     false
                 } else {
-                    val existing = messages[info.id]
-                    messages[info.id] = existing?.copy(info = info) ?: MessageWithParts(info)
+                    // An UnknownMessage with an empty id (e.g. from an unrecognized
+                    // server role with no id field) would collide with other such
+                    // messages in the map. Generate a unique synthetic key so each
+                    // unknown message gets its own entry instead of overwriting others.
+                    val key = if (info.id.isEmpty() && info is UnknownMessage) {
+                        "unknown-${System.nanoTime()}"
+                    } else {
+                        info.id
+                    }
+                    val existing = messages[key]
+                    messages[key] = existing?.copy(info = info) ?: MessageWithParts(info)
                     if (existing == null) evictOldMessages()
                     true
                 }
@@ -214,6 +225,7 @@ internal class MessageStore {
         val current = messages[messageId]
         val parts = current?.parts.orEmpty()
         val idx = parts.indexOfFirst { it.id == part.id }
+        if (idx >= 0 && parts[idx] == part) return false
         val newParts = if (idx >= 0) {
             parts.toMutableList().also { it[idx] = part }
         } else {
@@ -224,7 +236,7 @@ internal class MessageStore {
                 info = UnknownMessage(id = messageId, sessionID = part.sessionID ?: ""),
                 parts = newParts,
             )
-        evictOldMessages()
+        if (current == null) evictOldMessages()
         return true
     }
 

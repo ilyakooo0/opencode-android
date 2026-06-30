@@ -16,6 +16,10 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
@@ -36,8 +40,17 @@ fun PermissionDialog(
     onRespond: (PermissionResponse) -> Unit,
 ) {
     val haptics = LocalHapticFeedback.current
+    // Guard against double-respond: back press + button tap, or rapid double-tap,
+    // could call onRespond twice. Once a response is sent, subsequent calls are no-ops.
+    var responded by remember { mutableStateOf(false) }
+    val respond: (PermissionResponse) -> Unit = { response ->
+        if (!responded) {
+            responded = true
+            onRespond(response)
+        }
+    }
     // Intercept back so the dialog can't be dismissed without an explicit choice.
-    BackHandler { onRespond(PermissionResponse.REJECT) }
+    BackHandler { respond(PermissionResponse.REJECT) }
     AlertDialog(
         onDismissRequest = { /* require an explicit choice */ },
         icon = { Icon(Icons.Filled.Shield, contentDescription = null) },
@@ -70,14 +83,14 @@ fun PermissionDialog(
                 Button(
                     onClick = {
                         haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                        onRespond(PermissionResponse.ONCE)
+                        respond(PermissionResponse.ONCE)
                     },
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text(stringResource(R.string.allow_once)) }
                 OutlinedButton(
                     onClick = {
                         haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                        onRespond(PermissionResponse.ALWAYS)
+                        respond(PermissionResponse.ALWAYS)
                     },
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text(stringResource(R.string.always_allow)) }
@@ -86,7 +99,7 @@ fun PermissionDialog(
         dismissButton = {
             TextButton(onClick = {
                 haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                onRespond(PermissionResponse.REJECT)
+                respond(PermissionResponse.REJECT)
             }) {
                 Text(stringResource(R.string.reject), color = MaterialTheme.colorScheme.error)
             }

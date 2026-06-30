@@ -35,10 +35,11 @@ fun OpencodeApp(container: AppContainer) {
 
     // When text is shared into the app, surface the session list so the user can pick
     // (or create) a conversation to drop it into. The chosen session's draft is set
-    // in [onOpenSession] below. Fresh launches rely on auto-reconnect to get here.
-    LaunchedEffect(pendingShare) {
+    // in [onOpenSession] below. Keyed on `connection` too so a share that arrives
+    // before auto-reconnect completes is retried once the connection is established.
+    LaunchedEffect(pendingShare, connection) {
         if (pendingShare == null) return@LaunchedEffect
-        if (container.activeConnection.value == null) return@LaunchedEffect
+        if (connection == null) return@LaunchedEffect
         if (!navController.popBackStack(Routes.SESSIONS, inclusive = false)) {
             navController.navigate(Routes.SESSIONS) { launchSingleTop = true }
         }
@@ -95,7 +96,13 @@ fun OpencodeApp(container: AppContainer) {
                 SessionListScreen(
                     container = container,
                     onOpenSession = { id ->
-                        container.consumePendingShare()?.let { scope.launch { runCatchingCancellable { container.draftStore.set(id, it) } } }
+                        // Set the draft synchronously in-memory before navigating so the
+                        // ChatScreen sees it on first composition. The async persistence
+                        // to disk happens in the background via draftStore.set.
+                        container.consumePendingShare()?.let { shareText ->
+                            container.draftStore.setImmediate(id, shareText)
+                            scope.launch { runCatchingCancellable { container.draftStore.set(id, shareText) } }
+                        }
                         navController.navigate(Routes.chat(id))
                     },
                     onDisconnect = {

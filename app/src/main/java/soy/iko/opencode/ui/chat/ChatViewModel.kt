@@ -120,6 +120,10 @@ class ChatViewModel(
     private val _sessionTitle = MutableStateFlow<String?>(null)
     val sessionTitle: StateFlow<String?> = _sessionTitle.asStateFlow()
 
+    /** Set when the current session is deleted via SSE, so the UI can navigate away. */
+    private val _sessionDeleted = MutableStateFlow(false)
+    val sessionDeleted: StateFlow<Boolean> = _sessionDeleted.asStateFlow()
+
     /** The text of the last send that failed, surfaced so the UI can offer a retry. */
     private val _failedDraft = MutableStateFlow<String?>(null)
     val failedDraft: StateFlow<String?> = _failedDraft.asStateFlow()
@@ -228,7 +232,7 @@ class ChatViewModel(
                             if (event.properties.info.id == sessionId) _sessionTitle.value = event.properties.info.displayTitle
                         is SessionDeleted ->
                             if (event.properties.info?.id == sessionId || event.properties.sessionID == sessionId) {
-                                _sessionTitle.value = event.properties.info?.displayTitle
+                                _sessionDeleted.value = true
                             }
                         else -> {}
                     }

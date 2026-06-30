@@ -161,7 +161,9 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
     if (reportName != null) {
         var reportContent by remember(reportName) { mutableStateOf<String?>(null) }
         LaunchedEffect(reportName) {
-            reportContent = withContext(Dispatchers.IO) { logger.readReport(reportName) }
+            reportContent = withContext(Dispatchers.IO) {
+                runCatching { logger.readReport(reportName) }.getOrNull()
+            }
         }
         val content = reportContent
         AlertDialog(

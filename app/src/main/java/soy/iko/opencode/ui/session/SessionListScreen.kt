@@ -1,6 +1,7 @@
 package soy.iko.opencode.ui.session
 
 import androidx.compose.foundation.background
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -102,6 +103,9 @@ fun SessionListScreen(
     var pendingRenameId by rememberSaveable { mutableStateOf<String?>(null) }
     val pendingDelete = pendingDeleteId?.let { id -> state.sessions.firstOrNull { it.id == id } }
     val pendingRename = pendingRenameId?.let { id -> state.sessions.firstOrNull { it.id == id } }
+
+    // Close the server dropdown on back press instead of navigating away.
+    BackHandler(enabled = showServerMenu) { showServerMenu = false }
 
     LaunchedEffect(transientError) {
         val msg = transientError ?: return@LaunchedEffect

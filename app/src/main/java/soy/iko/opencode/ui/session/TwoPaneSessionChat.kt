@@ -61,7 +61,9 @@ fun TwoPaneSessionChat(
     // Inject a pending share into the currently selected session's draft (if any).
     // Unlike single-pane mode where the session list is navigated to specifically for
     // the share, in two-pane mode the list is always visible — so we inject into the
-    // session the user is already viewing rather than whichever one they tap next.
+    // session the user is already viewing. If no session is selected, the share is
+    // deferred until the user picks one (the LaunchedEffect re-fires when `selected`
+    // changes to non-null).
     LaunchedEffect(pendingShare, selected) {
         val target = selected
         if (pendingShare != null && target != null) {

@@ -24,11 +24,14 @@ object SessionNotifications {
     private const val NOTIF_ID_PREFIX = 4000
     private const val TAG = "SessionNotifications"
 
+    private val notifIdRegex = Regex("[^A-Za-z0-9_-]")
+
     /** Derive a stable, collision-resistant notification id from a session id.
      *  String.hashCode() can collide for different inputs; a SHA-256 truncated to 31
      *  bits makes accidental collisions astronomically unlikely. */
     private fun notifIdFor(sessionId: String): Int {
-        val digest = MessageDigest.getInstance("SHA-256").digest(sessionId.toByteArray())
+        val digest = runCatching { MessageDigest.getInstance("SHA-256") }
+            .getOrNull()?.digest(sessionId.toByteArray()) ?: return NOTIF_ID_PREFIX
         // Take the first 4 bytes, mask to 31 bits (always positive) to fit an Int id.
         val hash = ((digest[0].toInt() and 0xFF) shl 24 or
             (digest[1].toInt() and 0xFF) shl 16 or
@@ -51,9 +54,12 @@ object SessionNotifications {
             return
         }
         val notifId = notifIdFor(sessionId)
+        // Sanitize the session id before embedding it in the URI so characters like
+        // /, ?, # can't inject path segments or query parameters.
+        val safeSessionId = notifIdRegex.replace(sessionId, "")
         val openIntent = Intent(context, MainActivity::class.java).apply {
             action = Intent.ACTION_VIEW
-            data = android.net.Uri.parse("opencode://session/$sessionId")
+            data = android.net.Uri.parse("opencode://session/$safeSessionId")
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
         val pendingIntent = PendingIntent.getActivity(
@@ -63,7 +69,9 @@ object SessionNotifications {
         val notification = NotificationCompat.Builder(context, NotificationChannels.COMPLETED)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle(context.getString(R.string.notif_completed_title))
-            .setContentText(context.getString(R.string.notif_completed_text, title))
+            // Escape % characters in the title so getString formatting doesn't break
+            // when a server-controlled session title contains format-specifier-like text.
+            .setContentText(context.getString(R.string.notif_completed_text, title.replace("%", "%%")))
             .setAutoCancel(true)
             .setContentIntent(pendingIntent)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)

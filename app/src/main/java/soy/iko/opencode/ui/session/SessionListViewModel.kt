@@ -135,7 +135,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
                         is SessionDeleted -> {
                             val id = event.properties.info?.id ?: event.properties.sessionID
                             if (id != null) {
-                                livePreviewJobs.remove(id)?.cancel()
+                                synchronized(previewLock) { livePreviewJobs.remove(id)?.cancel() }
                                 container.draftStore.remove(id)
                                 _state.update { s ->
                                     s.copy(
@@ -173,21 +173,24 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         _refreshing.value = true
         refreshJob?.cancel()
         refreshJob = viewModelScope.launch {
-            runCatchingCancellable { conn.repository.listSessions() }
-                .onSuccess { list ->
-                    val sorted = list.sortedByDescending { it.time?.updated ?: it.time?.created ?: 0 }
-                    _state.update { it.copy(sessions = sorted, loading = false, error = null) }
-                    loadPreviews(sorted)
-                }
-                .onFailure {
-                    if (_state.value.sessions.isNotEmpty()) {
-                        _state.update { it.copy(loading = false) }
-                        _transientError.value = container.friendlyError(it)
-                    } else {
-                        _state.value = SessionListState(loading = false, error = container.friendlyError(it))
+            try {
+                runCatchingCancellable { conn.repository.listSessions() }
+                    .onSuccess { list ->
+                        val sorted = list.sortedByDescending { it.time?.updated ?: it.time?.created ?: 0 }
+                        _state.update { it.copy(sessions = sorted, loading = false, error = null) }
+                        loadPreviews(sorted)
                     }
-                }
-            _refreshing.value = false
+                    .onFailure {
+                        if (_state.value.sessions.isNotEmpty()) {
+                            _state.update { it.copy(loading = false) }
+                            _transientError.value = container.friendlyError(it)
+                        } else {
+                            _state.value = SessionListState(loading = false, error = container.friendlyError(it))
+                        }
+                    }
+            } finally {
+                _refreshing.value = false
+            }
         }
     }
 
@@ -281,6 +284,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         if (profile.id == activeProfileId) return
         if (_switchingId.value != null) return
         val previousProfile = container.activeConnection.value?.profile
+        val savedUnread = container.unread.value
         _switchingId.value = profile.id
         _state.update { it.copy(loading = true, error = null) }
         viewModelScope.launch {
@@ -297,6 +301,9 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
                     container.disconnect()
                     if (previousProfile != null) {
                         runCatchingCancellable { container.connect(previousProfile) }
+                        // connect() clears unread state; restore what we saved so the
+                        // user doesn't lose unread badges on a failed server switch.
+                        savedUnread.forEach { container.restoreUnread(it) }
                         _state.update { it.copy(loading = false, error = container.friendlyError(error)) }
                     } else {
                         _state.value = SessionListState(loading = false, error = container.friendlyError(error))

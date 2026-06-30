@@ -13,9 +13,9 @@ import soy.iko.opencode.data.model.UserMessage
  * be unit-tested directly.
  */
 fun buildConversationMarkdown(messages: List<MessageWithParts>, title: String?): String {
-    val sb = StringBuilder()
+    val sb = StringBuilder(messages.size * 128)
     if (!title.isNullOrBlank()) {
-        sb.append("# ").append(title.trim()).append("\n\n")
+        sb.append("# ").append(escapeMarkdown(title.trim())).append("\n\n")
     }
     for (message in messages) {
         val heading = when (message.info) {
@@ -26,8 +26,8 @@ fun buildConversationMarkdown(messages: List<MessageWithParts>, title: String?):
         val body = message.parts
             .mapNotNull { part ->
                 when (part) {
-                    is TextPart -> part.text.takeIf { it.isNotBlank() }
-                    is ReasoningPart -> part.text.takeIf { it.isNotBlank() }?.let { "_${it}_" }
+                    is TextPart -> part.text.takeIf { it.isNotBlank() }?.let { escapeMarkdown(it) }
+                    is ReasoningPart -> part.text.takeIf { it.isNotBlank() }?.let { "> _${escapeMarkdown(it)}_" }
                     else -> null
                 }
             }
@@ -38,3 +38,12 @@ fun buildConversationMarkdown(messages: List<MessageWithParts>, title: String?):
     }
     return sb.toString().trimEnd()
 }
+
+/** Escape markdown special characters so user/model text doesn't produce malformed markdown. */
+private fun escapeMarkdown(text: String): String =
+    text.replace("\\", "\\\\")
+        .replace("*", "\\*")
+        .replace("_", "\\_")
+        .replace("#", "\\#")
+        .replace("`", "\\`")
+        .replace(">", "\\>")

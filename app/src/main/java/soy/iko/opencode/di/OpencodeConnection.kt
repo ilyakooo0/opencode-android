@@ -35,6 +35,6 @@ class OpencodeConnection(val profile: ServerProfile) {
     suspend fun close() {
         scope.cancel()
         scopeJob.join()
-        client.close()
+        runCatching { client.close() }
     }
 }

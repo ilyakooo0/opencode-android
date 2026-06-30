@@ -76,9 +76,9 @@ fun ModelPickerSheet(
             )
         } else {
             LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
-                items(options, key = { it.providerID + "/" + it.modelID }) { option ->
+                items(options, key = { it.providerID to it.modelID }) { option ->
                     val isSelected = option.providerID == selected?.providerID &&
-                        option.modelID == selected.modelID
+                        option.modelID == selected?.modelID
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()

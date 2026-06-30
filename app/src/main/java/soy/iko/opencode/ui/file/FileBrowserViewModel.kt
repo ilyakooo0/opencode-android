@@ -95,10 +95,16 @@ class FileBrowserViewModel(private val container: AppContainer) : ViewModel() {
             )
             return
         }
-        _state.value = _state.value.copy(path = path, loading = true, error = null)
+        _state.value = _state.value.copy(
+            path = path,
+            query = "",
+            results = emptyList(),
+            searching = false,
+            loading = true,
+            error = null,
+        )
         openJob?.cancel()
         searchJob?.cancel()
-        if (_state.value.isSearching) _state.value = _state.value.copy(results = emptyList(), searching = false)
         openJob = viewModelScope.launch {
             runCatchingCancellable { client.listDirectory(path) }
                 .onSuccess { entries ->
@@ -122,6 +128,7 @@ class FileBrowserViewModel(private val container: AppContainer) : ViewModel() {
     fun setQuery(query: String) {
         _state.value = _state.value.copy(query = query, error = null)
         searchJob?.cancel()
+        openJob?.cancel()
         if (query.isBlank()) {
             _state.value = _state.value.copy(results = emptyList(), searching = false)
             return

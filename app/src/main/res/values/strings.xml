@@ -12,6 +12,7 @@
     <string name="remove">Remove</string>
     <string name="copy">Copy</string>
     <string name="copied">Copied</string>
+    <string name="no_share_app">No app available to share</string>
     <string name="retry">Retry</string>
     <string name="refresh">Refresh</string>
     <string name="settings">Settings</string>

@@ -59,6 +59,23 @@ class ProfileStore(context: Context) {
     private fun prefsForPasswords(): SharedPreferences =
         securePrefs ?: fallbackPrefs
 
+    /** Migrate any plaintext passwords from the fallback prefs to secure prefs,
+     *  then clear the fallback. Called lazily once when secure prefs are available. */
+    private suspend fun migrateFallbackPasswords() {
+        val secure = securePrefs ?: return
+        withContext(Dispatchers.IO) {
+            val fallbackKeys = fallbackPrefs.all.keys.filter { it.startsWith("pw_") }
+            if (fallbackKeys.isEmpty()) return@withContext
+            secure.edit().apply {
+                for (key in fallbackKeys) {
+                    val pw = fallbackPrefs.getString(key, null) ?: continue
+                    putString(key, pw)
+                    fallbackPrefs.edit().remove(key).apply()
+                }
+            }.apply()
+        }
+    }
+
     /** Stored shape on DataStore (everything except the secret password). */
     @Serializable
     private data class StoredProfile(
@@ -70,6 +87,8 @@ class ProfileStore(context: Context) {
     )
 
     val profiles: Flow<List<ServerProfile>> = appContext.dataStore.data.map { prefs ->
+        // Migrate any orphaned plaintext passwords to secure prefs on first load.
+        migrateFallbackPasswords()
         val json = prefs[profilesKey] ?: return@map emptyList()
         runCatching {
             OpencodeJson.decodeFromString(ListSerializer(StoredProfile.serializer()), json)
@@ -144,8 +163,12 @@ class ProfileStore(context: Context) {
                 current.filterNot { it.id == id },
             )
         }
+        // Clean up the password in both secure and fallback prefs so no orphaned
+        // plaintext password lingers if secure prefs were temporarily unavailable.
         withContext(Dispatchers.IO) {
-            prefsForPasswords().edit().remove(passwordKey(id)).apply()
+            val key = passwordKey(id)
+            securePrefs?.edit()?.remove(key)?.apply()
+            fallbackPrefs.edit().remove(key).apply()
         }
     }
 

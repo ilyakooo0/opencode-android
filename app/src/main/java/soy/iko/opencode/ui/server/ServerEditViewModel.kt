@@ -48,8 +48,12 @@ class ServerEditViewModel(
     init {
         viewModelScope.launch {
             if (profileId != null) {
+                // Wait for a non-empty profile list before searching, so DataStore
+                // emitting an empty list during loading doesn't cause a false timeout.
                 val existing = withTimeoutOrNull(5_000) {
-                    container.profileStore.profiles.first().firstOrNull { it.id == profileId }
+                    container.profileStore.profiles
+                        .first { it.isNotEmpty() || it.none { p -> p.id == profileId } }
+                        .firstOrNull { it.id == profileId }
                 }
                 if (existing != null) {
                     _state.value = ServerEditState(

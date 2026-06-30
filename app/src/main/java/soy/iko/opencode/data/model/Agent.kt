@@ -25,7 +25,7 @@ data class Command(
     val description: String? = null,
     val agent: String? = null,
     val model: String? = null,
-    val template: String,
+    val template: String = "",
     val subtask: Boolean = false,
 ) {
     val displayDescription: String get() = description?.takeIf { it.isNotBlank() } ?: template.take(80)

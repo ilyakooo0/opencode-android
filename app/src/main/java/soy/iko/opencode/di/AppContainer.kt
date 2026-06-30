@@ -25,6 +25,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -32,6 +33,7 @@ import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -108,6 +110,13 @@ class AppContainer(context: Context) {
         }
     }
 
+    /** Restore a session's unread badge after a failed server switch reconnects. */
+    fun restoreUnread(id: String) {
+        if (id != _currentSession.value) {
+            _unread.update { it + id }
+        }
+    }
+
     /** Resolve a localized string — view models reach resources through the container. */
     fun string(id: Int, vararg formatArgs: Any): String =
         if (formatArgs.isEmpty()) appContext.getString(id) else appContext.getString(id, *formatArgs)
@@ -141,19 +150,20 @@ class AppContainer(context: Context) {
 
     /** Release resources held for the process lifetime (network callback, app scope). */
     fun shutdown() {
-        // Acquire the connection mutex so a concurrent connect() can't leak a new
-        // connection after we've nulled the reference. This runs on a shutdown hook
-        // thread (or onTerminate), so a brief blocking wait is acceptable here.
+        // Cancel the app scope first so any coroutine holding the connection mutex
+        // (e.g. a connect() suspended on profileStore) is cancelled and releases the
+        // mutex. Otherwise the runBlocking below would deadlock waiting for a coroutine
+        // that can't be cancelled until after the runBlocking completes.
+        appScope.cancel()
         kotlinx.coroutines.runBlocking {
             connectionMutex.withLock {
-                _activeConnection.value?.close()
+                runCatching { _activeConnection.value?.close() }
                 _activeConnection.value = null
             }
         }
         val cm = appContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
         networkCallback?.let { runCatching { cm?.unregisterNetworkCallback(it) } }
         soy.iko.opencode.data.repo.CrashLogger.get(appContext).shutdown()
-        appScope.cancel()
     }
 
     /**
@@ -167,10 +177,14 @@ class AppContainer(context: Context) {
     @OptIn(ExperimentalCoroutinesApi::class)
     private fun observeMessageActivity() {
         appScope.launch {
-            runCatchingCancellable {
-                activeConnection
-                    .flatMapLatest { conn -> conn?.events?.events ?: emptyFlow() }
-                    .collect { event ->
+            // Retry the observer if it fails for any reason (transient flow exception,
+            // cancellation due to scope issues). Without this, a single failure would
+            // permanently disable unread tracking and completion notifications.
+            while (isActive) {
+                runCatchingCancellable {
+                    activeConnection
+                        .flatMapLatest { conn -> conn?.events?.events ?: emptyFlow() }
+                        .collect { event ->
                     // SessionIdle is not "message activity" (don't badge as unread)
                     // but signals a run finished — fire a completion notification if the
                     // session isn't currently being viewed and was actively streaming.
@@ -198,8 +212,10 @@ class AppContainer(context: Context) {
                             activeRuns.add(sid)
                         }
                     }
-                }
-            }.onFailure { Log.w("AppContainer", "Message activity observer failed", it) }
+                } }.onFailure { Log.w("AppContainer", "Message activity observer failed, will retry", it) }
+                if (!isActive) break
+                delay(5_000)
+            }
         }
     }
 

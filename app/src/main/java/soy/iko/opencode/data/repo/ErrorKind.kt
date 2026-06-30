@@ -2,6 +2,7 @@ package soy.iko.opencode.data.repo
 
 import io.ktor.client.plugins.ClientRequestException
 import io.ktor.client.plugins.HttpRequestTimeoutException
+import io.ktor.client.plugins.RedirectResponseException
 import io.ktor.client.plugins.ResponseException
 import io.ktor.client.plugins.ServerResponseException
 import java.io.IOException
@@ -51,10 +52,10 @@ fun classifyError(t: Throwable): ErrorKind {
                 return ErrorKind.TIMEOUT
             is ServerResponseException -> return ErrorKind.SERVER
             is ClientRequestException -> return ErrorKind.CLIENT
+            is RedirectResponseException -> return ErrorKind.CLIENT
             is IOException -> return ErrorKind.NETWORK
             else -> {
-                // ResponseException covers any other HTTP status failure (e.g. a redirect
-                // or an unrecognized status family) surfaced because expectSuccess = true.
+                // Any other ResponseException (unrecognized status family).
                 if (current is ResponseException) return ErrorKind.SERVER
             }
         }
