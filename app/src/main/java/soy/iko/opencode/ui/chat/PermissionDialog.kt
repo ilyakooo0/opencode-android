@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material3.AlertDialog
@@ -35,6 +36,8 @@ fun PermissionDialog(
     onRespond: (PermissionResponse) -> Unit,
 ) {
     val haptics = LocalHapticFeedback.current
+    // Intercept back so the dialog can't be dismissed without an explicit choice.
+    BackHandler { onRespond(PermissionResponse.REJECT) }
     AlertDialog(
         onDismissRequest = { /* require an explicit choice */ },
         icon = { Icon(Icons.Filled.Shield, contentDescription = null) },

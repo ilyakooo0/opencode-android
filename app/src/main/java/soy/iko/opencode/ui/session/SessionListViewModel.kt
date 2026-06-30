@@ -11,6 +11,7 @@ import soy.iko.opencode.data.network.EventStreamClient
 import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
+import soy.iko.opencode.util.runCatchingCancellable
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -169,7 +170,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         _refreshing.value = true
         refreshJob?.cancel()
         refreshJob = viewModelScope.launch {
-            runCatching { conn.repository.listSessions() }
+            runCatchingCancellable { conn.repository.listSessions() }
                 .onSuccess { list ->
                     val sorted = list.sortedByDescending { it.time?.updated ?: it.time?.created ?: 0 }
                     _state.update { it.copy(sessions = sorted, loading = false, error = null) }
@@ -234,7 +235,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
     fun createSession(onCreated: (String) -> Unit) {
         val conn = container.activeConnection.value ?: return
         viewModelScope.launch {
-            runCatching { conn.repository.createSession() }
+            runCatchingCancellable { conn.repository.createSession() }
                 .onSuccess { onCreated(it.id); refresh() }
                 .onFailure {
                     _state.update { it.copy(error = null) }
@@ -246,7 +247,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
     fun deleteSession(session: Session) {
         val conn = container.activeConnection.value ?: return
         viewModelScope.launch {
-            runCatching { conn.repository.deleteSession(session.id) }
+            runCatchingCancellable { conn.repository.deleteSession(session.id) }
                 .onSuccess {
                     container.draftStore.remove(session.id)
                     refresh()
@@ -263,7 +264,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         val title = newTitle.trim()
         if (title.isEmpty() || title == session.title) return
         viewModelScope.launch {
-            runCatching { conn.api.updateSession(session.id, title) }
+            runCatchingCancellable { conn.api.updateSession(session.id, title) }
                 .onSuccess { refresh() }
                 .onFailure {
                     _state.update { it.copy(error = null) }
@@ -279,7 +280,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         _switchingId.value = profile.id
         _state.update { it.copy(loading = true, error = null) }
         viewModelScope.launch {
-            val result = runCatching {
+            val result = runCatchingCancellable {
                 val conn = container.connect(profile)
                 conn.api.ping()
             }
@@ -301,7 +302,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
 private suspend fun fetchSessionPreview(
     api: soy.iko.opencode.data.network.OpencodeApiClient,
     sessionId: String,
-): String? = runCatching {
+): String? = runCatchingCancellable {
     api.listMessages(sessionId).lastOrNull()?.let { msg ->
         msg.parts.filterIsInstance<TextPart>().lastOrNull()?.text
     }

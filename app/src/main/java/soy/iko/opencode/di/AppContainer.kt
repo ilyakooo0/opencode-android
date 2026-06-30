@@ -260,15 +260,14 @@ class AppContainer(context: Context) {
             OpencodeConnection(finalProfile).also { _activeConnection.value = it }
         }
 
-    fun disconnect() {
-        // Launch on appScope so disconnect acquires the connection mutex, preventing
-        // a race where a concurrent connect() sets a new connection after disconnect
-        // reads null — which would leak the just-created connection.
-        appScope.launch {
-            connectionMutex.withLock {
-                _activeConnection.value?.close()
-                _activeConnection.value = null
-            }
+    suspend fun disconnect() {
+        // Acquire the connection mutex so disconnect is serialized with connect().
+        // Previously this was fire-and-forget (launch on appScope), which raced with
+        // a subsequent connect(): connect() could acquire the mutex, create a new
+        // connection, and then the pending disconnect() would close it.
+        connectionMutex.withLock {
+            _activeConnection.value?.close()
+            _activeConnection.value = null
         }
     }
 }

@@ -81,7 +81,7 @@ class SessionRepository(
                 if (state == EventStreamClient.ConnectionState.Connected) {
                     if (wasConnected) {
                         val fresh = runCatching { api.listMessages(sessionId) }.getOrDefault(emptyList())
-                        lock.withLock { store.seed(fresh) }
+                        lock.withLock { store.seed(fresh, prune = true) }
                         publish()
                     }
                     wasConnected = true
@@ -121,7 +121,17 @@ internal class MessageStore {
 
     fun snapshot(): List<MessageWithParts> = messages.values.toList()
 
-    fun seed(initial: List<MessageWithParts>) {
+    fun seed(initial: List<MessageWithParts>, prune: Boolean = false) {
+        // On re-seed (after SSE reconnect), remove messages that are no longer in the
+        // server snapshot (e.g. deleted during the disconnection gap). This keeps the
+        // in-memory state in sync with the authoritative REST snapshot rather than
+        // accumulating stale messages forever. Skipped on the initial seed to avoid
+        // racing with just-arrived SSE events whose messages may not yet be in REST.
+        if (prune) {
+            val incomingIds = initial.mapTo(mutableSetOf()) { it.info.id }
+            messages.keys.retainAll(incomingIds)
+        }
+
         for (m in initial) {
             val existing = messages[m.info.id]
             if (existing == null) {

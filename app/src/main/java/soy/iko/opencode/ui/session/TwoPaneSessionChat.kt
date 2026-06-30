@@ -49,12 +49,24 @@ fun TwoPaneSessionChat(
 ) {
     var selected by rememberSaveable { mutableStateOf<String?>(null) }
     val pendingOpenSession by container.pendingOpenSession.collectAsStateWithLifecycle()
+    val pendingShare by container.pendingShare.collectAsStateWithLifecycle()
 
     // A notification tap / deep link requests a session: open it in the detail pane.
     LaunchedEffect(pendingOpenSession) {
         pendingOpenSession?.let {
             selected = it
             container.consumePendingOpenSession()
+        }
+    }
+
+    // Inject a pending share into the currently selected session's draft (if any).
+    // Unlike single-pane mode where the session list is navigated to specifically for
+    // the share, in two-pane mode the list is always visible — so we inject into the
+    // session the user is already viewing rather than whichever one they tap next.
+    LaunchedEffect(pendingShare, selected) {
+        val target = selected
+        if (pendingShare != null && target != null) {
+            container.consumePendingShare()?.let { container.draftStore.set(target, it) }
         }
     }
 
@@ -67,7 +79,6 @@ fun TwoPaneSessionChat(
             SessionListScreen(
                 container = container,
                 onOpenSession = { id ->
-                    container.consumePendingShare()?.let { container.draftStore.set(id, it) }
                     selected = id
                 },
                 onDisconnect = onDisconnect,

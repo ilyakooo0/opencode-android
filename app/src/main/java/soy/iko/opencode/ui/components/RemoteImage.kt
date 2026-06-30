@@ -69,9 +69,12 @@ private fun FilePart.resolveModel(ctx: ImageLoadContext): Any? {
         // Resolve relative URL against the base. Collapse any ../ segments to
         // prevent path traversal from escaping the server's base path.
         val base = HttpClientFactory.normalizeBaseUrl(ctx.baseUrl)
-        val resolved = java.net.URI(base).resolve(url).normalize().toString()
-        // Guard: if normalization escaped the base path, fall back to the base.
-        if (!resolved.startsWith(base)) base else resolved
+        val resolved = runCatching {
+            java.net.URI(base).resolve(url).normalize().toString()
+        }.getOrElse { return null }
+        // Guard: if normalization escaped the base path, return null (don't
+        // attempt to load the base URL itself as an image — it's not one).
+        if (!resolved.startsWith(base)) null else resolved
     }
 }
 

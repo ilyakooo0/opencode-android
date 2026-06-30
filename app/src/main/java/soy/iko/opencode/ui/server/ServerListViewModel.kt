@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import soy.iko.opencode.data.model.ServerProfile
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
+import soy.iko.opencode.util.runCatchingCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -34,22 +35,25 @@ class ServerListViewModel(private val container: AppContainer) : ViewModel() {
         _connecting.value = profile.id
         _error.value = null
         viewModelScope.launch {
-            val result = runCatching {
-                val conn = container.connect(profile)
-                conn.api.ping()
-            }
-            _connecting.value = null
-            result.onSuccess { onConnected() }
-                .onFailure {
-                    container.disconnect()
-                    _error.value = container.friendlyError(it)
+            try {
+                val result = runCatchingCancellable {
+                    val conn = container.connect(profile)
+                    conn.api.ping()
                 }
+                result.onSuccess { onConnected() }
+                    .onFailure {
+                        container.disconnect()
+                        _error.value = container.friendlyError(it)
+                    }
+            } finally {
+                _connecting.value = null
+            }
         }
     }
 
     fun delete(profile: ServerProfile) {
         viewModelScope.launch {
-            runCatching { container.profileStore.delete(profile.id) }
+            runCatchingCancellable { container.profileStore.delete(profile.id) }
                 .onFailure { _error.value = container.friendlyError(it) }
         }
     }

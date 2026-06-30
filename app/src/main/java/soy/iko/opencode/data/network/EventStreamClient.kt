@@ -67,6 +67,41 @@ class EventStreamClient(
     /** Request an immediate reconnect, skipping any in-progress backoff. */
     fun triggerReconnect() { reconnectSignal.trySend(Unit) }
 
+    /**
+     * Read SSE events from [events], racing each read against an idle-timeout watchdog.
+     * Throws [IOException] on idle timeout so the outer reconnect loop fires; breaks on
+     * clean stream close or scope cancellation.
+     */
+    private suspend fun readSseEvents(
+        scope: CoroutineScope,
+        events: kotlinx.coroutines.channels.ReceiveChannel<ServerSentEvent>,
+        send: suspend (BusEvent) -> Unit,
+    ) {
+        while (scope.isActive) {
+            // The OkHttp engine has readTimeout=0 (the SSE stream must never time out on
+            // read), so a socket the peer never closed would otherwise hang until OS TCP
+            // keepalive kicks in — minutes to hours on stock Linux. If nothing arrives
+            // within the idle timeout, treat the connection as half-open and drop it.
+            val result: ChannelResult<ServerSentEvent>? = select {
+                events.onReceiveCatching { it }
+                onTimeout(NetworkConfig.sseIdleTimeoutMs) { null }
+            }
+            if (result == null) throw IOException("SSE idle timeout, reconnecting")
+            val sse = result.getOrNull() ?: break
+            val data = sse.data ?: continue
+            val event = try {
+                OpencodeJson.decodeFromString(BusEvent.serializer(), data)
+            } catch (e: kotlinx.serialization.SerializationException) {
+                Log.d("EventStream", "Skipping unparseable SSE event", e)
+                continue
+            }
+            if (_state.value != ConnectionState.Connected) {
+                _state.value = ConnectionState.Connected
+            }
+            send(event)
+        }
+    }
+
     private fun stream(): Flow<BusEvent> = channelFlow {
         val scope = this
         // Drain any stale reconnect signal from a previous collection cycle so it
@@ -86,10 +121,13 @@ class EventStreamClient(
                     request = {
                         timeout {
                             requestTimeoutMillis = Long.MAX_VALUE
-                            // Use a finite socket timeout so a server that accepts TCP but
-                            // never sends SSE headers doesn't hang indefinitely. Once events
-                            // are flowing, the idle-timeout watchdog handles half-open detection.
-                            socketTimeoutMillis = NetworkConfig.sseHandshakeTimeoutMs
+                            // Disable the socket (read) timeout entirely for the SSE stream.
+                            // A finite value would kill the connection whenever the server
+                            // is quiet for longer than that (idle sessions, slow agent runs),
+                            // causing a reconnect storm. Half-open detection is handled by
+                            // the idle-timeout watchdog below plus OkHttp's pingInterval on
+                            // HTTP/2 connections.
+                            socketTimeoutMillis = Long.MAX_VALUE
                         }
                     },
                 ) {
@@ -102,35 +140,7 @@ class EventStreamClient(
                     // element can be raced against an idle timeout via select.
                     val events = incoming.produceIn(scope)
                     try {
-                        while (isActive) {
-                            // The OkHttp engine has readTimeout=0 (the SSE stream must
-                            // never time out on read), so a socket the peer never closed
-                            // would otherwise hang until OS TCP keepalive kicks in —
-                            // minutes to hours on stock Linux. If nothing arrives within
-                            // the idle timeout, treat the connection as half-open and
-                            // drop it so the outer loop reconnects.
-                            val result: ChannelResult<ServerSentEvent>? = select {
-                                events.onReceiveCatching { it }
-                                onTimeout(NetworkConfig.sseIdleTimeoutMs) { null }
-                            }
-                            // Timeout: drop and reconnect.
-                            if (result == null) throw IOException("SSE idle timeout, reconnecting")
-                            // Stream closed cleanly: exit to reconnect without a warning log.
-                            val sse = result.getOrNull() ?: break
-                            val data = sse.data ?: continue
-                            val event = try {
-                                OpencodeJson.decodeFromString(BusEvent.serializer(), data)
-                            } catch (e: kotlinx.serialization.SerializationException) {
-                                Log.d("EventStream", "Skipping unparseable SSE event", e)
-                                continue
-                            }
-                            // Any successfully decoded event means the stream is live;
-                            // don't wait for a ServerConnected event to show "Connected".
-                            if (_state.value != ConnectionState.Connected) {
-                                _state.value = ConnectionState.Connected
-                            }
-                            send(event)
-                        }
+                        readSseEvents(scope, events) { send(it) }
                     } finally {
                         events.cancel()
                     }
@@ -138,9 +148,14 @@ class EventStreamClient(
             } catch (c: CancellationException) {
                 throw c
             } catch (e: Exception) {
+                // If the scope was cancelled (e.g. connection close), the closed-client
+                // exception is expected — don't log a spurious "stream error" warning.
                 if (isSseAuthFailure(e)) {
-                    Log.w("EventStream", "SSE auth failed, will retry with backoff", e)
-                } else {
+                    // Credentials are wrong — retrying won't help. Log and stop.
+                    Log.w("EventStream", "SSE auth failed (401/403), stopping retries", e)
+                    _state.value = ConnectionState.Disconnected
+                    break
+                } else if (isActive) {
                     Log.w("EventStream", "SSE stream error, will retry", e)
                 }
             }

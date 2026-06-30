@@ -19,6 +19,7 @@ import soy.iko.opencode.data.network.EventStreamClient
 import soy.iko.opencode.data.repo.SessionRepository
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
+import soy.iko.opencode.util.runCatchingCancellable
 import android.util.Log
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -155,7 +156,7 @@ class ChatViewModel(
             container.activeConnection.collectLatest { conn ->
                 if (conn == null) { _models.value = emptyList(); _selectedModel.value = null; _modelsLoading.value = false; return@collectLatest }
                 _modelsLoading.value = true
-                runCatching { conn.api.providers() }
+                runCatchingCancellable { conn.api.providers() }
                     .onFailure { Log.w("ChatViewModel", "Failed to load model catalog", it) }
                     .getOrNull()?.let { resp ->
                     val options = resp.toOptions()
@@ -170,7 +171,7 @@ class ChatViewModel(
             container.activeConnection.collectLatest { conn ->
                 if (conn == null) { _agents.value = emptyList(); _agentsLoading.value = false; return@collectLatest }
                 _agentsLoading.value = true
-                runCatching { conn.api.agents() }
+                runCatchingCancellable { conn.api.agents() }
                     .onFailure { Log.w("ChatViewModel", "Failed to load agent catalog", it) }
                     .getOrNull()?.let { _agents.value = it }
                 _agentsLoading.value = false
@@ -181,7 +182,7 @@ class ChatViewModel(
             container.activeConnection.collectLatest { conn ->
                 if (conn == null) { _commands.value = emptyList(); _commandsLoading.value = false; return@collectLatest }
                 _commandsLoading.value = true
-                runCatching { conn.api.commands() }
+                runCatchingCancellable { conn.api.commands() }
                     .onFailure { Log.w("ChatViewModel", "Failed to load command catalog", it) }
                     .getOrNull()?.let { _commands.value = it }
                 _commandsLoading.value = false
@@ -191,7 +192,7 @@ class ChatViewModel(
         viewModelScope.launch {
             container.activeConnection.collectLatest { conn ->
                 if (conn == null) return@collectLatest
-                runCatching { conn.repository.listSessions() }
+                runCatchingCancellable { conn.repository.listSessions() }
                     .getOrNull()
                     ?.firstOrNull { it.id == sessionId }
                     ?.let { _sessionTitle.value = it.displayTitle }
@@ -223,7 +224,7 @@ class ChatViewModel(
         // would be lost forever. The persisted draft is cleared only on success.
         _draft.value = ""
         viewModelScope.launch {
-            runCatching {
+            runCatchingCancellable {
                 conn.repository.sendPrompt(
                     sessionId,
                     trimmed,
@@ -257,7 +258,7 @@ class ChatViewModel(
         if (!_running.compareAndSet(false, true)) return
         _error.value = null
         viewModelScope.launch {
-            runCatching {
+            runCatchingCancellable {
                 conn.repository.runCommand(sessionId, command.name, agent = command.agent)
             }.onFailure { _error.value = container.friendlyError(it) }
             _running.value = false
@@ -267,9 +268,9 @@ class ChatViewModel(
     fun abort() {
         val conn = connection ?: return
         viewModelScope.launch {
-            runCatching { conn.repository.abort(sessionId) }
+            runCatchingCancellable { conn.repository.abort(sessionId) }
+                .onSuccess { _running.value = false }
                 .onFailure { _error.value = container.friendlyError(it) }
-            _running.value = false
         }
     }
 
@@ -281,7 +282,7 @@ class ChatViewModel(
             val recent = runCatching { container.profileStore.profiles.first() }
                 .getOrDefault(emptyList())
                 .firstOrNull() ?: run { _loading.value = false; return@launch }
-            runCatching {
+            runCatchingCancellable {
                 val conn = container.connect(recent)
                 conn.api.ping()
             }.onSuccess {
@@ -301,10 +302,11 @@ class ChatViewModel(
         // with a dismissed dialog and a paused tool run.
         _pendingPermission.value = null
         viewModelScope.launch {
-            runCatching { conn.api.respondPermission(sessionId, permission.id, response) }
+            runCatchingCancellable { conn.api.respondPermission(sessionId, permission.id, response) }
                 .onFailure {
                     _error.value = container.friendlyError(it)
-                    _pendingPermission.value = permission
+                    // Only restore if no new permission has arrived in the meantime.
+                    if (_pendingPermission.value == null) _pendingPermission.value = permission
                 }
         }
     }

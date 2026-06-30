@@ -249,6 +249,35 @@ class MessageStoreTest {
         assertEquals(listOf("m1"), store.snapshot().map { it.info.id })
     }
 
+    // --- seed prune (re-seed after SSE reconnect) ---
+
+    @Test
+    fun seedPruneRemovesMessagesNotInSnapshot() {
+        val store = MessageStore()
+        store.seed(listOf(
+            MessageWithParts(UserMessage("u1", session)),
+            MessageWithParts(AssistantMessage("a1", session)),
+        ))
+        // Re-seed with only u1 — a1 was deleted on the server during the gap.
+        store.seed(
+            listOf(MessageWithParts(UserMessage("u1", session))),
+            prune = true,
+        )
+        assertEquals(listOf("u1"), store.snapshot().map { it.info.id })
+    }
+
+    @Test
+    fun seedWithoutPruneKeepsAllMessages() {
+        val store = MessageStore()
+        store.seed(listOf(
+            MessageWithParts(UserMessage("u1", session)),
+            MessageWithParts(AssistantMessage("a1", session)),
+        ))
+        // Without prune, messages absent from the snapshot are retained.
+        store.seed(listOf(MessageWithParts(UserMessage("u1", session))))
+        assertEquals(listOf("u1", "a1"), store.snapshot().map { it.info.id })
+    }
+
     // --- end-to-end ordering ---
 
     @Test

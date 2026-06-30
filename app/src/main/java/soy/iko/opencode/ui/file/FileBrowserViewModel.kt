@@ -7,6 +7,7 @@ import soy.iko.opencode.data.model.FileStatusEntry
 import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
+import soy.iko.opencode.util.runCatchingCancellable
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -63,11 +64,15 @@ class FileBrowserViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
+    /** Tracks the in-flight VCS status load so a server switch can cancel it. */
+    private var statusJob: Job? = null
+
     /** Fetch the repo-wide VCS status once so file rows can show git badges. */
     private fun loadStatus() {
         val client = api ?: return
-        viewModelScope.launch {
-            runCatching { client.fileStatus() }
+        statusJob?.cancel()
+        statusJob = viewModelScope.launch {
+            runCatchingCancellable { client.fileStatus() }
                 .onSuccess { entries ->
                     _state.value = _state.value.copy(statusMap = entries.associateBy { it.path })
                 }
@@ -86,8 +91,10 @@ class FileBrowserViewModel(private val container: AppContainer) : ViewModel() {
         }
         _state.value = _state.value.copy(path = path, loading = true, error = null)
         openJob?.cancel()
+        searchJob?.cancel()
+        if (_state.value.isSearching) _state.value = _state.value.copy(results = emptyList(), searching = false)
         openJob = viewModelScope.launch {
-            runCatching { client.listDirectory(path) }
+            runCatchingCancellable { client.listDirectory(path) }
                 .onSuccess { entries ->
                     _state.value = _state.value.copy(
                         entries = entries.sortedWith(compareByDescending<FileNode> { it.isDirectory }.thenBy { it.name.lowercase() }),
@@ -120,7 +127,7 @@ class FileBrowserViewModel(private val container: AppContainer) : ViewModel() {
         searchJob = viewModelScope.launch {
             delay(NetworkConfig.fileSearchDebounceMs) // debounce
             _state.value = _state.value.copy(searching = true)
-            runCatching { client.findFiles(query) }
+            runCatchingCancellable { client.findFiles(query) }
                 .onSuccess { _state.value = _state.value.copy(results = it, searching = false) }
                 .onFailure { _state.value = _state.value.copy(searching = false, error = container.friendlyError(it)) }
         }

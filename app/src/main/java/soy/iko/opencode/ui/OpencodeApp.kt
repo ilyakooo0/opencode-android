@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -11,6 +12,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.launch
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.ui.chat.ChatScreen
 import soy.iko.opencode.ui.file.FileBrowserScreen
@@ -25,6 +27,7 @@ import soy.iko.opencode.ui.settings.SettingsScreen
 @Composable
 fun OpencodeApp(container: AppContainer) {
     val navController = rememberNavController()
+    val scope = rememberCoroutineScope()
     val pendingShare by container.pendingShare.collectAsStateWithLifecycle()
     val pendingOpenSession by container.pendingOpenSession.collectAsStateWithLifecycle()
     val connection by container.activeConnection.collectAsStateWithLifecycle()
@@ -83,7 +86,7 @@ fun OpencodeApp(container: AppContainer) {
                     onOpenFiles = { navController.navigate(Routes.FILES) },
                     onOpenSettings = { navController.navigate(Routes.SETTINGS) },
                     onDisconnect = {
-                        container.disconnect()
+                        scope.launch { container.disconnect() }
                         navController.popBackStack(Routes.SERVERS, inclusive = false)
                     },
                 )
@@ -95,7 +98,7 @@ fun OpencodeApp(container: AppContainer) {
                         navController.navigate(Routes.chat(id))
                     },
                     onDisconnect = {
-                        container.disconnect()
+                        scope.launch { container.disconnect() }
                         navController.popBackStack(Routes.SERVERS, inclusive = false)
                     },
                     onOpenFiles = { navController.navigate(Routes.FILES) },
