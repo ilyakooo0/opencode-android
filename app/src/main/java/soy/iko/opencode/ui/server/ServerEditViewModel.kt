@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import soy.iko.opencode.R
@@ -76,18 +77,18 @@ class ServerEditViewModel(
                 )
                 return@launch
             }
-            _state.value = _state.value.copy(loaded = true)
+            _state.update { it.copy(loaded = true) }
         }
     }
 
     fun update(transform: (ServerEditState) -> ServerEditState) {
-        _state.value = transform(_state.value)
+        _state.update(transform)
     }
 
     fun save(onDone: () -> Unit) {
         val s = _state.value
         if (!s.canSave || s.saving) return
-        _state.value = s.copy(saving = true)
+        _state.update { it.copy(saving = true) }
         viewModelScope.launch {
             val result = runCatchingCancellable {
                 val existingLastUsed = if (s.id != null) {
@@ -108,7 +109,7 @@ class ServerEditViewModel(
                 )
             }
             result.onSuccess { onDone() }
-                .onFailure { _state.value = _state.value.copy(error = container.friendlyError(it), saving = false) }
+                .onFailure { e -> _state.update { it.copy(error = container.friendlyError(e), saving = false) } }
         }
     }
 }

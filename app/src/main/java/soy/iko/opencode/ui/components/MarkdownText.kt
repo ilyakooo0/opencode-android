@@ -26,7 +26,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -35,6 +37,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.delay
 import com.mikepenz.markdown.compose.components.MarkdownComponentModel
 import com.mikepenz.markdown.compose.components.markdownComponents
@@ -55,6 +58,14 @@ import soy.iko.opencode.data.network.NetworkConfig
  * whenever the content string changes). To avoid O(n²) work during long responses, the
  * rendered content is throttled — the latest [markdown] is committed to the renderer at
  * most once per frame (~16ms), so a burst of tokens coalesces into a single re-parse.
+ *
+ * The throttle uses a single long-lived `LaunchedEffect(Unit)` that observes the markdown
+ * parameter via `rememberUpdatedState` + `snapshotFlow` + `conflate` + `collect`. A keyed
+ * effect (`LaunchedEffect(markdown)`) cancels and restarts on every token; if tokens arrive
+ * faster than the throttle delay, the in-flight `delay` is cancelled before it completes,
+ * starving the render and showing stale content until the stream pauses. The conflated
+ * `collect` lets the delay run to completion, then picks up the most recent buffered value,
+ * so rendering always progresses even under continuous fast streaming.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -64,21 +75,29 @@ fun MarkdownText(
     style: TextStyle = MaterialTheme.typography.bodyLarge,
 ) {
     val context = LocalContext.current
-    // Throttle the rendered content so a rapid burst of streaming tokens coalesces
-    // into a single markdown re-parse per frame instead of one per token. The delay
-    // is only applied when the content is growing incrementally (streaming) — a
-    // content switch or initial render proceeds immediately.
+    // Bridge the markdown parameter into snapshot state so snapshotFlow can observe it.
+    val markdownState = rememberUpdatedState(markdown)
     // Keyed to a content-prefix so switching to a different message resets
     // immediately instead of showing the old message for one frame.
     var renderedContent by remember(markdown.take(32)) { mutableStateOf(markdown) }
-    LaunchedEffect(markdown) {
-        if (renderedContent.isNotEmpty() &&
-            markdown.startsWith(renderedContent) &&
-            markdown != renderedContent
-        ) {
-            delay(NetworkConfig.streamingThrottleMs)
-        }
-        renderedContent = markdown
+    // conflate() coalesces a burst of token updates into a single emission so the
+    // collector sees only the latest value after the previous delay completes. Plain
+    // collect (not collectLatest) is critical: collectLatest would cancel the delay
+    // on every new value, reintroducing the same starvation the keyed effect had.
+    LaunchedEffect(markdown.take(32)) {
+        snapshotFlow { markdownState.value }
+            .conflate()
+            .collect { md ->
+                // Only throttle when the content is growing incrementally (streaming):
+                // a content switch or initial render proceeds immediately.
+                if (renderedContent.isNotEmpty() &&
+                    md.startsWith(renderedContent) &&
+                    md != renderedContent
+                ) {
+                    delay(NetworkConfig.streamingThrottleMs)
+                }
+                renderedContent = md
+            }
     }
     Markdown(
         content = renderedContent,
@@ -101,7 +120,13 @@ fun MarkdownText(
 @Composable
 private fun CodeWithCopy(model: MarkdownComponentModel) {
     val context = LocalContext.current
-    val code = androidx.compose.runtime.remember(model) { extractCode(model.content, model.node) }
+    // Key on the content string + the AST node's offset range (stable ints) instead of
+    // the model itself. MarkdownComponentModel is not @Immutable/@Stable (it holds an
+    // ASTNode), so remembering on it re-executes extractCode on every recomposition.
+    val node = model.node
+    val code = remember(model.content, node.startOffset, node.endOffset) {
+        extractCode(model.content, node)
+    }
     val codeStyle = model.typography.code.copy(fontFamily = FontFamily.Monospace)
     Box(
         modifier = Modifier
@@ -143,10 +168,18 @@ private fun CodeWithCopy(model: MarkdownComponentModel) {
  * Extract the raw code text from a markdown code node, stripping fence markers
  * (```/~~~ and the language tag) so only the code content is copied.
  */
-private fun extractCode(content: String, node: ASTNode): String {
-    val raw = node.getTextInNode(content).toString()
-    val isOpenFence = node.type == MarkdownElementTypes.CODE_FENCE
-    if (!isOpenFence) return raw.trimIndent()
+private fun extractCode(content: String, node: ASTNode): String =
+    extractCodeText(node.getTextInNode(content).toString(), node.type == MarkdownElementTypes.CODE_FENCE)
+
+/**
+ * Strip fence markers (```/~~~ and the language tag) from a raw code node text so
+ * only the code content is returned. Extracted as a pure function for testability.
+ *
+ * @param raw the raw text of the code node (including fence markers for fenced blocks)
+ * @param isFenced true for CODE_FENCE nodes, false for indented CODE_BLOCK nodes
+ */
+internal fun extractCodeText(raw: String, isFenced: Boolean): String {
+    if (!isFenced) return raw.trimIndent()
     val lines = raw.lines()
     val body = lines.drop(1).toMutableList()
     if (body.isNotEmpty() && (body.last().startsWith("```") || body.last().startsWith("~~~"))) {

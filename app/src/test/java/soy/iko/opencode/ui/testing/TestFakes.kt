@@ -80,9 +80,13 @@ class FakeProfileStore : ProfileStore() {
     var savedProfile: ServerProfile? = null
         private set
 
+    /** When non-null, [save] throws this exception instead of persisting. */
+    var saveException: Exception? = null
+
     override suspend fun resolve(profile: ServerProfile): ServerProfile = profile
 
     override suspend fun save(profile: ServerProfile) {
+        saveException?.let { throw it }
         savedProfile = profile
         val current = _profiles.value.toMutableList()
         current.removeAll { it.id == profile.id }

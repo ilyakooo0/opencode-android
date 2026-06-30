@@ -227,4 +227,34 @@ class ServerEditViewModelTest {
         assertNull(saved.username)
         assertNull(saved.password)
     }
+
+    @Test
+    fun save_failureSetsErrorAndClearsSaving() = testScope.runTest {
+        val container = FakeAppContainer()
+        container.fakeProfileStore.saveException = RuntimeException("disk full")
+        val vm = makeVm(container)
+        vm.update { it.copy(baseUrl = "http://localhost:3000") }
+        var doneCalled = false
+        vm.save { doneCalled = true }
+        testScheduler.advanceUntilIdle()
+        assertFalse(doneCalled)
+        assertFalse(vm.state.value.saving)
+        // The error must come from the exception, not from a clobbered ServerEditState.
+        assertNotNull(vm.state.value.error)
+        assertTrue(vm.state.value.error!!.contains("disk full"))
+    }
+
+    @Test
+    fun save_failureDoesNotClobberUserEdits() = testScope.runTest {
+        val container = FakeAppContainer()
+        container.fakeProfileStore.saveException = RuntimeException("disk full")
+        val vm = makeVm(container)
+        vm.update { it.copy(baseUrl = "http://localhost:3000", label = "Original") }
+        vm.save { }
+        // Simulate the user editing the label while the save coroutine is in-flight.
+        vm.update { it.copy(label = "Edited") }
+        testScheduler.advanceUntilIdle()
+        // The error path must not overwrite the user's edit.
+        assertEquals("Edited", vm.state.value.label)
+    }
 }
