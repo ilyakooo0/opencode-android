@@ -1,5 +1,6 @@
 package soy.iko.opencode.ui.server
 
+import androidx.compose.runtime.Immutable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import soy.iko.opencode.data.model.ServerProfile
@@ -14,6 +15,7 @@ import soy.iko.opencode.R
 import soy.iko.opencode.util.runCatchingCancellable
 import java.util.UUID
 
+@Immutable
 data class ServerEditState(
     val id: String? = null,
     val label: String = "",

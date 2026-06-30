@@ -1,8 +1,10 @@
 package soy.iko.opencode.data.model
 
+import androidx.compose.runtime.Immutable
 import kotlinx.serialization.Serializable
 
 /** Entry from `GET /agent`. */
+@Immutable
 @Serializable
 data class Agent(
     val name: String,
@@ -16,6 +18,7 @@ data class Agent(
 }
 
 /** Entry from `GET /command`. */
+@Immutable
 @Serializable
 data class Command(
     val name: String,

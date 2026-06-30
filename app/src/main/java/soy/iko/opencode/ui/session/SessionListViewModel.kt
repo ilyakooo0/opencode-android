@@ -1,5 +1,6 @@
 package soy.iko.opencode.ui.session
 
+import androidx.compose.runtime.Immutable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import soy.iko.opencode.data.model.ServerProfile
@@ -28,6 +29,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 
+@Immutable
 data class SessionListState(
     val sessions: List<Session> = emptyList(),
     val query: String = "",

@@ -1,5 +1,6 @@
 package soy.iko.opencode.ui.file
 
+import androidx.compose.runtime.Immutable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import soy.iko.opencode.data.model.FileContent
@@ -13,6 +14,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import soy.iko.opencode.util.runCatchingCancellable
 
+@Immutable
 data class FileViewState(
     val loading: Boolean = true,
     val content: FileContent? = null,

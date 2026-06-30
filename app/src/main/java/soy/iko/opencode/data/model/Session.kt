@@ -1,8 +1,10 @@
 package soy.iko.opencode.data.model
 
+import androidx.compose.runtime.Immutable
 import kotlinx.serialization.Serializable
 
 /** A session as returned by `GET /session` and `POST /session`. */
+@Immutable
 @Serializable
 data class Session(
     val id: String,

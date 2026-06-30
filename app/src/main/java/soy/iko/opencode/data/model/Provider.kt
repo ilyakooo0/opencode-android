@@ -1,14 +1,17 @@
 package soy.iko.opencode.data.model
 
+import androidx.compose.runtime.Immutable
 import kotlinx.serialization.Serializable
 
 /** Response of `GET /config/providers`. */
+@Immutable
 @Serializable
 data class ProvidersResponse(
     val providers: List<Provider> = emptyList(),
     val default: Map<String, String> = emptyMap(),
 )
 
+@Immutable
 @Serializable
 data class Provider(
     val id: String,
@@ -18,6 +21,7 @@ data class Provider(
     val displayName: String get() = name?.takeIf { it.isNotBlank() } ?: id
 }
 
+@Immutable
 @Serializable
 data class ModelInfo(
     val id: String? = null,
@@ -28,6 +32,7 @@ data class ModelInfo(
 }
 
 /** A flattened provider/model selection used by the prompt body and the model picker. */
+@Immutable
 @Serializable
 data class ModelRef(
     val providerID: String,
@@ -35,6 +40,7 @@ data class ModelRef(
 )
 
 /** A single selectable entry in the model picker, flattened from [ProvidersResponse]. */
+@Immutable
 data class ModelOption(
     val providerID: String,
     val modelID: String,

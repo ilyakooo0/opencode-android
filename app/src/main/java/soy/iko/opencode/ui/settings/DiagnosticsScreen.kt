@@ -1,6 +1,7 @@
 package soy.iko.opencode.ui.settings
 
 import android.content.Intent
+import android.util.Log
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -33,6 +34,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -57,7 +59,7 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val logger = remember { CrashLogger.get(context) }
     val reports by logger.reports.collectAsStateWithLifecycle()
-    var viewing by remember { mutableStateOf<String?>(null) }
+    var viewing by rememberSaveable { mutableStateOf<String?>(null) }
     val shareScope = rememberCoroutineScope()
     val shareLabel = stringResource(R.string.share)
 
@@ -73,7 +75,10 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                 actions = {
                     if (reports.isNotEmpty()) {
                         IconButton(onClick = {
-                            shareScope.launch(Dispatchers.IO) { runCatching { logger.clearAll() } }
+                            shareScope.launch(Dispatchers.IO) {
+                                runCatching { logger.clearAll() }
+                                    .onFailure { Log.w("Diagnostics", "Failed to clear crash reports", it) }
+                            }
                         }) {
                             Icon(Icons.Filled.DeleteSweep, contentDescription = stringResource(R.string.clear_all))
                         }
@@ -139,6 +144,7 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                                         putExtra(Intent.EXTRA_TEXT, content)
                                     }
                                     runCatching { context.startActivity(Intent.createChooser(send, shareLabel)) }
+                                        .onFailure { Log.w("Diagnostics", "Failed to share crash report", it) }
                                 }
                             }) {
                                 Icon(Icons.Filled.Share, contentDescription = stringResource(R.string.share))
@@ -173,10 +179,14 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                             putExtra(Intent.EXTRA_TEXT, content.orEmpty())
                         }
                         runCatching { context.startActivity(Intent.createChooser(send, shareLabel2)) }
+                            .onFailure { Log.w("Diagnostics", "Failed to share crash report", it) }
                     }) { Text(stringResource(R.string.share)) }
                     Spacer(Modifier.size(8.dp))
                     TextButton(onClick = {
-                        shareScope.launch(Dispatchers.IO) { runCatching { logger.deleteReport(reportName) } }
+                        shareScope.launch(Dispatchers.IO) {
+                            runCatching { logger.deleteReport(reportName) }
+                                .onFailure { Log.w("Diagnostics", "Failed to delete crash report", it) }
+                        }
                         viewing = null
                     }) { Text(stringResource(R.string.delete)) }
                 }

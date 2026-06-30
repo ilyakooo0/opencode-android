@@ -59,17 +59,19 @@ class OpencodeApiClient(private val client: HttpClient) {
         client.get("session").body()
     }
 
-    suspend fun createSession(title: String? = null): Session =
+    suspend fun createSession(title: String? = null): Session = withRetry {
         client.post("session") {
             contentType(ContentType.Application.Json)
             setBody(CreateSessionRequest(title = title))
         }.body()
+    }
 
-    suspend fun updateSession(id: String, title: String): Session =
+    suspend fun updateSession(id: String, title: String): Session = withRetry {
         client.patch("session/${encode(id)}") {
             contentType(ContentType.Application.Json)
             setBody(UpdateSessionRequest(title = title))
         }.body()
+    }
 
     suspend fun deleteSession(id: String) {
         client.delete("session/${encode(id)}")
@@ -112,11 +114,12 @@ class OpencodeApiClient(private val client: HttpClient) {
         command: String,
         arguments: String = "",
         agent: String? = null,
-    ): MessageWithParts =
+    ): MessageWithParts = withRetry {
         client.post("session/${encode(sessionId)}/command") {
             contentType(ContentType.Application.Json)
             setBody(CommandRequest(command = command, arguments = arguments, agent = agent))
         }.body()
+    }
 
     suspend fun providers(): ProvidersResponse = cacheMutex.withLock {
         val now = System.currentTimeMillis()

@@ -1,5 +1,6 @@
 package soy.iko.opencode.ui.file
 
+import androidx.compose.runtime.Immutable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import soy.iko.opencode.data.model.FileNode
@@ -17,6 +18,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
+@Immutable
 data class FileBrowserState(
     val path: String = "",
     val entries: List<FileNode> = emptyList(),

@@ -7,6 +7,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import android.util.Log
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -58,9 +59,11 @@ class DraftStore(context: Context, scope: CoroutineScope) {
             updated
         }
         withContext(Dispatchers.IO) {
-            prefs.edit().apply {
-                if (text.isBlank()) remove(sessionId) else putString(sessionId, text)
-            }.apply()
+            runCatching {
+                prefs.edit().apply {
+                    if (text.isBlank()) remove(sessionId) else putString(sessionId, text)
+                }.apply()
+            }.onFailure { Log.w("DraftStore", "Failed to persist draft for $sessionId", it) }
         }
     }
 
@@ -72,7 +75,29 @@ class DraftStore(context: Context, scope: CoroutineScope) {
             updated
         }
         withContext(Dispatchers.IO) {
-            prefs.edit().remove(sessionId).apply()
+            runCatching {
+                prefs.edit().remove(sessionId).apply()
+            }.onFailure { Log.w("DraftStore", "Failed to remove draft for $sessionId", it) }
         }
+    }
+
+    /**
+     * Synchronously persist a draft using [commit] instead of [apply]. Intended for
+     * [ViewModel.onCleared] where the viewModelScope is already cancelled and a
+     * suspending write would require [runBlocking], risking an ANR. Safe to call
+     * from the main thread — [commit] blocks briefly on disk I/O but the data is
+     * small (a single key-value pair).
+     */
+    fun flushDraft(sessionId: String, text: String) {
+        _drafts.update { current ->
+            val updated = current.toMutableMap()
+            if (text.isBlank()) updated.remove(sessionId) else updated[sessionId] = text
+            updated
+        }
+        runCatching {
+            prefs.edit().apply {
+                if (text.isBlank()) remove(sessionId) else putString(sessionId, text)
+            }.commit()
+        }.onFailure { Log.w("DraftStore", "Failed to flush draft for $sessionId", it) }
     }
 }

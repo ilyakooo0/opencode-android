@@ -1,8 +1,10 @@
 package soy.iko.opencode.data.model
 
+import androidx.compose.runtime.Immutable
 import kotlinx.serialization.Serializable
 
 /** Entry from `GET /file?path=` (directory listing). */
+@Immutable
 @Serializable
 data class FileNode(
     val name: String = "",
@@ -13,6 +15,7 @@ data class FileNode(
 }
 
 /** Response of `GET /file/content?path=`. */
+@Immutable
 @Serializable
 data class FileContent(
     val type: String? = null, // "text" | "binary"
@@ -25,6 +28,7 @@ data class FileContent(
 }
 
 /** Entry from `GET /file/status` (VCS status). */
+@Immutable
 @Serializable
 data class FileStatusEntry(
     val path: String = "",

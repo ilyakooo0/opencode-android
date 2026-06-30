@@ -38,6 +38,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -68,7 +69,7 @@ fun ServerListScreen(
     val reconnecting by container.reconnecting.collectAsStateWithLifecycle()
     val haptics = LocalHapticFeedback.current
     val snackbar = remember { SnackbarHostState() }
-    var pendingDelete by remember { mutableStateOf<ServerProfile?>(null) }
+    var pendingDeleteId by rememberSaveable { mutableStateOf<String?>(null) }
     val connectedId = activeConnection?.profile?.id
 
     LaunchedEffect(error) {
@@ -162,7 +163,7 @@ fun ServerListScreen(
                                     IconButton(onClick = { onEditProfile(profile.id) }) {
                                         Icon(Icons.Filled.Edit, contentDescription = stringResource(R.string.edit))
                                     }
-                                    IconButton(onClick = { pendingDelete = profile }) {
+                                    IconButton(onClick = { pendingDeleteId = profile.id }) {
                                         Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.delete))
                                     }
                                 }
@@ -174,20 +175,20 @@ fun ServerListScreen(
         }
     }
 
-    pendingDelete?.let { profile ->
+    profiles.find { it.id == pendingDeleteId }?.let { profile ->
         AlertDialog(
-            onDismissRequest = { pendingDelete = null },
+            onDismissRequest = { pendingDeleteId = null },
             title = { Text(stringResource(R.string.remove_server_title)) },
             text = { Text(stringResource(R.string.remove_server_text, profile.displayLabel)) },
             confirmButton = {
                 TextButton(onClick = {
                     haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                    pendingDelete = null
+                    pendingDeleteId = null
                     vm.delete(profile)
                 }) { Text(stringResource(R.string.remove), color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = {
-                TextButton(onClick = { pendingDelete = null }) { Text(stringResource(R.string.cancel)) }
+                TextButton(onClick = { pendingDeleteId = null }) { Text(stringResource(R.string.cancel)) }
             },
         )
     }

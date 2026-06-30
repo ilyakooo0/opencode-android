@@ -1,9 +1,12 @@
 package soy.iko.opencode.data.model
 
+import androidx.compose.runtime.Immutable
+
 /**
  * A saved opencode server connection. The [password] for HTTP Basic auth is resolved
  * separately from EncryptedSharedPreferences and is null when not loaded/needed.
  */
+@Immutable
 data class ServerProfile(
     val id: String,
     val label: String,

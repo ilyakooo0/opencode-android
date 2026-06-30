@@ -1,5 +1,6 @@
 package soy.iko.opencode.data.model
 
+import androidx.compose.runtime.Immutable
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
@@ -53,6 +54,7 @@ data class UnknownMessage(
 ) : MessageInfo
 
 /** A message together with its parts — the shape returned by message endpoints and the prompt response. */
+@Immutable
 @Serializable
 data class MessageWithParts(
     val info: MessageInfo,

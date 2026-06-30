@@ -1,7 +1,9 @@
 package soy.iko.opencode.data.model
 
+import androidx.compose.runtime.Immutable
 import kotlinx.serialization.Serializable
 
+@Immutable
 @Serializable
 data class TimeInfo(
     val created: Long? = null,
@@ -9,6 +11,7 @@ data class TimeInfo(
     val completed: Long? = null,
 )
 
+@Immutable
 @Serializable
 data class Tokens(
     val input: Long = 0,
@@ -17,6 +20,7 @@ data class Tokens(
     val cache: Cache = Cache(),
 ) {
     @Serializable
+    @Immutable
     data class Cache(
         val read: Long = 0,
         val write: Long = 0,

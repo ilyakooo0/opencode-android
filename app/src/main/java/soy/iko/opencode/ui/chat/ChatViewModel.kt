@@ -327,10 +327,11 @@ class ChatViewModel(
 
     override fun onCleared() {
         super.onCleared()
-        // Flush any pending debounced draft so it survives navigation.
+        // Flush any pending debounced draft so it survives navigation. Use a synchronous
+        // commit instead of runBlocking so the main thread isn't held hostage by disk I/O.
         val pending = _draft.value
         if (pending.isNotEmpty()) {
-            kotlinx.coroutines.runBlocking { container.draftStore.set(sessionId, pending) }
+            container.draftStore.flushDraft(sessionId, pending)
         }
     }
 }

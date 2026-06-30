@@ -56,6 +56,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -136,10 +137,10 @@ fun ChatScreen(
 
     val listState = rememberLazyListState()
     val snackbar = remember { SnackbarHostState() }
-    var showModelPicker by remember { mutableStateOf(false) }
-    var showAgentPicker by remember { mutableStateOf(false) }
-    var showCommandPicker by remember { mutableStateOf(false) }
-    var showExitConfirm by remember { mutableStateOf(false) }
+    var showModelPicker by rememberSaveable { mutableStateOf(false) }
+    var showAgentPicker by rememberSaveable { mutableStateOf(false) }
+    var showCommandPicker by rememberSaveable { mutableStateOf(false) }
+    var showExitConfirm by rememberSaveable { mutableStateOf(false) }
 
     // Keep the screen awake and hold a foreground priority while the agent is working,
     // so backgrounding mid-run doesn't let Doze choke the SSE stream.
