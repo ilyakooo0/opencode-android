@@ -34,10 +34,9 @@ object SessionNotifications {
             (digest[1].toInt() and 0xFF) shl 16 or
             (digest[2].toInt() and 0xFF) shl 8 or
             (digest[3].toInt() and 0xFF)).and(0x7FFFFFFF)
-        // Offset by NOTIF_ID_PREFIX, wrapping within the positive Int range so the
-        // prefix is preserved (not masked away) and ids don't collide with the
-        // foreground service's NOTIF_ID = 1.
-        return (NOTIF_ID_PREFIX + hash).and(0x7FFFFFFF)
+        // Offset by NOTIF_ID_PREFIX, staying within the positive Int range.
+        // Using modulo ensures the prefix is preserved without Int overflow.
+        return NOTIF_ID_PREFIX + (hash % (0x7FFFFFFF - NOTIF_ID_PREFIX))
     }
 
     fun postCompleted(context: Context, sessionId: String, title: String) {

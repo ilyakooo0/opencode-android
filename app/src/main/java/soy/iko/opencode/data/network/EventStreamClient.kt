@@ -40,7 +40,7 @@ class EventStreamClient(
     private val client: HttpClient,
     scope: CoroutineScope,
 ) {
-    enum class ConnectionState { Disconnected, Connecting, Connected }
+    enum class ConnectionState { Disconnected, Connecting, Connected, Failed }
 
     private val _state = MutableStateFlow(ConnectionState.Disconnected)
     val state: StateFlow<ConnectionState> = _state.asStateFlow()
@@ -160,7 +160,7 @@ class EventStreamClient(
                 if (isSseAuthFailure(e)) {
                     // Credentials are wrong — retrying won't help. Log and stop.
                     Log.w("EventStream", "SSE auth failed (401/403), stopping retries", e)
-                    _state.value = ConnectionState.Disconnected
+                    _state.value = ConnectionState.Failed
                     break
                 } else if (isActive) {
                     Log.w("EventStream", "SSE stream error, will retry", e)
@@ -170,7 +170,7 @@ class EventStreamClient(
             if (!isActive) break
             // Wait for the backoff, but allow a reconnect signal to cut it short.
             var signaled = false
-            val jitter = ((backoffMs * 0.2) * (Random.nextDouble() * 2 - 1)).toLong()
+            val jitter = ((backoffMs * NetworkConfig.retryJitterFactor) * (Random.nextDouble() * 2 - 1)).toLong()
             select {
                 reconnectSignal.onReceive { signaled = true }
                 onTimeout(backoffMs + jitter) { /* normal backoff elapsed */ }

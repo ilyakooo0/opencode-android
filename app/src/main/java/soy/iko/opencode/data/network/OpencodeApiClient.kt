@@ -158,7 +158,7 @@ class OpencodeApiClient(private val client: HttpClient) {
     }
 
     /** Invalidate the catalog cache (e.g. on server switch). */
-    fun invalidateCache() {
+    suspend fun invalidateCache() = cacheMutex.withLock {
         cachedProviders = null
         cachedAgents = null
         cachedCommands = null

@@ -114,6 +114,19 @@ class ChatViewModel(
     private val _draft = MutableStateFlow(container.draftStore.get(sessionId))
     val draft: StateFlow<String> = _draft.asStateFlow()
 
+    init {
+        // DraftStore loads SharedPreferences asynchronously; on a cold start the
+        // synchronous get() above returns "" until the background load completes.
+        // Observe the ready signal and re-seed the draft so it appears in the UI.
+        viewModelScope.launch {
+            container.draftStore.ready.collect { ready ->
+                if (ready && _draft.value.isEmpty()) {
+                    _draft.value = container.draftStore.get(sessionId)
+                }
+            }
+        }
+    }
+
     fun clearError() { _error.value = null }
 
     fun selectModel(option: ModelOption) { _selectedModel.value = option }
@@ -218,7 +231,8 @@ class ChatViewModel(
             container.activeConnection.collectLatest { conn ->
                 if (conn == null) return@collectLatest
                 conn.events.state.collect { state ->
-                    if (state == EventStreamClient.ConnectionState.Disconnected && _running.value) {
+                    if ((state == EventStreamClient.ConnectionState.Disconnected ||
+                         state == EventStreamClient.ConnectionState.Failed) && _running.value) {
                         _running.value = false
                     }
                 }

@@ -86,7 +86,8 @@ class SessionRepository(
                         publish()
                     }
                     wasConnected = true
-                } else if (state == EventStreamClient.ConnectionState.Disconnected) {
+                } else if (state == EventStreamClient.ConnectionState.Disconnected ||
+                           state == EventStreamClient.ConnectionState.Failed) {
                     wasConnected = false
                 }
             }

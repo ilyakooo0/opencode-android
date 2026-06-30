@@ -308,14 +308,15 @@ fun ChatScreen(
                     }
                     if (running) {
                         item(key = "__typing") {
+                            val workingText = stringResource(R.string.working)
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier.semantics {
-                                    contentDescription = shareContext.getString(R.string.working)
+                                    contentDescription = workingText
                                 },
                             ) {
                                 CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                                Text(stringResource(R.string.working), style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 6.dp))
+                                Text(workingText, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 6.dp))
                             }
                         }
                     }

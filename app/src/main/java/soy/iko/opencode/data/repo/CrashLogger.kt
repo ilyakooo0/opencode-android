@@ -93,7 +93,10 @@ class CrashLogger private constructor(private val appContext: Context) {
     private fun writeReport(thread: Thread, throwable: Throwable) {
         val now = Date()
         val stamp = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss-SSS", Locale.US).format(now)
-        val file = File(crashDir, "crash-$stamp.txt")
+        // Append a short random suffix so two crashes in the same millisecond don't
+        // overwrite each other.
+        val suffix = Integer.toHexString(System.nanoTime().toInt())
+        val file = File(crashDir, "crash-$stamp-$suffix.txt")
         val sw = StringWriter()
         PrintWriter(sw).use { pw ->
             pw.println("opencode-android crash report")

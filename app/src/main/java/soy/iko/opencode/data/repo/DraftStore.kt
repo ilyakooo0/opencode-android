@@ -82,11 +82,11 @@ class DraftStore(context: Context, scope: CoroutineScope) {
     }
 
     /**
-     * Synchronously persist a draft using [commit] instead of [apply]. Intended for
-     * [ViewModel.onCleared] where the viewModelScope is already cancelled and a
-     * suspending write would require [runBlocking], risking an ANR. Safe to call
-     * from the main thread — [commit] blocks briefly on disk I/O but the data is
-     * small (a single key-value pair).
+     * Synchronously persist a draft. Intended for [ViewModel.onCleared] where the
+     * viewModelScope is already cancelled and a suspending write can't be used.
+     * Uses [apply] (asynchronous) rather than [commit] (synchronous) to avoid
+     * blocking the main thread — Android's SharedPreferences framework guarantees
+     * pending `apply()` writes are flushed to disk before the process exits.
      */
     fun flushDraft(sessionId: String, text: String) {
         _drafts.update { current ->
@@ -97,7 +97,7 @@ class DraftStore(context: Context, scope: CoroutineScope) {
         runCatching {
             prefs.edit().apply {
                 if (text.isBlank()) remove(sessionId) else putString(sessionId, text)
-            }.commit()
+            }.apply()
         }.onFailure { Log.w("DraftStore", "Failed to flush draft for $sessionId", it) }
     }
 }

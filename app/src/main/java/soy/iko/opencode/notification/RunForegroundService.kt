@@ -72,7 +72,14 @@ class RunForegroundService : Service() {
         private const val NOTIF_ID = 1
 
         fun start(context: Context) {
-            context.startForegroundService(Intent(context, RunForegroundService::class.java))
+            // startForegroundService can throw ForegroundServiceStartNotAllowedException
+            // on Android 12+ if the app is in the background. Wrap it so a backgrounded
+            // start (e.g. the user navigates away at the wrong moment) doesn't crash.
+            runCatching {
+                context.startForegroundService(Intent(context, RunForegroundService::class.java))
+            }.onFailure {
+                Log.w(TAG, "startForegroundService failed; running without foreground priority", it)
+            }
         }
 
         fun stop(context: Context) {

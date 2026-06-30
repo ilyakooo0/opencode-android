@@ -29,6 +29,7 @@ fun ConnectionBanner(
     val text = when (state) {
         EventStreamClient.ConnectionState.Connecting -> stringResource(R.string.connecting)
         EventStreamClient.ConnectionState.Disconnected -> stringResource(R.string.reconnecting)
+        EventStreamClient.ConnectionState.Failed -> stringResource(R.string.connection_failed)
         EventStreamClient.ConnectionState.Connected -> null
     }
     if (text != null) {

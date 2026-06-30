@@ -26,8 +26,15 @@ data class ServerEditState(
     val saving: Boolean = false,
     val error: String? = null,
 ) {
-    val canSave: Boolean get() = baseUrl.isNotBlank()
+    val canSave: Boolean get() = baseUrl.isNotBlank() && isValidUrl(baseUrl)
     val isNew: Boolean get() = id == null
+}
+
+private fun isValidUrl(url: String): Boolean = try {
+    val u = java.net.URI(url.trim())
+    u.scheme != null && u.host != null && (u.scheme == "http" || u.scheme == "https")
+} catch (_: Exception) {
+    false
 }
 
 class ServerEditViewModel(

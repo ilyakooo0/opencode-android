@@ -223,7 +223,7 @@ private fun ToolStatusIcon(state: ToolState) {
     when (state) {
         is ToolPending, is ToolRunning ->
             CircularProgressIndicator(
-                modifier = Modifier.size(16.dp).semantics { contentDescription = "" },
+                modifier = Modifier.size(16.dp),
                 strokeWidth = 2.dp,
             )
         is ToolCompleted ->

@@ -19,6 +19,7 @@ import soy.iko.opencode.data.repo.responseStatusCode
 import soy.iko.opencode.notification.NotificationChannels
 import soy.iko.opencode.notification.SessionNotifications
 import soy.iko.opencode.R
+import soy.iko.opencode.util.runCatchingCancellable
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -178,8 +179,10 @@ class AppContainer(context: Context) {
                     // Track sessions actively streaming so we know which idle events
                     // represent a finished run worth notifying about.
                     if (event is MessagePartUpdated || event is MessageUpdated) {
-                        if (activeRuns.size >= activeRunsLimit) activeRuns.clear()
-                        activeRuns.add(sid)
+                        synchronized(activeRuns) {
+                            if (activeRuns.size >= activeRunsLimit) activeRuns.clear()
+                            activeRuns.add(sid)
+                        }
                     }
                 }
         }
@@ -203,7 +206,7 @@ class AppContainer(context: Context) {
     /** Resolve the title for [sessionId] (best-effort) and post a completion notification. */
     private suspend fun notifySessionCompleted(sessionId: String) {
         val conn = activeConnection.value ?: return
-        val title = runCatching {
+        val title = runCatchingCancellable {
             conn.repository.listSessions().firstOrNull { it.id == sessionId }?.displayTitle
         }.getOrNull() ?: sessionId
         SessionNotifications.postCompleted(appContext, sessionId, title)
@@ -221,7 +224,7 @@ class AppContainer(context: Context) {
             .getOrDefault(emptyList())
             .firstOrNull() ?: return
         _reconnecting.value = true
-        val ok = runCatching {
+        val ok = runCatchingCancellable {
             val conn = connect(recent)
             conn.api.ping()
         }.isSuccess
