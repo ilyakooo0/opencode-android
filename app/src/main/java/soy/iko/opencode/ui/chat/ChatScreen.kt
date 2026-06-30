@@ -200,13 +200,16 @@ fun ChatScreen(
     val retryLabel = stringResource(R.string.retry)
     LaunchedEffect(error) {
         val msg = error ?: return@LaunchedEffect
-        val result = if (failedDraft != null) {
-            snackbar.showSnackbar(message = msg, actionLabel = retryLabel)
-        } else {
-            snackbar.showSnackbar(msg)
+        try {
+            val result = if (failedDraft != null) {
+                snackbar.showSnackbar(message = msg, actionLabel = retryLabel)
+            } else {
+                snackbar.showSnackbar(msg)
+            }
+            if (result == androidx.compose.material3.SnackbarResult.ActionPerformed) vm.retryFailed()
+        } finally {
+            vm.clearError()
         }
-        if (result == androidx.compose.material3.SnackbarResult.ActionPerformed) vm.retryFailed()
-        vm.clearError()
     }
 
     fun doSend() {

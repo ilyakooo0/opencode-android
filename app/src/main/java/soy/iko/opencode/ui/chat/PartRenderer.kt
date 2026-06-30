@@ -29,6 +29,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -94,7 +95,7 @@ fun PartView(part: Part, modifier: Modifier = Modifier, isRunning: Boolean = fal
 private fun ReasoningBlock(text: String, streaming: Boolean, modifier: Modifier) {
     if (text.isBlank()) return
     val context = LocalContext.current
-    var expanded by remember { mutableStateOf(false) }
+    var expanded by rememberSaveable { mutableStateOf(false) }
     val expandedState = stringResource(R.string.state_expanded)
     val collapsedState = stringResource(R.string.state_collapsed)
     Column(modifier = modifier.fillMaxWidth()) {
@@ -177,7 +178,7 @@ private fun ToolCallView(part: ToolPart, modifier: Modifier) {
         }
         if (detail != null) {
             val collapsed = remember(detail) { detail.take(COLLAPSED_LIMIT) }
-            var expanded by remember(detail) { mutableStateOf(false) }
+            var expanded by rememberSaveable(detail) { mutableStateOf(false) }
             val expandedState = stringResource(R.string.state_expanded)
             val collapsedState = stringResource(R.string.state_collapsed)
             val display = if (expanded || detail.length <= COLLAPSED_LIMIT) detail else collapsed

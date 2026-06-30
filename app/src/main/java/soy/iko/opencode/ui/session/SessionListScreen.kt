@@ -109,8 +109,11 @@ fun SessionListScreen(
 
     LaunchedEffect(transientError) {
         val msg = transientError ?: return@LaunchedEffect
-        snackbar.showSnackbar(msg)
-        vm.clearTransientError()
+        try {
+            snackbar.showSnackbar(msg)
+        } finally {
+            vm.clearTransientError()
+        }
     }
 
     Scaffold(

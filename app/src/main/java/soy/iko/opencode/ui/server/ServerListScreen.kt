@@ -77,8 +77,10 @@ fun ServerListScreen(
     val connectedId = activeConnection?.profile?.id
 
     LaunchedEffect(error) {
-        error?.let {
-            snackbar.showSnackbar(it)
+        val msg = error ?: return@LaunchedEffect
+        try {
+            snackbar.showSnackbar(msg)
+        } finally {
             vm.clearError()
         }
     }
