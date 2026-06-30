@@ -72,12 +72,7 @@ class RunForegroundService : Service() {
         private const val NOTIF_ID = 1
 
         fun start(context: Context) {
-            val intent = Intent(context, RunForegroundService::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
-            }
+            context.startForegroundService(Intent(context, RunForegroundService::class.java))
         }
 
         fun stop(context: Context) {

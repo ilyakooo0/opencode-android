@@ -3,7 +3,6 @@ package soy.iko.opencode.notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
-import android.os.Build
 import soy.iko.opencode.R
 
 /**
@@ -19,7 +18,6 @@ object NotificationChannels {
     const val COMPLETED = "session_completed"
 
     fun create(context: Context) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
         nm.createNotificationChannel(
             NotificationChannel(STATUS, context.getString(R.string.notif_channel_status), NotificationManager.IMPORTANCE_LOW).apply {

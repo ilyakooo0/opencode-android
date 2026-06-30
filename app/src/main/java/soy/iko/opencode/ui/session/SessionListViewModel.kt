@@ -90,6 +90,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
     fun clearTransientError() { _transientError.value = null }
 
     private var previewJob: Job? = null
+    private var refreshJob: Job? = null
 
     /** Per-session in-flight preview loads, so rapid SSE events for the same session
      *  coalesce into a single request instead of firing one per event. Accessed from
@@ -166,7 +167,8 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         _serverLabel.value = conn.profile.displayLabel
         _state.update { it.copy(loading = true, error = null) }
         _refreshing.value = true
-        viewModelScope.launch {
+        refreshJob?.cancel()
+        refreshJob = viewModelScope.launch {
             runCatching { conn.repository.listSessions() }
                 .onSuccess { list ->
                     val sorted = list.sortedByDescending { it.time?.updated ?: it.time?.created ?: 0 }
@@ -212,7 +214,10 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         previewJob?.cancel()
         val conn = container.activeConnection.value ?: return
         val api = conn.api
-        _state.update { it.copy(previews = emptyMap()) }
+        // Keep previews for sessions still in the list; drop stale ones without
+        // clearing the whole map (which would cause a visual flash).
+        val keepIds = sessions.mapTo(mutableSetOf()) { it.id }
+        _state.update { s -> s.copy(previews = s.previews.filterKeys { it in keepIds }) }
         previewJob = viewModelScope.launch {
             val semaphore = Semaphore(NetworkConfig.maxConcurrentPreviews)
             sessions.take(NetworkConfig.maxPreviewSessions).map { session ->

@@ -5,7 +5,6 @@
 
     <!-- Common -->
     <string name="back">Back</string>
-    <string name="loading">Loading</string>
     <string name="cancel">Cancel</string>
     <string name="save">Save</string>
     <string name="delete">Delete</string>
@@ -89,7 +88,6 @@
     <!-- Errors (view models) -->
     <string name="error_generic">Something went wrong.</string>
     <string name="error_client_status">Request failed (%1$d).</string>
-    <string name="error_failed_to_send">Failed to send</string>
     <string name="error_agent_reported">The agent reported an error.</string>
     <string name="error_not_reachable">Could not reach %1$s</string>
     <string name="error_timeout">The request timed out. Check the connection and try again.</string>
@@ -102,7 +100,6 @@
     <string name="show_less">Show less</string>
     <string name="tool_completed">Completed</string>
     <string name="tool_error">Error</string>
-    <string name="tool_running">In progress</string>
     <string name="state_expanded">Expanded</string>
     <string name="state_collapsed">Collapsed</string>
 
@@ -121,9 +118,6 @@
     <string name="default_agent">Default</string>
     <string name="default_agent_desc">Server default agent</string>
     <string name="no_commands">No commands reported by the server.</string>
-    <string name="loading_models">Loading models…</string>
-    <string name="loading_agents">Loading agents…</string>
-    <string name="loading_commands">Loading commands…</string>
     <string name="saving">Saving…</string>
     <string name="image_failed">Failed to load image</string>
 
@@ -163,7 +157,6 @@
     <string name="no_crash_reports">No crashes recorded. \ud83d\udc4d</string>
     <string name="clear_all">Clear all</string>
     <string name="crash_report">Crash report</string>
-    <string name="diagnostics_share_subject">opencode-android crash report</string>
 
     <!-- Notifications -->
     <string name="notif_channel_status">Agent activity</string>
