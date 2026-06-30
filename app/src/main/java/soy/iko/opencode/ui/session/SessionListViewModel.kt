@@ -165,6 +165,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
                 _state.update { it.copy(loading = false) }
                 _transientError.value = container.string(R.string.not_connected)
             }
+            _refreshing.value = false
             return
         }
         _serverLabel.value = conn.profile.displayLabel

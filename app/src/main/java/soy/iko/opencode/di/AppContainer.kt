@@ -259,6 +259,7 @@ class AppContainer(context: Context) {
             _activeConnection.value?.close()
             _activeConnection.value = null
             activeRuns.clear()
+            _unread.value = emptySet()
             val now = System.currentTimeMillis()
             val resolved = profileStore.resolve(profile)
             val needsSave = (now - resolved.lastUsed) > LAST_USED_SAVE_THRESHOLD_MS

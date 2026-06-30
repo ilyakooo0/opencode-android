@@ -88,7 +88,11 @@ class FileBrowserViewModel(private val container: AppContainer) : ViewModel() {
 
     fun open(path: String) {
         val client = api ?: run {
-            _state.value = _state.value.copy(loading = false, error = container.string(R.string.not_connected))
+            _state.value = _state.value.copy(
+                path = path,
+                loading = false,
+                error = container.string(R.string.not_connected),
+            )
             return
         }
         _state.value = _state.value.copy(path = path, loading = true, error = null)
