@@ -29,7 +29,7 @@ class ProfileStore(context: Context) {
     private val appContext = context.applicationContext
     private val profilesKey = stringPreferencesKey("profiles_json")
 
-    private val securePrefs: SharedPreferences by lazy {
+    private val securePrefs: SharedPreferences? by lazy {
         runCatching {
             val masterKey = MasterKey.Builder(appContext)
                 .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
@@ -42,10 +42,22 @@ class ProfileStore(context: Context) {
                 EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
             )
         }.getOrElse {
-            Log.e("ProfileStore", "Encrypted prefs unavailable, falling back to plaintext", it)
-            appContext.getSharedPreferences("server_secrets_fallback", Context.MODE_PRIVATE)
+            Log.e("ProfileStore", "Encrypted prefs unavailable; passwords will not be persisted", it)
+            null
         }
     }
+
+    /** True when EncryptedSharedPreferences could not be initialized. */
+    val securePrefsUnavailable: Boolean get() = securePrefs == null
+
+    /** Plaintext fallback used only when encrypted prefs are unavailable, so the user
+     *  can still connect — but passwords won't survive an app reinstall. */
+    private val fallbackPrefs: SharedPreferences by lazy {
+        appContext.getSharedPreferences("server_secrets_fallback", Context.MODE_PRIVATE)
+    }
+
+    private fun prefsForPasswords(): SharedPreferences =
+        securePrefs ?: fallbackPrefs
 
     /** Stored shape on DataStore (everything except the secret password). */
     @Serializable
@@ -85,9 +97,22 @@ class ProfileStore(context: Context) {
     }
 
     private suspend fun passwordFor(id: String): String? =
-        withContext(Dispatchers.IO) { securePrefs.getString(passwordKey(id), null) }
+        withContext(Dispatchers.IO) { prefsForPasswords().getString(passwordKey(id), null) }
 
     suspend fun save(profile: ServerProfile) {
+        // Write the password first so that if the DataStore write fails, we're left
+        // with an orphaned password (harmless, cleaned up on next save/delete) rather
+        // than a profile with no password (which would break authentication).
+        withContext(Dispatchers.IO) {
+            prefsForPasswords().edit().apply {
+                val pw = profile.password
+                if (!profile.username.isNullOrBlank() && !pw.isNullOrEmpty()) {
+                    putString(passwordKey(profile.id), pw)
+                } else {
+                    remove(passwordKey(profile.id))
+                }
+            }.apply()
+        }
         appContext.dataStore.edit { prefs ->
             val current = prefs[profilesKey]?.let {
                 runCatching { OpencodeJson.decodeFromString(ListSerializer(StoredProfile.serializer()), it) }
@@ -103,21 +128,12 @@ class ProfileStore(context: Context) {
             val updated = current.filterNot { it.id == profile.id } + stored
             prefs[profilesKey] = OpencodeJson.encodeToString(ListSerializer(StoredProfile.serializer()), updated)
         }
-        // Secret goes to encrypted storage (or is cleared when auth removed).
-        // EncryptedSharedPreferences encrypts on the calling thread, so move to IO.
-        withContext(Dispatchers.IO) {
-            securePrefs.edit().apply {
-                val pw = profile.password
-                if (!profile.username.isNullOrBlank() && !pw.isNullOrEmpty()) {
-                    putString(passwordKey(profile.id), pw)
-                } else {
-                    remove(passwordKey(profile.id))
-                }
-            }.apply()
-        }
     }
 
     suspend fun delete(id: String) {
+        // Delete the profile from DataStore first, then the password. If the process
+        // dies between the two, an orphaned password remains (harmless, cleaned up on
+        // next save/delete) rather than a profile with no password.
         appContext.dataStore.edit { prefs ->
             val current = prefs[profilesKey]?.let {
                 runCatching { OpencodeJson.decodeFromString(ListSerializer(StoredProfile.serializer()), it) }
@@ -129,7 +145,7 @@ class ProfileStore(context: Context) {
             )
         }
         withContext(Dispatchers.IO) {
-            securePrefs.edit().remove(passwordKey(id)).apply()
+            prefsForPasswords().edit().remove(passwordKey(id)).apply()
         }
     }
 

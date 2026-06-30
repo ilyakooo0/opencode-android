@@ -37,7 +37,9 @@ fun ModelPickerSheet(
     options: List<ModelOption>,
     selected: ModelOption?,
     loading: Boolean,
+    error: Boolean,
     onSelect: (ModelOption) -> Unit,
+    onRetry: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -53,6 +55,16 @@ fun ModelPickerSheet(
             ) {
                 CircularProgressIndicator()
             }
+        } else if (error && options.isEmpty()) {
+            Text(
+                stringResource(R.string.load_failed),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onRetry() }
+                    .padding(horizontal = 24.dp, vertical = 16.dp),
+            )
         } else if (options.isEmpty()) {
             Text(
                 stringResource(R.string.no_models),

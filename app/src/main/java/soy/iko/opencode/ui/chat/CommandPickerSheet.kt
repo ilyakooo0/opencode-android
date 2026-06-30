@@ -33,7 +33,9 @@ import soy.iko.opencode.R
 fun CommandPickerSheet(
     commands: List<Command>,
     loading: Boolean,
+    error: Boolean,
     onSelect: (Command) -> Unit,
+    onRetry: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -49,6 +51,16 @@ fun CommandPickerSheet(
             ) {
                 CircularProgressIndicator()
             }
+        } else if (error && commands.isEmpty()) {
+            Text(
+                stringResource(R.string.load_failed),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onRetry() }
+                    .padding(horizontal = 24.dp, vertical = 16.dp),
+            )
         } else if (commands.isEmpty()) {
             Text(
                 stringResource(R.string.no_commands),

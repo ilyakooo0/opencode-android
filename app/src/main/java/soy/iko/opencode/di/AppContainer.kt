@@ -141,8 +141,15 @@ class AppContainer(context: Context) {
 
     /** Release resources held for the process lifetime (network callback, app scope). */
     fun shutdown() {
-        _activeConnection.value?.close()
-        _activeConnection.value = null
+        // Acquire the connection mutex so a concurrent connect() can't leak a new
+        // connection after we've nulled the reference. This runs on a shutdown hook
+        // thread (or onTerminate), so a brief blocking wait is acceptable here.
+        kotlinx.coroutines.runBlocking {
+            connectionMutex.withLock {
+                _activeConnection.value?.close()
+                _activeConnection.value = null
+            }
+        }
         val cm = appContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
         networkCallback?.let { runCatching { cm?.unregisterNetworkCallback(it) } }
         appScope.cancel()
@@ -180,7 +187,12 @@ class AppContainer(context: Context) {
                     // represent a finished run worth notifying about.
                     if (event is MessagePartUpdated || event is MessageUpdated) {
                         synchronized(activeRuns) {
-                            if (activeRuns.size >= activeRunsLimit) activeRuns.clear()
+                            // Evict the oldest entry when the cap is reached instead of
+                            // clearing everything, so completion notifications for the
+                            // remaining active runs still fire on SessionIdle.
+                            if (activeRuns.size >= activeRunsLimit) {
+                                activeRuns.remove(activeRuns.iterator().next())
+                            }
                             activeRuns.add(sid)
                         }
                     }
@@ -220,7 +232,7 @@ class AppContainer(context: Context) {
      * returning user lands in their session list instead of the empty server screen.
      */
     private suspend fun autoConnect() {
-        val recent = runCatching { profileStore.profiles.first() }
+        val recent = runCatchingCancellable { profileStore.profiles.first() }
             .getOrDefault(emptyList())
             .firstOrNull() ?: return
         _reconnecting.value = true

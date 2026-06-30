@@ -46,9 +46,9 @@ class OpencodeApiClient(private val client: HttpClient) {
     // between sessions on the same server.
     private data class CachedEntry<T>(val value: T, val fetchedAt: Long)
     private val cacheMutex = Mutex()
-    @Volatile private var cachedProviders: CachedEntry<ProvidersResponse>? = null
-    @Volatile private var cachedAgents: CachedEntry<List<Agent>>? = null
-    @Volatile private var cachedCommands: CachedEntry<List<Command>>? = null
+    private var cachedProviders: CachedEntry<ProvidersResponse>? = null
+    private var cachedAgents: CachedEntry<List<Agent>>? = null
+    private var cachedCommands: CachedEntry<List<Command>>? = null
 
     /** Lightweight connectivity check. Throws on non-2xx / network failure. */
     suspend fun ping() {
@@ -74,7 +74,7 @@ class OpencodeApiClient(private val client: HttpClient) {
     }
 
     suspend fun deleteSession(id: String) {
-        client.delete("session/${encode(id)}")
+        withRetry { client.delete("session/${encode(id)}") }
     }
 
     suspend fun listMessages(sessionId: String): List<MessageWithParts> = withRetry {
@@ -86,26 +86,29 @@ class OpencodeApiClient(private val client: HttpClient) {
         text: String,
         model: ModelRef? = null,
         agent: String? = null,
-    ): MessageWithParts = withRetry {
-        // Send an idempotency key so the server can safely deduplicate if a transient
-        // network failure causes this request to be retried. The key is unique per call
-        // so a genuine re-send (e.g. retry-failed) still creates a new message.
+    ): MessageWithParts {
+        // Generate the idempotency key *before* entering withRetry so all retry
+        // attempts share the same key. If the key were generated inside withRetry,
+        // each attempt would get a fresh UUID and the server couldn't deduplicate a
+        // request that reached it but whose response was lost (e.g. timeout).
         val idempotencyKey = java.util.UUID.randomUUID().toString()
-        client.post("session/${encode(sessionId)}/message") {
-            contentType(ContentType.Application.Json)
-            header("Idempotency-Key", idempotencyKey)
-            setBody(
-                PromptRequest(
-                    parts = listOf(PromptPart(text = text)),
-                    model = model,
-                    agent = agent,
-                ),
-            )
-        }.body()
+        return withRetry {
+            client.post("session/${encode(sessionId)}/message") {
+                contentType(ContentType.Application.Json)
+                header("Idempotency-Key", idempotencyKey)
+                setBody(
+                    PromptRequest(
+                        parts = listOf(PromptPart(text = text)),
+                        model = model,
+                        agent = agent,
+                    ),
+                )
+            }.body()
+        }
     }
 
     suspend fun abort(sessionId: String) {
-        client.post("session/${encode(sessionId)}/abort")
+        withRetry { client.post("session/${encode(sessionId)}/abort") }
     }
 
     /** Invoke a slash-command by name via `POST /session/:id/command`. */

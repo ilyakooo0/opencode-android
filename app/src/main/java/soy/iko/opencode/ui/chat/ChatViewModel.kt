@@ -26,6 +26,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.drop
@@ -55,6 +56,10 @@ class ChatViewModel(
                 conn?.repository?.observeMessages(sessionId) ?: flowOf(emptyList())
             }
             .onEach { _loading.value = false }
+            .catch {
+                _loading.value = false
+                _error.value = container.friendlyError(it)
+            }
             .stateIn(
                 scope = viewModelScope,
                 started = SharingStarted.WhileSubscribed(5_000),
@@ -72,6 +77,9 @@ class ChatViewModel(
 
     private val _modelsLoading = MutableStateFlow(true)
     val modelsLoading: StateFlow<Boolean> = _modelsLoading.asStateFlow()
+
+    private val _modelsError = MutableStateFlow(false)
+    val modelsError: StateFlow<Boolean> = _modelsError.asStateFlow()
 
     private val _selectedModel = MutableStateFlow<ModelOption?>(null)
     val selectedModel: StateFlow<ModelOption?> = _selectedModel.asStateFlow()
@@ -94,6 +102,9 @@ class ChatViewModel(
     private val _agentsLoading = MutableStateFlow(true)
     val agentsLoading: StateFlow<Boolean> = _agentsLoading.asStateFlow()
 
+    private val _agentsError = MutableStateFlow(false)
+    val agentsError: StateFlow<Boolean> = _agentsError.asStateFlow()
+
     private val _selectedAgent = MutableStateFlow<String?>(null)
     val selectedAgent: StateFlow<String?> = _selectedAgent.asStateFlow()
 
@@ -102,6 +113,9 @@ class ChatViewModel(
 
     private val _commandsLoading = MutableStateFlow(true)
     val commandsLoading: StateFlow<Boolean> = _commandsLoading.asStateFlow()
+
+    private val _commandsError = MutableStateFlow(false)
+    val commandsError: StateFlow<Boolean> = _commandsError.asStateFlow()
 
     private val _sessionTitle = MutableStateFlow<String?>(null)
     val sessionTitle: StateFlow<String?> = _sessionTitle.asStateFlow()
@@ -132,6 +146,49 @@ class ChatViewModel(
     fun selectModel(option: ModelOption) { _selectedModel.value = option }
 
     fun selectAgent(name: String?) { _selectedAgent.value = name }
+
+    fun reloadModels() {
+        val conn = connection ?: return
+        viewModelScope.launch {
+            conn.api.invalidateCache()
+            _modelsLoading.value = true
+            _modelsError.value = false
+            runCatchingCancellable { conn.api.providers() }
+                .onFailure { Log.w("ChatViewModel", "Failed to reload model catalog", it); _modelsError.value = true }
+                .getOrNull()?.let { resp ->
+                    val options = resp.toOptions()
+                    _models.value = options
+                    _selectedModel.value = resp.defaultOption(options)
+                }
+            _modelsLoading.value = false
+        }
+    }
+
+    fun reloadAgents() {
+        val conn = connection ?: return
+        viewModelScope.launch {
+            conn.api.invalidateCache()
+            _agentsLoading.value = true
+            _agentsError.value = false
+            runCatchingCancellable { conn.api.agents() }
+                .onFailure { Log.w("ChatViewModel", "Failed to reload agent catalog", it); _agentsError.value = true }
+                .getOrNull()?.let { _agents.value = it }
+            _agentsLoading.value = false
+        }
+    }
+
+    fun reloadCommands() {
+        val conn = connection ?: return
+        viewModelScope.launch {
+            conn.api.invalidateCache()
+            _commandsLoading.value = true
+            _commandsError.value = false
+            runCatchingCancellable { conn.api.commands() }
+                .onFailure { Log.w("ChatViewModel", "Failed to reload command catalog", it); _commandsError.value = true }
+                .getOrNull()?.let { _commands.value = it }
+            _commandsLoading.value = false
+        }
+    }
 
     fun updateDraft(text: String) {
         _draft.value = text
@@ -181,10 +238,11 @@ class ChatViewModel(
         // sending with no model just uses the server's default agent/model.
         viewModelScope.launch {
             container.activeConnection.collectLatest { conn ->
-                if (conn == null) { _models.value = emptyList(); _selectedModel.value = null; _modelsLoading.value = false; return@collectLatest }
+                if (conn == null) { _models.value = emptyList(); _selectedModel.value = null; _modelsLoading.value = false; _modelsError.value = false; return@collectLatest }
                 _modelsLoading.value = true
+                _modelsError.value = false
                 runCatchingCancellable { conn.api.providers() }
-                    .onFailure { Log.w("ChatViewModel", "Failed to load model catalog", it) }
+                    .onFailure { Log.w("ChatViewModel", "Failed to load model catalog", it); _modelsError.value = true }
                     .getOrNull()?.let { resp ->
                     val options = resp.toOptions()
                     _models.value = options
@@ -196,10 +254,11 @@ class ChatViewModel(
         // Load the agent catalog (non-fatal).
         viewModelScope.launch {
             container.activeConnection.collectLatest { conn ->
-                if (conn == null) { _agents.value = emptyList(); _agentsLoading.value = false; return@collectLatest }
+                if (conn == null) { _agents.value = emptyList(); _agentsLoading.value = false; _agentsError.value = false; return@collectLatest }
                 _agentsLoading.value = true
+                _agentsError.value = false
                 runCatchingCancellable { conn.api.agents() }
-                    .onFailure { Log.w("ChatViewModel", "Failed to load agent catalog", it) }
+                    .onFailure { Log.w("ChatViewModel", "Failed to load agent catalog", it); _agentsError.value = true }
                     .getOrNull()?.let { _agents.value = it }
                 _agentsLoading.value = false
             }
@@ -207,10 +266,11 @@ class ChatViewModel(
         // Load the command catalog (non-fatal).
         viewModelScope.launch {
             container.activeConnection.collectLatest { conn ->
-                if (conn == null) { _commands.value = emptyList(); _commandsLoading.value = false; return@collectLatest }
+                if (conn == null) { _commands.value = emptyList(); _commandsLoading.value = false; _commandsError.value = false; return@collectLatest }
                 _commandsLoading.value = true
+                _commandsError.value = false
                 runCatchingCancellable { conn.api.commands() }
-                    .onFailure { Log.w("ChatViewModel", "Failed to load command catalog", it) }
+                    .onFailure { Log.w("ChatViewModel", "Failed to load command catalog", it); _commandsError.value = true }
                     .getOrNull()?.let { _commands.value = it }
                 _commandsLoading.value = false
             }
@@ -264,11 +324,14 @@ class ChatViewModel(
                 // Only restore the draft if the user hasn't typed anything new since.
                 if (_draft.value.isBlank()) updateDraft(trimmed)
                 _error.value = container.friendlyError(it)
+                _running.value = false
             }.onSuccess {
                 // Send succeeded — now it's safe to persist the empty draft.
                 container.draftStore.set(sessionId, "")
+                // Don't reset _running here: the agent continues streaming via SSE.
+                // _running is cleared on SessionIdle/SessionError (see event collector)
+                // or when the SSE stream drops (see connection state watcher below).
             }
-            _running.value = false
         }
         return true
     }
@@ -288,8 +351,10 @@ class ChatViewModel(
         viewModelScope.launch {
             runCatchingCancellable {
                 conn.repository.runCommand(sessionId, command.name, agent = command.agent)
-            }.onFailure { _error.value = container.friendlyError(it) }
-            _running.value = false
+            }.onFailure {
+                _error.value = container.friendlyError(it)
+                _running.value = false
+            }
         }
     }
 
@@ -307,7 +372,7 @@ class ChatViewModel(
         if (container.activeConnection.value != null) return
         viewModelScope.launch {
             _loading.value = true
-            val recent = runCatching { container.profileStore.profiles.first() }
+            val recent = runCatchingCancellable { container.profileStore.profiles.first() }
                 .getOrDefault(emptyList())
                 .firstOrNull() ?: run { _loading.value = false; return@launch }
             runCatchingCancellable {

@@ -97,21 +97,24 @@ fun ChatScreen(
     sessionId: String,
     onBack: () -> Unit,
 ) {
-    val vm: ChatViewModel = viewModel(factory = vmFactory { ChatViewModel(container, sessionId) })
+    val vm: ChatViewModel = viewModel(key = sessionId, factory = vmFactory { ChatViewModel(container, sessionId) })
     val messages by vm.messages.collectAsStateWithLifecycle()
     val running by vm.running.collectAsStateWithLifecycle()
     val error by vm.error.collectAsStateWithLifecycle()
     val loading by vm.loading.collectAsStateWithLifecycle()
     val models by vm.models.collectAsStateWithLifecycle()
     val modelsLoading by vm.modelsLoading.collectAsStateWithLifecycle()
+    val modelsError by vm.modelsError.collectAsStateWithLifecycle()
     val selectedModel by vm.selectedModel.collectAsStateWithLifecycle()
     val connectionState by vm.connectionState.collectAsStateWithLifecycle()
     val pendingPermission by vm.pendingPermission.collectAsStateWithLifecycle()
     val agents by vm.agents.collectAsStateWithLifecycle()
     val agentsLoading by vm.agentsLoading.collectAsStateWithLifecycle()
+    val agentsError by vm.agentsError.collectAsStateWithLifecycle()
     val selectedAgent by vm.selectedAgent.collectAsStateWithLifecycle()
     val commands by vm.commands.collectAsStateWithLifecycle()
     val commandsLoading by vm.commandsLoading.collectAsStateWithLifecycle()
+    val commandsError by vm.commandsError.collectAsStateWithLifecycle()
     val sessionTitle by vm.sessionTitle.collectAsStateWithLifecycle()
     val failedDraft by vm.failedDraft.collectAsStateWithLifecycle()
     val draft by vm.draft.collectAsStateWithLifecycle()
@@ -291,7 +294,12 @@ fun ChatScreen(
                     modifier = Modifier.align(Alignment.TopCenter),
                 )
                 if (loading && messages.isEmpty()) {
-                    CircularProgressIndicator(Modifier.align(Alignment.Center))
+                    val loadingLabel = stringResource(R.string.loading)
+                    CircularProgressIndicator(
+                        Modifier
+                            .align(Alignment.Center)
+                            .semantics { contentDescription = loadingLabel },
+                    )
                 } else if (messages.isEmpty() && !running) {
                     EmptyConversation(
                         modifier = Modifier.align(Alignment.Center),
@@ -365,7 +373,9 @@ fun ChatScreen(
             options = models,
             selected = selectedModel,
             loading = modelsLoading,
+            error = modelsError,
             onSelect = { vm.selectModel(it) },
+            onRetry = { vm.reloadModels() },
             onDismiss = { showModelPicker = false },
         )
     }
@@ -375,7 +385,9 @@ fun ChatScreen(
             agents = agents,
             selected = selectedAgent,
             loading = agentsLoading,
+            error = agentsError,
             onSelect = { vm.selectAgent(it?.name) },
+            onRetry = { vm.reloadAgents() },
             onDismiss = { showAgentPicker = false },
         )
     }
@@ -384,7 +396,9 @@ fun ChatScreen(
         CommandPickerSheet(
             commands = commands,
             loading = commandsLoading,
+            error = commandsError,
             onSelect = { vm.runCommand(it) },
+            onRetry = { vm.reloadCommands() },
             onDismiss = { showCommandPicker = false },
         )
     }

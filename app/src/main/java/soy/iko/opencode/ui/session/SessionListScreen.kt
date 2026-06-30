@@ -147,7 +147,13 @@ fun SessionListScreen(
                                                     )
                                                 }
                                                 if (switchingId == profile.id) {
-                                                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                                                    val switchingLabel = stringResource(R.string.loading)
+                                                    CircularProgressIndicator(
+                                                        Modifier
+                                                            .size(18.dp)
+                                                            .semantics { contentDescription = switchingLabel },
+                                                        strokeWidth = 2.dp,
+                                                    )
                                                 }
                                             }
                                         },
@@ -192,7 +198,14 @@ fun SessionListScreen(
                 modifier = Modifier.align(Alignment.TopCenter),
             )
             when {
-                state.loading -> CircularProgressIndicator(Modifier.align(Alignment.Center))
+                state.loading -> {
+                    val loadingLabel = stringResource(R.string.loading)
+                    CircularProgressIndicator(
+                        Modifier
+                            .align(Alignment.Center)
+                            .semantics { contentDescription = loadingLabel },
+                    )
+                }
                 state.sessions.isEmpty() && state.error != null -> Text(
                     state.error ?: "",
                     modifier = Modifier.align(Alignment.Center).padding(24.dp),
@@ -339,41 +352,50 @@ private fun SessionCard(
         modifier = modifier,
     ) {
         Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable(role = Role.Button) { onClick() },
+            modifier = Modifier.fillMaxWidth(),
         ) {
             Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    if (unread) {
-                        val unreadLabel = stringResource(R.string.unread)
-                        Box(
-                            modifier = Modifier
-                                .padding(end = 8.dp)
-                                .size(8.dp)
-                                .clip(androidx.compose.foundation.shape.CircleShape)
-                                .background(MaterialTheme.colorScheme.primary)
-                                .semantics { contentDescription = unreadLabel },
-                        )
-                    }
-                    Text(
-                        session.displayTitle,
-                        style = MaterialTheme.typography.titleMedium,
-                        color = if (unread) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f),
-                    )
-                    val time = rememberRelativeTime(session.time?.updated ?: session.time?.created)
-                    if (time.isNotEmpty()) {
-                        Text(
-                            time,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                    // Title area is the primary click target; the action buttons below
+                    // remain separate accessibility nodes so screen readers can activate
+                    // them independently.
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable(role = Role.Button) { onClick() },
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (unread) {
+                                val unreadLabel = stringResource(R.string.unread)
+                                Box(
+                                    modifier = Modifier
+                                        .padding(end = 8.dp)
+                                        .size(8.dp)
+                                        .clip(androidx.compose.foundation.shape.CircleShape)
+                                        .background(MaterialTheme.colorScheme.primary)
+                                        .semantics { contentDescription = unreadLabel },
+                                )
+                            }
+                            Text(
+                                session.displayTitle,
+                                style = MaterialTheme.typography.titleMedium,
+                                color = if (unread) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        val time = rememberRelativeTime(session.time?.updated ?: session.time?.created)
+                        if (time.isNotEmpty()) {
+                            Text(
+                                time,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 2.dp),
+                            )
+                        }
                     }
                     IconButton(onClick = onRename) {
                         Icon(Icons.Filled.Edit, contentDescription = stringResource(R.string.rename))
@@ -390,6 +412,7 @@ private fun SessionCard(
                         color = if (unread) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.clickable { onClick() },
                     )
                 }
             }

@@ -37,7 +37,9 @@ fun AgentPickerSheet(
     agents: List<Agent>,
     selected: String?,
     loading: Boolean,
+    error: Boolean,
     onSelect: (Agent?) -> Unit,
+    onRetry: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -53,6 +55,16 @@ fun AgentPickerSheet(
             ) {
                 CircularProgressIndicator()
             }
+        } else if (error && agents.isEmpty()) {
+            Text(
+                stringResource(R.string.load_failed),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onRetry() }
+                    .padding(horizontal = 24.dp, vertical = 16.dp),
+            )
         } else if (agents.isEmpty()) {
             Text(
                 stringResource(R.string.no_agents),

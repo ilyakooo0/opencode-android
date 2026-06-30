@@ -24,6 +24,9 @@ complexity:
   TooManyFunctions:
     active: true
     ignoreOverridden: true
+    thresholdInFiles: 16
+    thresholdInClasses: 16
+    thresholdInObjects: 16
 
 style:
   active: true

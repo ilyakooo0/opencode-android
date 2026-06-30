@@ -7,6 +7,7 @@ import soy.iko.opencode.data.network.OpencodeApiClient
 import soy.iko.opencode.data.repo.SessionRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 
@@ -18,14 +19,22 @@ import kotlinx.coroutines.cancel
 class OpencodeConnection(val profile: ServerProfile) {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val scopeJob: Job get() = scope.coroutineContext[Job]!!
 
     private val client = HttpClientFactory.create(profile)
     val api = OpencodeApiClient(client)
     val events = EventStreamClient(client, scope)
     val repository = SessionRepository(api, events)
 
-    fun close() {
+    /**
+     * Cancel the coroutine scope and wait for in-flight work (including the SSE reader)
+     * to wind down before closing the HTTP client. Calling client.close() while the SSE
+     * coroutine is still mid-request produces a spurious "stream error, will retry"
+     * warning during normal teardown.
+     */
+    suspend fun close() {
         scope.cancel()
+        scopeJob.join()
         client.close()
     }
 }

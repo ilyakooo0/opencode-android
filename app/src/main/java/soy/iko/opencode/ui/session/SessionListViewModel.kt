@@ -280,6 +280,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
     fun switchServer(profile: ServerProfile) {
         if (profile.id == activeProfileId) return
         if (_switchingId.value != null) return
+        val previousProfile = container.activeConnection.value?.profile
         _switchingId.value = profile.id
         _state.update { it.copy(loading = true, error = null) }
         viewModelScope.launch {
@@ -289,9 +290,17 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
             }
             _switchingId.value = null
             result.onSuccess { refresh() }
-                .onFailure {
+                .onFailure { error ->
+                    // connect() already closed the old connection; if we just disconnect()
+                    // the user is left with nothing. Try to restore the previous profile so
+                    // the session list survives. If there was none, show the error state.
                     container.disconnect()
-                    _state.value = SessionListState(loading = false, error = container.friendlyError(it))
+                    if (previousProfile != null) {
+                        runCatchingCancellable { container.connect(previousProfile) }
+                        _state.update { it.copy(loading = false, error = container.friendlyError(error)) }
+                    } else {
+                        _state.value = SessionListState(loading = false, error = container.friendlyError(error))
+                    }
                 }
         }
     }

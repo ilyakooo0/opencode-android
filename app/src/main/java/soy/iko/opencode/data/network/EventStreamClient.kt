@@ -39,6 +39,10 @@ import kotlin.random.Random
 class EventStreamClient(
     private val client: HttpClient,
     scope: CoroutineScope,
+    private val idleTimeoutMs: Long = NetworkConfig.sseIdleTimeoutMs,
+    private val initialBackoffMs: Long = NetworkConfig.sseInitialBackoffMs,
+    private val maxBackoffMs: Long = NetworkConfig.sseMaxBackoffMs,
+    private val bufferCapacity: Int = NetworkConfig.sseEventBufferCapacity,
 ) {
     enum class ConnectionState { Disconnected, Connecting, Connected, Failed }
 
@@ -49,7 +53,7 @@ class EventStreamClient(
         // Buffer so a slow subscriber (e.g. a reducer under lock) can't suspend send()
         // and stall the SSE read loop. Drop oldest on overflow — the next event carries
         // the freshest state, so a dropped interim delta is harmless.
-        .buffer(NetworkConfig.sseEventBufferCapacity, BufferOverflow.DROP_OLDEST)
+        .buffer(bufferCapacity, BufferOverflow.DROP_OLDEST)
         .shareIn(
             scope = scope,
             started = SharingStarted.WhileSubscribed(stopTimeoutMillis = 5_000),
@@ -84,7 +88,7 @@ class EventStreamClient(
             // within the idle timeout, treat the connection as half-open and drop it.
             val result: ChannelResult<ServerSentEvent>? = select {
                 events.onReceiveCatching { it }
-                onTimeout(NetworkConfig.sseIdleTimeoutMs) { null }
+                onTimeout(idleTimeoutMs) { null }
             }
             if (result == null) throw IOException("SSE idle timeout, reconnecting")
             val sse = result.getOrNull() ?: break
@@ -115,7 +119,7 @@ class EventStreamClient(
         // doesn't spuriously reset the backoff on startup (WhileSubscribed may have
         // stopped the upstream while triggerReconnect() queued a signal).
         while (reconnectSignal.tryReceive().isSuccess) { /* drain */ }
-        var backoffMs = NetworkConfig.sseInitialBackoffMs
+        var backoffMs = initialBackoffMs
         while (isActive) {
             _state.value = ConnectionState.Connecting
             try {
@@ -138,7 +142,7 @@ class EventStreamClient(
                         }
                     },
                 ) {
-                    backoffMs = NetworkConfig.sseInitialBackoffMs
+                    backoffMs = initialBackoffMs
                     // Clear any stale reconnect signal from a triggerReconnect() call
                     // made while the previous stream was healthy, so it doesn't suppress
                     // the next legitimate backoff.
@@ -173,9 +177,9 @@ class EventStreamClient(
             val jitter = ((backoffMs * NetworkConfig.retryJitterFactor) * (Random.nextDouble() * 2 - 1)).toLong()
             select {
                 reconnectSignal.onReceive { signaled = true }
-                onTimeout(backoffMs + jitter) { /* normal backoff elapsed */ }
+                onTimeout((backoffMs + jitter).coerceAtLeast(0)) { /* normal backoff elapsed */ }
             }
-            backoffMs = if (signaled) NetworkConfig.sseInitialBackoffMs else (backoffMs * 2).coerceAtMost(NetworkConfig.sseMaxBackoffMs)
+            backoffMs = if (signaled) initialBackoffMs else (backoffMs * 2).coerceAtMost(maxBackoffMs)
         }
     }
 }

@@ -14,6 +14,7 @@ import soy.iko.opencode.data.model.UnknownMessage
 import soy.iko.opencode.data.network.EventStreamClient
 import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.data.network.OpencodeApiClient
+import soy.iko.opencode.util.runCatchingCancellable
 import android.util.Log
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
@@ -76,13 +77,21 @@ class SessionRepository(
         // by the server during the disconnection gap are lost from the in-memory state;
         // re-fetching the current snapshot fills those holes. The seed merge logic
         // (see MessageStore.seed) handles interleaving with concurrently-arrived events.
+        //
+        // Both the REST fetch and the seed are performed under the lock so that events
+        // arriving via SSE between the fetch and the seed are not incorrectly pruned
+        // by the prune=true pass.
         launch {
             var wasConnected = false
             eventStream.state.collect { state ->
                 if (state == EventStreamClient.ConnectionState.Connected) {
                     if (wasConnected) {
-                        val fresh = runCatching { api.listMessages(sessionId) }.getOrDefault(emptyList())
-                        lock.withLock { store.seed(fresh, prune = true) }
+                        lock.withLock {
+                            val fresh = runCatchingCancellable { api.listMessages(sessionId) }
+                                .onFailure { Log.w("SessionRepository", "Re-seed message load failed for $sessionId; relying on SSE", it) }
+                                .getOrDefault(emptyList())
+                            store.seed(fresh, prune = true)
+                        }
                         publish()
                     }
                     wasConnected = true
@@ -93,7 +102,7 @@ class SessionRepository(
             }
         }
 
-        val initial = runCatching { api.listMessages(sessionId) }
+        val initial = runCatchingCancellable { api.listMessages(sessionId) }
             .onFailure { Log.w("SessionRepository", "Initial message load failed for $sessionId; relying on SSE", it) }
             .getOrDefault(emptyList())
         lock.withLock { store.seed(initial) }
