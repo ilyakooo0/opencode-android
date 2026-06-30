@@ -27,6 +27,8 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
@@ -120,10 +122,15 @@ class ChatViewModel(
 
     fun updateDraft(text: String) {
         _draft.value = text
-        viewModelScope.launch { container.draftStore.set(sessionId, text) }
     }
 
     init {
+        // Debounce draft persistence so we don't write to disk on every keystroke.
+        viewModelScope.launch {
+            _draft.drop(1).debounce(500).collect { text ->
+                container.draftStore.set(sessionId, text)
+            }
+        }
         // Reset per-connection state when the active server changes so stale spinners,
         // permission dialogs, errors, and agent selections from the old server don't
         // persist into the new one.
@@ -315,6 +322,15 @@ class ChatViewModel(
                     // Only restore if no new permission has arrived in the meantime.
                     if (_pendingPermission.value == null) _pendingPermission.value = permission
                 }
+        }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        // Flush any pending debounced draft so it survives navigation.
+        val pending = _draft.value
+        if (pending.isNotEmpty()) {
+            kotlinx.coroutines.runBlocking { container.draftStore.set(sessionId, pending) }
         }
     }
 }

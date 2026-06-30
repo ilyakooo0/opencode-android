@@ -46,6 +46,7 @@ import kotlinx.coroutines.launch
 import soy.iko.opencode.data.repo.ThemeMode
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
+import soy.iko.opencode.util.runCatchingCancellable
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -93,7 +94,7 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onManageServers:
                 ThemeRow(
                     mode = mode,
                     selected = themeMode == mode,
-                    onSelect = { scope.launch { runCatching { container.settingsStore.setThemeMode(mode) } } },
+                    onSelect = { scope.launch { runCatchingCancellable { container.settingsStore.setThemeMode(mode) } } },
                 )
             }
 
@@ -112,7 +113,7 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onManageServers:
                 }
                 Switch(
                     checked = dynamicColor,
-                    onCheckedChange = { scope.launch { runCatching { container.settingsStore.setDynamicColor(it) } } },
+                    onCheckedChange = { scope.launch { runCatchingCancellable { container.settingsStore.setDynamicColor(it) } } },
                 )
             }
 

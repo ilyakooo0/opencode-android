@@ -21,6 +21,9 @@ complexity:
   NestedBlockDepth:
     active: true
     threshold: 6
+  TooManyFunctions:
+    active: true
+    ignoreOverridden: true
 
 style:
   active: true

@@ -6,6 +6,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -51,9 +52,11 @@ class DraftStore(context: Context, scope: CoroutineScope) {
     fun get(sessionId: String): String = _drafts.value[sessionId].orEmpty()
 
     suspend fun set(sessionId: String, text: String) {
-        val current = _drafts.value.toMutableMap()
-        if (text.isBlank()) current.remove(sessionId) else current[sessionId] = text
-        _drafts.value = current
+        _drafts.update { current ->
+            val updated = current.toMutableMap()
+            if (text.isBlank()) updated.remove(sessionId) else updated[sessionId] = text
+            updated
+        }
         withContext(Dispatchers.IO) {
             prefs.edit().apply {
                 if (text.isBlank()) remove(sessionId) else putString(sessionId, text)
@@ -63,9 +66,11 @@ class DraftStore(context: Context, scope: CoroutineScope) {
 
     /** Remove the draft for a session (call on session deletion to avoid orphaned entries). */
     suspend fun remove(sessionId: String) {
-        val current = _drafts.value.toMutableMap()
-        current.remove(sessionId)
-        _drafts.value = current
+        _drafts.update { current ->
+            val updated = current.toMutableMap()
+            updated.remove(sessionId)
+            updated
+        }
         withContext(Dispatchers.IO) {
             prefs.edit().remove(sessionId).apply()
         }

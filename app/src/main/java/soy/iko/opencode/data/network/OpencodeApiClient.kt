@@ -46,9 +46,9 @@ class OpencodeApiClient(private val client: HttpClient) {
     // between sessions on the same server.
     private data class CachedEntry<T>(val value: T, val fetchedAt: Long)
     private val cacheMutex = Mutex()
-    private var cachedProviders: CachedEntry<ProvidersResponse>? = null
-    private var cachedAgents: CachedEntry<List<Agent>>? = null
-    private var cachedCommands: CachedEntry<List<Command>>? = null
+    @Volatile private var cachedProviders: CachedEntry<ProvidersResponse>? = null
+    @Volatile private var cachedAgents: CachedEntry<List<Agent>>? = null
+    @Volatile private var cachedCommands: CachedEntry<List<Command>>? = null
 
     /** Lightweight connectivity check. Throws on non-2xx / network failure. */
     suspend fun ping() {

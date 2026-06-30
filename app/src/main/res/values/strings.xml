@@ -92,6 +92,7 @@
     <string name="error_not_reachable">Could not reach %1$s</string>
     <string name="error_timeout">The request timed out. Check the connection and try again.</string>
     <string name="error_server">The server reported an error. Try again later.</string>
+    <string name="error_load_timeout">Loading took too long. Try again.</string>
 
     <!-- Part renderer -->
     <string name="thinking">Thinking…</string>

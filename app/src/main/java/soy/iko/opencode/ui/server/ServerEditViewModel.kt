@@ -10,6 +10,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import soy.iko.opencode.R
+import soy.iko.opencode.util.runCatchingCancellable
 import java.util.UUID
 
 data class ServerEditState(
@@ -51,6 +53,14 @@ class ServerEditViewModel(
                     )
                     return@launch
                 }
+                // Profile existed but timed out loading — show an error instead of
+                // silently presenting an empty form that looks like "new server".
+                _state.value = ServerEditState(
+                    id = profileId,
+                    loaded = true,
+                    error = container.string(R.string.error_load_timeout),
+                )
+                return@launch
             }
             _state.value = _state.value.copy(loaded = true)
         }
@@ -65,7 +75,7 @@ class ServerEditViewModel(
         if (!s.canSave || s.saving) return
         _state.value = s.copy(saving = true)
         viewModelScope.launch {
-            val result = runCatching {
+            val result = runCatchingCancellable {
                 val existingLastUsed = if (s.id != null) {
                     withTimeoutOrNull(5_000) {
                         container.profileStore.profiles.first()
@@ -84,7 +94,7 @@ class ServerEditViewModel(
                 )
             }
             result.onSuccess { onDone() }
-                .onFailure { _state.value = _state.value.copy(error = it.message ?: "Failed to save", saving = false) }
+                .onFailure { _state.value = _state.value.copy(error = container.friendlyError(it), saving = false) }
         }
     }
 }

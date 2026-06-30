@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import soy.iko.opencode.util.runCatchingCancellable
 
 data class FileViewState(
     val loading: Boolean = true,
@@ -39,7 +40,7 @@ class FileViewModel(
                     return@collectLatest
                 }
                 _state.value = FileViewState(loading = true)
-                runCatching { conn.api.readFile(path) }
+                runCatchingCancellable { conn.api.readFile(path) }
                     .onSuccess { _state.value = FileViewState(loading = false, content = it) }
                     .onFailure { _state.value = FileViewState(loading = false, error = container.friendlyError(it)) }
             }
