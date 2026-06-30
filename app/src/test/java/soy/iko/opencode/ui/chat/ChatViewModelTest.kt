@@ -4,6 +4,7 @@ package soy.iko.opencode.ui.chat
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.resetMain
@@ -18,6 +19,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import soy.iko.opencode.data.model.Command
+import soy.iko.opencode.data.model.MessageWithParts
 import soy.iko.opencode.data.model.ModelInfo
 import soy.iko.opencode.data.model.Permission
 import soy.iko.opencode.data.model.PermissionResponse
@@ -30,6 +32,7 @@ import soy.iko.opencode.data.model.SessionDeleted
 import soy.iko.opencode.data.model.SessionError
 import soy.iko.opencode.data.model.SessionIdle
 import soy.iko.opencode.data.model.SessionUpdated
+import soy.iko.opencode.data.model.UserMessage
 import soy.iko.opencode.data.network.EventStreamClient
 import soy.iko.opencode.ui.testing.FakeAppContainer
 import soy.iko.opencode.ui.testing.FakeEventStreamClient
@@ -477,5 +480,56 @@ class ChatViewModelTest {
         assertNotNull(vm.error.value)
         vm.clearError()
         assertNull(vm.error.value)
+    }
+
+    @Test
+    fun messagesFlowRetry_clearsStaleErrorOnSuccess() = testScope.runTest {
+        val api = FakeOpencodeApiClient()
+        val events = FakeEventStreamClient()
+        // Use a controllable flow so we can simulate a re-emission after an error.
+        val messagesFlow = kotlinx.coroutines.flow.MutableStateFlow(
+            listOf(MessageWithParts(info = UserMessage(id = "m1", sessionID = "session1")))
+        )
+        val repo = FakeSessionRepository(api, events)
+        repo.observeMessagesOverride = messagesFlow
+        val container = makeContainer(api = api, events = events, repo = repo)
+        val vm = makeVm(container)
+        // Subscribe to messages so the flow's onEach is active and can clear errors.
+        val collector = launch { vm.messages.collect { /* keep subscribed */ } }
+        testScope.testScheduler.advanceUntilIdle()
+        // Set an error via SSE
+        events.fakeEvents.tryEmit(SessionError(SessionError.Props(sessionID = "session1")))
+        testScope.testScheduler.advanceUntilIdle()
+        assertNotNull(vm.error.value)
+        // Trigger a new messages emission — onEach should clear the stale error
+        messagesFlow.value = messagesFlow.value + MessageWithParts(
+            info = UserMessage(id = "m2", sessionID = "session1"),
+        )
+        testScope.testScheduler.advanceUntilIdle()
+        assertNull(vm.error.value)
+        collector.cancel()
+    }
+
+    // --- Connection switch clears session title ---
+
+    @Test
+    fun connectionChange_clearsSessionTitle() = testScope.runTest {
+        val events = FakeEventStreamClient()
+        val container = makeContainer(events = events)
+        val vm = makeVm(container)
+        // Set the title via SSE event
+        events.fakeEvents.tryEmit(
+            SessionUpdated(SessionUpdated.Props(info = Session(id = "session1", title = "Old Title"))),
+        )
+        testScope.testScheduler.advanceUntilIdle()
+        assertEquals("Old Title", vm.sessionTitle.value)
+        // Switch to a new connection
+        val api2 = FakeOpencodeApiClient()
+        val events2 = FakeEventStreamClient()
+        val repo2 = FakeSessionRepository(api2, events2)
+        val conn2 = FakeOpencodeConnection(api2, events2, repo2, ServerProfile(id = "s2", label = "Server 2", baseUrl = "http://other"))
+        container.setActiveConnection(conn2)
+        testScope.testScheduler.advanceUntilIdle()
+        assertNull(vm.sessionTitle.value)
     }
 }

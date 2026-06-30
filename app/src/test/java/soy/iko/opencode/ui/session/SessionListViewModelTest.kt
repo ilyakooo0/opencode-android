@@ -280,4 +280,39 @@ class SessionListViewModelTest {
             state,
         )
     }
+
+    // --- Server switch cancels stale preview jobs ---
+
+    @Test
+    fun connectionChange_cancelsStalePreviewJobs() = testScope.runTest {
+        val api = FakeOpencodeApiClient()
+        val events = FakeEventStreamClient()
+        val repo = FakeSessionRepository(api, events)
+        repo.sessions = listOf(Session(id = "s1", title = "Chat 1"))
+        api.messages = listOf(
+            MessageWithParts(
+                info = UserMessage(id = "m1", sessionID = "s1"),
+                parts = listOf(TextPart(id = "p1", text = "hello")),
+            ),
+        )
+        val container = makeContainer(api = api, events = events, repo = repo)
+        val vm = makeVm(container)
+        // Trigger a preview load via SSE event
+        events.fakeEvents.tryEmit(
+            SessionUpdated(SessionUpdated.Props(info = Session(id = "s1", title = "Chat 1"))),
+        )
+        testScheduler.advanceUntilIdle()
+        // Preview should be loaded
+        assertEquals("hello", vm.state.value.previews["s1"])
+        // Switch to a new connection — previews should be cleared by refresh()
+        val api2 = FakeOpencodeApiClient()
+        val events2 = FakeEventStreamClient()
+        val repo2 = FakeSessionRepository(api2, events2)
+        repo2.sessions = listOf(Session(id = "x1", title = "New Server Chat"))
+        val conn2 = FakeOpencodeConnection(api2, events2, repo2, ServerProfile(id = "s2", label = "Server 2", baseUrl = "http://other"))
+        container.setActiveConnection(conn2)
+        testScheduler.advanceUntilIdle()
+        // The old session's preview should be gone (refresh re-populates from the new server)
+        assertFalse(vm.state.value.previews.containsKey("s1"))
+    }
 }

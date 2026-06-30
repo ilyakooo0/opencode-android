@@ -226,6 +226,9 @@ class FakeSessionRepository(
     var abortCalls: List<String> = emptyList()
         private set
 
+    /** When non-null, [observeMessages] returns this flow instead of [messages]. */
+    var observeMessagesOverride: kotlinx.coroutines.flow.Flow<List<MessageWithParts>>? = null
+
     override suspend fun listSessions(): List<Session> {
         listSessionsThrows?.let { throw it }
         return sessions
@@ -257,7 +260,8 @@ class FakeSessionRepository(
         parts = emptyList(),
     )
 
-    override fun observeMessages(sessionId: String): Flow<List<MessageWithParts>> = flowOf(messages)
+    override fun observeMessages(sessionId: String): Flow<List<MessageWithParts>> =
+        observeMessagesOverride ?: flowOf(messages)
 }
 
 // ---------------------------------------------------------------------------

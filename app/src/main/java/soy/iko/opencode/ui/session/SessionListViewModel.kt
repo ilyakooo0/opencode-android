@@ -119,6 +119,15 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
             container.activeConnection.collectLatest { conn ->
                 if (conn == null) return@collectLatest
                 _serverLabel.value = conn.profile.displayLabel
+                // Cancel any in-flight preview loads from the previous connection so
+                // they don't complete against the old server and write stale previews
+                // for sessions that may not exist on the new one. collectLatest cancels
+                // the SSE collector, but the jobs in livePreviewJobs are independent
+                // launches on viewModelScope that survive the collector cancellation.
+                synchronized(previewLock) {
+                    livePreviewJobs.values.forEach { it.cancel() }
+                    livePreviewJobs.clear()
+                }
                 // Reload the session list when a connection becomes available so the
                 // initial load (which may have run before auto-reconnect finished and
                 // found no connection) doesn't leave a stale "not connected" error.

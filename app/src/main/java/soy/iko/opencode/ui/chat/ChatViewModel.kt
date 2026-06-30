@@ -76,7 +76,13 @@ class ChatViewModel(
             .flatMapLatest { conn ->
                 conn?.repository?.observeMessages(sessionId) ?: flowOf(emptyList())
             }
-            .onEach { _loading.value = false }
+            .onEach {
+                _loading.value = false
+                // Clear a stale error from a previous failed attempt now that
+                // messages are flowing again. Without this, the error snackbar
+                // persists after a transient failure that was retried successfully.
+                if (_error.value != null) _error.value = null
+            }
             .retryWhen { cause, _ ->
                 _loading.value = false
                 _error.value = container.friendlyError(cause)
@@ -259,6 +265,7 @@ class ChatViewModel(
                 _error.value = null
                 _failedDraft.value = null
                 _selectedAgent.value = null
+                _sessionTitle.value = null
                 try {
                     conn.events.events.collect { event ->
                         if (SessionRepository.isIdle(event, sessionId)) _running.value = false
