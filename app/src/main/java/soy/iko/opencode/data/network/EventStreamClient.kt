@@ -164,6 +164,7 @@ class EventStreamClient(
                     }
                 }
             } catch (c: CancellationException) {
+                _state.value = ConnectionState.Disconnected
                 throw c
             } catch (e: Exception) {
                 // If the scope was cancelled (e.g. connection close), the closed-client

@@ -59,7 +59,13 @@ class DraftStore(context: Context, scope: CoroutineScope) {
             val snapshot = runCatching {
                 prefs.all.mapValues { it.value as? String ?: "" }
             }.getOrDefault(emptyMap())
-            _drafts.value = snapshot
+            // Merge instead of overwriting: any in-memory writes that arrived before
+            // the background load completed (e.g. a share-intent draft injected via
+            // setImmediate) take priority over the persisted snapshot so they aren't
+            // clobbered.
+            _drafts.update { current ->
+                snapshot.toMutableMap().apply { putAll(current) }
+            }
             _ready.value = true
         }
     }
@@ -151,5 +157,8 @@ class DraftStore(context: Context, scope: CoroutineScope) {
     /** Shut down the background flush executor. Call from AppContainer.shutdown(). */
     fun shutdown() {
         flushExecutor.shutdown()
+        // Await pending flushDraft writes so drafts aren't lost if the process exits
+        // immediately after shutdown (e.g. ANR-triggered process kill).
+        runCatching { flushExecutor.awaitTermination(2, java.util.concurrent.TimeUnit.SECONDS) }
     }
 }

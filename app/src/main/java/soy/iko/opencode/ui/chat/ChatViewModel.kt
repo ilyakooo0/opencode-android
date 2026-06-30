@@ -27,7 +27,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.debounce
@@ -35,11 +34,14 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.retryWhen
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalCoroutinesApi::class)
+@OptIn(ExperimentalCoroutinesApi::class, kotlinx.coroutines.FlowPreview::class)
 class ChatViewModel(
     private val container: AppContainer,
     private val sessionId: String,
@@ -52,15 +54,35 @@ class ChatViewModel(
     private val _loading = MutableStateFlow(true)
     val loading: StateFlow<Boolean> = _loading.asStateFlow()
 
+    /** Separate from [loading]: tracks the manual reconnect() flow so its spinner
+     *  doesn't conflict with the messages flow's loading state. */
+    private val _reconnecting = MutableStateFlow(false)
+    val reconnecting: StateFlow<Boolean> = _reconnecting.asStateFlow()
+
+    /** When true, the debounced draft collector skips persisting an empty draft so
+     *  [send]'s deliberate non-persistence of the cleared draft isn't undone by the
+     *  debounce timer firing before the send completes. */
+    private val suppressDraftPersist = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** Per-catalog reload triggers: incrementing one causes [observeCatalog]'s
+     *  collectLatest to cancel any in-flight fetch and start a fresh one, so a
+     *  manual reload supersedes a stale observeCatalog fetch. */
+    private val _modelsReload = MutableStateFlow(0)
+    private val _agentsReload = MutableStateFlow(0)
+    private val _commandsReload = MutableStateFlow(0)
+
     val messages: StateFlow<List<MessageWithParts>> =
         container.activeConnection
             .flatMapLatest { conn ->
                 conn?.repository?.observeMessages(sessionId) ?: flowOf(emptyList())
             }
             .onEach { _loading.value = false }
-            .catch {
+            .retryWhen { cause, _ ->
                 _loading.value = false
-                _error.value = container.friendlyError(it)
+                _error.value = container.friendlyError(cause)
+                // Delay before retrying to avoid a tight loop on persistent errors.
+                delay(NetworkConfig.retryInitialDelayMs)
+                true
             }
             .stateIn(
                 scope = viewModelScope,
@@ -155,73 +177,36 @@ class ChatViewModel(
 
     fun reloadModels() {
         val conn = connection ?: return
-        reloadCatalog(
-            conn = conn,
-            tag = "model catalog",
-            loading = _modelsLoading,
-            error = _modelsError,
-            fetch = { it.providers() },
-            onSuccess = { resp ->
-                val options = resp.toOptions()
-                _models.value = options
-                _selectedModel.value = resp.defaultOption(options)
-            },
-        )
+        viewModelScope.launch {
+            conn.api.invalidateCache()
+            _modelsReload.value++
+        }
     }
 
     fun reloadAgents() {
         val conn = connection ?: return
-        reloadCatalog(
-            conn = conn,
-            tag = "agent catalog",
-            loading = _agentsLoading,
-            error = _agentsError,
-            fetch = { it.agents() },
-            onSuccess = { _agents.value = it },
-        )
+        viewModelScope.launch {
+            conn.api.invalidateCache()
+            _agentsReload.value++
+        }
     }
 
     fun reloadCommands() {
         val conn = connection ?: return
-        reloadCatalog(
-            conn = conn,
-            tag = "command catalog",
-            loading = _commandsLoading,
-            error = _commandsError,
-            fetch = { it.commands() },
-            onSuccess = { _commands.value = it },
-        )
-    }
-
-    /**
-     * Shared helper for reloadXxx(): invalidates the API cache, sets loading/error
-     * state, and applies [onSuccess] to the fetched result. Reduces triplicated
-     * boilerplate that was easy to get out of sync.
-     */
-    private fun <T> reloadCatalog(
-        conn: soy.iko.opencode.di.OpencodeConnection,
-        tag: String,
-        loading: MutableStateFlow<Boolean>,
-        error: MutableStateFlow<Boolean>,
-        fetch: suspend (soy.iko.opencode.data.network.OpencodeApiClient) -> T,
-        onSuccess: (T) -> Unit,
-    ) {
         viewModelScope.launch {
             conn.api.invalidateCache()
-            loading.value = true
-            error.value = false
-            runCatchingCancellable { fetch(conn.api) }
-                .onFailure { Log.w("ChatViewModel", "Failed to reload $tag", it); error.value = true }
-                .getOrNull()?.let(onSuccess)
-            loading.value = false
+            _commandsReload.value++
         }
     }
 
     /**
      * Shared helper for init-block catalog observers: re-fetches whenever the active
-     * connection changes, invoking [onNull] to clear state on null so stale data from
-     * the old server doesn't persist. Failure is non-fatal — the error flag is surfaced
-     * to the UI.
+     * connection or the catalog's reload trigger changes, invoking [onNull] to clear
+     * state on null so stale data from the old server doesn't persist. The
+     * [reloadTrigger] is merged with [activeConnection] so a manual reload (via
+     * reloadModels/reloadAgents/reloadCommands) cancels any in-flight observe fetch
+     * via collectLatest, preventing a stale observe result from overwriting a fresh
+     * reload result. Failure is non-fatal — the error flag is surfaced to the UI.
      */
     private fun <T> observeCatalog(
         tag: String,
@@ -230,9 +215,11 @@ class ChatViewModel(
         fetch: suspend (soy.iko.opencode.data.network.OpencodeApiClient) -> T,
         onSuccess: (T) -> Unit,
         onNull: () -> Unit,
+        reloadTrigger: StateFlow<Int>,
     ) {
         viewModelScope.launch {
-            container.activeConnection.collectLatest { conn ->
+            merge(container.activeConnection, reloadTrigger).collectLatest { _ ->
+                val conn = container.activeConnection.value
                 if (conn == null) { onNull(); loading.value = false; error.value = false; return@collectLatest }
                 loading.value = true
                 error.value = false
@@ -250,8 +237,13 @@ class ChatViewModel(
 
     init {
         // Debounce draft persistence so we don't write to disk on every keystroke.
+        // Skip persisting empty drafts that were set by send() (suppressed via
+        // suppressDraftPersist) — send() clears the in-memory draft immediately for
+        // UI feedback but deliberately doesn't persist the clear until the send
+        // succeeds, so a failed send can restore the draft.
         viewModelScope.launch {
             _draft.drop(1).debounce(NetworkConfig.draftDebounceMs).collect { text ->
+                if (text.isBlank() && suppressDraftPersist.get()) return@collect
                 runCatchingCancellable { container.draftStore.set(sessionId, text) }
                     .onFailure { Log.w("ChatViewModel", "Failed to persist draft", it) }
             }
@@ -308,6 +300,7 @@ class ChatViewModel(
                 _selectedModel.value = resp.defaultOption(options)
             },
             onNull = { _models.value = emptyList(); _selectedModel.value = null },
+            reloadTrigger = _modelsReload,
         )
         // Load the agent catalog (non-fatal).
         observeCatalog(
@@ -317,6 +310,7 @@ class ChatViewModel(
             fetch = { it.agents() },
             onSuccess = { _agents.value = it },
             onNull = { _agents.value = emptyList() },
+            reloadTrigger = _agentsReload,
         )
         // Load the command catalog (non-fatal).
         observeCatalog(
@@ -326,6 +320,7 @@ class ChatViewModel(
             fetch = { it.commands() },
             onSuccess = { _commands.value = it },
             onNull = { _commands.value = emptyList() },
+            reloadTrigger = _commandsReload,
         )
         // Resolve the human-readable session title for the app bar (non-fatal).
         viewModelScope.launch {
@@ -368,6 +363,9 @@ class ChatViewModel(
         // Clear the in-memory draft for the UI immediately, but don't persist the clear
         // yet — if the send fails and the process dies before we restore, the draft
         // would be lost forever. The persisted draft is cleared only on success.
+        // suppressDraftPersist prevents the debounced collector from persisting the
+        // empty draft before the send resolves.
+        suppressDraftPersist.set(true)
         _draft.value = ""
         viewModelScope.launch {
             runCatchingCancellable {
@@ -378,12 +376,14 @@ class ChatViewModel(
                     agent = _selectedAgent.value,
                 )
             }.onFailure {
+                suppressDraftPersist.set(false)
                 _failedDraft.value = trimmed
                 // Only restore the draft if the user hasn't typed anything new since.
                 if (_draft.value.isBlank()) updateDraft(trimmed)
                 _error.value = container.friendlyError(it)
                 _running.value = false
             }.onSuccess {
+                suppressDraftPersist.set(false)
                 // Send succeeded — now it's safe to persist the empty draft.
                 container.draftStore.set(sessionId, "")
                 // Don't reset _running here: the agent continues streaming via SSE.
@@ -397,8 +397,11 @@ class ChatViewModel(
     /** Re-send the last draft whose send failed, if any. */
     fun retryFailed() {
         val draft = _failedDraft.value ?: return
-        _failedDraft.value = null
-        send(draft)
+        // Don't clear _failedDraft until send() accepts the text — if _running is
+        // already true, send() returns false and the draft would be lost forever.
+        if (send(draft)) {
+            _failedDraft.value = null
+        }
     }
 
     /** Invoke a slash-command by name via the server's /command endpoint. */
@@ -429,19 +432,19 @@ class ChatViewModel(
     fun reconnect() {
         if (container.activeConnection.value != null) return
         viewModelScope.launch {
-            _loading.value = true
+            _reconnecting.value = true
             val recent = runCatchingCancellable { container.profileStore.profiles.first() }
                 .getOrDefault(emptyList())
-                .firstOrNull() ?: run { _loading.value = false; return@launch }
+                .firstOrNull() ?: run { _reconnecting.value = false; return@launch }
             runCatchingCancellable {
                 val conn = container.connect(recent)
                 conn.api.ping()
             }.onSuccess {
-                _loading.value = false
+                _reconnecting.value = false
             }.onFailure {
                 container.disconnect()
                 _error.value = container.friendlyError(it)
-                _loading.value = false
+                _reconnecting.value = false
             }
         }
     }

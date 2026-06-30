@@ -74,31 +74,37 @@ class SessionRepository(
             }
         }
 
-        // Re-seed from REST when the SSE stream reconnects after a drop. Events emitted
-        // by the server during the disconnection gap are lost from the in-memory state;
-        // re-fetching the current snapshot fills those holes. The seed merge logic
-        // (see MessageStore.seed) handles interleaving with concurrently-arrived events.
-        //
-        // The REST fetch is performed *outside* the lock so events arriving via SSE
-        // during the fetch are not blocked — holding the lock during a network call
-        // would stall the event reducer and overflow the SharedFlow buffer (DROP_OLDEST),
-        // silently losing events. The seed itself is under the lock; an interim seed
-        // token is checked so a concurrent re-seed doesn't clobber a newer fetch.
+        // Re-seed from REST when the SSE stream reconnects after a drop. The REST fetch
+        // is performed *outside* the lock so events arriving via SSE during the fetch are
+        // not blocked. The seed itself is under the lock; a seed generation counter ensures
+        // a stale fetch (from an earlier reconnect) doesn't clobber a newer one.
         launch {
-            var wasConnected = false
+            // Re-seed from REST when the SSE stream reconnects after a drop. The
+            // hasConnectedBefore flag is NOT reset on disconnect — it stays true after
+            // the first successful connection so a subsequent reconnect triggers the
+            // re-seed. Resetting it on disconnect would make the condition always false
+            // after the first cycle, turning the re-seed into dead code.
+            //
+            // A seed generation counter guards against a stale re-seed clobbering a
+            // newer one: if two reconnects fire in quick succession, the older fetch
+            // (which returns later) is discarded because its generation no longer matches.
+            var hasConnectedBefore = false
+            var seedGeneration = 0
             eventStream.state.collect { state ->
                 if (state == EventStreamClient.ConnectionState.Connected) {
-                    if (wasConnected) {
+                    if (hasConnectedBefore) {
+                        val generation = ++seedGeneration
                         val fresh = runCatchingCancellable { api.listMessages(sessionId) }
                             .onFailure { Log.w("SessionRepository", "Re-seed message load failed for $sessionId; relying on SSE: ${safeExceptionSummary(it)}") }
                             .getOrDefault(emptyList())
-                        lock.withLock { store.seed(fresh, prune = true) }
+                        lock.withLock {
+                            if (generation == seedGeneration) {
+                                store.seed(fresh, prune = true)
+                            }
+                        }
                         publish()
                     }
-                    wasConnected = true
-                } else if (state == EventStreamClient.ConnectionState.Disconnected ||
-                           state == EventStreamClient.ConnectionState.Failed) {
-                    wasConnected = false
+                    hasConnectedBefore = true
                 }
             }
         }
@@ -132,6 +138,9 @@ class SessionRepository(
 internal class MessageStore {
     // messageId -> (info + parts), insertion-ordered.
     private val messages = LinkedHashMap<String, MessageWithParts>()
+
+    /** Monotonic counter for synthetic UnknownMessage keys, avoiding nanoTime collisions. */
+    private val unknownCounter = java.util.concurrent.atomic.AtomicLong(0)
 
     /** Maximum number of messages to keep in memory; oldest are evicted when exceeded. */
     internal val maxMessages = NetworkConfig.maxInMemoryMessages
@@ -185,7 +194,7 @@ internal class MessageStore {
                     // messages in the map. Generate a unique synthetic key so each
                     // unknown message gets its own entry instead of overwriting others.
                     val key = if (info.id.isEmpty() && info is UnknownMessage) {
-                        "unknown-${System.nanoTime()}"
+                        "unknown-${unknownCounter.incrementAndGet()}"
                     } else {
                         info.id
                     }
@@ -207,19 +216,29 @@ internal class MessageStore {
                 }
             }
 
-            is MessagePartRemoved -> {
-                val messageId = event.properties.messageID
-                val partId = event.properties.partID
-                if (messageId == null || partId == null) false else removePart(messageId, partId)
-            }
+            is MessagePartRemoved -> handlePartRemoved(sessionId, event)
 
-            is MessageRemoved -> {
-                val id = event.properties.messageID
-                if (id == null) false else messages.remove(id) != null
-            }
+            is MessageRemoved -> handleMessageRemoved(sessionId, event)
 
             else -> false
         }
+    }
+
+    /** Returns false if [eventSession] is non-null and doesn't match [sessionId]. */
+    private fun matchesSession(eventSession: String?, sessionId: String): Boolean =
+        eventSession == null || eventSession == sessionId
+
+    private fun handlePartRemoved(sessionId: String, event: MessagePartRemoved): Boolean {
+        val messageId = event.properties.messageID ?: return false
+        val partId = event.properties.partID ?: return false
+        if (!matchesSession(event.properties.sessionID, sessionId)) return false
+        return removePart(messageId, partId)
+    }
+
+    private fun handleMessageRemoved(sessionId: String, event: MessageRemoved): Boolean {
+        val id = event.properties.messageID ?: return false
+        if (!matchesSession(event.properties.sessionID, sessionId)) return false
+        return messages.remove(id) != null
     }
 
     private fun upsertPart(messageId: String, part: Part): Boolean {

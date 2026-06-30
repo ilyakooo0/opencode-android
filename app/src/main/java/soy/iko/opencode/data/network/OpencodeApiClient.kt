@@ -45,7 +45,12 @@ class OpencodeApiClient(private val client: HttpClient) {
     // A short-lived in-memory cache avoids redundant network calls when navigating
     // between sessions on the same server.
     private data class CachedEntry<T>(val value: T, val fetchedAt: Long)
-    private val cacheMutex = Mutex()
+    // Per-catalog mutexes so a slow fetch of one catalog doesn't block the others.
+    // The lock is held during the fetch to prevent a thundering-herd stampede when
+    // multiple coroutines miss the cache simultaneously.
+    private val providersMutex = Mutex()
+    private val agentsMutex = Mutex()
+    private val commandsMutex = Mutex()
     private var cachedProviders: CachedEntry<ProvidersResponse>? = null
     private var cachedAgents: CachedEntry<List<Agent>>? = null
     private var cachedCommands: CachedEntry<List<Command>>? = null
@@ -117,57 +122,58 @@ class OpencodeApiClient(private val client: HttpClient) {
         command: String,
         arguments: String = "",
         agent: String? = null,
-    ): MessageWithParts = withRetry {
-        client.post("session/${encode(sessionId)}/command") {
-            contentType(ContentType.Application.Json)
-            setBody(CommandRequest(command = command, arguments = arguments, agent = agent))
-        }.body()
+    ): MessageWithParts {
+        // Generate the idempotency key before entering withRetry so all retry
+        // attempts share the same key, preventing duplicate command execution if
+        // the server processed the request but the response was lost.
+        val idempotencyKey = java.util.UUID.randomUUID().toString()
+        return withRetry {
+            client.post("session/${encode(sessionId)}/command") {
+                contentType(ContentType.Application.Json)
+                header("Idempotency-Key", idempotencyKey)
+                setBody(CommandRequest(command = command, arguments = arguments, agent = agent))
+            }.body()
+        }
     }
 
-    suspend fun providers(): ProvidersResponse {
+    suspend fun providers(): ProvidersResponse = providersMutex.withLock {
         val now = System.currentTimeMillis()
-        cacheMutex.withLock {
-            val cached = cachedProviders
-            if (cached != null && now - cached.fetchedAt < NetworkConfig.catalogCacheTtlMs) {
-                return cached.value
-            }
+        val cached = cachedProviders
+        if (cached != null && now - cached.fetchedAt < NetworkConfig.catalogCacheTtlMs) {
+            return@withLock cached.value
         }
         val value = withRetry { client.get("config/providers").body<ProvidersResponse>() }
-        cacheMutex.withLock { cachedProviders = CachedEntry(value, System.currentTimeMillis()) }
-        return value
+        cachedProviders = CachedEntry(value, System.currentTimeMillis())
+        value
     }
 
-    suspend fun agents(): List<Agent> {
+    suspend fun agents(): List<Agent> = agentsMutex.withLock {
         val now = System.currentTimeMillis()
-        cacheMutex.withLock {
-            val cached = cachedAgents
-            if (cached != null && now - cached.fetchedAt < NetworkConfig.catalogCacheTtlMs) {
-                return cached.value
-            }
+        val cached = cachedAgents
+        if (cached != null && now - cached.fetchedAt < NetworkConfig.catalogCacheTtlMs) {
+            return@withLock cached.value
         }
         val value = withRetry { client.get("agent").body<List<Agent>>() }
-        cacheMutex.withLock { cachedAgents = CachedEntry(value, System.currentTimeMillis()) }
-        return value
+        cachedAgents = CachedEntry(value, System.currentTimeMillis())
+        value
     }
 
-    suspend fun commands(): List<Command> {
+    suspend fun commands(): List<Command> = commandsMutex.withLock {
         val now = System.currentTimeMillis()
-        cacheMutex.withLock {
-            val cached = cachedCommands
-            if (cached != null && now - cached.fetchedAt < NetworkConfig.catalogCacheTtlMs) {
-                return cached.value
-            }
+        val cached = cachedCommands
+        if (cached != null && now - cached.fetchedAt < NetworkConfig.catalogCacheTtlMs) {
+            return@withLock cached.value
         }
         val value = withRetry { client.get("command").body<List<Command>>() }
-        cacheMutex.withLock { cachedCommands = CachedEntry(value, System.currentTimeMillis()) }
-        return value
+        cachedCommands = CachedEntry(value, System.currentTimeMillis())
+        value
     }
 
     /** Invalidate the catalog cache (e.g. on server switch). */
-    suspend fun invalidateCache() = cacheMutex.withLock {
-        cachedProviders = null
-        cachedAgents = null
-        cachedCommands = null
+    suspend fun invalidateCache() {
+        providersMutex.withLock { cachedProviders = null }
+        agentsMutex.withLock { cachedAgents = null }
+        commandsMutex.withLock { cachedCommands = null }
     }
 
     /** Respond to a permission request so a paused tool run can proceed. */
