@@ -307,16 +307,28 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
             _switchingId.value = null
             result.onSuccess { refresh() }
                 .onFailure { error ->
-                    // connect() already closed the old connection; if we just disconnect()
-                    // the user is left with nothing. Try to restore the previous profile so
-                    // the session list survives. If there was none, show the error state.
+                    // connect() already closed the old connection; try to restore the
+                    // previous profile so the session list survives. If there was none,
+                    // show the error state.
                     container.disconnect()
                     if (previousProfile != null) {
-                        runCatchingCancellable { container.connect(previousProfile) }
+                        val restored = runCatchingCancellable { container.connect(previousProfile) }
                         // connect() clears unread state; restore what we saved so the
                         // user doesn't lose unread badges on a failed server switch.
                         savedUnread.forEach { container.restoreUnread(it) }
-                        _state.update { it.copy(loading = false, error = container.friendlyError(error)) }
+                        if (restored.isSuccess) {
+                            _state.update { it.copy(loading = false, error = container.friendlyError(error)) }
+                        } else {
+                            // Restore also failed — the user is now disconnected from
+                            // both servers. Surface both failures so the user understands
+                            // why they're looking at an empty list.
+                            val restoreMsg = container.friendlyError(restored.exceptionOrNull() ?: error)
+                            _state.value = SessionListState(
+                                loading = false,
+                                error = container.string(R.string.error_switch_and_restore_failed,
+                                    container.friendlyError(error), restoreMsg),
+                            )
+                        }
                     } else {
                         _state.value = SessionListState(loading = false, error = container.friendlyError(error))
                     }

@@ -431,19 +431,24 @@ class ChatViewModel(
     /** Reconnect to the most recently used server profile (used when the connection is gone). */
     fun reconnect() {
         if (container.activeConnection.value != null) return
+        // Guard against concurrent reconnect calls: the user can tap the button
+        // multiple times while _reconnecting is true, which would launch parallel
+        // connect() coroutines that race to set the active connection, leaking the
+        // intermediate connections.
+        if (!_reconnecting.compareAndSet(false, true)) return
         viewModelScope.launch {
-            _reconnecting.value = true
-            val recent = runCatchingCancellable { container.profileStore.profiles.first() }
-                .getOrDefault(emptyList())
-                .firstOrNull() ?: run { _reconnecting.value = false; return@launch }
-            runCatchingCancellable {
-                val conn = container.connect(recent)
-                conn.api.ping()
-            }.onSuccess {
-                _reconnecting.value = false
-            }.onFailure {
-                container.disconnect()
-                _error.value = container.friendlyError(it)
+            try {
+                val recent = runCatchingCancellable { container.profileStore.profiles.first() }
+                    .getOrDefault(emptyList())
+                    .firstOrNull() ?: return@launch
+                runCatchingCancellable {
+                    val conn = container.connect(recent)
+                    conn.api.ping()
+                }.onFailure {
+                    container.disconnect()
+                    _error.value = container.friendlyError(it)
+                }
+            } finally {
                 _reconnecting.value = false
             }
         }

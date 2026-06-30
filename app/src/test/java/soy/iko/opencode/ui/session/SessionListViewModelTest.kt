@@ -97,11 +97,28 @@ class SessionListViewModelTest {
         val vm = makeVm(container)
         assertTrue(vm.state.value.sessions.isNotEmpty())
 
-        // Now make listSessions fail
-        api.sessions = listOf()
+        // Now make listSessions fail — the existing list should remain and a
+        // transient error should be surfaced (not replace the whole list).
+        repo.listSessionsThrows = IOException("network error")
+        vm.refresh()
+        testScheduler.advanceUntilIdle()
+        assertTrue(vm.state.value.sessions.isNotEmpty())
+        assertFalse(vm.state.value.loading)
+        assertNotNull(vm.transientError.value)
+    }
+
+    @Test
+    fun refresh_failureWithNoSessions_setsErrorState() = testScope.runTest {
+        val api = FakeOpencodeApiClient()
+        val events = FakeEventStreamClient()
+        val repo = FakeSessionRepository(api, events)
         repo.sessions = emptyList()
-        // Can't easily make listSessions throw via FakeSessionRepository since it
-        // returns sessions directly. Test that the error path for empty + failure works.
+        repo.listSessionsThrows = IOException("network error")
+        val container = makeContainer(api = api, events = events, repo = repo)
+        val vm = makeVm(container)
+        assertFalse(vm.state.value.loading)
+        assertNotNull(vm.state.value.error)
+        assertTrue(vm.state.value.sessions.isEmpty())
     }
 
     // --- SSE events ---

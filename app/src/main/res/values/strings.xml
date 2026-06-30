@@ -96,6 +96,7 @@
     <string name="error_timeout">The request timed out. Check the connection and try again.</string>
     <string name="error_server">The server reported an error. Try again later.</string>
     <string name="error_load_timeout">Loading took too long. Try again.</string>
+    <string name="error_switch_and_restore_failed">Could not connect to the new server (%1$s), and restoring the previous server also failed (%2$s).</string>
 
     <!-- Part renderer -->
     <string name="thinking">Thinking…</string>

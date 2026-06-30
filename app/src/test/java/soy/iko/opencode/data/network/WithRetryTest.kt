@@ -16,6 +16,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
 
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class WithRetryTest {
 
     /** Produce the real exception Ktor throws for a status when expectSuccess = true. */

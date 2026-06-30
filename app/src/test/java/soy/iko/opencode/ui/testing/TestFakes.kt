@@ -222,10 +222,14 @@ class FakeSessionRepository(
     var createdSession: Session = Session(id = "new-session", title = "New")
     var messages: List<MessageWithParts> = emptyList()
     var sendPromptThrows: Throwable? = null
+    var listSessionsThrows: Throwable? = null
     var abortCalls: List<String> = emptyList()
         private set
 
-    override suspend fun listSessions(): List<Session> = sessions
+    override suspend fun listSessions(): List<Session> {
+        listSessionsThrows?.let { throw it }
+        return sessions
+    }
     override suspend fun createSession(title: String?): Session = createdSession
     override suspend fun deleteSession(id: String) { /* no-op */ }
     override suspend fun abort(sessionId: String) { abortCalls = abortCalls + sessionId }

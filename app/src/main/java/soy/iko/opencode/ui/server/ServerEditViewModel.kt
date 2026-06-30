@@ -91,6 +91,12 @@ class ServerEditViewModel(
         _state.update { it.copy(saving = true) }
         viewModelScope.launch {
             val result = runCatchingCancellable {
+                // Preserve the existing lastUsed timestamp so saving an edit doesn't
+                // reset the profile's sort position (profiles are sorted descending
+                // by lastUsed). connect() is responsible for updating lastUsed on
+                // actual server use. If loading the existing profile times out,
+                // lastUsed=0 is passed — ProfileStore.save() preserves the existing
+                // nonzero lastUsed in that case so the sort position isn't lost.
                 val existingLastUsed = if (s.id != null) {
                     withTimeoutOrNull(NetworkConfig.profileLoadTimeoutMs) {
                         container.profileStore.profiles.first()

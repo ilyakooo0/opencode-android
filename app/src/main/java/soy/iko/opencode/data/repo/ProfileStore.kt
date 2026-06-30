@@ -142,12 +142,21 @@ open class ProfileStore private constructor(
                 runCatching { OpencodeJson.decodeFromString(ListSerializer(StoredProfile.serializer()), it) }
                     .getOrDefault(emptyList())
             } ?: emptyList()
+            // If the incoming profile has lastUsed=0 (e.g. ServerEditViewModel.save()
+            // couldn't read the existing value due to a DataStore timeout), preserve
+            // the existing nonzero lastUsed so saving an edit doesn't reset the
+            // profile's sort position in the server list.
+            val preservedLastUsed = if (profile.lastUsed == 0L) {
+                current.firstOrNull { it.id == profile.id }?.lastUsed ?: 0L
+            } else {
+                profile.lastUsed
+            }
             val stored = StoredProfile(
                 id = profile.id,
                 label = profile.label,
                 baseUrl = profile.baseUrl,
                 username = profile.username?.takeIf { it.isNotBlank() },
-                lastUsed = profile.lastUsed,
+                lastUsed = preservedLastUsed,
             )
             val updated = current.filterNot { it.id == profile.id } + stored
             prefs[profilesKey] = OpencodeJson.encodeToString(ListSerializer(StoredProfile.serializer()), updated)
