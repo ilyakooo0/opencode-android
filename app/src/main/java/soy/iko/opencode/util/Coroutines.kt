@@ -15,3 +15,14 @@ inline fun <T> runCatchingCancellable(block: () -> T): Result<T> = try {
 } catch (e: Exception) {
     Result.failure(e)
 }
+
+/**
+ * A log-safe exception summary that avoids leaking the request URL (which
+ * [ClientRequestException] embeds in its message and may contain auth or paths).
+ * Use this instead of logging the full exception object when it may originate
+ * from a Ktor HTTP call.
+ */
+fun safeExceptionSummary(e: Throwable): String {
+    val status = (e as? io.ktor.client.plugins.ClientRequestException)?.response?.status?.value
+    return if (status != null) "${e.javaClass.simpleName}($status)" else e.javaClass.simpleName
+}

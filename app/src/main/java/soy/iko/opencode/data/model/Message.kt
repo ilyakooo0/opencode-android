@@ -19,6 +19,7 @@ sealed interface MessageInfo {
     val time: TimeInfo?
 }
 
+@Immutable
 @Serializable
 @SerialName("user")
 data class UserMessage(
@@ -27,6 +28,7 @@ data class UserMessage(
     override val time: TimeInfo? = null,
 ) : MessageInfo
 
+@Immutable
 @Serializable
 @SerialName("assistant")
 data class AssistantMessage(
@@ -45,6 +47,7 @@ data class AssistantMessage(
 }
 
 /** Fallback for an unrecognized `role`, so new server roles never crash decoding. */
+@Immutable
 @Serializable
 @SerialName("__unknown")
 data class UnknownMessage(

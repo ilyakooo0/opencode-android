@@ -63,7 +63,6 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -124,8 +123,7 @@ fun SessionListScreen(
                         Box {
                             Row(
                                 modifier = Modifier
-                                    .clickable { showServerMenu = true }
-                                    .semantics { role = Role.Button },
+                                    .clickable(role = Role.Button) { showServerMenu = true },
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Text(serverLabel, maxLines = 1, overflow = TextOverflow.Ellipsis)

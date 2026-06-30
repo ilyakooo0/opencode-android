@@ -1,5 +1,6 @@
 package soy.iko.opencode.data.model
 
+import androidx.compose.runtime.Immutable
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
@@ -18,6 +19,7 @@ sealed interface ToolState
 @SerialName("pending")
 data object ToolPending : ToolState
 
+@Immutable
 @Serializable
 @SerialName("running")
 data class ToolRunning(
@@ -26,6 +28,7 @@ data class ToolRunning(
     val time: TimeInfo? = null,
 ) : ToolState
 
+@Immutable
 @Serializable
 @SerialName("completed")
 data class ToolCompleted(
@@ -35,6 +38,7 @@ data class ToolCompleted(
     val time: TimeInfo? = null,
 ) : ToolState
 
+@Immutable
 @Serializable
 @SerialName("error")
 data class ToolError(

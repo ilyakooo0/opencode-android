@@ -18,6 +18,7 @@ import soy.iko.opencode.data.repo.classifyError
 import soy.iko.opencode.data.repo.responseStatusCode
 import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.notification.NotificationChannels
+import soy.iko.opencode.util.safeExceptionSummary
 import soy.iko.opencode.notification.SessionNotifications
 import soy.iko.opencode.R
 import soy.iko.opencode.util.runCatchingCancellable
@@ -173,6 +174,7 @@ class AppContainer(context: Context) {
         val cm = appContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
         networkCallback?.let { runCatching { cm?.unregisterNetworkCallback(it) } }
         soy.iko.opencode.data.repo.CrashLogger.get(appContext).shutdown()
+        draftStore.shutdown()
     }
 
     /**
@@ -221,7 +223,7 @@ class AppContainer(context: Context) {
                             activeRuns.add(sid)
                         }
                     }
-                } }.onFailure { Log.w("AppContainer", "Message activity observer failed, will retry", it) }
+                } }.onFailure { Log.w("AppContainer", "Message activity observer failed, will retry: ${safeExceptionSummary(it)}") }
                 if (!isActive) break
                 delay(NetworkConfig.observerRetryDelayMs)
             }

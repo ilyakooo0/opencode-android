@@ -26,8 +26,9 @@ class DraftStore(context: Context, scope: CoroutineScope) {
 
     private val appContext = context.applicationContext
     private val prefs by lazy {
+        val sp = appContext.getSharedPreferences("drafts", Context.MODE_PRIVATE)
         prefsInitialized.set(true)
-        appContext.getSharedPreferences("drafts", Context.MODE_PRIVATE)
+        sp
     }
 
     /** Tracks whether the [prefs] lazy has been resolved (i.e. the file has been
@@ -145,5 +146,10 @@ class DraftStore(context: Context, scope: CoroutineScope) {
                 }.onFailure { Log.w("DraftStore", "Failed to flush draft for $sessionId", it) }
             }
         }
+    }
+
+    /** Shut down the background flush executor. Call from AppContainer.shutdown(). */
+    fun shutdown() {
+        flushExecutor.shutdown()
     }
 }

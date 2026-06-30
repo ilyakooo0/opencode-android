@@ -1,6 +1,7 @@
 package soy.iko.opencode.data.network
 
 import soy.iko.opencode.data.model.BusEvent
+import soy.iko.opencode.util.safeExceptionSummary
 import android.util.Log
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.timeout
@@ -67,13 +68,6 @@ class EventStreamClient(
     private fun isSseAuthFailure(e: Throwable): Boolean =
         e is io.ktor.client.plugins.ClientRequestException &&
             (e.response.status.value == 401 || e.response.status.value == 403)
-
-    /** A log-safe exception summary that avoids leaking the request URL (which
-     *  ClientRequestException embeds in its message and may contain auth or paths). */
-    private fun safeExceptionSummary(e: Throwable): String {
-        val status = (e as? io.ktor.client.plugins.ClientRequestException)?.response?.status?.value
-        return if (status != null) "${e.javaClass.simpleName}($status)" else e.javaClass.simpleName
-    }
 
     /** Request an immediate reconnect, skipping any in-progress backoff. */
     fun triggerReconnect() { reconnectSignal.trySend(Unit) }

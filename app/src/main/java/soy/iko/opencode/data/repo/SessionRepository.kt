@@ -15,6 +15,7 @@ import soy.iko.opencode.data.network.EventStreamClient
 import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.data.network.OpencodeApiClient
 import soy.iko.opencode.util.runCatchingCancellable
+import soy.iko.opencode.util.safeExceptionSummary
 import android.util.Log
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
@@ -89,7 +90,7 @@ class SessionRepository(
                 if (state == EventStreamClient.ConnectionState.Connected) {
                     if (wasConnected) {
                         val fresh = runCatchingCancellable { api.listMessages(sessionId) }
-                            .onFailure { Log.w("SessionRepository", "Re-seed message load failed for $sessionId; relying on SSE", it) }
+                            .onFailure { Log.w("SessionRepository", "Re-seed message load failed for $sessionId; relying on SSE: ${safeExceptionSummary(it)}") }
                             .getOrDefault(emptyList())
                         lock.withLock { store.seed(fresh, prune = true) }
                         publish()
@@ -103,7 +104,7 @@ class SessionRepository(
         }
 
         val initial = runCatchingCancellable { api.listMessages(sessionId) }
-            .onFailure { Log.w("SessionRepository", "Initial message load failed for $sessionId; relying on SSE", it) }
+            .onFailure { Log.w("SessionRepository", "Initial message load failed for $sessionId; relying on SSE: ${safeExceptionSummary(it)}") }
             .getOrDefault(emptyList())
         lock.withLock { store.seed(initial) }
         publish()

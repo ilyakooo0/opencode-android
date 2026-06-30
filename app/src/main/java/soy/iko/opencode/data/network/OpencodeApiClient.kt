@@ -52,7 +52,7 @@ class OpencodeApiClient(private val client: HttpClient) {
 
     /** Lightweight connectivity check. Throws on non-2xx / network failure. */
     suspend fun ping() {
-        client.get("global/health")
+        withRetry { client.get("global/health").body<String>() }
     }
 
     suspend fun listSessions(): List<Session> = withRetry {
@@ -74,7 +74,7 @@ class OpencodeApiClient(private val client: HttpClient) {
     }
 
     suspend fun deleteSession(id: String) {
-        withRetry { client.delete("session/${encode(id)}") }
+        withRetry { client.delete("session/${encode(id)}").body<String>() }
     }
 
     suspend fun listMessages(sessionId: String): List<MessageWithParts> = withRetry {
@@ -108,7 +108,7 @@ class OpencodeApiClient(private val client: HttpClient) {
     }
 
     suspend fun abort(sessionId: String) {
-        withRetry { client.post("session/${encode(sessionId)}/abort") }
+        withRetry { client.post("session/${encode(sessionId)}/abort").body<String>() }
     }
 
     /** Invoke a slash-command by name via `POST /session/:id/command`. */
@@ -179,7 +179,7 @@ class OpencodeApiClient(private val client: HttpClient) {
         client.post("session/${encode(sessionId)}/permissions/${encode(permissionId)}") {
             contentType(ContentType.Application.Json)
             setBody(PermissionReplyBody(response.wire))
-        }
+        }.body<String>()
     }
 
     // --- Files ---

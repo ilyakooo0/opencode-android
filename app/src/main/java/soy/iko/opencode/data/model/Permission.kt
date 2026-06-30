@@ -1,5 +1,6 @@
 package soy.iko.opencode.data.model
 
+import androidx.compose.runtime.Immutable
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -11,6 +12,7 @@ import kotlinx.serialization.json.jsonArray
  * [pattern] + [metadata]; [pattern] is a string or array of strings on the wire, so
  * it's kept as a [JsonElement] and flattened for display.
  */
+@Immutable
 @Serializable
 data class Permission(
     val id: String,

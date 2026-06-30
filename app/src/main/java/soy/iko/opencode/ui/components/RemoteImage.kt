@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -32,6 +33,7 @@ import soy.iko.opencode.data.network.HttpClientFactory
  * Carries the bits needed to load an image off the opencode server: the base URL (for
  * resolving relative `url`s) and an optional HTTP Basic header for protected servers.
  */
+@Immutable
 data class ImageLoadContext(
     val baseUrl: String,
     val basicAuthHeader: String?,

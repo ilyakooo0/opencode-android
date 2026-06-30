@@ -1,5 +1,6 @@
 package soy.iko.opencode.data.model
 
+import androidx.compose.runtime.Immutable
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -18,6 +19,7 @@ sealed interface Part {
     val sessionID: String?
 }
 
+@Immutable
 @Serializable
 @SerialName("text")
 data class TextPart(
@@ -30,6 +32,7 @@ data class TextPart(
     val time: TimeInfo? = null,
 ) : Part
 
+@Immutable
 @Serializable
 @SerialName("reasoning")
 data class ReasoningPart(
@@ -40,6 +43,7 @@ data class ReasoningPart(
     val time: TimeInfo? = null,
 ) : Part
 
+@Immutable
 @Serializable
 @SerialName("tool")
 data class ToolPart(
@@ -51,6 +55,7 @@ data class ToolPart(
     val state: ToolState = ToolPending,
 ) : Part
 
+@Immutable
 @Serializable
 @SerialName("file")
 data class FilePart(
@@ -63,6 +68,7 @@ data class FilePart(
     val source: String? = null,
 ) : Part
 
+@Immutable
 @Serializable
 @SerialName("step-start")
 data class StepStartPart(
@@ -71,6 +77,7 @@ data class StepStartPart(
     override val sessionID: String? = null,
 ) : Part
 
+@Immutable
 @Serializable
 @SerialName("step-finish")
 data class StepFinishPart(
@@ -82,6 +89,7 @@ data class StepFinishPart(
 ) : Part
 
 /** Fallback for an unrecognized `type`. */
+@Immutable
 @Serializable
 @SerialName("__unknown")
 data class UnknownPart(

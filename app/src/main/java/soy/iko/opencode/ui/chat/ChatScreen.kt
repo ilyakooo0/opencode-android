@@ -76,7 +76,6 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
@@ -225,8 +224,7 @@ fun ChatScreen(
             TopAppBar(
                 title = {
                     Column(modifier = Modifier
-                        .clickable(enabled = models.isNotEmpty()) { showModelPicker = true }
-                        .semantics { role = Role.Button }
+                        .clickable(enabled = models.isNotEmpty(), role = Role.Button) { showModelPicker = true }
                     ) {
                         Text(sessionTitle ?: stringResource(R.string.session))
                         Text(
