@@ -46,21 +46,25 @@ import java.util.concurrent.atomic.AtomicBoolean
  * Hand-written service locator held by [soy.iko.opencode.OpencodeApp]. Owns the
  * process-wide singletons and the currently active [OpencodeConnection].
  */
-class AppContainer(context: Context) {
+open class AppContainer private constructor(
+    private val appContext: Context?,
+    private val skipInit: Boolean,
+    @Suppress("unused") private val testMode: Boolean,
+) {
+    constructor(context: Context) : this(context.applicationContext, false, false)
+    protected constructor() : this(null, true, true)
 
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    val profileStore = ProfileStore(context)
-    val settingsStore = SettingsStore(context)
-    val draftStore = DraftStore(context, appScope)
-
-    private val appContext = context.applicationContext
+    open val profileStore: ProfileStore by lazy { ProfileStore(appContext!!) }
+    open val settingsStore: SettingsStore by lazy { SettingsStore(appContext!!) }
+    open val draftStore: DraftStore by lazy { DraftStore(appContext!!, appScope) }
 
     private val _activeConnection = MutableStateFlow<OpencodeConnection?>(null)
-    val activeConnection: StateFlow<OpencodeConnection?> = _activeConnection.asStateFlow()
+    open val activeConnection: StateFlow<OpencodeConnection?> = _activeConnection.asStateFlow()
 
     /** True while a background auto-reconnect to the most-recent server is in flight. */
     private val _reconnecting = MutableStateFlow(false)
-    val reconnecting: StateFlow<Boolean> = _reconnecting.asStateFlow()
+    open val reconnecting: StateFlow<Boolean> = _reconnecting.asStateFlow()
 
     /**
      * Set once a startup auto-reconnect succeeds. The server list collects this and
@@ -68,15 +72,15 @@ class AppContainer(context: Context) {
      * [consumeAutoConnect] guards against re-firing on screen re-entry.
      */
     private val _autoConnectDone = MutableStateFlow(false)
-    val autoConnectDone: StateFlow<Boolean> = _autoConnectDone.asStateFlow()
+    open val autoConnectDone: StateFlow<Boolean> = _autoConnectDone.asStateFlow()
     private val autoConnectConsumed = AtomicBoolean(false)
-    fun consumeAutoConnect(): Boolean = autoConnectConsumed.compareAndSet(false, true)
+    open fun consumeAutoConnect(): Boolean = autoConnectConsumed.compareAndSet(false, true)
 
     /** Text shared into the app (ACTION_SEND), prefilled into a session draft. */
     private val _pendingShare = MutableStateFlow<String?>(null)
-    val pendingShare: StateFlow<String?> = _pendingShare.asStateFlow()
-    fun setPendingShare(text: String) { _pendingShare.value = text }
-    fun consumePendingShare(): String? {
+    open val pendingShare: StateFlow<String?> = _pendingShare.asStateFlow()
+    open fun setPendingShare(text: String) { _pendingShare.value = text }
+    open fun consumePendingShare(): String? {
         val current = _pendingShare.value ?: return null
         return if (_pendingShare.compareAndSet(current, null)) current else null
     }
@@ -86,9 +90,9 @@ class AppContainer(context: Context) {
      * The nav host consumes it once a connection is active.
      */
     private val _pendingOpenSession = MutableStateFlow<String?>(null)
-    val pendingOpenSession: StateFlow<String?> = _pendingOpenSession.asStateFlow()
-    fun requestOpenSession(id: String) { _pendingOpenSession.value = id }
-    fun consumePendingOpenSession(): String? {
+    open val pendingOpenSession: StateFlow<String?> = _pendingOpenSession.asStateFlow()
+    open fun requestOpenSession(id: String) { _pendingOpenSession.value = id }
+    open fun consumePendingOpenSession(): String? {
         val current = _pendingOpenSession.value ?: return null
         return if (_pendingOpenSession.compareAndSet(current, null)) current else null
     }
@@ -99,37 +103,39 @@ class AppContainer(context: Context) {
      * opening a session clears its unread state.
      */
     private val _currentSession = MutableStateFlow<String?>(null)
-    val currentSession: StateFlow<String?> = _currentSession.asStateFlow()
+    open val currentSession: StateFlow<String?> = _currentSession.asStateFlow()
 
     /** Session ids that received activity while not being viewed. */
     private val _unread = MutableStateFlow<Set<String>>(emptySet())
-    val unread: StateFlow<Set<String>> = _unread.asStateFlow()
+    open val unread: StateFlow<Set<String>> = _unread.asStateFlow()
 
-    fun setCurrentSession(id: String?) {
+    open fun setCurrentSession(id: String?) {
         _currentSession.value = id
         if (id != null) {
             _unread.update { it - id }
-            SessionNotifications.cancel(appContext, id)
+            appContext?.let { SessionNotifications.cancel(it, id) }
         }
     }
 
     /** Restore a session's unread badge after a failed server switch reconnects. */
-    fun restoreUnread(id: String) {
+    open fun restoreUnread(id: String) {
         if (id != _currentSession.value) {
             _unread.update { it + id }
         }
     }
 
     /** Resolve a localized string — view models reach resources through the container. */
-    fun string(id: Int, vararg formatArgs: Any): String =
-        if (formatArgs.isEmpty()) appContext.getString(id) else appContext.getString(id, *formatArgs)
+    open fun string(id: Int, vararg formatArgs: Any): String {
+        if (appContext == null) return ""
+        return if (formatArgs.isEmpty()) appContext.getString(id) else appContext.getString(id, *formatArgs)
+    }
 
     /**
      * Convert a throwable into a user-facing message. Classifies the error by concrete
      * type (network, timeout, HTTP status) rather than string-matching class names, so
      * the message reflects what actually went wrong without leaking internal URLs/state.
      */
-    fun friendlyError(t: Throwable): String {
+    open fun friendlyError(t: Throwable): String {
         val baseUrl = activeConnection.value?.profile?.baseUrl.orEmpty()
         return when (classifyError(t)) {
             ErrorKind.NOT_REACHABLE, ErrorKind.NETWORK ->
@@ -146,13 +152,15 @@ class AppContainer(context: Context) {
     }
 
     init {
-        NotificationChannels.create(appContext)
-        observeMessageActivity()
-        appScope.launch { autoConnect() }
+        if (!skipInit) {
+            NotificationChannels.create(appContext!!)
+            observeMessageActivity()
+            appScope.launch { autoConnect() }
+        }
     }
 
     /** Release resources held for the process lifetime (network callback, app scope). */
-    fun shutdown() {
+    open fun shutdown() {
         // Cancel the app scope first so any coroutine holding the connection mutex
         // (e.g. a connect() suspended on profileStore) is cancelled and releases the
         // mutex. Otherwise the runBlocking below would deadlock waiting for a coroutine
@@ -171,10 +179,10 @@ class AppContainer(context: Context) {
             // If the timeout fired, force-clear the connection so it isn't left dangling.
             _activeConnection.value = null
         }
-        val cm = appContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+        val cm = appContext?.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
         networkCallback?.let { runCatching { cm?.unregisterNetworkCallback(it) } }
-        soy.iko.opencode.data.repo.CrashLogger.get(appContext).shutdown()
-        draftStore.shutdown()
+        soy.iko.opencode.data.repo.CrashLogger.get(appContext!!).shutdown()
+        draftStore.let { if (!skipInit) it.shutdown() }
     }
 
     /**
@@ -251,7 +259,7 @@ class AppContainer(context: Context) {
         val title = runCatchingCancellable {
             conn.repository.listSessions().firstOrNull { it.id == sessionId }?.displayTitle
         }.getOrNull() ?: sessionId
-        SessionNotifications.postCompleted(appContext, sessionId, title)
+        appContext?.let { SessionNotifications.postCompleted(it, sessionId, title) }
     }
 
     /** Extract the session id an event pertains to, for message-activity events. */
@@ -281,7 +289,8 @@ class AppContainer(context: Context) {
     private val networkCallback: ConnectivityManager.NetworkCallback? = registerNetworkMonitor()
 
     private fun registerNetworkMonitor(): ConnectivityManager.NetworkCallback? {
-        val cm = appContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+        if (appContext == null) return null
+        val cm = appContext!!.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
             ?: return null
         val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
@@ -296,7 +305,7 @@ class AppContainer(context: Context) {
     /** Open (or re-open) a connection to [profile], replacing any current one.
      *  Only persists the updated `lastUsed` timestamp if it's stale (older than a
      *  minute), so rapid reconnect storms don't each trigger a DataStore write. */
-    suspend fun connect(profile: ServerProfile): OpencodeConnection =
+    open suspend fun connect(profile: ServerProfile): OpencodeConnection =
         connectionMutex.withLock {
             _activeConnection.value?.close()
             _activeConnection.value = null
@@ -310,7 +319,7 @@ class AppContainer(context: Context) {
             OpencodeConnection(finalProfile).also { _activeConnection.value = it }
         }
 
-    suspend fun disconnect() {
+    open suspend fun disconnect() {
         // Acquire the connection mutex so disconnect is serialized with connect().
         // Previously this was fire-and-forget (launch on appScope), which raced with
         // a subsequent connect(): connect() could acquire the mutex, create a new

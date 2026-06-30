@@ -29,19 +29,19 @@ import kotlinx.coroutines.sync.withLock
  * and then reduces [BusEvent]s from the SSE stream into an ordered list of messages,
  * each keyed by message id with parts keyed by part id (idempotent upserts).
  */
-class SessionRepository(
+open class SessionRepository(
     private val api: OpencodeApiClient,
     private val eventStream: EventStreamClient,
 ) {
-    suspend fun listSessions() = api.listSessions()
-    suspend fun createSession(title: String? = null) = api.createSession(title)
-    suspend fun deleteSession(id: String) = api.deleteSession(id)
-    suspend fun abort(sessionId: String) = api.abort(sessionId)
+    open suspend fun listSessions() = api.listSessions()
+    open suspend fun createSession(title: String? = null) = api.createSession(title)
+    open suspend fun deleteSession(id: String) = api.deleteSession(id)
+    open suspend fun abort(sessionId: String) = api.abort(sessionId)
 
-    suspend fun sendPrompt(sessionId: String, text: String, model: ModelRef?, agent: String? = null) =
+    open suspend fun sendPrompt(sessionId: String, text: String, model: ModelRef?, agent: String? = null) =
         api.sendPrompt(sessionId, text, model, agent)
 
-    suspend fun runCommand(
+    open suspend fun runCommand(
         sessionId: String,
         command: String,
         arguments: String = "",
@@ -55,7 +55,7 @@ class SessionRepository(
      * streaming tokens (each publishing a fresh snapshot) never back-pressures the
      * event reducer — a slow collector simply sees the most recent snapshot.
      */
-    fun observeMessages(sessionId: String): Flow<List<MessageWithParts>> = channelFlow {
+    open fun observeMessages(sessionId: String): Flow<List<MessageWithParts>> = channelFlow {
         val store = MessageStore()
         val lock = Mutex()
 

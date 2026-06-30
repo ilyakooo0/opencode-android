@@ -38,7 +38,12 @@ import java.net.URLEncoder
  * Request/response wrapper over the opencode REST endpoints. The long-lived `/event`
  * SSE stream lives in [EventStreamClient]; everything else is here.
  */
-class OpencodeApiClient(private val client: HttpClient) {
+open class OpencodeApiClient private constructor(
+    private val client: HttpClient?,
+    @Suppress("unused") private val testMode: Boolean,
+) {
+    constructor(client: HttpClient) : this(client, false)
+    protected constructor() : this(null, true)
 
     // --- Catalog cache (providers/agents/commands) ---
     // These change rarely, but the ChatViewModel re-fetches them on every creation.
@@ -56,37 +61,37 @@ class OpencodeApiClient(private val client: HttpClient) {
     private var cachedCommands: CachedEntry<List<Command>>? = null
 
     /** Lightweight connectivity check. Throws on non-2xx / network failure. */
-    suspend fun ping() {
-        withRetry { client.get("global/health").body<String>() }
+    open suspend fun ping() {
+        withRetry { client!!.get("global/health").body<String>() }
     }
 
-    suspend fun listSessions(): List<Session> = withRetry {
-        client.get("session").body()
+    open suspend fun listSessions(): List<Session> = withRetry {
+        client!!.get("session").body()
     }
 
-    suspend fun createSession(title: String? = null): Session = withRetry {
-        client.post("session") {
+    open suspend fun createSession(title: String? = null): Session = withRetry {
+        client!!.post("session") {
             contentType(ContentType.Application.Json)
             setBody(CreateSessionRequest(title = title))
         }.body()
     }
 
-    suspend fun updateSession(id: String, title: String): Session = withRetry {
-        client.patch("session/${encode(id)}") {
+    open suspend fun updateSession(id: String, title: String): Session = withRetry {
+        client!!.patch("session/${encode(id)}") {
             contentType(ContentType.Application.Json)
             setBody(UpdateSessionRequest(title = title))
         }.body()
     }
 
-    suspend fun deleteSession(id: String) {
-        withRetry { client.delete("session/${encode(id)}").body<String>() }
+    open suspend fun deleteSession(id: String) {
+        withRetry { client!!.delete("session/${encode(id)}").body<String>() }
     }
 
-    suspend fun listMessages(sessionId: String): List<MessageWithParts> = withRetry {
-        client.get("session/${encode(sessionId)}/message").body()
+    open suspend fun listMessages(sessionId: String): List<MessageWithParts> = withRetry {
+        client!!.get("session/${encode(sessionId)}/message").body()
     }
 
-    suspend fun sendPrompt(
+    open suspend fun sendPrompt(
         sessionId: String,
         text: String,
         model: ModelRef? = null,
@@ -98,7 +103,7 @@ class OpencodeApiClient(private val client: HttpClient) {
         // request that reached it but whose response was lost (e.g. timeout).
         val idempotencyKey = java.util.UUID.randomUUID().toString()
         return withRetry {
-            client.post("session/${encode(sessionId)}/message") {
+            client!!.post("session/${encode(sessionId)}/message") {
                 contentType(ContentType.Application.Json)
                 header("Idempotency-Key", idempotencyKey)
                 setBody(
@@ -112,12 +117,12 @@ class OpencodeApiClient(private val client: HttpClient) {
         }
     }
 
-    suspend fun abort(sessionId: String) {
-        withRetry { client.post("session/${encode(sessionId)}/abort").body<String>() }
+    open suspend fun abort(sessionId: String) {
+        withRetry { client!!.post("session/${encode(sessionId)}/abort").body<String>() }
     }
 
     /** Invoke a slash-command by name via `POST /session/:id/command`. */
-    suspend fun runCommand(
+    open suspend fun runCommand(
         sessionId: String,
         command: String,
         arguments: String = "",
@@ -128,7 +133,7 @@ class OpencodeApiClient(private val client: HttpClient) {
         // the server processed the request but the response was lost.
         val idempotencyKey = java.util.UUID.randomUUID().toString()
         return withRetry {
-            client.post("session/${encode(sessionId)}/command") {
+            client!!.post("session/${encode(sessionId)}/command") {
                 contentType(ContentType.Application.Json)
                 header("Idempotency-Key", idempotencyKey)
                 setBody(CommandRequest(command = command, arguments = arguments, agent = agent))
@@ -136,53 +141,53 @@ class OpencodeApiClient(private val client: HttpClient) {
         }
     }
 
-    suspend fun providers(): ProvidersResponse = providersMutex.withLock {
+    open suspend fun providers(): ProvidersResponse = providersMutex.withLock {
         val now = System.currentTimeMillis()
         val cached = cachedProviders
         if (cached != null && now - cached.fetchedAt < NetworkConfig.catalogCacheTtlMs) {
             return@withLock cached.value
         }
-        val value = withRetry { client.get("config/providers").body<ProvidersResponse>() }
+        val value = withRetry { client!!.get("config/providers").body<ProvidersResponse>() }
         cachedProviders = CachedEntry(value, System.currentTimeMillis())
         value
     }
 
-    suspend fun agents(): List<Agent> = agentsMutex.withLock {
+    open suspend fun agents(): List<Agent> = agentsMutex.withLock {
         val now = System.currentTimeMillis()
         val cached = cachedAgents
         if (cached != null && now - cached.fetchedAt < NetworkConfig.catalogCacheTtlMs) {
             return@withLock cached.value
         }
-        val value = withRetry { client.get("agent").body<List<Agent>>() }
+        val value = withRetry { client!!.get("agent").body<List<Agent>>() }
         cachedAgents = CachedEntry(value, System.currentTimeMillis())
         value
     }
 
-    suspend fun commands(): List<Command> = commandsMutex.withLock {
+    open suspend fun commands(): List<Command> = commandsMutex.withLock {
         val now = System.currentTimeMillis()
         val cached = cachedCommands
         if (cached != null && now - cached.fetchedAt < NetworkConfig.catalogCacheTtlMs) {
             return@withLock cached.value
         }
-        val value = withRetry { client.get("command").body<List<Command>>() }
+        val value = withRetry { client!!.get("command").body<List<Command>>() }
         cachedCommands = CachedEntry(value, System.currentTimeMillis())
         value
     }
 
     /** Invalidate the catalog cache (e.g. on server switch). */
-    suspend fun invalidateCache() {
+    open suspend fun invalidateCache() {
         providersMutex.withLock { cachedProviders = null }
         agentsMutex.withLock { cachedAgents = null }
         commandsMutex.withLock { cachedCommands = null }
     }
 
     /** Respond to a permission request so a paused tool run can proceed. */
-    suspend fun respondPermission(
+    open suspend fun respondPermission(
         sessionId: String,
         permissionId: String,
         response: PermissionResponse,
     ) = withRetry {
-        client.post("session/${encode(sessionId)}/permissions/${encode(permissionId)}") {
+        client!!.post("session/${encode(sessionId)}/permissions/${encode(permissionId)}") {
             contentType(ContentType.Application.Json)
             setBody(PermissionReplyBody(response.wire))
         }.body<String>()
@@ -190,20 +195,20 @@ class OpencodeApiClient(private val client: HttpClient) {
 
     // --- Files ---
 
-    suspend fun findFiles(query: String): List<String> = withRetry {
-        client.get("find/file") { parameter("query", query) }.body()
+    open suspend fun findFiles(query: String): List<String> = withRetry {
+        client!!.get("find/file") { parameter("query", query) }.body()
     }
 
-    suspend fun listDirectory(path: String): List<FileNode> = withRetry {
-        client.get("file") { parameter("path", path) }.body()
+    open suspend fun listDirectory(path: String): List<FileNode> = withRetry {
+        client!!.get("file") { parameter("path", path) }.body()
     }
 
-    suspend fun readFile(path: String): FileContent = withRetry {
-        client.get("file/content") { parameter("path", path) }.body()
+    open suspend fun readFile(path: String): FileContent = withRetry {
+        client!!.get("file/content") { parameter("path", path) }.body()
     }
 
-    suspend fun fileStatus(): List<FileStatusEntry> = withRetry {
-        client.get("file/status").body()
+    open suspend fun fileStatus(): List<FileStatusEntry> = withRetry {
+        client!!.get("file/status").body()
     }
 }
 

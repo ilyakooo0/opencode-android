@@ -22,11 +22,17 @@ import java.util.concurrent.Executors
  * than blocking the caller (previously a [CountDownLatch] could stall the main
  * thread for up to 2 seconds on a slow disk).
  */
-class DraftStore(context: Context, scope: CoroutineScope) {
+open class DraftStore private constructor(
+    private val appContext: Context?,
+    private val scope: CoroutineScope?,
+    @Suppress("unused") private val testMode: Boolean,
+) {
+    constructor(context: Context, scope: CoroutineScope) : this(context.applicationContext, scope, false)
+    protected constructor() : this(null, null, true)
 
-    private val appContext = context.applicationContext
     private val prefs by lazy {
-        val sp = appContext.getSharedPreferences("drafts", Context.MODE_PRIVATE)
+        val sp = appContext?.getSharedPreferences("drafts", Context.MODE_PRIVATE)
+            ?: error("No context — override methods in test subclass")
         prefsInitialized.set(true)
         sp
     }
@@ -39,44 +45,50 @@ class DraftStore(context: Context, scope: CoroutineScope) {
 
     /** Single-thread executor for flushDraft when prefs aren't initialized yet,
      *  so the main thread is never blocked on disk I/O. */
-    private val flushExecutor = Executors.newSingleThreadExecutor { r ->
-        Thread(r, "DraftStore-flush").apply { isDaemon = true }
+    private val flushExecutor by lazy {
+        Executors.newSingleThreadExecutor { r ->
+            Thread(r, "DraftStore-flush").apply { isDaemon = true }
+        }
     }
 
     private val _drafts = MutableStateFlow<Map<String, String>>(emptyMap())
     /** The full in-memory snapshot of all drafts, updated when prefs finish loading. */
-    val drafts: StateFlow<Map<String, String>> = _drafts.asStateFlow()
+    open val drafts: StateFlow<Map<String, String>> = _drafts.asStateFlow()
 
     private val _ready = MutableStateFlow(false)
     /** True once the background prefs load has completed. */
-    val ready: StateFlow<Boolean> = _ready.asStateFlow()
+    open val ready: StateFlow<Boolean> = _ready.asStateFlow()
 
     init {
         // Eagerly load the prefs file on a background thread so the first main-thread
         // get() doesn't block on disk I/O. The loaded snapshot is published via [_drafts]
         // so callers can observe readiness without blocking.
-        scope.launch(Dispatchers.IO) {
-            val snapshot = runCatching {
-                prefs.all.mapValues { it.value as? String ?: "" }
-            }.getOrDefault(emptyMap())
-            // Merge instead of overwriting: any in-memory writes that arrived before
-            // the background load completed (e.g. a share-intent draft injected via
-            // setImmediate) take priority over the persisted snapshot so they aren't
-            // clobbered.
-            _drafts.update { current ->
-                snapshot.toMutableMap().apply { putAll(current) }
+        if (scope != null && appContext != null) {
+            scope.launch(Dispatchers.IO) {
+                val snapshot = runCatching {
+                    prefs.all.mapValues { it.value as? String ?: "" }
+                }.getOrDefault(emptyMap())
+                // Merge instead of overwriting: any in-memory writes that arrived before
+                // the background load completed (e.g. a share-intent draft injected via
+                // setImmediate) take priority over the persisted snapshot so they aren't
+                // clobbered.
+                _drafts.update { current ->
+                    snapshot.toMutableMap().apply { putAll(current) }
+                }
+                _ready.value = true
             }
+        } else {
             _ready.value = true
         }
     }
 
     /** Returns the draft for [sessionId], or "" if not found or still loading. */
-    fun get(sessionId: String): String = _drafts.value[sessionId].orEmpty()
+    open fun get(sessionId: String): String = _drafts.value[sessionId].orEmpty()
 
     /** Update the in-memory draft immediately without persisting to disk.
      *  Used when navigation must see the new value synchronously (e.g. share-intent
      *  injection before ChatScreen composes). Call [set] afterwards to persist. */
-    fun setImmediate(sessionId: String, text: String) {
+    open fun setImmediate(sessionId: String, text: String) {
         _drafts.update { current ->
             val updated = current.toMutableMap()
             if (text.isBlank()) updated.remove(sessionId) else updated[sessionId] = text
@@ -84,7 +96,7 @@ class DraftStore(context: Context, scope: CoroutineScope) {
         }
     }
 
-    suspend fun set(sessionId: String, text: String) {
+    open suspend fun set(sessionId: String, text: String) {
         _drafts.update { current ->
             val updated = current.toMutableMap()
             if (text.isBlank()) updated.remove(sessionId) else updated[sessionId] = text
@@ -100,7 +112,7 @@ class DraftStore(context: Context, scope: CoroutineScope) {
     }
 
     /** Remove the draft for a session (call on session deletion to avoid orphaned entries). */
-    suspend fun remove(sessionId: String) {
+    open suspend fun remove(sessionId: String) {
         _drafts.update { current ->
             val updated = current.toMutableMap()
             updated.remove(sessionId)
@@ -127,7 +139,7 @@ class DraftStore(context: Context, scope: CoroutineScope) {
      * may be lost if the process exits before the write completes, but this is
      * preferable to an ANR.
      */
-    fun flushDraft(sessionId: String, text: String) {
+    open fun flushDraft(sessionId: String, text: String) {
         _drafts.update { current ->
             val updated = current.toMutableMap()
             if (text.isBlank()) updated.remove(sessionId) else updated[sessionId] = text
@@ -155,7 +167,7 @@ class DraftStore(context: Context, scope: CoroutineScope) {
     }
 
     /** Shut down the background flush executor. Call from AppContainer.shutdown(). */
-    fun shutdown() {
+    open fun shutdown() {
         flushExecutor.shutdown()
         // Await pending flushDraft writes so drafts aren't lost if the process exits
         // immediately after shutdown (e.g. ANR-triggered process kill).

@@ -24,18 +24,23 @@ private val Context.dataStore by preferencesDataStore(name = "server_profiles")
  * the Basic-auth password is stored separately in EncryptedSharedPreferences, keyed
  * by profile id, and merged back in on read.
  */
-class ProfileStore(context: Context) {
+open class ProfileStore private constructor(
+    private val appContext: Context?,
+    @Suppress("unused") private val testMode: Boolean,
+) {
+    constructor(context: Context) : this(context.applicationContext, false)
+    protected constructor() : this(null, true)
 
-    private val appContext = context.applicationContext
     private val profilesKey = stringPreferencesKey("profiles_json")
 
     private val securePrefs: SharedPreferences? by lazy {
+        val ctx = appContext ?: return@lazy null
         runCatching {
-            val masterKey = MasterKey.Builder(appContext)
+            val masterKey = MasterKey.Builder(ctx)
                 .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
                 .build()
             EncryptedSharedPreferences.create(
-                appContext,
+                ctx,
                 "server_secrets",
                 masterKey,
                 EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
@@ -48,12 +53,12 @@ class ProfileStore(context: Context) {
     }
 
     /** True when EncryptedSharedPreferences could not be initialized. */
-    val securePrefsUnavailable: Boolean get() = securePrefs == null
+    open val securePrefsUnavailable: Boolean get() = securePrefs == null
 
     /** Plaintext fallback used only when encrypted prefs are unavailable, so the user
      *  can still connect — but passwords won't survive an app reinstall. */
     private val fallbackPrefs: SharedPreferences by lazy {
-        appContext.getSharedPreferences("server_secrets_fallback", Context.MODE_PRIVATE)
+        appContext!!.getSharedPreferences("server_secrets_fallback", Context.MODE_PRIVATE)
     }
 
     private fun prefsForPasswords(): SharedPreferences =
@@ -86,7 +91,7 @@ class ProfileStore(context: Context) {
         val lastUsed: Long = 0,
     )
 
-    val profiles: Flow<List<ServerProfile>> = appContext.dataStore.data.map { prefs ->
+    open val profiles: Flow<List<ServerProfile>> = appContext?.dataStore?.data?.map { prefs ->
         // Migrate any orphaned plaintext passwords to secure prefs on first load.
         migrateFallbackPasswords()
         val json = prefs[profilesKey] ?: return@map emptyList()
@@ -96,7 +101,7 @@ class ProfileStore(context: Context) {
             .getOrDefault(emptyList())
             .sortedByDescending { it.lastUsed }
             .map { it.toProfile() }
-    }
+    } ?: kotlinx.coroutines.flow.flowOf(emptyList())
 
     private suspend fun StoredProfile.toProfile(): ServerProfile {
         val pw = username?.let { passwordFor(id) }
@@ -110,7 +115,7 @@ class ProfileStore(context: Context) {
         )
     }
 
-    suspend fun resolve(profile: ServerProfile): ServerProfile {
+    open suspend fun resolve(profile: ServerProfile): ServerProfile {
         val pw = if (profile.hasAuth) passwordFor(profile.id) else null
         return profile.copy(password = pw)
     }
@@ -118,7 +123,7 @@ class ProfileStore(context: Context) {
     private suspend fun passwordFor(id: String): String? =
         withContext(Dispatchers.IO) { prefsForPasswords().getString(passwordKey(id), null) }
 
-    suspend fun save(profile: ServerProfile) {
+    open suspend fun save(profile: ServerProfile) {
         // Write the password first so that if the DataStore write fails, we're left
         // with an orphaned password (harmless, cleaned up on next save/delete) rather
         // than a profile with no password (which would break authentication).
@@ -132,7 +137,7 @@ class ProfileStore(context: Context) {
                 }
             }.apply()
         }
-        appContext.dataStore.edit { prefs ->
+        appContext!!.dataStore.edit { prefs ->
             val current = prefs[profilesKey]?.let {
                 runCatching { OpencodeJson.decodeFromString(ListSerializer(StoredProfile.serializer()), it) }
                     .getOrDefault(emptyList())
@@ -149,11 +154,11 @@ class ProfileStore(context: Context) {
         }
     }
 
-    suspend fun delete(id: String) {
+    open suspend fun delete(id: String) {
         // Delete the profile from DataStore first, then the password. If the process
         // dies between the two, an orphaned password remains (harmless, cleaned up on
         // next save/delete) rather than a profile with no password.
-        appContext.dataStore.edit { prefs ->
+        appContext!!.dataStore.edit { prefs ->
             val current = prefs[profilesKey]?.let {
                 runCatching { OpencodeJson.decodeFromString(ListSerializer(StoredProfile.serializer()), it) }
                     .getOrDefault(emptyList())

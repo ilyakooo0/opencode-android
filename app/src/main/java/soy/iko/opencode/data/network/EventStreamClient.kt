@@ -9,6 +9,7 @@ import io.ktor.client.plugins.sse.sse
 import io.ktor.sse.ServerSentEvent
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlin.coroutines.EmptyCoroutineContext
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ChannelResult
@@ -37,29 +38,32 @@ import kotlin.random.Random
  * (directly or via the repository) so early `message.part.updated` deltas aren't missed.
  */
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-class EventStreamClient(
+open class EventStreamClient(
     private val client: HttpClient,
-    scope: CoroutineScope,
+    private val scope: CoroutineScope,
     private val idleTimeoutMs: Long = NetworkConfig.sseIdleTimeoutMs,
     private val initialBackoffMs: Long = NetworkConfig.sseInitialBackoffMs,
     private val maxBackoffMs: Long = NetworkConfig.sseMaxBackoffMs,
     private val bufferCapacity: Int = NetworkConfig.sseEventBufferCapacity,
 ) {
+    protected constructor() : this(
+        HttpClient(io.ktor.client.engine.okhttp.OkHttp) {},
+        CoroutineScope(EmptyCoroutineContext),
+    )
     enum class ConnectionState { Disconnected, Connecting, Connected, Failed }
 
     private val _state = MutableStateFlow(ConnectionState.Disconnected)
-    val state: StateFlow<ConnectionState> = _state.asStateFlow()
+    open val state: StateFlow<ConnectionState> = _state.asStateFlow()
 
-    val events: SharedFlow<BusEvent> = stream()
-        // Buffer so a slow subscriber (e.g. a reducer under lock) can't suspend send()
-        // and stall the SSE read loop. Drop oldest on overflow — the next event carries
-        // the freshest state, so a dropped interim delta is harmless.
-        .buffer(bufferCapacity, BufferOverflow.DROP_OLDEST)
-        .shareIn(
-            scope = scope,
-            started = SharingStarted.WhileSubscribed(stopTimeoutMillis = NetworkConfig.stateFlowSubscriptionTimeoutMs),
-            replay = 0,
-        )
+    open val events: SharedFlow<BusEvent> by lazy {
+        stream()
+            .buffer(bufferCapacity, BufferOverflow.DROP_OLDEST)
+            .shareIn(
+                scope = scope,
+                started = SharingStarted.WhileSubscribed(stopTimeoutMillis = NetworkConfig.stateFlowSubscriptionTimeoutMs),
+                replay = 0,
+            )
+    }
 
     /** Conflated channel used to cut the reconnect backoff short when network returns. */
     private val reconnectSignal = Channel<Unit>(Channel.CONFLATED)
@@ -70,7 +74,7 @@ class EventStreamClient(
             (e.response.status.value == 401 || e.response.status.value == 403)
 
     /** Request an immediate reconnect, skipping any in-progress backoff. */
-    fun triggerReconnect() { reconnectSignal.trySend(Unit) }
+    open fun triggerReconnect() { reconnectSignal.trySend(Unit) }
 
     /**
      * Read SSE events from [events], racing each read against an idle-timeout watchdog.

@@ -15,15 +15,17 @@ import kotlinx.coroutines.cancel
  * SSE event stream, and the reducing repository, all sharing a connection-scoped
  * coroutine scope that is cancelled on [close].
  */
-class OpencodeConnection(val profile: ServerProfile) {
+open class OpencodeConnection(val profile: ServerProfile) {
+
+    protected constructor() : this(ServerProfile(id = "", label = "", baseUrl = "http://localhost"))
 
     private val scopeJob = SupervisorJob()
-    private val scope = CoroutineScope(scopeJob + Dispatchers.IO)
+    private val scope by lazy { CoroutineScope(scopeJob + Dispatchers.IO) }
+    private val client by lazy { HttpClientFactory.create(profile) }
 
-    private val client = HttpClientFactory.create(profile)
-    val api = OpencodeApiClient(client)
-    val events = EventStreamClient(client, scope)
-    val repository = SessionRepository(api, events)
+    open val api: OpencodeApiClient by lazy { OpencodeApiClient(client) }
+    open val events: EventStreamClient by lazy { EventStreamClient(client, scope) }
+    open val repository: SessionRepository by lazy { SessionRepository(api, events) }
 
     /**
      * Cancel the coroutine scope and wait for in-flight work (including the SSE reader)
@@ -31,7 +33,7 @@ class OpencodeConnection(val profile: ServerProfile) {
      * coroutine is still mid-request produces a spurious "stream error, will retry"
      * warning during normal teardown.
      */
-    suspend fun close() {
+    open suspend fun close() {
         scope.cancel()
         scopeJob.join()
         runCatching { client.close() }
