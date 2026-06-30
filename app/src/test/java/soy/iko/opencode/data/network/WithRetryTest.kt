@@ -158,4 +158,22 @@ class WithRetryTest {
         // Expected delays: 50, 100, 200 (50 * 2^0, 50 * 2^1, 50 * 2^2)
         assertEquals(listOf(50L, 100L, 200L), delays)
     }
+
+    @Test
+    fun symmetricJitterStaysWithinBounds() = runTest {
+        // With jitterFactor = 0.2, the delay should be baseDelay ± 20%.
+        // baseDelay = 100, so delay ∈ [80, 120]. Run many times to verify
+        // the symmetric jitter never exceeds the bounds.
+        repeat(100) {
+            val start = testScheduler.currentTime
+            runCatching {
+                withRetryInternal(maxAttempts = 2, initialDelayMs = 100L, jitterFactor = 0.2) {
+                    throw IOException("always")
+                }
+            }
+            val elapsed = testScheduler.currentTime - start
+            assertTrue("elapsed $elapsed should be >= 80", elapsed >= 80)
+            assertTrue("elapsed $elapsed should be <= 120", elapsed <= 120)
+        }
+    }
 }

@@ -22,6 +22,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -29,6 +34,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 import com.mikepenz.markdown.compose.components.MarkdownComponentModel
 import com.mikepenz.markdown.compose.components.markdownComponents
 import com.mikepenz.markdown.m3.Markdown
@@ -42,6 +48,11 @@ import soy.iko.opencode.R
  * (commonmark-java under the hood). Keeps a local API so callers don't import the library directly.
  * Long-press copies the raw markdown to the system clipboard. Code blocks/fences get an
  * inline copy button.
+ *
+ * During streaming, the full markdown is re-parsed on every token (the library re-parses
+ * whenever the content string changes). To avoid O(n²) work during long responses, the
+ * rendered content is throttled — the latest [markdown] is committed to the renderer at
+ * most once per frame (~16ms), so a burst of tokens coalesces into a single re-parse.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -51,8 +62,22 @@ fun MarkdownText(
     style: TextStyle = MaterialTheme.typography.bodyLarge,
 ) {
     val context = LocalContext.current
+    // Throttle the rendered content so a rapid burst of streaming tokens coalesces
+    // into a single markdown re-parse per frame instead of one per token. The delay
+    // is only applied when the content is growing incrementally (streaming) — a
+    // content switch or initial render proceeds immediately.
+    var renderedContent by remember { mutableStateOf(markdown) }
+    LaunchedEffect(markdown) {
+        if (renderedContent.isNotEmpty() &&
+            markdown.startsWith(renderedContent) &&
+            markdown != renderedContent
+        ) {
+            delay(16)
+        }
+        renderedContent = markdown
+    }
     Markdown(
-        content = markdown,
+        content = renderedContent,
         modifier = modifier.combinedClickable(
             onClick = {},
             onLongClick = { copyToClipboard(context, markdown) },

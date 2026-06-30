@@ -21,6 +21,7 @@ import io.ktor.client.call.body
 import io.ktor.client.plugins.ClientRequestException
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
+import io.ktor.client.request.header
 import io.ktor.client.request.parameter
 import io.ktor.client.request.patch
 import io.ktor.client.request.post
@@ -28,6 +29,8 @@ import io.ktor.client.request.setBody
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlin.random.Random
 import java.net.URLEncoder
 
@@ -36,6 +39,16 @@ import java.net.URLEncoder
  * SSE stream lives in [EventStreamClient]; everything else is here.
  */
 class OpencodeApiClient(private val client: HttpClient) {
+
+    // --- Catalog cache (providers/agents/commands) ---
+    // These change rarely, but the ChatViewModel re-fetches them on every creation.
+    // A short-lived in-memory cache avoids redundant network calls when navigating
+    // between sessions on the same server.
+    private data class CachedEntry<T>(val value: T, val fetchedAt: Long)
+    private val cacheMutex = Mutex()
+    private var cachedProviders: CachedEntry<ProvidersResponse>? = null
+    private var cachedAgents: CachedEntry<List<Agent>>? = null
+    private var cachedCommands: CachedEntry<List<Command>>? = null
 
     /** Lightweight connectivity check. Throws on non-2xx / network failure. */
     suspend fun ping() {
@@ -71,9 +84,14 @@ class OpencodeApiClient(private val client: HttpClient) {
         text: String,
         model: ModelRef? = null,
         agent: String? = null,
-    ): MessageWithParts =
+    ): MessageWithParts = withRetry {
+        // Send an idempotency key so the server can safely deduplicate if a transient
+        // network failure causes this request to be retried. The key is unique per call
+        // so a genuine re-send (e.g. retry-failed) still creates a new message.
+        val idempotencyKey = java.util.UUID.randomUUID().toString()
         client.post("session/${encode(sessionId)}/message") {
             contentType(ContentType.Application.Json)
+            header("Idempotency-Key", idempotencyKey)
             setBody(
                 PromptRequest(
                     parts = listOf(PromptPart(text = text)),
@@ -82,6 +100,7 @@ class OpencodeApiClient(private val client: HttpClient) {
                 ),
             )
         }.body()
+    }
 
     suspend fun abort(sessionId: String) {
         client.post("session/${encode(sessionId)}/abort")
@@ -99,16 +118,47 @@ class OpencodeApiClient(private val client: HttpClient) {
             setBody(CommandRequest(command = command, arguments = arguments, agent = agent))
         }.body()
 
-    suspend fun providers(): ProvidersResponse = withRetry {
-        client.get("config/providers").body()
+    suspend fun providers(): ProvidersResponse = cacheMutex.withLock {
+        val now = System.currentTimeMillis()
+        val cached = cachedProviders
+        if (cached != null && now - cached.fetchedAt < NetworkConfig.catalogCacheTtlMs) {
+            cached.value
+        } else {
+            val value = withRetry { client.get("config/providers").body<ProvidersResponse>() }
+            cachedProviders = CachedEntry(value, now)
+            value
+        }
     }
 
-    suspend fun agents(): List<Agent> = withRetry {
-        client.get("agent").body()
+    suspend fun agents(): List<Agent> = cacheMutex.withLock {
+        val now = System.currentTimeMillis()
+        val cached = cachedAgents
+        if (cached != null && now - cached.fetchedAt < NetworkConfig.catalogCacheTtlMs) {
+            cached.value
+        } else {
+            val value = withRetry { client.get("agent").body<List<Agent>>() }
+            cachedAgents = CachedEntry(value, now)
+            value
+        }
     }
 
-    suspend fun commands(): List<Command> = withRetry {
-        client.get("command").body()
+    suspend fun commands(): List<Command> = cacheMutex.withLock {
+        val now = System.currentTimeMillis()
+        val cached = cachedCommands
+        if (cached != null && now - cached.fetchedAt < NetworkConfig.catalogCacheTtlMs) {
+            cached.value
+        } else {
+            val value = withRetry { client.get("command").body<List<Command>>() }
+            cachedCommands = CachedEntry(value, now)
+            value
+        }
+    }
+
+    /** Invalidate the catalog cache (e.g. on server switch). */
+    fun invalidateCache() {
+        cachedProviders = null
+        cachedAgents = null
+        cachedCommands = null
     }
 
     /** Respond to a permission request so a paused tool run can proceed. */
@@ -176,8 +226,11 @@ internal suspend fun <T> withRetryInternal(
             }
             if (attempt < maxAttempts) {
                 val baseDelay = initialDelayMs * (1 shl (attempt - 1))
-                val jitter = (baseDelay * jitterFactor * Random.nextDouble()).toLong()
-                delay(baseDelay + jitter)
+                // Symmetric jitter: vary by ±jitterFactor so the delay is sometimes
+                // shorter, sometimes longer — spreads concurrent client retries and
+                // prevents thundering-herd reconnection storms.
+                val jitter = ((baseDelay * jitterFactor) * (Random.nextDouble() * 2 - 1)).toLong()
+                delay((baseDelay + jitter).coerceAtLeast(0))
             }
         }
     }

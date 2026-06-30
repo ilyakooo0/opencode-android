@@ -94,7 +94,7 @@ fun OpencodeApp(container: AppContainer) {
                 SessionListScreen(
                     container = container,
                     onOpenSession = { id ->
-                        container.consumePendingShare()?.let { container.draftStore.set(id, it) }
+                        container.consumePendingShare()?.let { scope.launch { container.draftStore.set(id, it) } }
                         navController.navigate(Routes.chat(id))
                     },
                     onDisconnect = {

@@ -54,8 +54,8 @@ object SessionNotifications {
         val notifId = notifIdFor(sessionId)
         val openIntent = Intent(context, MainActivity::class.java).apply {
             action = Intent.ACTION_VIEW
+            data = android.net.Uri.parse("opencode://session/$sessionId")
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            putExtra(MainActivity.EXTRA_SESSION_ID, sessionId)
         }
         val pendingIntent = PendingIntent.getActivity(
             context, notifId, openIntent,

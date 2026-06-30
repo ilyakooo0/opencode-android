@@ -295,4 +295,26 @@ class MessageStoreTest {
         assertEquals(listOf("t1", "t2"), a1.parts.map { it.id })
         assertEquals("final", (a1.parts[0] as TextPart).text)
     }
+
+    // --- eviction ---
+
+    @Test
+    fun evictionCapsMessageCountKeepingNewest() {
+        val store = MessageStore()
+        // Seed exactly at the cap.
+        val messages = (1..store.maxMessages).map { i ->
+            MessageWithParts(UserMessage("m$i", session))
+        }
+        store.seed(messages)
+        assertEquals(store.maxMessages, store.snapshot().size)
+
+        // Adding one more via reduce should evict the oldest.
+        store.reduce(session, msgUpdated("m${store.maxMessages + 1}"))
+        assertEquals(store.maxMessages, store.snapshot().size)
+        // The oldest (m1) should be gone; the newest should be present.
+        val ids = store.snapshot().map { it.info.id }
+        assertFalse("m1 should have been evicted", ids.contains("m1"))
+        assertTrue("m${store.maxMessages} should still be present", ids.contains("m${store.maxMessages}"))
+        assertTrue("newest message should be present", ids.contains("m${store.maxMessages + 1}"))
+    }
 }

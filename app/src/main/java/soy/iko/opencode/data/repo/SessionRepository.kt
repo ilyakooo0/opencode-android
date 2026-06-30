@@ -12,6 +12,7 @@ import soy.iko.opencode.data.model.SessionError
 import soy.iko.opencode.data.model.SessionIdle
 import soy.iko.opencode.data.model.UnknownMessage
 import soy.iko.opencode.data.network.EventStreamClient
+import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.data.network.OpencodeApiClient
 import android.util.Log
 import kotlinx.coroutines.flow.Flow
@@ -119,6 +120,9 @@ internal class MessageStore {
     // messageId -> (info + parts), insertion-ordered.
     private val messages = LinkedHashMap<String, MessageWithParts>()
 
+    /** Maximum number of messages to keep in memory; oldest are evicted when exceeded. */
+    internal val maxMessages = NetworkConfig.maxInMemoryMessages
+
     fun snapshot(): List<MessageWithParts> = messages.values.toList()
 
     fun seed(initial: List<MessageWithParts>, prune: Boolean = false) {
@@ -152,6 +156,7 @@ internal class MessageStore {
                 messages[m.info.id] = MessageWithParts(info = info, parts = ordered)
             }
         }
+        evictOldMessages()
     }
 
     /** Returns true if the state changed (and a new snapshot should be published). */
@@ -164,6 +169,7 @@ internal class MessageStore {
                 } else {
                     val existing = messages[info.id]
                     messages[info.id] = existing?.copy(info = info) ?: MessageWithParts(info)
+                    if (existing == null) evictOldMessages()
                     true
                 }
             }
@@ -208,6 +214,7 @@ internal class MessageStore {
                 info = UnknownMessage(id = messageId, sessionID = part.sessionID ?: ""),
                 parts = newParts,
             )
+        evictOldMessages()
         return true
     }
 
@@ -217,5 +224,13 @@ internal class MessageStore {
         if (newParts.size == current.parts.size) return false
         messages[messageId] = current.copy(parts = newParts)
         return true
+    }
+
+    /** Evict the oldest messages when the store exceeds [maxMessages], keeping memory bounded. */
+    private fun evictOldMessages() {
+        while (messages.size > maxMessages) {
+            val oldestKey = messages.keys.iterator().next()
+            messages.remove(oldestKey)
+        }
     }
 }

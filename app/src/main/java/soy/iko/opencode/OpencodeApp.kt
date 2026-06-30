@@ -12,6 +12,12 @@ class OpencodeApp : Application() {
         super.onCreate()
         CrashLogger.get(this).install()
         container = AppContainer(this)
+        // onTerminate() is only called in emulated process environments, not on real
+        // devices. Register a JVM shutdown hook so cleanup (network callback unregister,
+        // scope cancellation, connection close) runs when the process is actually killed.
+        Runtime.getRuntime().addShutdownHook(Thread {
+            container.shutdown()
+        })
     }
 
     override fun onTerminate() {

@@ -24,7 +24,7 @@ object NetworkConfig {
     const val retryMaxAttempts = 3
     /** Initial backoff delay; doubles on each successive failure (exponential backoff). */
     const val retryInitialDelayMs = 500L
-    /** Jitter factor for retry backoff (0.2 = ±20% random jitter added to each delay). */
+    /** Jitter factor for retry backoff (0.2 = ±20% symmetric random jitter on each delay). */
     const val retryJitterFactor = 0.2
 
     // --- SSE stream (EventStreamClient) ---
@@ -37,8 +37,11 @@ object NetworkConfig {
     const val sseIdleTimeoutMs = 90_000L
     /** Buffer capacity for the SSE events SharedFlow; prevents a slow subscriber stalling the read loop. */
     const val sseEventBufferCapacity = 64
-    /** Max time to wait for the first SSE event before treating the connection as stale. */
-    const val sseHandshakeTimeoutMs = 30_000L
+
+    // --- Catalog cache (OpencodeApiClient) ---
+
+    /** How long cached catalog responses (providers/agents/commands) are considered fresh. */
+    const val catalogCacheTtlMs = 60_000L
 
     // --- Session list (SessionListViewModel) ---
 
@@ -48,6 +51,11 @@ object NetworkConfig {
     const val maxConcurrentPreviews = 8
     /** Max characters of a session's last message to keep as a list preview. */
     const val previewTextMaxLength = 200
+
+    // --- In-memory message store (SessionRepository.MessageStore) ---
+
+    /** Max messages to keep in memory per observed session; oldest are evicted beyond this. */
+    const val maxInMemoryMessages = 500
 
     // --- File browser (FileBrowserViewModel) ---
 

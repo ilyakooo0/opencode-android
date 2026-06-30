@@ -113,7 +113,7 @@ class ProfileStore(context: Context) {
                 } else {
                     remove(passwordKey(profile.id))
                 }
-            }.commit()
+            }.apply()
         }
     }
 
@@ -129,7 +129,7 @@ class ProfileStore(context: Context) {
             )
         }
         withContext(Dispatchers.IO) {
-            securePrefs.edit().remove(passwordKey(id)).commit()
+            securePrefs.edit().remove(passwordKey(id)).apply()
         }
     }
 

@@ -88,7 +88,14 @@ class EventStreamClient(
             }
             if (result == null) throw IOException("SSE idle timeout, reconnecting")
             val sse = result.getOrNull() ?: break
-            val data = sse.data ?: continue
+            val data = sse.data
+            if (data == null) {
+                // A comment or keep-alive event (no data field) resets the idle watchdog
+                // — servers send `: ping` comments to keep the connection alive through
+                // proxies. Without this, a server that only sends comments would still
+                // hit the idle timeout and reconnect unnecessarily.
+                continue
+            }
             val event = try {
                 OpencodeJson.decodeFromString(BusEvent.serializer(), data)
             } catch (e: kotlinx.serialization.SerializationException) {
@@ -163,7 +170,7 @@ class EventStreamClient(
             if (!isActive) break
             // Wait for the backoff, but allow a reconnect signal to cut it short.
             var signaled = false
-            val jitter = (backoffMs * 0.2 * Random.nextDouble()).toLong()
+            val jitter = ((backoffMs * 0.2) * (Random.nextDouble() * 2 - 1)).toLong()
             select {
                 reconnectSignal.onReceive { signaled = true }
                 onTimeout(backoffMs + jitter) { /* normal backoff elapsed */ }

@@ -178,6 +178,7 @@ class AppContainer(context: Context) {
                     // Track sessions actively streaming so we know which idle events
                     // represent a finished run worth notifying about.
                     if (event is MessagePartUpdated || event is MessageUpdated) {
+                        if (activeRuns.size >= activeRunsLimit) activeRuns.clear()
                         activeRuns.add(sid)
                     }
                 }
@@ -186,6 +187,9 @@ class AppContainer(context: Context) {
 
     /** Session ids currently streaming an assistant run (best-effort, in-process). */
     private val activeRuns: MutableSet<String> = java.util.Collections.synchronizedSet(mutableSetOf())
+
+    /** Upper bound on [activeRuns] to prevent unbounded growth if SessionIdle never arrives. */
+    private val activeRunsLimit = 200
 
     /** Guards connect/disconnect so concurrent callers can't leak an old connection. */
     private val connectionMutex = Mutex()

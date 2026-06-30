@@ -1,52 +1,73 @@
 package soy.iko.opencode.data.repo
 
 import android.content.Context
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Persists the in-progress message draft for each session so it survives
  * back-navigation and process death. Backed by SharedPreferences because the
  * UI needs the initial value synchronously and drafts are low-stakes data.
  *
- * The prefs file is loaded on a background thread at construction time so the
- * first [get] call on the main thread doesn't trigger a synchronous disk read.
+ * The prefs file is loaded on a background thread at construction time. Until
+ * the load completes, [drafts] reports an empty map and [get] returns "" rather
+ * than blocking the caller (previously a [CountDownLatch] could stall the main
+ * thread for up to 2 seconds on a slow disk).
  */
 class DraftStore(context: Context, scope: CoroutineScope) {
 
     private val appContext = context.applicationContext
-    private val prefsReady = CountDownLatch(1)
     private val prefs by lazy {
         appContext.getSharedPreferences("drafts", Context.MODE_PRIVATE)
     }
 
+    private val _drafts = MutableStateFlow<Map<String, String>>(emptyMap())
+    /** The full in-memory snapshot of all drafts, updated when prefs finish loading. */
+    val drafts: StateFlow<Map<String, String>> = _drafts.asStateFlow()
+
+    private val _ready = MutableStateFlow(false)
+    /** True once the background prefs load has completed. */
+    val ready: StateFlow<Boolean> = _ready.asStateFlow()
+
     init {
         // Eagerly load the prefs file on a background thread so the first main-thread
-        // get() doesn't block on disk I/O. The latch ensures get() waits for this
-        // background load instead of triggering its own lazy load on the main thread.
-        scope.launch {
-            runCatching { prefs.all }
-            prefsReady.countDown()
+        // get() doesn't block on disk I/O. The loaded snapshot is published via [_drafts]
+        // so callers can observe readiness without blocking.
+        scope.launch(Dispatchers.IO) {
+            val snapshot = runCatching {
+                prefs.all.mapValues { it.value as? String ?: "" }
+            }.getOrDefault(emptyMap())
+            _drafts.value = snapshot
+            _ready.value = true
         }
     }
 
-    fun get(sessionId: String): String {
-        prefsReady.await(2, TimeUnit.SECONDS)
-        return prefs.getString(sessionId, "").orEmpty()
-    }
+    /** Returns the draft for [sessionId], or "" if not found or still loading. */
+    fun get(sessionId: String): String = _drafts.value[sessionId].orEmpty()
 
-    fun set(sessionId: String, text: String) {
-        prefsReady.await(2, TimeUnit.SECONDS)
-        prefs.edit().apply {
-            if (text.isBlank()) remove(sessionId) else putString(sessionId, text)
-        }.apply()
+    suspend fun set(sessionId: String, text: String) {
+        val current = _drafts.value.toMutableMap()
+        if (text.isBlank()) current.remove(sessionId) else current[sessionId] = text
+        _drafts.value = current
+        withContext(Dispatchers.IO) {
+            prefs.edit().apply {
+                if (text.isBlank()) remove(sessionId) else putString(sessionId, text)
+            }.apply()
+        }
     }
 
     /** Remove the draft for a session (call on session deletion to avoid orphaned entries). */
-    fun remove(sessionId: String) {
-        prefsReady.await(2, TimeUnit.SECONDS)
-        prefs.edit().remove(sessionId).apply()
+    suspend fun remove(sessionId: String) {
+        val current = _drafts.value.toMutableMap()
+        current.remove(sessionId)
+        _drafts.value = current
+        withContext(Dispatchers.IO) {
+            prefs.edit().remove(sessionId).apply()
+        }
     }
 }

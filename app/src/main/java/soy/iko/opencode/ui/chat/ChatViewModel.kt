@@ -120,14 +120,21 @@ class ChatViewModel(
 
     fun updateDraft(text: String) {
         _draft.value = text
-        container.draftStore.set(sessionId, text)
+        viewModelScope.launch { container.draftStore.set(sessionId, text) }
     }
 
     init {
-        // Watch the bus for run completion / errors / permission asks for this session.
+        // Reset per-connection state when the active server changes so stale spinners,
+        // permission dialogs, errors, and agent selections from the old server don't
+        // persist into the new one.
         viewModelScope.launch {
             container.activeConnection.collectLatest { conn ->
                 if (conn == null) return@collectLatest
+                _running.value = false
+                _pendingPermission.value = null
+                _error.value = null
+                _failedDraft.value = null
+                _selectedAgent.value = null
                 conn.events.events.collect { event ->
                     if (SessionRepository.isIdle(event, sessionId)) _running.value = false
                     if (SessionRepository.isError(event, sessionId)) {
