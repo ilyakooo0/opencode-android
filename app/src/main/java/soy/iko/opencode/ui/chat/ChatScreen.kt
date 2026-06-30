@@ -85,6 +85,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import soy.iko.opencode.data.model.TextPart
 import soy.iko.opencode.data.network.EventStreamClient
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
@@ -188,9 +189,19 @@ fun ChatScreen(
     // churn that keying on lastPartLen (which changes on every streaming token) caused.
     // collectLatest cancels the in-flight scroll when a newer snapshot arrives, so
     // streaming stays smooth without dozens of competing animations per second.
+    //
+    // The second Triple component tracks the total text length of the last message's
+    // parts. When a streaming token updates an existing TextPart (same part ID, longer
+    // text), messages.size and parts.size don't change — without the text length, the
+    // snapshotFlow wouldn't emit and the view wouldn't auto-scroll to follow the stream.
     LaunchedEffect(Unit) {
-        snapshotFlow { Triple(messages.size, messages.lastOrNull()?.parts?.size, isPinnedToBottom) }
-            .collectLatest { (_, _, pinned) ->
+        snapshotFlow {
+            Triple(
+                messages.size,
+                messages.lastOrNull()?.parts?.sumOf { (it as? TextPart)?.text?.length ?: 0 } ?: 0,
+                isPinnedToBottom,
+            )
+        }.collectLatest { (_, _, pinned) ->
                 if (messages.isNotEmpty() && pinned) {
                     listState.animateScrollToItem(messages.lastIndex)
                 }
