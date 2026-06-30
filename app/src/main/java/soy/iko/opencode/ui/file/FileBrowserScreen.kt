@@ -229,11 +229,11 @@ private fun FileRow(
             tint = if (icon) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Text(
-            "  $label",
+            label,
             style = MaterialTheme.typography.bodyLarge,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.weight(1f).padding(start = 8.dp),
         )
         if (status != null) StatusBadge(status)
     }
@@ -261,10 +261,11 @@ private fun StatusBadge(status: FileStatusEntry) {
         )
         if (status.added > 0 || status.removed > 0) {
             Text(
-                "  +${status.added} −${status.removed}",
+                "+${status.added} −${status.removed}",
                 style = MaterialTheme.typography.labelSmall,
                 fontFamily = FontFamily.Monospace,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 4.dp),
             )
         }
     }

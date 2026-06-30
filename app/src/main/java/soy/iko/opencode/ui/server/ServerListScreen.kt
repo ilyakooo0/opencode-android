@@ -217,7 +217,7 @@ private fun EmptyServers(onAdd: () -> Unit, modifier: Modifier = Modifier) {
             Spacer(Modifier.size(20.dp))
             TextButton(onClick = onAdd) {
                 Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                Text("  " + stringResource(R.string.add_server))
+                Text(stringResource(R.string.add_server), modifier = Modifier.padding(start = 8.dp))
             }
         }
     }

@@ -59,8 +59,9 @@ fun CommandPickerSheet(
                         ) {
                             Icon(Icons.AutoMirrored.Filled.PlaylistPlay, contentDescription = null)
                             Text(
-                                "  /${cmd.name}",
+                                "/${cmd.name}",
                                 style = MaterialTheme.typography.bodyLarge,
+                                modifier = Modifier.padding(start = 8.dp),
                             )
                         }
                         Text(

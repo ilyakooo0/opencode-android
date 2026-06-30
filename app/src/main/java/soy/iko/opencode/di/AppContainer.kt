@@ -42,7 +42,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 class AppContainer(context: Context) {
 
-    val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     val profileStore = ProfileStore(context)
     val settingsStore = SettingsStore(context)
     val draftStore = DraftStore(context, appScope)

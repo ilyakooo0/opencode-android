@@ -147,7 +147,7 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onManageServers:
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(Icons.Filled.Dns, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                Text("  " + stringResource(R.string.manage_servers), modifier = Modifier.weight(1f))
+                Text(stringResource(R.string.manage_servers), modifier = Modifier.weight(1f).padding(start = 8.dp))
                 Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
@@ -180,7 +180,7 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onManageServers:
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(Icons.Filled.BugReport, contentDescription = null, tint = MaterialTheme.colorScheme.error)
-                Text("  " + stringResource(R.string.diagnostics), modifier = Modifier.weight(1f))
+                Text(stringResource(R.string.diagnostics), modifier = Modifier.weight(1f).padding(start = 8.dp))
                 Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }

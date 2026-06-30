@@ -10,8 +10,10 @@ import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import soy.iko.opencode.data.model.ServerProfile
 import soy.iko.opencode.data.network.OpencodeJson
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 
@@ -65,20 +67,25 @@ class ProfileStore(context: Context) {
             .map { it.toProfile() }
     }
 
-    private fun StoredProfile.toProfile() = ServerProfile(
-        id = id,
-        label = label,
-        baseUrl = baseUrl,
-        username = username,
-        password = username?.let { passwordFor(id) },
-        lastUsed = lastUsed,
-    )
+    private suspend fun StoredProfile.toProfile(): ServerProfile {
+        val pw = username?.let { passwordFor(id) }
+        return ServerProfile(
+            id = id,
+            label = label,
+            baseUrl = baseUrl,
+            username = username,
+            password = pw,
+            lastUsed = lastUsed,
+        )
+    }
 
-    /** Resolve a single profile with its password loaded, for opening a connection. */
-    suspend fun resolve(profile: ServerProfile): ServerProfile =
-        profile.copy(password = if (profile.hasAuth) passwordFor(profile.id) else null)
+    suspend fun resolve(profile: ServerProfile): ServerProfile {
+        val pw = if (profile.hasAuth) passwordFor(profile.id) else null
+        return profile.copy(password = pw)
+    }
 
-    fun passwordFor(id: String): String? = securePrefs.getString(passwordKey(id), null)
+    private suspend fun passwordFor(id: String): String? =
+        withContext(Dispatchers.IO) { securePrefs.getString(passwordKey(id), null) }
 
     suspend fun save(profile: ServerProfile) {
         appContext.dataStore.edit { prefs ->
@@ -97,14 +104,17 @@ class ProfileStore(context: Context) {
             prefs[profilesKey] = OpencodeJson.encodeToString(ListSerializer(StoredProfile.serializer()), updated)
         }
         // Secret goes to encrypted storage (or is cleared when auth removed).
-        securePrefs.edit().apply {
-            val pw = profile.password
-            if (!profile.username.isNullOrBlank() && !pw.isNullOrEmpty()) {
-                putString(passwordKey(profile.id), pw)
-            } else {
-                remove(passwordKey(profile.id))
-            }
-        }.apply()
+        // EncryptedSharedPreferences encrypts on the calling thread, so move to IO.
+        withContext(Dispatchers.IO) {
+            securePrefs.edit().apply {
+                val pw = profile.password
+                if (!profile.username.isNullOrBlank() && !pw.isNullOrEmpty()) {
+                    putString(passwordKey(profile.id), pw)
+                } else {
+                    remove(passwordKey(profile.id))
+                }
+            }.apply()
+        }
     }
 
     suspend fun delete(id: String) {
@@ -118,7 +128,9 @@ class ProfileStore(context: Context) {
                 current.filterNot { it.id == id },
             )
         }
-        securePrefs.edit().remove(passwordKey(id)).apply()
+        withContext(Dispatchers.IO) {
+            securePrefs.edit().remove(passwordKey(id)).apply()
+        }
     }
 
     private fun passwordKey(id: String) = "pw_$id"
