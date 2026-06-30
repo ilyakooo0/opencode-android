@@ -132,8 +132,15 @@ class FileBrowserViewModel(private val container: AppContainer) : ViewModel() {
         openJob?.cancel()
         if (query.isBlank()) {
             _state.update { it.copy(results = emptyList(), searching = false) }
+            // Cancelling openJob above may have interrupted an in-flight directory load,
+            // leaving loading=true stuck. Re-open the current directory so the listing
+            // re-populates instead of showing a perpetual spinner after clearing search.
+            open(_state.value.path)
             return
         }
+        // The search view replaces the directory listing; clear loading so the spinner
+        // from a cancelled open() doesn't persist into the search results view.
+        _state.update { it.copy(loading = false) }
         val client = api ?: run {
             _state.update { it.copy(searching = false, error = container.string(R.string.not_connected)) }
             return

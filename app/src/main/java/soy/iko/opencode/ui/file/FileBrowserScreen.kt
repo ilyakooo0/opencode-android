@@ -113,7 +113,7 @@ fun FileBrowserScreen(
                             Modifier.align(Alignment.Center).semantics { contentDescription = loadingLabel },
                         )
                     }
-                    state.error != null && !state.isSearching -> Text(
+                    state.error != null -> Text(
                         state.error ?: "",
                         modifier = Modifier.align(Alignment.Center).padding(24.dp),
                         color = MaterialTheme.colorScheme.error,
