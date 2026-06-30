@@ -93,7 +93,7 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onManageServers:
                 ThemeRow(
                     mode = mode,
                     selected = themeMode == mode,
-                    onSelect = { scope.launch { container.settingsStore.setThemeMode(mode) } },
+                    onSelect = { scope.launch { runCatching { container.settingsStore.setThemeMode(mode) } } },
                 )
             }
 
@@ -112,7 +112,7 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onManageServers:
                 }
                 Switch(
                     checked = dynamicColor,
-                    onCheckedChange = { scope.launch { container.settingsStore.setDynamicColor(it) } },
+                    onCheckedChange = { scope.launch { runCatching { container.settingsStore.setDynamicColor(it) } } },
                 )
             }
 

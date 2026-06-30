@@ -27,7 +27,7 @@ class DraftStore(context: Context, scope: CoroutineScope) {
         // get() doesn't block on disk I/O. The latch ensures get() waits for this
         // background load instead of triggering its own lazy load on the main thread.
         scope.launch {
-            prefs.all
+            runCatching { prefs.all }
             prefsReady.countDown()
         }
     }

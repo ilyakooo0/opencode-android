@@ -73,7 +73,7 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                 actions = {
                     if (reports.isNotEmpty()) {
                         IconButton(onClick = {
-                            shareScope.launch(Dispatchers.IO) { logger.clearAll() }
+                            shareScope.launch(Dispatchers.IO) { runCatching { logger.clearAll() } }
                         }) {
                             Icon(Icons.Filled.DeleteSweep, contentDescription = stringResource(R.string.clear_all))
                         }
@@ -176,7 +176,7 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                     }) { Text(stringResource(R.string.share)) }
                     Spacer(Modifier.size(8.dp))
                     TextButton(onClick = {
-                        shareScope.launch(Dispatchers.IO) { logger.deleteReport(reportName) }
+                        shareScope.launch(Dispatchers.IO) { runCatching { logger.deleteReport(reportName) } }
                         viewing = null
                     }) { Text(stringResource(R.string.delete)) }
                 }

@@ -71,6 +71,26 @@ class SessionRepository(
             }
         }
 
+        // Re-seed from REST when the SSE stream reconnects after a drop. Events emitted
+        // by the server during the disconnection gap are lost from the in-memory state;
+        // re-fetching the current snapshot fills those holes. The seed merge logic
+        // (see MessageStore.seed) handles interleaving with concurrently-arrived events.
+        launch {
+            var wasConnected = false
+            eventStream.state.collect { state ->
+                if (state == EventStreamClient.ConnectionState.Connected) {
+                    if (wasConnected) {
+                        val fresh = runCatching { api.listMessages(sessionId) }.getOrDefault(emptyList())
+                        lock.withLock { store.seed(fresh) }
+                        publish()
+                    }
+                    wasConnected = true
+                } else if (state == EventStreamClient.ConnectionState.Disconnected) {
+                    wasConnected = false
+                }
+            }
+        }
+
         val initial = runCatching { api.listMessages(sessionId) }
             .onFailure { Log.w("SessionRepository", "Initial message load failed for $sessionId; relying on SSE", it) }
             .getOrDefault(emptyList())

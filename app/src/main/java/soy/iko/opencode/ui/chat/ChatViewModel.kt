@@ -215,8 +215,7 @@ class ChatViewModel(
     fun send(text: String): Boolean {
         val conn = connection ?: return false
         val trimmed = text.trim()
-        if (trimmed.isEmpty() || _running.value) return false
-        _running.value = true
+        if (trimmed.isEmpty() || !_running.compareAndSet(false, true)) return false
         _error.value = null
         _failedDraft.value = null
         // Clear the in-memory draft for the UI immediately, but don't persist the clear
@@ -255,8 +254,7 @@ class ChatViewModel(
     /** Invoke a slash-command by name via the server's /command endpoint. */
     fun runCommand(command: Command) {
         val conn = connection ?: return
-        if (_running.value) return
-        _running.value = true
+        if (!_running.compareAndSet(false, true)) return
         _error.value = null
         viewModelScope.launch {
             runCatching {
