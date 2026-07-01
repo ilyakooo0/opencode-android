@@ -16,13 +16,14 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Dns
-import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -227,20 +228,39 @@ fun ServerListScreen(
                                         tint = MaterialTheme.colorScheme.primary,
                                         modifier = Modifier.size(22.dp),
                                     )
-                                    // Keep edit available on the active server so credentials can be
-                                    // fixed without disconnecting first. Delete is also offered: the
-                                    // confirmation dialog warns that removing the active server also
-                                    // disconnects (remove_server_active_text), and the ViewModel
-                                    // disconnects immediately on confirm. Swipe remains disabled for
-                                    // the active row so an accidental swipe can't disconnect.
-                                    IconButton(onClick = { onEditProfile(profile.id) }) {
-                                        Icon(Icons.Filled.Edit, contentDescription = stringResource(R.string.edit))
-                                    }
-                                    IconButton(onClick = { onDuplicateProfile(profile.id) }) {
-                                        Icon(Icons.Filled.ContentCopy, contentDescription = stringResource(R.string.duplicate_server))
-                                    }
-                                    IconButton(onClick = { pendingDeleteId = profile.id }) {
-                                        Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.delete))
+                                    // Overflow menu consolidates edit/duplicate/delete so the
+                                    // active row shows a single chevron instead of three icons.
+                                    // Keep edit available on the active server so credentials can
+                                    // be fixed without disconnecting first. Delete is also offered:
+                                    // the confirmation dialog warns that removing the active server
+                                    // also disconnects (remove_server_active_text), and the
+                                    // ViewModel disconnects immediately on confirm.
+                                    var showRowMenu by rememberSaveable(profile.id) { mutableStateOf(false) }
+                                    val editLabel = stringResource(R.string.edit)
+                                    val duplicateLabel = stringResource(R.string.duplicate_server)
+                                    val removeLabel = stringResource(R.string.remove)
+                                    val moreLabel = stringResource(R.string.more)
+                                    Box {
+                                        IconButton(onClick = { showRowMenu = true }) {
+                                            Icon(Icons.Filled.MoreVert, contentDescription = moreLabel)
+                                        }
+                                        DropdownMenu(
+                                            expanded = showRowMenu,
+                                            onDismissRequest = { showRowMenu = false },
+                                        ) {
+                                            DropdownMenuItem(
+                                                text = { Text(editLabel) },
+                                                onClick = { showRowMenu = false; onEditProfile(profile.id) },
+                                            )
+                                            DropdownMenuItem(
+                                                text = { Text(duplicateLabel) },
+                                                onClick = { showRowMenu = false; onDuplicateProfile(profile.id) },
+                                            )
+                                            DropdownMenuItem(
+                                                text = { Text(removeLabel, color = MaterialTheme.colorScheme.error) },
+                                                onClick = { showRowMenu = false; pendingDeleteId = profile.id },
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -312,14 +332,36 @@ fun ServerListScreen(
                                                 modifier = Modifier.size(24.dp).semantics { contentDescription = connectingLabel },
                                             )
                                         } else {
-                                            IconButton(onClick = { onEditProfile(profile.id) }) {
-                                                Icon(Icons.Filled.Edit, contentDescription = stringResource(R.string.edit))
-                                            }
-                                            IconButton(onClick = { onDuplicateProfile(profile.id) }) {
-                                                Icon(Icons.Filled.ContentCopy, contentDescription = stringResource(R.string.duplicate_server))
-                                            }
-                                            IconButton(onClick = { pendingDeleteId = profile.id }) {
-                                                Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.delete))
+                                            // Overflow menu replaces the three inline edit/duplicate/
+                                            // delete icons so a long server list looks less busy.
+                                            // Swipe-to-delete remains the gesture path; the overflow
+                                            // is the discovery path (matching the session cards).
+                                            var showRowMenu by rememberSaveable(profile.id) { mutableStateOf(false) }
+                                            val editLabel = stringResource(R.string.edit)
+                                            val duplicateLabel = stringResource(R.string.duplicate_server)
+                                            val removeLabel = stringResource(R.string.remove)
+                                            val moreLabel = stringResource(R.string.more)
+                                            Box {
+                                                IconButton(onClick = { showRowMenu = true }) {
+                                                    Icon(Icons.Filled.MoreVert, contentDescription = moreLabel)
+                                                }
+                                                DropdownMenu(
+                                                    expanded = showRowMenu,
+                                                    onDismissRequest = { showRowMenu = false },
+                                                ) {
+                                                    DropdownMenuItem(
+                                                        text = { Text(editLabel) },
+                                                        onClick = { showRowMenu = false; onEditProfile(profile.id) },
+                                                    )
+                                                    DropdownMenuItem(
+                                                        text = { Text(duplicateLabel) },
+                                                        onClick = { showRowMenu = false; onDuplicateProfile(profile.id) },
+                                                    )
+                                                    DropdownMenuItem(
+                                                        text = { Text(removeLabel, color = MaterialTheme.colorScheme.error) },
+                                                        onClick = { showRowMenu = false; pendingDeleteId = profile.id },
+                                                    )
+                                                }
                                             }
                                         }
                                     }

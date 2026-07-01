@@ -260,4 +260,14 @@
     <string name="run_command_text">Run the command “%1$s”?</string>
     <string name="run">Run</string>
     <string name="command_busy">Wait for the current response to finish before running a command.</string>
+
+    <!-- UX additions: chat overflow, date separators, settings retry -->
+    <string name="more">More</string>
+    <string name="delete_session_chat">Delete session</string>
+    <string name="delete_session_chat_title">Delete this session?</string>
+    <string name="delete_session_chat_text">“%1$s” will be permanently deleted. This cannot be undone.</string>
+    <string name="rename_session_chat">Rename session</string>
+    <string name="session_deleted_chat">Session deleted</string>
+    <string name="today">Today</string>
+    <string name="yesterday">Yesterday</string>
 </resources>

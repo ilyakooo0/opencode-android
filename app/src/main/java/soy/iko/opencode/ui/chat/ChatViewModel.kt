@@ -675,6 +675,36 @@ class ChatViewModel(
         }
     }
 
+    /** Rename the current session via PATCH /session/:id. On success updates [sessionTitle]
+     *  so the top bar reflects the new name immediately. A failure surfaces as a snackbar;
+     *  the caller keeps the dialog open so the user can retry without retyping. */
+    fun renameSession(newTitle: String) {
+        val conn = connection ?: return
+        val title = newTitle.trim()
+        if (title.isEmpty() || title == _sessionTitle.value) return
+        viewModelScope.launch {
+            runCatchingCancellable { conn.api.updateSession(sessionId, title) }
+                .onSuccess { _sessionTitle.value = it.displayTitle }
+                .onFailure { _errorEvents.trySend(ChatError(container.friendlyError(it))) }
+        }
+    }
+
+    /** Delete the current session via DELETE /session/:id. Surfaces a toast (via the UI's
+     *  sessionDeleted flow) and navigates away on success; a failure surfaces as a snackbar.
+     *  Unlike [SessionListViewModel.deleteSession] there's no undo window — the user is
+     *  already viewing the session, so a confirmation dialog guards the action instead. */
+    fun deleteSession() {
+        val conn = connection ?: return
+        viewModelScope.launch {
+            runCatchingCancellable { conn.repository.deleteSession(sessionId) }
+                .onSuccess {
+                    container.draftStore.remove(sessionId)
+                    _sessionDeleted.value = true
+                }
+                .onFailure { _errorEvents.trySend(ChatError(container.friendlyError(it))) }
+        }
+    }
+
     /** Reconnect to the most recently used server profile (used when the connection is gone). */
     fun reconnect() {
         if (container.activeConnection.value != null) return

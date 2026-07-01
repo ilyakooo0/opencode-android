@@ -229,8 +229,12 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onManageServers:
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 // Surface the SSE stream state so a user who opens Settings during a
-                // reconnect sees it (the ConnectionBanner on other screens handles this
-                // elsewhere). Only show non-Connected states to avoid clutter.
+                // reconnect saw it (the ConnectionBanner on other screens handles this
+                // elsewhere). Only show non-Connected states to avoid clutter. On a hard
+                // failure offer an inline Retry — without it a user who opened Settings
+                // during a failure is stuck on an error message with no recovery path
+                // (the ConnectionBanner used elsewhere has Retry, but Settings doesn't
+                // host it). Retry forces an SSE reconnect, which re-seeds from REST.
                 val stateText = when (connectionState) {
                     EventStreamClient.ConnectionState.Connecting -> stringResource(R.string.connecting)
                     EventStreamClient.ConnectionState.Disconnected -> stringResource(R.string.reconnecting)
@@ -238,14 +242,24 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onManageServers:
                     EventStreamClient.ConnectionState.Connected -> null
                 }
                 stateText?.let {
-                    Text(
-                        it,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (connectionState == EventStreamClient.ConnectionState.Failed)
-                            MaterialTheme.colorScheme.error
-                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                    Row(
                         modifier = Modifier.padding(top = 4.dp),
-                    )
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            it,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (connectionState == EventStreamClient.ConnectionState.Failed)
+                                MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        if (connectionState == EventStreamClient.ConnectionState.Failed) {
+                            TextButton(
+                                onClick = { container.activeConnection.value?.events?.triggerReconnect() },
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp),
+                            ) { Text(stringResource(R.string.retry_now)) }
+                        }
+                    }
                 }
             } else {
                 Text(

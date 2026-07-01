@@ -104,6 +104,7 @@ fun TwoPaneSessionChat(
                 onOpenFiles = onOpenFiles,
                 onOpenSettings = onOpenSettings,
                 onAddServer = onAddServer,
+                selectedSessionId = selected,
             )
         }
 

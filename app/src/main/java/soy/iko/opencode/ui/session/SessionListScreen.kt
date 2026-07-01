@@ -24,11 +24,9 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.ChatBubbleOutline
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Dns
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -101,6 +99,7 @@ fun SessionListScreen(
     onOpenFiles: () -> Unit,
     onOpenSettings: () -> Unit,
     onAddServer: () -> Unit,
+    selectedSessionId: String? = null,
 ) {
     val vm: SessionListViewModel = viewModel(factory = vmFactory { SessionListViewModel(container) })
     val state by vm.state.collectAsStateWithLifecycle()
@@ -264,6 +263,7 @@ fun SessionListScreen(
                 unread = unread,
                 refreshing = refreshing,
                 haptics = haptics,
+                selectedSessionId = selectedSessionId,
                 onRefresh = vm::refresh,
                 onQueryChange = vm::setQuery,
                 onOpenSession = onOpenSession,
@@ -332,6 +332,7 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
     unread: Map<String, Int>,
     refreshing: Boolean,
     haptics: androidx.compose.ui.hapticfeedback.HapticFeedback,
+    selectedSessionId: String?,
     onRefresh: () -> Unit,
     onQueryChange: (String) -> Unit,
     onOpenSession: (String) -> Unit,
@@ -458,6 +459,7 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
                                     session = session,
                                     preview = state.previews[session.id],
                                     unreadCount = unread[session.id] ?: 0,
+                                    isSelected = session.id == selectedSessionId,
                                     onClick = { onOpenSession(session.id) },
                                     onRename = { onRename(session.id) },
                                     onDelete = { onDelete(session.id) },
@@ -513,11 +515,21 @@ private fun SessionCard(
     onRename: () -> Unit,
     onDelete: () -> Unit,
     modifier: Modifier = Modifier,
+    isSelected: Boolean = false,
 ) {
+    // In two-pane mode the selected row is highlighted (border + container tint) so
+    // the user can tell which conversation is open in the detail pane at a glance —
+    // without it every row looks identical and the open session is a guess.
+    val containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer
+        else MaterialTheme.colorScheme.surface
+    val borderColor = if (isSelected) MaterialTheme.colorScheme.primary
+        else androidx.compose.ui.graphics.Color.Transparent
     Card(
         modifier = modifier
             .fillMaxWidth()
             .clickable { onClick() },
+        colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = containerColor),
+        border = androidx.compose.foundation.BorderStroke(1.dp, borderColor),
     ) {
         Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
             Row(
@@ -576,11 +588,31 @@ private fun SessionCard(
                         )
                     }
                 }
-                IconButton(onClick = onRename) {
-                    Icon(Icons.Filled.Edit, contentDescription = stringResource(R.string.rename))
-                }
-                IconButton(onClick = onDelete) {
-                    Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.delete))
+                // Overflow menu replaces the inline edit + delete IconButtons so the
+                // card row is decluttered — two always-visible icons per row made a
+                // long list look busy. Swipe-to-delete and the overflow cover the same
+                // actions; swipe remains the gesture path, overflow the discovery path.
+                var showRowMenu by rememberSaveable(session.id) { mutableStateOf(false) }
+                val renameLabel = stringResource(R.string.rename)
+                val deleteLabel = stringResource(R.string.delete)
+                val moreLabel = stringResource(R.string.more)
+                Box {
+                    IconButton(onClick = { showRowMenu = true }) {
+                        Icon(Icons.Filled.MoreVert, contentDescription = moreLabel)
+                    }
+                    DropdownMenu(
+                        expanded = showRowMenu,
+                        onDismissRequest = { showRowMenu = false },
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text(renameLabel) },
+                            onClick = { showRowMenu = false; onRename() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text(deleteLabel, color = MaterialTheme.colorScheme.error) },
+                            onClick = { showRowMenu = false; onDelete() },
+                        )
+                    }
                 }
             }
             if (!preview.isNullOrBlank()) {

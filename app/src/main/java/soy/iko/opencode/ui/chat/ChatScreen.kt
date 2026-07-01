@@ -26,16 +26,17 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material.icons.filled.Terminal
-import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FloatingActionButton
@@ -93,6 +94,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import soy.iko.opencode.data.model.Part
+import soy.iko.opencode.data.model.MessageWithParts
 import soy.iko.opencode.data.model.ReasoningPart
 import soy.iko.opencode.data.model.TextPart
 import soy.iko.opencode.data.model.ToolCompleted
@@ -148,7 +150,6 @@ fun ChatScreen(
     val haptics = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
     val shareContext = LocalContext.current
-    val shareLabel = stringResource(R.string.share)
     val defaultShareSubject = stringResource(R.string.share_subject)
     val sessionLabel = stringResource(R.string.session)
     val defaultModelLabel = stringResource(R.string.default_model)
@@ -177,10 +178,13 @@ fun ChatScreen(
     // on a zombie screen showing a conversation that no longer exists. Surface a
     // toast (not a snackbar) because the screen is about to be popped — a snackbar
     // would be torn down before the user could read it, while a toast survives.
+    // Covers both SSE-driven deletion (deleted on another device) and a user-
+    // initiated delete from the chat overflow menu (deleteSession in ChatViewModel
+    // sets the same flag on success).
     val deletedContext = LocalContext.current
     LaunchedEffect(sessionDeleted) {
         if (sessionDeleted) {
-            showToast(deletedContext, deletedContext.getString(R.string.session_deleted_msg))
+            showToast(deletedContext, deletedContext.getString(R.string.session_deleted_chat))
             onBack()
         }
     }
@@ -193,6 +197,9 @@ fun ChatScreen(
     var showCommandPicker by rememberSaveable { mutableStateOf(false) }
     var showExitConfirm by rememberSaveable { mutableStateOf(false) }
     var showStopConfirm by rememberSaveable { mutableStateOf(false) }
+    var showOverflowMenu by rememberSaveable { mutableStateOf(false) }
+    var showRenameDialog by rememberSaveable { mutableStateOf(false) }
+    var showDeleteDialog by rememberSaveable { mutableStateOf(false) }
 
     // Keep the screen awake and hold a foreground priority while the agent is working,
     // so backgrounding mid-run doesn't let Doze choke the SSE stream.
@@ -241,12 +248,20 @@ fun ChatScreen(
                             .semantics(mergeDescendants = true) { contentDescription = changeLabel },
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Column {
-                            Text(sessionTitle ?: sessionLabel)
+                        Column(modifier = Modifier.weight(1f, fill = false)) {
+                            // maxLines=1 + Ellipsis so a long session title can't wrap and
+                            // push the top bar to multiple lines, shifting the whole layout.
+                            Text(
+                                sessionTitle ?: sessionLabel,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
                             Text(
                                 subtitle,
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                             )
                         }
                         // Visual affordance that the title opens the model picker;
@@ -301,60 +316,88 @@ fun ChatScreen(
                             Icon(Icons.Filled.Refresh, contentDescription = refreshLabel)
                         }
                     }
-                    IconButton(
-                        onClick = {
-                            scope.launch {
-                                val md = withContext(Dispatchers.Default) {
-                                    buildConversationMarkdown(vm.messages.value, sessionTitle)
-                                }
-                                val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-                                    type = "text/markdown"
-                                    putExtra(android.content.Intent.EXTRA_SUBJECT, sessionTitle ?: defaultShareSubject)
-                                    putExtra(android.content.Intent.EXTRA_TEXT, md)
-                                }
-                                runCatchingCancellable { shareContext.startActivity(android.content.Intent.createChooser(send, shareLabel)) }
-                                    .onFailure { showToast(shareContext, shareContext.getString(R.string.no_share_app)) }
-                            }
-                        },
-                        enabled = hasMessages,
-                    ) {
-                        Icon(Icons.Filled.Share, contentDescription = stringResource(R.string.share_conversation))
-                    }
-                    // Show a spinner while a catalog is initially loading (empty list +
-                    // loading flag) so the icon doesn't look permanently disabled. Once
-                    // loaded, the icon is always enabled — tapping a picker with no items
-                    // shows the "no models/agents/commands" or error-with-retry state.
-                    if (commandsLoading && commands.isEmpty()) {
-                        val loadingLabel = stringResource(R.string.loading)
-                        CircularProgressIndicator(
-                            Modifier.size(18.dp).semantics { contentDescription = loadingLabel },
-                            strokeWidth = 2.dp,
-                        )
-                    } else {
-                        IconButton(onClick = { showCommandPicker = true }) {
-                            Icon(Icons.Filled.Terminal, contentDescription = stringResource(R.string.commands))
+                    // Overflow menu consolidates the less-frequent actions (share,
+                    // commands, agent, model, rename, delete) so the top bar stays
+                    // scannable on narrow phones — previously 5 icons crowded the bar
+                    // alongside the back button and tappable title. Catalog-loading
+                    // spinners stay inline (next to the overflow) so a load state is
+                    // visible without opening the menu.
+                    val moreLabel = stringResource(R.string.more)
+                    val loadingLabel = stringResource(R.string.loading)
+                    val shareLabel = stringResource(R.string.share_conversation)
+                    val commandsLabel = stringResource(R.string.commands)
+                    val agentLabel = stringResource(R.string.choose_agent)
+                    val modelLabel = stringResource(R.string.choose_model)
+                    val renameLabel = stringResource(R.string.rename_session_chat)
+                    val deleteLabel = stringResource(R.string.delete_session_chat)
+                    Box {
+                        IconButton(onClick = { showOverflowMenu = true }) {
+                            Icon(Icons.Filled.MoreVert, contentDescription = moreLabel)
                         }
-                    }
-                    if (agentsLoading && agents.isEmpty()) {
-                        val loadingLabel = stringResource(R.string.loading)
-                        CircularProgressIndicator(
-                            Modifier.size(18.dp).semantics { contentDescription = loadingLabel },
-                            strokeWidth = 2.dp,
-                        )
-                    } else {
-                        IconButton(onClick = { showAgentPicker = true }) {
-                            Icon(Icons.Filled.SmartToy, contentDescription = stringResource(R.string.choose_agent))
+                        DropdownMenu(
+                            expanded = showOverflowMenu,
+                            onDismissRequest = { showOverflowMenu = false },
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text(shareLabel) },
+                                enabled = hasMessages,
+                                onClick = {
+                                    showOverflowMenu = false
+                                    scope.launch {
+                                        val md = withContext(Dispatchers.Default) {
+                                            buildConversationMarkdown(vm.messages.value, sessionTitle)
+                                        }
+                                        val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                            type = "text/markdown"
+                                            putExtra(android.content.Intent.EXTRA_SUBJECT, sessionTitle ?: defaultShareSubject)
+                                            putExtra(android.content.Intent.EXTRA_TEXT, md)
+                                        }
+                                        runCatchingCancellable { shareContext.startActivity(android.content.Intent.createChooser(send, shareLabel)) }
+                                            .onFailure { showToast(shareContext, shareContext.getString(R.string.no_share_app)) }
+                                    }
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(commandsLabel) },
+                                enabled = !commandsLoading || commands.isNotEmpty(),
+                                onClick = { showOverflowMenu = false; showCommandPicker = true },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(agentLabel) },
+                                enabled = !agentsLoading || agents.isNotEmpty(),
+                                onClick = { showOverflowMenu = false; showAgentPicker = true },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(modelLabel) },
+                                enabled = !modelsLoading || models.isNotEmpty(),
+                                onClick = { showOverflowMenu = false; showModelPicker = true },
+                            )
+                            androidx.compose.material3.HorizontalDivider()
+                            DropdownMenuItem(
+                                text = { Text(renameLabel) },
+                                onClick = { showOverflowMenu = false; showRenameDialog = true },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(deleteLabel, color = MaterialTheme.colorScheme.error) },
+                                onClick = { showOverflowMenu = false; showDeleteDialog = true },
+                            )
                         }
-                    }
-                    if (modelsLoading && models.isEmpty()) {
-                        val loadingLabel = stringResource(R.string.loading)
-                        CircularProgressIndicator(
-                            Modifier.size(18.dp).semantics { contentDescription = loadingLabel },
-                            strokeWidth = 2.dp,
-                        )
-                    } else {
-                        IconButton(onClick = { showModelPicker = true }) {
-                            Icon(Icons.Filled.Tune, contentDescription = stringResource(R.string.choose_model))
+                        // While a catalog is initially loading (empty list + loading flag),
+                        // show a tiny inline spinner beside the overflow so the user can see
+                        // a load is in progress without opening the menu. Once loaded the
+                        // spinner disappears; the menu items are always enabled (tapping a
+                        // picker with no items shows the "no models/agents/commands" state).
+                        val catalogLoading = (commandsLoading && commands.isEmpty()) ||
+                            (agentsLoading && agents.isEmpty()) ||
+                            (modelsLoading && models.isEmpty())
+                        if (catalogLoading) {
+                            CircularProgressIndicator(
+                                Modifier
+                                    .align(Alignment.TopEnd)
+                                    .size(10.dp)
+                                    .semantics { contentDescription = loadingLabel },
+                                strokeWidth = 1.dp,
+                            )
                         }
                     }
                 },
@@ -386,17 +429,28 @@ fun ChatScreen(
         val listState = rememberLazyListState()
         val contentScope = rememberCoroutineScope()
         val timeTick = rememberRelativeTimeTick()
+        // Group messages by day and interleave date separators so a long conversation
+        // has visual "Today"/"Yesterday"/date breaks. Computed once per messages
+        // emission (memoized) so a scroll-induced recomposition doesn't re-scan. Lives
+        // outside the PullToRefreshBox so the auto-scroll effects below can reference
+        // the same list the LazyColumn renders (separators shift the indices vs. the
+        // raw messages list, so scroll targets must be in listItems space).
+        val todayLabel = stringResource(R.string.today)
+        val yesterdayLabel = stringResource(R.string.yesterday)
+        val listItems = remember(messages, todayLabel, yesterdayLabel) {
+            buildMessageListItems(messages, todayLabel, yesterdayLabel)
+        }
 
         val isPinnedToBottom by remember {
             derivedStateOf {
                 val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
                 // When a run is active, the LazyColumn has one trailing "__typing"
-                // item after the last message. Account for it so "pinned to bottom"
+                // item after the last list item. Account for it so "pinned to bottom"
                 // includes the working indicator — otherwise the pin check targets
-                // messages.lastIndex, the typing row sits just below the viewport,
+                // listItems.lastIndex, the typing row sits just below the viewport,
                 // and the user never sees the progress indicator even when pinned.
-                val effectiveLast = if (running) messages.size else messages.lastIndex
-                lastVisible >= effectiveLast || messages.isEmpty()
+                val effectiveLast = if (running) listItems.size else listItems.lastIndex
+                lastVisible >= effectiveLast || listItems.isEmpty()
             }
         }
 
@@ -405,28 +459,28 @@ fun ChatScreen(
         // (rotation) — rememberLazyListState restores the user's scroll offset, and an
         // unconditional scrollToItem here would clobber it, snapping them back to the bottom.
         var didInitialScroll by rememberSaveable { mutableStateOf(false) }
-        LaunchedEffect(messages.isNotEmpty()) {
-            if (messages.isNotEmpty() && !didInitialScroll) {
+        LaunchedEffect(listItems.isNotEmpty()) {
+            if (listItems.isNotEmpty() && !didInitialScroll) {
                 // When a run is active the LazyColumn has a trailing "__typing" row at
-                // messages.size; target it (not messages.lastIndex) so deep-linking into a
+                // listItems.size; target it (not listItems.lastIndex) so deep-linking into a
                 // running session lands truly pinned to bottom and streaming auto-scroll engages.
-                listState.scrollToItem(if (running) messages.size else messages.lastIndex)
+                listState.scrollToItem(if (running) listItems.size else listItems.lastIndex)
                 didInitialScroll = true
             }
         }
 
         // When a run starts, the LazyColumn gains a trailing "__typing" row, so
-        // effectiveLast jumps from messages.lastIndex to messages.size and the
+        // effectiveLast jumps from listItems.lastIndex to listItems.size and the
         // isPinnedToBottom check flips to false the instant you send — freezing
-        // auto-scroll. If the user was pinned to the last message just before the run
+        // auto-scroll. If the user was pinned to the last item just before the run
         // began, bring the typing row into view so the pin (and streaming follow) is
         // preserved. Guard on the raw last-visible index (isPinnedToBottom has already
         // recomputed to false by now) so we don't scroll when the user had scrolled up.
         LaunchedEffect(running) {
-            if (running && messages.isNotEmpty()) {
+            if (running && listItems.isNotEmpty()) {
                 val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
-                if (lastVisible >= messages.lastIndex) {
-                    runCatchingCancellable { listState.animateScrollToItem(messages.size) }
+                if (lastVisible >= listItems.lastIndex) {
+                    runCatchingCancellable { listState.animateScrollToItem(listItems.size) }
                 }
             }
         }
@@ -441,13 +495,13 @@ fun ChatScreen(
                 // and tool output — not just TextPart — keeps a pinned view following a long
                 // reasoning/tool block while it streams (previously it stalled at 0).
                 val lastLen = streamingContentLength(messages.lastOrNull()?.parts?.lastOrNull())
-                AutoScrollSignal(messages.size, lastLen, isPinnedToBottom)
+                AutoScrollSignal(listItems.size, lastLen, isPinnedToBottom)
             }.collect { signal ->
                 if (signal.size > 0 && signal.pinned) {
                     // Scroll to the effective last index, including the trailing
                     // "__typing" row when a run is active so the working indicator
                     // is brought into view (not just the last message).
-                    val target = if (running) messages.size else messages.lastIndex
+                    val target = if (running) listItems.size else listItems.lastIndex
                     listState.scrollToItem(target)
                 }
             }
@@ -559,19 +613,29 @@ fun ChatScreen(
                     contentPadding = PaddingValues(16.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp),
                 ) {
-                    items(messages, key = { it.info.id }, contentType = { it.info::class }) { message ->
-                        // Only the last (streaming) message needs isRunning — it drives the
-                        // reasoning-block spinner. Passing the live flag to every bubble
-                        // makes all visible messages recompose whenever a run starts or stops.
-                        val modelLabel = (message.info as? soy.iko.opencode.data.model.AssistantMessage)
-                            ?.let { resolveModelLabel(it, models) }
-                        MessageBubble(
-                            message,
-                            isRunning = running && message.info.id == lastMessageId,
-                            imageContext = imageContext,
-                            modelLabel = modelLabel,
-                            onOpenFile = onOpenFile,
-                        )
+                    items(
+                        items = listItems,
+                        key = { it.key },
+                        contentType = { it.contentType },
+                    ) { item ->
+                        when (item) {
+                            is MessageListItem.Separator -> DateSeparator(item.label)
+                            is MessageListItem.Message -> {
+                                val message = item.message
+                                // Only the last (streaming) message needs isRunning — it drives the
+                                // reasoning-block spinner. Passing the live flag to every bubble
+                                // makes all visible messages recompose whenever a run starts or stops.
+                                val modelLabel = (message.info as? soy.iko.opencode.data.model.AssistantMessage)
+                                    ?.let { resolveModelLabel(it, models) }
+                                MessageBubble(
+                                    message,
+                                    isRunning = running && message.info.id == lastMessageId,
+                                    imageContext = imageContext,
+                                    modelLabel = modelLabel,
+                                    onOpenFile = onOpenFile,
+                                )
+                            }
+                        }
                     }
                     if (running) {
                         item(key = "__typing") {
@@ -591,15 +655,15 @@ fun ChatScreen(
                 }
                 // Jump-to-latest affordance when the user has scrolled away during a stream.
                 AnimatedVisibility(
-                    visible = !isPinnedToBottom && messages.isNotEmpty(),
+                    visible = !isPinnedToBottom && listItems.isNotEmpty(),
                     modifier = Modifier.align(Alignment.BottomEnd),
                 ) {
                     ExtendedFloatingActionButton(
                         onClick = {
-                            if (messages.isNotEmpty()) {
+                            if (listItems.isNotEmpty()) {
                                 // Scroll to the effective last index, including the
                                 // trailing "__typing" row when a run is active.
-                                val target = if (running) messages.size else messages.lastIndex
+                                val target = if (running) listItems.size else listItems.lastIndex
                                 contentScope.launch { runCatchingCancellable { listState.animateScrollToItem(target) } }
                             }
                         },
@@ -647,6 +711,35 @@ fun ChatScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showStopConfirm = false }) { Text(stringResource(R.string.cancel)) }
+            },
+        )
+    }
+
+    if (showRenameDialog) {
+        RenameSessionChatDialog(
+            initialTitle = sessionTitle ?: "",
+            onDismiss = { showRenameDialog = false },
+            onConfirm = { newName ->
+                showRenameDialog = false
+                vm.renameSession(newName)
+            },
+        )
+    }
+
+    if (showDeleteDialog) {
+        AlertDialog(
+            onDismissRequest = { showDeleteDialog = false },
+            title = { Text(stringResource(R.string.delete_session_chat_title)) },
+            text = { Text(stringResource(R.string.delete_session_chat_text, sessionTitle ?: sessionLabel)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    showDeleteDialog = false
+                    haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                    vm.deleteSession()
+                }) { Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteDialog = false }) { Text(stringResource(R.string.cancel)) }
             },
         )
     }
@@ -910,4 +1003,152 @@ private fun streamingContentLength(part: Part?): Int = when (part) {
         else -> 0
     }
     else -> 0
+}
+
+/** Rename dialog for the currently-open session. Mirrors the SessionListScreen rename
+ *  dialog but lives in the chat screen so the user can rename without backing out to
+ *  the list. Pre-filled with the current title; the cap matches the list dialog. */
+@Composable
+private fun RenameSessionChatDialog(
+    initialTitle: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    var title by rememberSaveable(initialTitle) { mutableStateOf(initialTitle) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.rename_session_chat)) },
+        text = {
+            OutlinedTextField(
+                value = title,
+                onValueChange = { v -> title = v.take(NetworkConfig.maxSessionTitleChars) },
+                modifier = Modifier.fillMaxWidth(),
+                placeholder = { Text(stringResource(R.string.session_title_hint)) },
+                label = { Text(stringResource(R.string.rename_session_chat)) },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { if (title.isNotBlank()) onConfirm(title.trim()) }),
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { if (title.isNotBlank()) onConfirm(title.trim()) }, enabled = title.isNotBlank()) {
+                Text(stringResource(R.string.save))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
+        },
+    )
+}
+
+/**
+ * A single item in the chat message list — either a [Message] bubble or a day
+ * [Separator] inserted before the first message of a new day. The separator shifts
+ * the LazyColumn indices vs. the raw messages list, so scroll-target math must use
+ * the [List] of these items (not `messages.size`/`lastIndex`).
+ */
+private sealed interface MessageListItem {
+    val key: Any
+    val contentType: Any
+
+    data class Message(val message: MessageWithParts) : MessageListItem {
+        override val key: Any get() = message.info.id
+        override val contentType: Any get() = message.info::class
+    }
+
+    data class Separator(val label: String) : MessageListItem {
+        // Stable key per label so a recomposition doesn't re-create the item.
+        override val key: Any get() = "sep_$label"
+        // Separators share a contentType so the LazyColumn can recycle their slots.
+        override val contentType: Any get() = "separator"
+    }
+}
+
+/**
+ * Build the interleaved list of [MessageListItem]s for the message list, inserting a
+ * [MessageListItem.Separator] before the first message of each new calendar day. Uses
+ * the message's `time.created` (falling back to `updated` then `completed`) to bucket.
+ * Messages with no timestamp are grouped under an empty-label separator only if they
+ * start the list, so a server that omits timestamps doesn't suppress the first divider.
+ *
+ * [todayLabel]/[yesterdayLabel] are resolved by the caller (a @Composable can't call
+ * stringResource from inside this plain function) and used for the "Today"/"Yesterday"
+ * labels; older days fall back to a locale-stable medium-date format.
+ */
+private fun buildMessageListItems(
+    messages: List<MessageWithParts>,
+    todayLabel: String,
+    yesterdayLabel: String,
+): List<MessageListItem> {
+    if (messages.isEmpty()) return emptyList()
+    val today = java.time.LocalDate.now(java.time.ZoneId.systemDefault())
+    val dateFmt = java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM)
+    val result = ArrayList<MessageListItem>(messages.size + 4)
+    var lastDayKey: String? = null
+    for (message in messages) {
+        val ts = message.info.time?.created ?: message.info.time?.updated ?: message.info.time?.completed
+        val dayKey = ts?.let { dayKey(it) } ?: ""
+        if (dayKey != lastDayKey) {
+            result.add(MessageListItem.Separator(dayLabel(dayKey, ts ?: 0L, today, todayLabel, yesterdayLabel, dateFmt)))
+            lastDayKey = dayKey
+        }
+        result.add(MessageListItem.Message(message))
+    }
+    return result
+}
+
+/** A stable bucket key for a timestamp's calendar day (epoch-days as a string). */
+private fun dayKey(epochMillis: Long): String {
+    val instant = java.time.Instant.ofEpochMilli(epochMillis)
+    val date = instant.atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+    return date.toEpochDay().toString()
+}
+
+/**
+ * Resolve a day-key back to a human-readable label. "Today" / "Yesterday" for the
+ * recent days, otherwise a locale-stable medium-date format. Returns an empty string
+ * when [dayKey] is empty (no timestamp) so no separator is rendered for un-timestamped
+ * messages.
+ */
+private fun dayLabel(
+    dayKey: String,
+    ts: Long,
+    today: java.time.LocalDate,
+    todayLabel: String,
+    yesterdayLabel: String,
+    dateFmt: java.text.DateFormat,
+): String {
+    if (dayKey.isEmpty()) return ""
+    val epochDay = dayKey.toLongOrNull() ?: return ""
+    val date = java.time.LocalDate.ofEpochDay(epochDay)
+    return when {
+        date == today -> todayLabel
+        date == today.minusDays(1) -> yesterdayLabel
+        else -> dateFmt.format(java.util.Date(ts))
+    }
+}
+
+/**
+ * A centered day divider in the message list. Renders nothing for an empty label
+ * (the no-timestamp case) so un-timestamped messages don't get a stray blank divider.
+ */
+@Composable
+private fun DateSeparator(label: String) {
+    if (label.isBlank()) return
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.Center,
+    ) {
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            shape = MaterialTheme.shapes.small,
+        ) {
+            Text(
+                label,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+            )
+        }
+    }
 }
