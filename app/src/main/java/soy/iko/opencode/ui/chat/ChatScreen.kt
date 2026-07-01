@@ -130,6 +130,14 @@ fun ChatScreen(
     val shareContext = LocalContext.current
     val shareLabel = stringResource(R.string.share)
     val defaultShareSubject = stringResource(R.string.share_subject)
+    val sessionLabel = stringResource(R.string.session)
+    val defaultModelLabel = stringResource(R.string.default_model)
+    val subtitle = remember(selectedModel?.modelLabel, selectedAgent, defaultModelLabel) {
+        buildString {
+            append(selectedModel?.modelLabel ?: defaultModelLabel)
+            selectedAgent?.let { append(" · $it") }
+        }
+    }
 
     // Connection profile (with auth) for rendering inline image attachments.
     // Collect as state so a server switch recomposes the image context.
@@ -197,12 +205,9 @@ fun ChatScreen(
                     Column(modifier = Modifier
                         .clickable(enabled = models.isNotEmpty(), role = Role.Button) { showModelPicker = true }
                     ) {
-                        Text(sessionTitle ?: stringResource(R.string.session))
+                        Text(sessionTitle ?: sessionLabel)
                         Text(
-                            buildString {
-                                append(selectedModel?.modelLabel ?: stringResource(R.string.default_model))
-                                selectedAgent?.let { append(" · $it") }
-                            },
+                            subtitle,
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )

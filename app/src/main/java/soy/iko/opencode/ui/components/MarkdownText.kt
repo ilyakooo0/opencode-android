@@ -91,12 +91,13 @@ fun MarkdownText(
         val markdownState = rememberUpdatedState(markdown)
         // Keyed to a content-prefix so switching to a different message resets
         // immediately instead of showing the old message for one frame.
-        var renderedContent by remember(markdown.take(32)) { mutableStateOf(markdown) }
+        val prefix = markdown.take(32)
+        var renderedContent by remember(prefix) { mutableStateOf(markdown) }
         // conflate() coalesces a burst of token updates into a single emission so the
         // collector sees only the latest value after the previous delay completes. Plain
         // collect (not collectLatest) is critical: collectLatest would cancel the delay
         // on every new value, reintroducing the same starvation the keyed effect had.
-        LaunchedEffect(markdown.take(32)) {
+        LaunchedEffect(prefix) {
             snapshotFlow { markdownState.value }
                 .conflate()
                 .collect { md ->

@@ -97,6 +97,8 @@ private fun ReasoningBlock(text: String, streaming: Boolean, modifier: Modifier)
     var expanded by rememberSaveable { mutableStateOf(false) }
     val expandedState = stringResource(R.string.state_expanded)
     val collapsedState = stringResource(R.string.state_collapsed)
+    val thinkingLabel = stringResource(R.string.thinking)
+    val thoughtsLabel = stringResource(R.string.thoughts)
     Column(modifier = modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier
@@ -110,7 +112,6 @@ private fun ReasoningBlock(text: String, streaming: Boolean, modifier: Modifier)
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (streaming) {
-                val thinkingLabel = stringResource(R.string.thinking)
                 CircularProgressIndicator(
                     Modifier.size(14.dp).semantics { contentDescription = thinkingLabel },
                     strokeWidth = 2.dp,
@@ -125,7 +126,7 @@ private fun ReasoningBlock(text: String, streaming: Boolean, modifier: Modifier)
                 )
             }
             Text(
-                if (streaming) stringResource(R.string.thinking) else stringResource(R.string.thoughts),
+                if (streaming) thinkingLabel else thoughtsLabel,
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(start = 6.dp),
