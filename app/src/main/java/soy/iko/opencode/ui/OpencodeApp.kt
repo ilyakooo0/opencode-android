@@ -1,5 +1,10 @@
 package soy.iko.opencode.ui
 
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -60,7 +65,16 @@ fun OpencodeApp(container: AppContainer) {
             navController.navigate(Routes.chat(id)) { launchSingleTop = true }
         }
 
-        NavHost(navController = navController, startDestination = Routes.SERVERS) {
+        NavHost(
+            navController = navController,
+            startDestination = Routes.SERVERS,
+            // Slide horizontally for forward/back navigation to feel native; fade for
+            // the root so the first frame doesn't slide in from off-screen.
+            enterTransition = { slideInHorizontally(animationSpec = tween(220)) { it } + fadeIn(tween(180)) },
+            exitTransition = { fadeOut(tween(180)) },
+            popEnterTransition = { fadeIn(tween(180)) },
+            popExitTransition = { slideOutHorizontally(animationSpec = tween(220)) { it } + fadeOut(tween(180)) },
+        ) {
 
         composable(Routes.SERVERS) {
             ServerListScreen(

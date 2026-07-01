@@ -10,10 +10,13 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.BugReport
@@ -67,6 +70,7 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
     val logger = remember { CrashLogger.get(context) }
     val reports by logger.reports.collectAsStateWithLifecycle()
     var viewing by rememberSaveable { mutableStateOf<String?>(null) }
+    var showClearAll by rememberSaveable { mutableStateOf(false) }
     val shareScope = rememberCoroutineScope()
     val shareLabel = stringResource(R.string.share)
     val timeTick = rememberRelativeTimeTick()
@@ -83,7 +87,7 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                 actions = {
                     if (reports.isNotEmpty()) {
                         IconButton(onClick = {
-                            logger.clearAll()
+                            showClearAll = true
                         }) {
                             Icon(Icons.Filled.DeleteSweep, contentDescription = stringResource(R.string.clear_all))
                         }
@@ -200,11 +204,18 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
             title = { Text(stringResource(R.string.crash_report)) },
             text = {
                 if (content != null) {
-                    Text(
-                        content,
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 400.dp)
+                            .verticalScroll(rememberScrollState()),
+                    ) {
+                        Text(
+                            content,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
                 } else {
                     val loadingLabel = stringResource(R.string.loading)
                     Box(
@@ -214,6 +225,23 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                         CircularProgressIndicator(Modifier.semantics { contentDescription = loadingLabel })
                     }
                 }
+            },
+        )
+    }
+
+    if (showClearAll) {
+        AlertDialog(
+            onDismissRequest = { showClearAll = false },
+            title = { Text(stringResource(R.string.clear_all)) },
+            text = { Text(stringResource(R.string.clear_all_confirm)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    showClearAll = false
+                    logger.clearAll()
+                }) { Text(stringResource(R.string.clear_all), color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearAll = false }) { Text(stringResource(R.string.cancel)) }
             },
         )
     }

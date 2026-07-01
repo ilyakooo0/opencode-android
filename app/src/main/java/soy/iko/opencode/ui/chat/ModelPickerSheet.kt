@@ -20,6 +20,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -67,15 +68,17 @@ fun ModelPickerSheet(
                 CircularProgressIndicator(Modifier.semantics { contentDescription = loadingLabel })
             }
         } else if (error && options.isEmpty()) {
-            Text(
-                stringResource(R.string.load_failed),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.error,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(role = Role.Button) { onRetry() }
-                    .padding(horizontal = 24.dp, vertical = 16.dp),
-            )
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(
+                    stringResource(R.string.load_failed),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error,
+                )
+                TextButton(onClick = onRetry) { Text(stringResource(R.string.retry)) }
+            }
         } else if (options.isEmpty()) {
             Text(
                 stringResource(R.string.no_models),

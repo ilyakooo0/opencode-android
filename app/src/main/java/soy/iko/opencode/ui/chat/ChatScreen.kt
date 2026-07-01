@@ -202,15 +202,32 @@ fun ChatScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Column(modifier = Modifier
-                        .clickable(enabled = models.isNotEmpty(), role = Role.Button) { showModelPicker = true }
+                    val changeLabel = stringResource(R.string.change_model_agent)
+                    Row(
+                        modifier = Modifier
+                            .clickable(enabled = models.isNotEmpty(), role = Role.Button) { showModelPicker = true }
+                            .semantics(mergeDescendants = true) { contentDescription = changeLabel },
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text(sessionTitle ?: sessionLabel)
-                        Text(
-                            subtitle,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                        Column {
+                            Text(sessionTitle ?: sessionLabel)
+                            Text(
+                                subtitle,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        // Visual affordance that the title opens the model picker;
+                        // without it the tappable title is indistinguishable from plain
+                        // text and the picker is effectively undiscoverable.
+                        if (models.isNotEmpty()) {
+                            Icon(
+                                Icons.Filled.KeyboardArrowDown,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(20.dp),
+                            )
+                        }
                     }
                 },
                 navigationIcon = {
@@ -221,6 +238,17 @@ fun ChatScreen(
                     }
                 },
                 actions = {
+                    // At-a-glance run status in the top bar. When the user is scrolled
+                    // up (jump-to-latest FAB visible), the input-bar Stop button and the
+                    // trailing "working…" row are off-screen, so a top-bar spinner is the
+                    // only signal the agent is still working.
+                    if (running) {
+                        val workingLabel = stringResource(R.string.working)
+                        CircularProgressIndicator(
+                            Modifier.size(18.dp).semantics { contentDescription = workingLabel },
+                            strokeWidth = 2.dp,
+                        )
+                    }
                     IconButton(
                         onClick = {
                             scope.launch {
@@ -335,7 +363,20 @@ fun ChatScreen(
                             .align(Alignment.Center)
                             .semantics { contentDescription = loadingLabel },
                     )
-                } else if (messages.isEmpty() && !running) {
+                } else if (messages.isEmpty() && running) {
+                    // A run just started but no parts have arrived yet — the empty
+                    // list with only the trailing "working…" row looks broken, so
+                    // surface a clear starting state until the first part streams in.
+                    val workingText = stringResource(R.string.working)
+                    Column(
+                        modifier = Modifier.align(Alignment.Center).padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 3.dp)
+                        Spacer(Modifier.size(12.dp))
+                        Text(workingText, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                } else if (messages.isEmpty()) {
                     EmptyConversation(
                         modifier = Modifier.align(Alignment.Center),
                     )

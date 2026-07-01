@@ -93,10 +93,16 @@ fun ServerEditScreen(
             )
             OutlinedTextField(
                 value = state.baseUrl,
-                onValueChange = { v -> vm.update { it.copy(baseUrl = v, authFieldsVisible = false, error = null) } },
+                onValueChange = { v -> vm.update { it.copy(baseUrl = v, error = null) } },
                 label = { Text(stringResource(R.string.base_url)) },
                 placeholder = { Text(stringResource(R.string.base_url_hint)) },
                 singleLine = true,
+                isError = state.baseUrl.isNotBlank() && !isValidUrl(state.baseUrl),
+                supportingText = {
+                    if (state.baseUrl.isNotBlank() && !isValidUrl(state.baseUrl)) {
+                        Text(stringResource(R.string.invalid_url))
+                    }
+                },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Next),
                 modifier = Modifier.fillMaxWidth().testTag("server_url"),
             )
@@ -117,6 +123,17 @@ fun ServerEditScreen(
                 } else {
                     Text(stringResource(R.string.check_connectivity))
                 }
+            }
+            // Guide users through the probe-for-auth flow: auth fields only appear
+            // after a probe detects they're required, so a user who doesn't know to
+            // tap "Check connectivity" would otherwise be confused.
+            if (!state.authFieldsVisible) {
+                Text(
+                    stringResource(R.string.auth_help),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.fillMaxWidth(),
+                )
             }
             AnimatedVisibility(visible = state.authFieldsVisible) {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {

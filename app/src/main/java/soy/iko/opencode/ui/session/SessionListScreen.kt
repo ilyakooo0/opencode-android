@@ -14,9 +14,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.Add
@@ -43,10 +43,13 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -213,11 +216,19 @@ fun SessionListScreen(
                             .semantics { contentDescription = loadingLabel },
                     )
                 }
-                state.sessions.isEmpty() && state.error != null -> Text(
-                    state.error ?: "",
+                state.sessions.isEmpty() && state.error != null -> Column(
                     modifier = Modifier.align(Alignment.Center).padding(24.dp),
-                    color = MaterialTheme.colorScheme.error,
-                )
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text(
+                        state.error ?: "",
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    Spacer(Modifier.size(12.dp))
+                    TextButton(onClick = { vm.refresh() }) {
+                        Text(stringResource(R.string.retry))
+                    }
+                }
                 state.sessions.isEmpty() -> EmptySessions(
                     onCreate = { vm.createSession(onCreated = onOpenSession) },
                     modifier = Modifier.align(Alignment.Center),
@@ -258,15 +269,46 @@ fun SessionListScreen(
                                 verticalArrangement = Arrangement.spacedBy(12.dp),
                             ) {
                                 items(sessions, key = { it.id }) { session ->
-                                    SessionCard(
-                                        session = session,
-                                        preview = state.previews[session.id],
-                                        unread = unread.contains(session.id),
-                                        onClick = { onOpenSession(session.id) },
-                                        onRename = { pendingRenameId = session.id },
-                                        onDelete = { pendingDeleteId = session.id },
-                                        modifier = Modifier.testTag("session_card"),
+                                    // Swipe end-to-start reveals a delete affordance and opens the
+                                    // same confirmation dialog as the trash icon. We never commit
+                                    // the dismissal (always reset to Settled) so the card snaps back
+                                    // and the dialog guards against accidental data loss.
+                                    val swipeState = rememberSwipeToDismissBoxState(
+                                        confirmValueChange = {
+                                            pendingDeleteId = session.id
+                                            false
+                                        },
                                     )
+                                    SwipeToDismissBox(
+                                        state = swipeState,
+                                        enableDismissFromStartToEnd = false,
+                                        backgroundContent = {
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxSize()
+                                                    .clip(MaterialTheme.shapes.medium)
+                                                    .background(MaterialTheme.colorScheme.errorContainer)
+                                                    .padding(horizontal = 20.dp),
+                                                contentAlignment = Alignment.CenterEnd,
+                                            ) {
+                                                Icon(
+                                                    Icons.Filled.Delete,
+                                                    contentDescription = stringResource(R.string.delete),
+                                                    tint = MaterialTheme.colorScheme.onErrorContainer,
+                                                )
+                                            }
+                                        },
+                                    ) {
+                                        SessionCard(
+                                            session = session,
+                                            preview = state.previews[session.id],
+                                            unread = unread.contains(session.id),
+                                            onClick = { onOpenSession(session.id) },
+                                            onRename = { pendingRenameId = session.id },
+                                            onDelete = { pendingDeleteId = session.id },
+                                            modifier = Modifier.testTag("session_card"),
+                                        )
+                                    }
                                 }
                             }
                         }

@@ -37,6 +37,14 @@ fun ConnectionBanner(
         EventStreamClient.ConnectionState.Connected -> null
     }
     if (text != null) {
+        // Distinguish a hard failure (e.g. bad credentials) from transient
+        // connecting/reconnecting states by switching to the error palette, so
+        // the banner conveys urgency without relying on text alone.
+        val isFailed = state == EventStreamClient.ConnectionState.Failed
+        val container = if (isFailed) MaterialTheme.colorScheme.errorContainer
+            else MaterialTheme.colorScheme.tertiaryContainer
+        val onContainer = if (isFailed) MaterialTheme.colorScheme.onErrorContainer
+            else MaterialTheme.colorScheme.onTertiaryContainer
         Surface(
             modifier = modifier
                 .fillMaxWidth()
@@ -46,21 +54,23 @@ fun ConnectionBanner(
                     liveRegion = LiveRegionMode.Polite
                     contentDescription = text
                 },
-            color = MaterialTheme.colorScheme.tertiaryContainer,
+            color = container,
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                CircularProgressIndicator(
-                    Modifier.size(12.dp),
-                    strokeWidth = 2.dp,
-                )
+                if (!isFailed) {
+                    CircularProgressIndicator(
+                        Modifier.size(12.dp),
+                        strokeWidth = 2.dp,
+                    )
+                }
                 Text(
                     text,
                     style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                    color = onContainer,
                     modifier = Modifier.padding(start = 6.dp),
                 )
             }

@@ -193,7 +193,7 @@ private fun DirectoryListing(
     onUp: () -> Unit,
     onOpenFile: (String) -> Unit,
 ) {
-    if (state.entries.isEmpty() && state.path.isBlank()) {
+    if (state.entries.isEmpty()) {
         Text(
             stringResource(R.string.empty_folder),
             modifier = Modifier.fillMaxWidth().padding(24.dp),

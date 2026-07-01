@@ -12,8 +12,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -85,7 +87,7 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onManageServers:
             )
         },
     ) { padding ->
-        Column(modifier = Modifier.padding(padding).widthIn(max = 600.dp).padding(16.dp)) {
+        Column(modifier = Modifier.padding(padding).widthIn(max = 600.dp).verticalScroll(rememberScrollState()).padding(16.dp)) {
             Text(
                 stringResource(R.string.appearance),
                 style = MaterialTheme.typography.titleSmall,

@@ -54,6 +54,7 @@
     <string name="label_optional">Label (optional)</string>
     <string name="base_url">Base URL</string>
     <string name="base_url_hint">http://192.168.1.10:4096</string>
+    <string name="invalid_url">Enter a valid http:// or https:// URL.</string>
     <string name="check_connectivity">Check connectivity</string>
     <string name="checking">Checking…</string>
     <string name="auth_required">This server requires authentication.</string>
@@ -90,6 +91,7 @@
     <string name="commands">Commands</string>
     <string name="choose_agent">Choose agent</string>
     <string name="choose_model">Choose model</string>
+    <string name="change_model_agent">Change model and agent</string>
     <string name="share_conversation">Share conversation</string>
 
     <!-- Errors (view models) -->
@@ -171,6 +173,7 @@
     <string name="crash_reports">Crash reports</string>
     <string name="no_crash_reports">No crashes recorded. \ud83d\udc4d</string>
     <string name="clear_all">Clear all</string>
+    <string name="clear_all_confirm">Delete all stored crash reports? This cannot be undone.</string>
     <string name="crash_report">Crash report</string>
 
     <!-- Notifications -->

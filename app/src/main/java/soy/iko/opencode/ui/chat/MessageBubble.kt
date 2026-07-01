@@ -123,7 +123,6 @@ private fun AssistantBlock(message: MessageWithParts, isRunning: Boolean, imageC
                 if (textToCopy != null) {
                     IconButton(
                         onClick = { copyToClipboard(context, "message", textToCopy) },
-                        modifier = Modifier.size(28.dp),
                     ) {
                         Icon(
                             Icons.Filled.ContentCopy,
