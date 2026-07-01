@@ -74,6 +74,15 @@ class ServerListViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
+    /** Retry connecting to the most recently used profile — the pull-to-refresh action on
+     *  the server list. Gives the user a familiar gesture to retry a failed auto-connect
+     *  instead of having to tap a server card. */
+    fun refresh(onConnected: () -> Unit) {
+        if (_connecting.value != null || container.reconnecting.value) return
+        val target = profiles.value.firstOrNull() ?: return
+        connect(target, onConnected)
+    }
+
     /**
      * Mark [profile] for deferred deletion and emit an Undo event. The actual
      * [ProfileStore.delete] is delayed by [NetworkConfig.undoServerDeleteDelayMs]; if

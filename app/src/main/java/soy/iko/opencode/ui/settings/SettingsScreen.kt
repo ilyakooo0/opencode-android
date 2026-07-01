@@ -25,6 +25,7 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -52,6 +53,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import soy.iko.opencode.data.repo.CrashLogger
 import soy.iko.opencode.data.repo.ThemeMode
@@ -65,9 +67,15 @@ import soy.iko.opencode.util.runCatchingCancellable
 @Composable
 fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onManageServers: () -> Unit, onOpenDiagnostics: () -> Unit) {
     val scope = rememberCoroutineScope()
-    val themeMode by container.settingsStore.themeMode.collectAsStateWithLifecycle(initialValue = ThemeMode.SYSTEM)
-    val dynamicColor by container.settingsStore.dynamicColor.collectAsStateWithLifecycle(initialValue = true)
-    val sendOnEnter by container.settingsStore.sendOnEnter.collectAsStateWithLifecycle(initialValue = true)
+    // Combine the three settings into a single nullable state so the appearance section
+    // renders only after the persisted values have loaded, avoiding a brief flash of
+    // hardcoded defaults (SYSTEM/light/dynamic-on) on cold start.
+    val settings by combine(
+        container.settingsStore.themeMode,
+        container.settingsStore.dynamicColor,
+        container.settingsStore.sendOnEnter,
+    ) { theme, dyn, enter -> SettingsValues(theme, dyn, enter) as SettingsValues? }
+        .collectAsStateWithLifecycle(initialValue = null)
     val dynamicColorAvailable = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
     val activeProfile = container.activeConnection.collectAsStateWithLifecycle().value?.profile
     val context = LocalContext.current
@@ -104,75 +112,85 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onManageServers:
         },
     ) { padding ->
         Column(modifier = Modifier.padding(padding).widthIn(max = 600.dp).verticalScroll(rememberScrollState()).padding(16.dp)) {
+            val s = settings
             Text(
                 stringResource(R.string.appearance),
                 style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.semantics { heading() },
             )
-            ThemeMode.entries.forEach { mode ->
-                ThemeRow(
-                    mode = mode,
-                    selected = themeMode == mode,
-                    onSelect = { scope.launch { runCatchingCancellable { container.settingsStore.setThemeMode(mode) } } },
-                )
-            }
+            if (s != null) {
+                ThemeMode.entries.forEach { mode ->
+                    ThemeRow(
+                        mode = mode,
+                        selected = s.themeMode == mode,
+                        onSelect = { scope.launch { runCatchingCancellable { container.settingsStore.setThemeMode(mode) } } },
+                    )
+                }
 
-            Spacer(Modifier.size(8.dp))
-            // Dynamic color (Material You) only works on Android 12+, so hide the toggle
-            // on older devices instead of offering a control that silently does nothing.
-            if (dynamicColorAvailable) {
+                Spacer(Modifier.size(8.dp))
+                // Dynamic color (Material You) only works on Android 12+, so hide the toggle
+                // on older devices instead of offering a control that silently does nothing.
+                if (dynamicColorAvailable) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .toggleable(
+                                value = s.dynamicColor,
+                                onValueChange = { scope.launch { runCatchingCancellable { container.settingsStore.setDynamicColor(it) } } },
+                                role = Role.Switch,
+                            )
+                            .padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(stringResource(R.string.dynamic_color), style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                stringResource(R.string.dynamic_color_desc),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(
+                            checked = s.dynamicColor,
+                            onCheckedChange = null,
+                        )
+                    }
+                }
+
+                // Send-on-Enter: controls hardware-keyboard Enter behavior in the chat input.
+                Spacer(Modifier.size(4.dp))
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .toggleable(
-                            value = dynamicColor,
-                            onValueChange = { scope.launch { runCatchingCancellable { container.settingsStore.setDynamicColor(it) } } },
+                            value = s.sendOnEnter,
+                            onValueChange = { scope.launch { runCatchingCancellable { container.settingsStore.setSendOnEnter(it) } } },
                             role = Role.Switch,
                         )
                         .padding(vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(stringResource(R.string.dynamic_color), style = MaterialTheme.typography.bodyLarge)
+                        Text(stringResource(R.string.send_on_enter), style = MaterialTheme.typography.bodyLarge)
                         Text(
-                            stringResource(R.string.dynamic_color_desc),
+                            stringResource(R.string.send_on_enter_desc),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                     Switch(
-                        checked = dynamicColor,
+                        checked = s.sendOnEnter,
                         onCheckedChange = null,
                     )
                 }
-            }
-
-            // Send-on-Enter: controls hardware-keyboard Enter behavior in the chat input.
-            Spacer(Modifier.size(4.dp))
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .toggleable(
-                        value = sendOnEnter,
-                        onValueChange = { scope.launch { runCatchingCancellable { container.settingsStore.setSendOnEnter(it) } } },
-                        role = Role.Switch,
-                    )
-                    .padding(vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(stringResource(R.string.send_on_enter), style = MaterialTheme.typography.bodyLarge)
-                    Text(
-                        stringResource(R.string.send_on_enter_desc),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+            } else {
+                Box(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
                 }
-                Switch(
-                    checked = sendOnEnter,
-                    onCheckedChange = null,
-                )
             }
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
@@ -310,6 +328,14 @@ private val LightSwatches: List<Color> = LightPaletteSwatches
 // recomposition surprises.
 @Composable
 private fun isSystemInDarkThemeStatic(): Boolean = androidx.compose.foundation.isSystemInDarkTheme()
+
+/** Small wrapper so the three appearance settings load atomically and the UI can gate
+ *  on a single null check instead of flashing hardcoded defaults. */
+private data class SettingsValues(
+    val themeMode: ThemeMode,
+    val dynamicColor: Boolean,
+    val sendOnEnter: Boolean,
+)
 
 /** Small circular count badge used to indicate pending crash reports. */
 @Composable

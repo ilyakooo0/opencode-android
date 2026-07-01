@@ -83,6 +83,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -304,14 +305,42 @@ fun ChatScreen(
                     ) {
                         Icon(Icons.Filled.Share, contentDescription = stringResource(R.string.share_conversation))
                     }
-                    IconButton(onClick = { showCommandPicker = true }, enabled = commands.isNotEmpty()) {
-                        Icon(Icons.Filled.Terminal, contentDescription = stringResource(R.string.commands))
+                    // Show a spinner while a catalog is initially loading (empty list +
+                    // loading flag) so the icon doesn't look permanently disabled. Once
+                    // loaded, the icon is always enabled — tapping a picker with no items
+                    // shows the "no models/agents/commands" or error-with-retry state.
+                    if (commandsLoading && commands.isEmpty()) {
+                        val loadingLabel = stringResource(R.string.loading)
+                        CircularProgressIndicator(
+                            Modifier.size(18.dp).semantics { contentDescription = loadingLabel },
+                            strokeWidth = 2.dp,
+                        )
+                    } else {
+                        IconButton(onClick = { showCommandPicker = true }) {
+                            Icon(Icons.Filled.Terminal, contentDescription = stringResource(R.string.commands))
+                        }
                     }
-                    IconButton(onClick = { showAgentPicker = true }, enabled = agents.isNotEmpty()) {
-                        Icon(Icons.Filled.SmartToy, contentDescription = stringResource(R.string.choose_agent))
+                    if (agentsLoading && agents.isEmpty()) {
+                        val loadingLabel = stringResource(R.string.loading)
+                        CircularProgressIndicator(
+                            Modifier.size(18.dp).semantics { contentDescription = loadingLabel },
+                            strokeWidth = 2.dp,
+                        )
+                    } else {
+                        IconButton(onClick = { showAgentPicker = true }) {
+                            Icon(Icons.Filled.SmartToy, contentDescription = stringResource(R.string.choose_agent))
+                        }
                     }
-                    IconButton(onClick = { showModelPicker = true }, enabled = models.isNotEmpty()) {
-                        Icon(Icons.Filled.Tune, contentDescription = stringResource(R.string.choose_model))
+                    if (modelsLoading && models.isEmpty()) {
+                        val loadingLabel = stringResource(R.string.loading)
+                        CircularProgressIndicator(
+                            Modifier.size(18.dp).semantics { contentDescription = loadingLabel },
+                            strokeWidth = 2.dp,
+                        )
+                    } else {
+                        IconButton(onClick = { showModelPicker = true }) {
+                            Icon(Icons.Filled.Tune, contentDescription = stringResource(R.string.choose_model))
+                        }
                     }
                 },
             )
@@ -369,9 +398,11 @@ fun ChatScreen(
         }
 
         CompositionLocalProvider(LocalRelativeTimeTick provides timeTick) {
-        // imePadding so the jump-to-latest FAB (aligned BottomEnd) is pushed above the
-        // IME instead of being hidden behind it when the keyboard is open.
-        Box(modifier = Modifier.fillMaxSize().padding(padding).imePadding()) {
+        // The bottomBar (ChatInputBar) already has imePadding, and the Scaffold's
+        // content padding accounts for the bottomBar's raised height, so the message
+        // list is already above the keyboard. Adding imePadding here would double-apply
+        // the IME inset and push messages too far up.
+        Box(modifier = Modifier.fillMaxSize().padding(padding)) {
             if (activeConnection == null) {
                 Column(
                     modifier = Modifier.align(Alignment.Center).padding(24.dp),
@@ -620,12 +651,20 @@ private fun ChatInputBar(
                         .padding(start = 12.dp, top = 6.dp, end = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(
-                        stringResource(R.string.queued),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.weight(1f),
-                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            stringResource(R.string.queued),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Text(
+                            queuedFollowUp,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                     TextButton(onClick = onCancelQueue, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp)) {
                         Text(stringResource(R.string.cancel))
                     }

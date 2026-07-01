@@ -154,6 +154,7 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                         SwipeToDismissBox(
                             state = swipeState,
                             enableDismissFromStartToEnd = false,
+                            modifier = Modifier.animateItem(),
                             backgroundContent = {
                                 Box(
                                     modifier = Modifier

@@ -206,6 +206,7 @@ private fun SearchResults(results: List<String>, onOpenFile: (String) -> Unit) {
                 label = name,
                 sublabel = dir.takeIf { it.isNotEmpty() },
                 onClick = { onOpenFile(path) },
+                modifier = Modifier.animateItem(),
             )
             HorizontalDivider()
         }
@@ -240,6 +241,7 @@ private fun DirectoryListing(
                 label = node.name,
                 onClick = { if (node.isDirectory) onOpenDir(node.path) else onOpenFile(node.path) },
                 status = state.statusMap[node.path],
+                modifier = Modifier.animateItem(),
             )
             HorizontalDivider()
         }
@@ -277,16 +279,29 @@ private fun FileRow(
     onClick: () -> Unit,
     status: FileStatusEntry? = null,
     sublabel: String? = null,
+    modifier: Modifier = Modifier,
 ) {
-    val desc = if (label == "..") stringResource(R.string.parent_dir)
+    val fileDesc = if (label == "..") stringResource(R.string.parent_dir)
         else if (icon) stringResource(R.string.folder, label)
         else stringResource(R.string.file_label, label)
+    // Build a combined description so TalkBack announces both the file name and its git
+    // status. The parent sets an explicit contentDescription (mergeDescendants), which
+    // would otherwise suppress the StatusBadge's own description.
+    val statusDesc = status?.let {
+        when (it.status) {
+            "added" -> stringResource(R.string.git_added)
+            "modified" -> stringResource(R.string.git_modified)
+            "deleted" -> stringResource(R.string.git_deleted)
+            else -> ""
+        }
+    }.orEmpty()
+    val fullDesc = if (statusDesc.isNotEmpty()) "$fileDesc, $statusDesc" else fileDesc
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .defaultMinSize(minHeight = 48.dp)
             .clickable(role = Role.Button, onClick = onClick)
-            .semantics(mergeDescendants = true) { contentDescription = desc }
+            .semantics(mergeDescendants = true) { contentDescription = fullDesc }
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -319,17 +334,14 @@ private fun FileRow(
 
 @Composable
 private fun StatusBadge(status: FileStatusEntry) {
-    val (letter, color, desc) = when (status.status) {
-        "added" -> Triple("A", MaterialTheme.colorScheme.primary, stringResource(R.string.git_added))
-        "modified" -> Triple("M", MaterialTheme.colorScheme.tertiary, stringResource(R.string.git_modified))
-        "deleted" -> Triple("D", MaterialTheme.colorScheme.error, stringResource(R.string.git_deleted))
-        else -> Triple("·", MaterialTheme.colorScheme.onSurfaceVariant, "")
+    val (letter, color) = when (status.status) {
+        "added" -> "A" to MaterialTheme.colorScheme.primary
+        "modified" -> "M" to MaterialTheme.colorScheme.tertiary
+        "deleted" -> "D" to MaterialTheme.colorScheme.error
+        else -> "·" to MaterialTheme.colorScheme.onSurfaceVariant
     }
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.semantics(mergeDescendants = true) {
-            if (desc.isNotEmpty()) contentDescription = desc
-        },
     ) {
         Text(
             letter,

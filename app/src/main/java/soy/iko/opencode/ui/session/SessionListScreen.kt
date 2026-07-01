@@ -210,8 +210,18 @@ fun SessionListScreen(
         snackbarHost = { SnackbarHost(snackbar) },
         floatingActionButton = {
             ExtendedFloatingActionButton(
-                onClick = { vm.createSession(onCreated = onOpenSession) },
-                icon = { Icon(Icons.Filled.Add, contentDescription = null) },
+                onClick = { if (!creating) vm.createSession(onCreated = onOpenSession) },
+                icon = {
+                    if (creating) {
+                        CircularProgressIndicator(
+                            Modifier.size(24.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        )
+                    } else {
+                        Icon(Icons.Filled.Add, contentDescription = null)
+                    }
+                },
                 text = { Text(stringResource(R.string.new_session)) },
                 // Disable while a creation is in flight so a double-tap can't spawn two
                 // sessions. The container guard in createSession is the real protection;
@@ -355,11 +365,28 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
                 if (state.query.isBlank()) state.sessions else state.filtered
             }
             if (sessions.isEmpty()) {
-                Text(
-                    stringResource(R.string.no_sessions_match, state.query),
-                    modifier = Modifier.padding(24.dp),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.padding(32.dp),
+                    ) {
+                        Icon(
+                            Icons.Filled.Search,
+                            contentDescription = null,
+                            modifier = Modifier.size(48.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.size(12.dp))
+                        Text(
+                            stringResource(R.string.no_sessions_match, state.query),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
             } else {
                 PullToRefreshBox(
                     isRefreshing = refreshing,
@@ -389,6 +416,7 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
                             SwipeToDismissBox(
                                 state = swipeState,
                                 enableDismissFromStartToEnd = false,
+                                modifier = Modifier.animateItem(),
                                 backgroundContent = {
                                     Box(
                                         modifier = Modifier
@@ -469,7 +497,7 @@ private fun SessionCard(
     Card(
         modifier = modifier
             .fillMaxWidth()
-            .clickable(role = Role.Button) { onClick() },
+            .clickable { onClick() },
     ) {
         Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
             Row(

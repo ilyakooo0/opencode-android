@@ -60,6 +60,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
@@ -386,6 +387,7 @@ private fun FindBar(
     onNext: () -> Unit,
     onClose: () -> Unit,
 ) {
+    val keyboardController = LocalSoftwareKeyboardController.current
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -397,7 +399,7 @@ private fun FindBar(
             placeholder = { Text(stringResource(R.string.find_hint)) },
             singleLine = true,
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-            keyboardActions = KeyboardActions(onSearch = { onQueryChange(query) }),
+            keyboardActions = KeyboardActions(onSearch = { keyboardController?.hide() }),
             trailingIcon = {
                 val countText = if (query.isBlank()) ""
                 else if (matchCount == 0) stringResource(R.string.no_matches_in_file)
@@ -412,10 +414,10 @@ private fun FindBar(
             },
         )
         IconButton(onClick = onPrev, enabled = matchCount > 0) {
-            Icon(Icons.Filled.KeyboardArrowUp, contentDescription = stringResource(R.string.find_in_file))
+            Icon(Icons.Filled.KeyboardArrowUp, contentDescription = stringResource(R.string.find_previous))
         }
         IconButton(onClick = onNext, enabled = matchCount > 0) {
-            Icon(Icons.Filled.KeyboardArrowDown, contentDescription = stringResource(R.string.find_in_file))
+            Icon(Icons.Filled.KeyboardArrowDown, contentDescription = stringResource(R.string.find_next))
         }
         IconButton(onClick = onClose) {
             Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.close))

@@ -233,7 +233,7 @@ private fun ServerEditForm(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Button(
+            OutlinedButton(
                 onClick = {
                     haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                     vm.save(onDone)
@@ -244,7 +244,7 @@ private fun ServerEditForm(
                 if (state.saving) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(20.dp),
-                        color = MaterialTheme.colorScheme.onPrimary,
+                        color = MaterialTheme.colorScheme.primary,
                         strokeWidth = 2.dp,
                     )
                     Text(stringResource(R.string.saving), modifier = Modifier.padding(start = 8.dp))

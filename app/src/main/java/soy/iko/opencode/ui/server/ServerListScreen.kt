@@ -39,6 +39,7 @@ import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -145,29 +146,35 @@ fun ServerListScreen(
                     modifier = Modifier.fillMaxSize().padding(padding),
                 )
             } else {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize().padding(padding),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                        start = 16.dp, end = 16.dp, top = 16.dp, bottom = 96.dp,
-                    ),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                PullToRefreshBox(
+                    isRefreshing = connectingId != null,
+                    onRefresh = { vm.refresh(onConnected) },
+                    modifier = Modifier.fillMaxSize(),
                 ) {
-                    items(profiles, key = { it.id }) { profile ->
-                        val isActive = profile.id == connectedId
-                        if (isActive) {
-                            // The active server can't be swipe-deleted (deleting it also
-                            // disconnects, which deserves an explicit tap, not an
-                            // accidental swipe). Render a plain card without the swipe
-                            // affordance for the active row.
-                            Card(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("server_card")
-                                    .clickable(enabled = connectingId == null, role = Role.Button) {
-                                        haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                                        vm.connect(profile, onConnected)
-                                    },
-                            ) {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize().padding(padding),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                            start = 16.dp, end = 16.dp, top = 16.dp, bottom = 96.dp,
+                        ),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        items(profiles, key = { it.id }) { profile ->
+                            val isActive = profile.id == connectedId
+                            if (isActive) {
+                                // The active server can't be swipe-deleted (deleting it also
+                                // disconnects, which deserves an explicit tap, not an
+                                // accidental swipe). Render a plain card without the swipe
+                                // affordance for the active row.
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .animateItem()
+                                        .testTag("server_card")
+                                        .clickable(enabled = connectingId == null, role = Role.Button) {
+                                            haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                            vm.connect(profile, onConnected)
+                                        },
+                                ) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth().padding(16.dp),
                                     verticalAlignment = Alignment.CenterVertically,
@@ -224,6 +231,7 @@ fun ServerListScreen(
                             SwipeToDismissBox(
                                 state = swipeState,
                                 enableDismissFromStartToEnd = false,
+                                modifier = Modifier.animateItem(),
                                 backgroundContent = {
                                     Box(
                                         modifier = Modifier
@@ -289,6 +297,7 @@ fun ServerListScreen(
                                     }
                                 }
                             }
+                        }
                         }
                     }
                 }

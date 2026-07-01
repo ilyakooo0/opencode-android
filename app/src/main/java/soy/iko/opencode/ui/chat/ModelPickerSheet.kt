@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
@@ -29,6 +30,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -88,6 +90,7 @@ fun ModelPickerSheet(
             )
         } else {
             var query by rememberSaveable { mutableStateOf("") }
+            val keyboardController = LocalSoftwareKeyboardController.current
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
@@ -96,6 +99,7 @@ fun ModelPickerSheet(
                 leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardActions = KeyboardActions(onSearch = { keyboardController?.hide() }),
             )
             val filtered = remember(options, query) {
                 val q = query.trim()
