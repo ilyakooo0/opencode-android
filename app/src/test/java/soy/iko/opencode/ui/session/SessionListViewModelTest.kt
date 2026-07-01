@@ -25,7 +25,10 @@ import soy.iko.opencode.data.model.ServerProfile
 import soy.iko.opencode.data.model.Session
 import soy.iko.opencode.data.model.SessionDeleted
 import soy.iko.opencode.data.model.SessionUpdated
+import soy.iko.opencode.data.model.AssistantMessage
 import soy.iko.opencode.data.model.TextPart
+import soy.iko.opencode.data.model.ToolCompleted
+import soy.iko.opencode.data.model.ToolPart
 import soy.iko.opencode.data.model.UserMessage
 import soy.iko.opencode.data.model.MessageWithParts
 import soy.iko.opencode.ui.testing.FakeAppContainer
@@ -457,5 +460,64 @@ class SessionListViewModelTest {
             initialCalls,
             api.listMessagesCalls.size,
         )
+    }
+
+    // --- sorting ---
+
+    @Test
+    fun defaultSortMode_isRecent() = testScope.runTest {
+        val container = makeContainer()
+        val vm = makeVm(container)
+        assertEquals(SessionSortMode.RECENT, vm.state.value.sortMode)
+    }
+
+    @Test
+    fun setSortMode_titleSortsAlphabetically() = testScope.runTest {
+        val repo = FakeSessionRepository(FakeOpencodeApiClient(), FakeEventStreamClient())
+        repo.sessions = listOf(
+            Session(id = "s1", title = "Zebra"),
+            Session(id = "s2", title = "Apple"),
+            Session(id = "s3", title = "Mango"),
+        )
+        val container = makeContainer(repo = repo)
+        val vm = makeVm(container)
+        vm.setSortMode(SessionSortMode.TITLE)
+        val titles = vm.state.value.sessions.map { it.title }
+        assertEquals(listOf("Apple", "Mango", "Zebra"), titles)
+    }
+
+    @Test
+    fun setSortMode_recentSortsByActivity() = testScope.runTest {
+        val repo = FakeSessionRepository(FakeOpencodeApiClient(), FakeEventStreamClient())
+        repo.sessions = listOf(
+            Session(id = "old", title = "Old", time = soy.iko.opencode.data.model.TimeInfo(created = 100)),
+            Session(id = "new", title = "New", time = soy.iko.opencode.data.model.TimeInfo(created = 900)),
+        )
+        val container = makeContainer(repo = repo)
+        val vm = makeVm(container)
+        vm.setSortMode(SessionSortMode.RECENT)
+        assertEquals("new", vm.state.value.sessions[0].id)
+    }
+
+    // --- preview fallback ---
+
+    @Test
+    fun preview_fallsBackToToolSummaryWhenNoText() = testScope.runTest {
+        val api = FakeOpencodeApiClient()
+        val events = FakeEventStreamClient()
+        val repo = FakeSessionRepository(api, events)
+        repo.sessions = listOf(Session(id = "s1", title = "Chat 1"))
+        api.messages = listOf(
+            MessageWithParts(
+                info = AssistantMessage("m1", "s1"),
+                parts = listOf(ToolPart(id = "tool1", tool = "read", state = ToolCompleted(output = "contents"))),
+            ),
+        )
+        val container = makeContainer(api = api, events = events, repo = repo)
+        val vm = makeVm(container)
+        val preview = vm.state.value.previews["s1"]
+        assertNotNull(preview)
+        assertTrue("preview should reference the tool: $preview", preview!!.contains("🔧"))
+        assertTrue("preview should name the tool: $preview", preview.contains("read"))
     }
 }

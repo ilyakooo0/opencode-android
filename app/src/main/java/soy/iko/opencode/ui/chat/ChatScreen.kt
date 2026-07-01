@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -68,6 +69,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
@@ -130,6 +132,8 @@ fun ChatScreen(
     val sessionDeleted by vm.sessionDeleted.collectAsStateWithLifecycle()
     val draft by vm.draft.collectAsStateWithLifecycle()
     val reconnecting by vm.reconnecting.collectAsStateWithLifecycle()
+    val sendOnEnter by container.settingsStore.sendOnEnter.collectAsStateWithLifecycle(initialValue = true)
+    val isOnline by container.isOnline.collectAsStateWithLifecycle()
     val haptics = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
     val shareContext = LocalContext.current
@@ -320,6 +324,7 @@ fun ChatScreen(
                 onValueChange = vm::updateDraft,
                 running = running,
                 enabled = activeConnection != null,
+                sendOnEnter = sendOnEnter,
                 onSend = ::doSend,
                 onAbort = { showStopConfirm = true },
                 queuedFollowUp = queuedFollowUp,
@@ -393,6 +398,7 @@ fun ChatScreen(
                 ConnectionBanner(
                     state = connectionState,
                     modifier = Modifier.align(Alignment.TopCenter),
+                    isOnline = isOnline,
                     // On a hard failure, retry by forcing an SSE reconnect (which
                     // re-seeds from REST). refreshMessages is the right recovery path
                     // when the connection is present but the stream died; reconnect()
@@ -465,7 +471,14 @@ fun ChatScreen(
                         // Only the last (streaming) message needs isRunning — it drives the
                         // reasoning-block spinner. Passing the live flag to every bubble
                         // makes all visible messages recompose whenever a run starts or stops.
-                        MessageBubble(message, isRunning = running && message.info.id == lastMessageId, imageContext = imageContext)
+                        val modelLabel = (message.info as? soy.iko.opencode.data.model.AssistantMessage)
+                            ?.let { resolveModelLabel(it, models) }
+                        MessageBubble(
+                            message,
+                            isRunning = running && message.info.id == lastMessageId,
+                            imageContext = imageContext,
+                            modelLabel = modelLabel,
+                        )
                     }
                     if (running) {
                         item(key = "__typing") {
@@ -589,6 +602,7 @@ private fun ChatInputBar(
     onValueChange: (String) -> Unit,
     running: Boolean,
     enabled: Boolean,
+    sendOnEnter: Boolean,
     onSend: () -> Unit,
     onAbort: () -> Unit,
     queuedFollowUp: String?,
@@ -632,11 +646,15 @@ private fun ChatInputBar(
                         .weight(1f)
                         .testTag("chat_input")
                         .onPreviewKeyEvent { event ->
-                            if (event.type == KeyEventType.KeyDown &&
-                                event.key == Key.Enter &&
-                                !event.isShiftPressed &&
-                                enabled && value.isNotBlank()
-                            ) {
+                            if (event.type != KeyEventType.KeyDown || event.key != Key.Enter) return@onPreviewKeyEvent false
+                            // With "Send on Enter" on, Enter sends (Shift+Enter newlines).
+                            // With it off, Enter inserts a newline and Ctrl+Enter sends.
+                            val send = when {
+                                !enabled || value.isBlank() -> false
+                                sendOnEnter -> !event.isShiftPressed
+                                else -> event.isCtrlPressed
+                            }
+                            if (send) {
                                 if (running) onQueueFollowUp(value) else onSend()
                                 true
                             } else {
@@ -690,6 +708,7 @@ private fun ChatInputBar(
     }
 }
 
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun EmptyConversation(
     onSuggestion: (String) -> Unit,
@@ -727,15 +746,20 @@ private fun EmptyConversation(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.size(20.dp))
-        // Suggestion chips wrap across multiple rows on narrow screens. FlowRow-like
-        // behavior via a plain Column of Rows keeps the dependency surface zero.
-        suggestions.forEach { resId ->
-            val text = stringResource(resId)
-            androidx.compose.material3.AssistChip(
-                onClick = { onSuggestion(text) },
-                label = { Text(text, style = MaterialTheme.typography.bodyMedium) },
-                modifier = Modifier.padding(vertical = 4.dp),
-            )
+        // Suggestion chips wrap across rows on narrow screens instead of stacking full-width,
+        // so a longer localized prompt doesn't push the chips off-screen on a phone.
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            suggestions.forEach { resId ->
+                val text = stringResource(resId)
+                androidx.compose.material3.AssistChip(
+                    onClick = { onSuggestion(text) },
+                    label = { Text(text, style = MaterialTheme.typography.bodyMedium) },
+                )
+            }
         }
     }
 }

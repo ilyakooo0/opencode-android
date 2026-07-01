@@ -82,16 +82,21 @@ fun OpencodeApp(container: AppContainer) {
                 onConnected = { navController.navigate(Routes.SESSIONS) },
                 onAddProfile = { navController.navigate(Routes.serverEdit()) },
                 onEditProfile = { id -> navController.navigate(Routes.serverEdit(id)) },
+                onDuplicateProfile = { id -> navController.navigate(Routes.serverEditDuplicate(id)) },
             )
         }
 
         composable(
-            route = "${Routes.SERVER_EDIT}?id={id}",
-            arguments = listOf(navArgument("id") { type = NavType.StringType; nullable = true; defaultValue = null }),
+            route = "${Routes.SERVER_EDIT}?id={id}&dup={dup}",
+            arguments = listOf(
+                navArgument("id") { type = NavType.StringType; nullable = true; defaultValue = null },
+                navArgument("dup") { type = NavType.StringType; nullable = true; defaultValue = null },
+            ),
         ) { entry ->
             ServerEditScreen(
                 container = container,
                 profileId = entry.arguments?.getString("id"),
+                sourceId = entry.arguments?.getString("dup"),
                 onDone = { navController.popBackStack() },
             )
         }

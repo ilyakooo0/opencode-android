@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Edit
@@ -62,6 +63,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import soy.iko.opencode.data.model.ServerProfile
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
+import soy.iko.opencode.ui.components.rememberRelativeTime
 import soy.iko.opencode.ui.vmFactory
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -71,6 +73,7 @@ fun ServerListScreen(
     onConnected: () -> Unit,
     onAddProfile: () -> Unit,
     onEditProfile: (String) -> Unit,
+    onDuplicateProfile: (String) -> Unit,
 ) {
     val vm: ServerListViewModel = viewModel(factory = vmFactory { ServerListViewModel(container) })
     val profiles by vm.profiles.collectAsStateWithLifecycle()
@@ -188,6 +191,7 @@ fun ServerListScreen(
                                             style = MaterialTheme.typography.labelSmall,
                                             color = MaterialTheme.colorScheme.primary,
                                         )
+                                        LastUsedText(profile.lastUsed)
                                     }
                                     Icon(
                                         Icons.Filled.CheckCircle,
@@ -199,6 +203,9 @@ fun ServerListScreen(
                                     // fixed without disconnecting first. Only delete is hidden.
                                     IconButton(onClick = { onEditProfile(profile.id) }) {
                                         Icon(Icons.Filled.Edit, contentDescription = stringResource(R.string.edit))
+                                    }
+                                    IconButton(onClick = { onDuplicateProfile(profile.id) }) {
+                                        Icon(Icons.Filled.ContentCopy, contentDescription = stringResource(R.string.duplicate_server))
                                     }
                                 }
                             }
@@ -261,6 +268,7 @@ fun ServerListScreen(
                                                 maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis,
                                             )
+                                            LastUsedText(profile.lastUsed)
                                         }
                                         if (connectingId == profile.id) {
                                             val connectingLabel = stringResource(R.string.connecting)
@@ -270,6 +278,9 @@ fun ServerListScreen(
                                         } else {
                                             IconButton(onClick = { onEditProfile(profile.id) }) {
                                                 Icon(Icons.Filled.Edit, contentDescription = stringResource(R.string.edit))
+                                            }
+                                            IconButton(onClick = { onDuplicateProfile(profile.id) }) {
+                                                Icon(Icons.Filled.ContentCopy, contentDescription = stringResource(R.string.duplicate_server))
                                             }
                                             IconButton(onClick = { pendingDeleteId = profile.id }) {
                                                 Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.delete))
@@ -309,6 +320,28 @@ fun ServerListScreen(
                 TextButton(onClick = { pendingDeleteId = null }) { Text(stringResource(R.string.cancel)) }
             },
         )
+    }
+}
+
+/** "Last used X ago" or "Not used yet" for a server profile, so the user can spot stale
+ *  configs at a glance. Mirrors the relative-time formatting used elsewhere. */
+@Composable
+private fun LastUsedText(lastUsed: Long) {
+    if (lastUsed <= 0) {
+        Text(
+            stringResource(R.string.last_used_never),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    } else {
+        val relative = rememberRelativeTime(lastUsed)
+        if (relative.isNotEmpty()) {
+            Text(
+                stringResource(R.string.last_used, relative),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 

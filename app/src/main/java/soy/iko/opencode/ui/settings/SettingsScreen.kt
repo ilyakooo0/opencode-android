@@ -67,6 +67,8 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onManageServers:
     val scope = rememberCoroutineScope()
     val themeMode by container.settingsStore.themeMode.collectAsStateWithLifecycle(initialValue = ThemeMode.SYSTEM)
     val dynamicColor by container.settingsStore.dynamicColor.collectAsStateWithLifecycle(initialValue = true)
+    val sendOnEnter by container.settingsStore.sendOnEnter.collectAsStateWithLifecycle(initialValue = true)
+    val dynamicColorAvailable = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
     val activeProfile = container.activeConnection.collectAsStateWithLifecycle().value?.profile
     val context = LocalContext.current
     // Crash count badge: surface that there are reports to look at without making the
@@ -117,27 +119,58 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onManageServers:
             }
 
             Spacer(Modifier.size(8.dp))
+            // Dynamic color (Material You) only works on Android 12+, so hide the toggle
+            // on older devices instead of offering a control that silently does nothing.
+            if (dynamicColorAvailable) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .toggleable(
+                            value = dynamicColor,
+                            onValueChange = { scope.launch { runCatchingCancellable { container.settingsStore.setDynamicColor(it) } } },
+                            role = Role.Switch,
+                        )
+                        .padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(stringResource(R.string.dynamic_color), style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            stringResource(R.string.dynamic_color_desc),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = dynamicColor,
+                        onCheckedChange = null,
+                    )
+                }
+            }
+
+            // Send-on-Enter: controls hardware-keyboard Enter behavior in the chat input.
+            Spacer(Modifier.size(4.dp))
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .toggleable(
-                        value = dynamicColor,
-                        onValueChange = { scope.launch { runCatchingCancellable { container.settingsStore.setDynamicColor(it) } } },
+                        value = sendOnEnter,
+                        onValueChange = { scope.launch { runCatchingCancellable { container.settingsStore.setSendOnEnter(it) } } },
                         role = Role.Switch,
                     )
                     .padding(vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(stringResource(R.string.dynamic_color), style = MaterialTheme.typography.bodyLarge)
+                    Text(stringResource(R.string.send_on_enter), style = MaterialTheme.typography.bodyLarge)
                     Text(
-                        stringResource(R.string.dynamic_color_desc),
+                        stringResource(R.string.send_on_enter_desc),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
                 Switch(
-                    checked = dynamicColor,
+                    checked = sendOnEnter,
                     onCheckedChange = null,
                 )
             }

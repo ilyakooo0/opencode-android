@@ -18,6 +18,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -49,6 +50,7 @@ fun CommandPickerSheet(
     onRetry: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    var pendingCommand by rememberSaveable { mutableStateOf<Command?>(null) }
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Text(
             stringResource(R.string.commands),
@@ -114,7 +116,14 @@ fun CommandPickerSheet(
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable(role = Role.Button) { onSelect(cmd); onDismiss() }
+                                .clickable(role = Role.Button) {
+                                    if (isDestructiveCommand(cmd.name)) {
+                                        pendingCommand = cmd
+                                    } else {
+                                        onSelect(cmd)
+                                        onDismiss()
+                                    }
+                                }
                                 .padding(horizontal = 24.dp, vertical = 12.dp),
                         ) {
                             androidx.compose.foundation.layout.Row(
@@ -141,4 +150,35 @@ fun CommandPickerSheet(
             }
         }
     }
+
+    // Confirmation for commands whose name suggests they may discard work or reset state,
+    // so a tap doesn't irrevocably run e.g. /clear or /compact without consent.
+    pendingCommand?.let { cmd ->
+        AlertDialog(
+            onDismissRequest = { pendingCommand = null },
+            title = { Text(stringResource(R.string.run_command_title, cmd.name)) },
+            text = { Text(stringResource(R.string.run_command_text, "/${cmd.name}")) },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingCommand = null
+                    onSelect(cmd)
+                    onDismiss()
+                }) { Text(stringResource(R.string.run)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingCommand = null }) { Text(stringResource(R.string.cancel)) }
+            },
+        )
+    }
+}
+
+/**
+ * Heuristic for commands that may be destructive (discard work / reset state) and so
+ * warrant a confirmation step before invocation. Matches common opencode slash-command
+ * names; non-matching commands invoke immediately.
+ */
+private fun isDestructiveCommand(name: String): Boolean {
+    val n = name.lowercase()
+    return n in setOf("clear", "compact", "delete", "reset", "remove", "wipe", "drop", "purge") ||
+        n.startsWith("clear") || n.startsWith("compact") || n.startsWith("reset")
 }

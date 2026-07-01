@@ -8,6 +8,10 @@ import soy.iko.opencode.data.model.Session
 import soy.iko.opencode.data.model.SessionDeleted
 import soy.iko.opencode.data.model.SessionUpdated
 import soy.iko.opencode.data.model.TextPart
+import soy.iko.opencode.data.model.ToolCompleted
+import soy.iko.opencode.data.model.ToolError
+import soy.iko.opencode.data.model.ToolPart
+import soy.iko.opencode.data.model.ToolRunning
 import soy.iko.opencode.data.network.EventStreamClient
 import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.di.AppContainer
@@ -36,6 +40,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 
+/** Sort order for the session list. */
+enum class SessionSortMode { RECENT, TITLE }
+
 @Immutable
 data class SessionListState(
     val sessions: List<Session> = emptyList(),
@@ -43,6 +50,7 @@ data class SessionListState(
     val previews: Map<String, String> = emptyMap(),
     val loading: Boolean = true,
     val error: String? = null,
+    val sortMode: SessionSortMode = SessionSortMode.RECENT,
 ) {
     /** Sessions filtered by the current search query (title or preview text). */
     val filtered: List<Session>
@@ -54,6 +62,15 @@ data class SessionListState(
                     (previews[session.id]?.contains(q, ignoreCase = true) == true)
             }
         }
+}
+
+/** Sort sessions by the given mode. RECENT sorts by last activity time desc; TITLE by
+ *  display title asc (case-insensitive), falling back to recency for ties. */
+private fun Iterable<Session>.sortedByMode(mode: SessionSortMode): List<Session> = when (mode) {
+    SessionSortMode.RECENT ->
+        sortedByDescending { it.time?.updated ?: it.time?.created ?: 0L }
+    SessionSortMode.TITLE ->
+        sortedWith(compareBy<Session> { it.displayTitle.lowercase() }.thenByDescending { it.time?.updated ?: it.time?.created ?: 0L })
 }
 
 class SessionListViewModel(private val container: AppContainer) : ViewModel() {
@@ -221,7 +238,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
             // new state (and trigger recomposition) when the batch held no real changes
             // (e.g. a duplicate SessionUpdated for an unchanged session).
             if (!anyChanged) return@update s
-            val sorted = byId.values.sortedByDescending { it.time?.updated ?: it.time?.created ?: 0 }
+            val sorted = byId.values.sortedByMode(s.sortMode)
             // If the new ordering matches the existing one (e.g. only the already-newest
             // session updated its timestamp), reuse the same list instance so downstream
             // skips a recomposition for an identical reference.
@@ -263,7 +280,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
             try {
                 runCatchingCancellable { conn.repository.listSessions() }
                     .onSuccess { list ->
-                        val sorted = list.sortedByDescending { it.time?.updated ?: it.time?.created ?: 0 }
+                        val sorted = list.sortedByMode(_state.value.sortMode)
                         _state.update { it.copy(sessions = sorted, loading = false, error = null) }
                         loadPreviews(sorted)
                     }
@@ -388,7 +405,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
                     }
                     .onFailure {
                         // Restore the session to the list since the delete failed.
-                        _state.update { s -> s.copy(sessions = (s.sessions + session).sortedByDescending { it.time?.updated ?: it.time?.created ?: 0 }) }
+                        _state.update { s -> s.copy(sessions = (s.sessions + session).sortedByMode(s.sortMode)) }
                         _transientErrors.tryEmit(container.friendlyError(it))
                     }
             }
@@ -401,9 +418,14 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         if (pending != null && pending.id == sessionId) {
             pendingDelete = null
             _state.update { s ->
-                s.copy(sessions = (s.sessions + pending).sortedByDescending { it.time?.updated ?: it.time?.created ?: 0 })
+                s.copy(sessions = (s.sessions + pending).sortedByMode(s.sortMode))
             }
         }
+    }
+
+    fun setSortMode(mode: SessionSortMode) {
+        if (mode == _state.value.sortMode) return
+        _state.update { s -> s.copy(sortMode = mode, sessions = s.sessions.sortedByMode(mode)) }
     }
 
     fun renameSession(session: Session, newTitle: String) {
@@ -479,15 +501,29 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
 }
 
 /**
- * Fetch the last text part of a session's most recent message, truncated to
- * [NetworkConfig.previewTextMaxLength]. Returns null on failure or when the
- * last message has no text part.
+ * Fetch a preview of a session's most recent activity, truncated to
+ * [NetworkConfig.previewTextMaxLength]. Returns the last text part if present; otherwise
+ * a short summary of the last tool call (e.g. "🔧 read") so a session whose last activity
+ * was a tool call (no assistant text yet) still shows a meaningful preview instead of
+ * stale/empty. Returns null on failure or when there's nothing usable.
  */
 private suspend fun fetchSessionPreview(
     api: soy.iko.opencode.data.network.OpencodeApiClient,
     sessionId: String,
 ): String? = runCatchingCancellable {
     api.listMessages(sessionId).lastOrNull()?.let { msg ->
-        msg.parts.filterIsInstance<TextPart>().lastOrNull()?.text
+        val text = msg.parts.filterIsInstance<TextPart>().lastOrNull()?.text
+        if (text != null) return@let text
+        val tool = msg.parts.filterIsInstance<ToolPart>().lastOrNull()
+        if (tool != null) {
+            val title = when (val st = tool.state) {
+                is ToolRunning -> st.title
+                is ToolCompleted -> st.title
+                is ToolError -> st.error
+                else -> null
+            }
+            return@let title?.takeIf { it.isNotBlank() }?.let { "🔧 $it" } ?: "🔧 ${tool.tool}"
+        }
+        null
     }
 }.getOrNull()?.takeIf { it.isNotBlank() }?.take(NetworkConfig.previewTextMaxLength)

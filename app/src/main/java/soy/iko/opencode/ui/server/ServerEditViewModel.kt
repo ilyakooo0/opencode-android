@@ -38,6 +38,9 @@ data class ServerEditState(
     val testingCredentials: Boolean = false,
     /** Non-null when the last credential test succeeded (true) or failed (false). */
     val credentialsResult: Boolean? = null,
+    /** True when the last connectivity probe found the server reachable without auth.
+     *  Null until a probe runs, and cleared when the base URL is edited. */
+    val probeReachable: Boolean? = null,
 ) {
     val canSave: Boolean get() = baseUrl.isNotBlank() && isValidUrl(baseUrl)
     val isNew: Boolean get() = id == null
@@ -67,9 +70,22 @@ fun isValidUrl(url: String): Boolean = try {
     false
 }
 
+/**
+ * If [input] looks like a bare host (optionally with a port/path) and lacks a scheme,
+ * return the suggested `http://`-prefixed form (only when it parses to a valid URL).
+ * Lets the UI offer a one-tap fix instead of a generic "invalid URL" error.
+ */
+fun suggestUrlScheme(input: String): String? {
+    val trimmed = input.trim()
+    if (trimmed.isEmpty() || "://" in trimmed) return null
+    val candidate = "http://$trimmed"
+    return if (isValidUrl(candidate)) candidate else null
+}
+
 class ServerEditViewModel(
     private val container: AppContainer,
     private val profileId: String?,
+    private val sourceId: String? = null,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(ServerEditState(id = profileId))
@@ -109,6 +125,31 @@ class ServerEditViewModel(
                 )
                 return@launch
             }
+            // Duplicate: seed the form from an existing profile but as a NEW profile
+            // (id stays null so save() generates a fresh one). Appends " (copy)" to the
+            // label so the user can tell the duplicate from the original at a glance.
+            if (sourceId != null) {
+                val source = withTimeoutOrNull(NetworkConfig.profileLoadTimeoutMs) {
+                    container.profileStore.profiles
+                        .first { it.isNotEmpty() || it.none { p -> p.id == sourceId } }
+                        .firstOrNull { it.id == sourceId }
+                }
+                if (source != null) {
+                    val dupLabel = if (source.label.isBlank()) source.baseUrl + " (copy)" else "${source.label} (copy)"
+                    _state.value = ServerEditState(
+                        id = null,
+                        label = dupLabel,
+                        baseUrl = source.baseUrl,
+                        username = source.username.orEmpty(),
+                        password = source.password.orEmpty(),
+                        loaded = true,
+                        authFieldsVisible = source.hasAuth,
+                        initial = InitialProfile("", "", "", ""),
+                    )
+                    return@launch
+                }
+                // Source not found — fall through to a blank new-profile form.
+            }
             // New-profile form: seed an initial snapshot of empty values so isDirty
             // becomes true the moment the user types anything.
             _state.update {
@@ -127,7 +168,7 @@ class ServerEditViewModel(
     fun probe() {
         val s = _state.value
         if (!s.canSave || s.probing) return
-        _state.update { it.copy(probing = true, error = null, credentialsResult = null) }
+        _state.update { it.copy(probing = true, error = null, credentialsResult = null, probeReachable = null) }
         viewModelScope.launch {
             val result = runCatchingCancellable { container.probeServer(s.baseUrl) }
             result.onSuccess { pr ->
@@ -137,21 +178,24 @@ class ServerEditViewModel(
                             probing = false,
                             authFieldsVisible = false,
                             error = null,
+                            probeReachable = true,
                         )
                         is ProbeResult.NeedsAuth -> it.copy(
                             probing = false,
                             authFieldsVisible = true,
                             error = null,
+                            probeReachable = false,
                         )
                         is ProbeResult.Unreachable -> it.copy(
                             probing = false,
                             authFieldsVisible = false,
                             error = pr.error,
+                            probeReachable = false,
                         )
                     }
                 }
             }.onFailure { e ->
-                _state.update { it.copy(probing = false, error = container.friendlyError(e)) }
+                _state.update { it.copy(probing = false, error = container.friendlyError(e), probeReachable = false) }
             }
         }
     }

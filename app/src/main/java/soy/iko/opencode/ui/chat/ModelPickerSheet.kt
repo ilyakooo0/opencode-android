@@ -113,8 +113,20 @@ fun ModelPickerSheet(
                     modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp),
                 )
             } else {
+                // Group by provider so a long catalog is scannable: a provider header
+                // followed by its models, instead of a flat list mixing providers.
+                val grouped = remember(filtered) { filtered.groupBy { it.providerID } }
                 LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
-                    items(filtered, key = { it.providerID to it.modelID }) { option ->
+                    grouped.forEach { (providerID, opts) ->
+                        item(key = "header_$providerID") {
+                            Text(
+                                opts.firstOrNull()?.providerLabel ?: providerID,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(start = 24.dp, top = 12.dp, bottom = 4.dp),
+                            )
+                        }
+                        items(opts, key = { it.providerID to it.modelID }) { option ->
                     val isSelected = option.providerID == selected?.providerID &&
                         option.modelID == selected?.modelID
                     Column(
@@ -145,13 +157,9 @@ fun ModelPickerSheet(
                                 )
                             }
                         }
-                        Text(
-                            option.providerLabel,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
                     }
                 }
+                    }
             }
         }
         }

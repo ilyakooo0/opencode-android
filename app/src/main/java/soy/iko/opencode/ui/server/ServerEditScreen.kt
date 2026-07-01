@@ -62,9 +62,10 @@ fun ServerEditScreen(
     container: AppContainer,
     profileId: String?,
     onDone: () -> Unit,
+    sourceId: String? = null,
 ) {
     val vm: ServerEditViewModel =
-        viewModel(factory = vmFactory { ServerEditViewModel(container, profileId) })
+        viewModel(factory = vmFactory { ServerEditViewModel(container, profileId, sourceId) })
     val state by vm.state.collectAsStateWithLifecycle()
     var showDiscardConfirm by rememberSaveable { mutableStateOf(false) }
     var passwordVisible by rememberSaveable { mutableStateOf(false) }
@@ -159,14 +160,26 @@ private fun ServerEditForm(
         )
         OutlinedTextField(
             value = state.baseUrl,
-            onValueChange = { v -> vm.update { it.copy(baseUrl = v, error = null) } },
+            onValueChange = { v -> vm.update { it.copy(baseUrl = v, error = null, probeReachable = null) } },
             label = { Text(stringResource(R.string.base_url)) },
             placeholder = { Text(stringResource(R.string.base_url_hint)) },
             singleLine = true,
             isError = state.baseUrl.isNotBlank() && !isValidUrl(state.baseUrl),
             supportingText = {
                 if (state.baseUrl.isNotBlank() && !isValidUrl(state.baseUrl)) {
-                    Text(stringResource(R.string.invalid_url))
+                    // Offer a one-tap "http://" fix for bare host:port input instead of a
+                    // generic error, so the user doesn't have to know the URL needs a scheme.
+                    val suggestion = suggestUrlScheme(state.baseUrl)
+                    if (suggestion != null) {
+                        TextButton(
+                            onClick = { vm.update { it.copy(baseUrl = suggestion, probeReachable = null) } },
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp),
+                        ) {
+                            Text(stringResource(R.string.suggest_scheme))
+                        }
+                    } else {
+                        Text(stringResource(R.string.invalid_url))
+                    }
                 }
             },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Next),
@@ -186,6 +199,17 @@ private fun ServerEditForm(
             } else {
                 Text(stringResource(R.string.check_connectivity))
             }
+        }
+        // Positive feedback when the probe found the server reachable without auth, so
+        // the user knows the connection works before saving (closes the loop that the
+        // prior "silently does nothing" Reachable path left open).
+        if (state.probeReachable == true && !state.authFieldsVisible) {
+            Text(
+                stringResource(R.string.server_reachable),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
         if (!state.authFieldsVisible) {
             Text(

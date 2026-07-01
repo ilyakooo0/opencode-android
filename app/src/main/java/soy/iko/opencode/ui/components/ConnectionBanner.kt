@@ -38,23 +38,32 @@ import soy.iko.opencode.data.network.EventStreamClient
 fun ConnectionBanner(
     state: EventStreamClient.ConnectionState,
     modifier: Modifier = Modifier,
+    isOnline: Boolean = true,
     onRetry: (() -> Unit)? = null,
 ) {
-    val text = when (state) {
-        EventStreamClient.ConnectionState.Connecting -> stringResource(R.string.connecting)
-        EventStreamClient.ConnectionState.Disconnected -> stringResource(R.string.reconnecting)
-        EventStreamClient.ConnectionState.Failed -> stringResource(R.string.connection_failed)
-        EventStreamClient.ConnectionState.Connected -> null
+    // When the device itself has no connectivity, surface that distinctly (instead of
+    // the SSE state) — a dropped Wi-Fi shouldn't read "Reconnecting…" or "check
+    // credentials", neither of which reflects the real problem.
+    val text = if (!isOnline) {
+        stringResource(R.string.offline)
+    } else {
+        when (state) {
+            EventStreamClient.ConnectionState.Connecting -> stringResource(R.string.connecting)
+            EventStreamClient.ConnectionState.Disconnected -> stringResource(R.string.reconnecting)
+            EventStreamClient.ConnectionState.Failed -> stringResource(R.string.connection_failed)
+            EventStreamClient.ConnectionState.Connected -> null
+        }
     }
+    val isOffline = !isOnline
     // AnimatedVisibility so the banner slides/fades in and out instead of appearing
     // and disappearing instantly — a state change that's especially jarring when the
     // connection flaps, and was called out as a rough edge in the UX audit.
     AnimatedVisibility(visible = text != null, enter = fadeIn(), exit = fadeOut()) {
         if (text == null) return@AnimatedVisibility
-        // Distinguish a hard failure (e.g. bad credentials) from transient
-        // connecting/reconnecting states by switching to the error palette, so
-        // the banner conveys urgency without relying on text alone.
-        val isFailed = state == EventStreamClient.ConnectionState.Failed
+        // Distinguish a hard failure (e.g. bad credentials) and an offline device from
+        // transient connecting/reconnecting states by switching to the error palette,
+        // so the banner conveys urgency without relying on text alone.
+        val isFailed = isOffline || state == EventStreamClient.ConnectionState.Failed
         val container = if (isFailed) MaterialTheme.colorScheme.errorContainer
             else MaterialTheme.colorScheme.tertiaryContainer
         val onContainer = if (isFailed) MaterialTheme.colorScheme.onErrorContainer
@@ -91,9 +100,9 @@ fun ConnectionBanner(
                 )
                 // Inline retry on the Failed banner so the user can recover without
                 // leaving the screen. Hidden during transient states (the system is
-                // already reconnecting) and when no callback is wired (callers that
-                // don't have a reconnect path, e.g. the file browser).
-                if (isFailed && onRetry != null) {
+                // already reconnecting), when offline (retry can't help), and when no
+                // callback is wired (callers that don't have a reconnect path).
+                if (state == EventStreamClient.ConnectionState.Failed && !isOffline && onRetry != null) {
                     TextButton(onClick = onRetry, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp)) {
                         Text(stringResource(R.string.retry_now), color = onContainer)
                     }

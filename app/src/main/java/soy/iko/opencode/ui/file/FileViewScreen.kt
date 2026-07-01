@@ -7,23 +7,36 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.WrapText
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -31,12 +44,15 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -47,6 +63,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
@@ -71,167 +88,374 @@ fun FileViewScreen(
     val vm: FileViewModel = viewModel(factory = vmFactory { FileViewModel(container, path) })
     val state by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
-    // Trim a trailing slash so "dir/" doesn't yield an empty filename; fall back to the
-    // raw path if there's no basename at all (e.g. the root "/").
     val filename = remember(path) {
         val trimmed = path.trimEnd('/')
         trimmed.substringAfterLast('/').ifBlank { path.ifBlank { "/" } }
     }
     val shareLabel = stringResource(R.string.share)
-    // Diff vs raw view toggle. Defaults to showing the diff when one exists (the common
-    // case a developer opens a file for); the user can switch to the raw new content to
-    // see the full file without +/- markers. Persisted across recomposition via
-    // rememberSaveable so a rotation doesn't reset the user's choice.
+    // Diff vs raw view toggle. Defaults to showing the diff when one exists; the user can
+    // switch to the raw new content. Persisted via rememberSaveable across rotation.
     val hasDiff = state.content?.diff != null && state.content?.diff?.isNotBlank() == true
     var showDiff by rememberSaveable(path) { mutableStateOf(true) }
     val showToggle = hasDiff && state.content?.content.orEmpty().isNotEmpty()
+    // Find-in-file and line-wrapping state, persisted so a rotation or reload keeps the
+    // user's query/mode.
+    var findActive by rememberSaveable(path) { mutableStateOf(false) }
+    var findQuery by rememberSaveable(path) { mutableStateOf("") }
+    var matchPos by rememberSaveable(path) { mutableIntStateOf(0) }
+    var wrap by rememberSaveable(path) { mutableStateOf(false) }
+    val listState = rememberLazyListState()
+    val rawText = state.content?.content.orEmpty()
+    val lines = remember(rawText) { rawText.split("\n") }
+    val matchIndices = remember(lines, findQuery) {
+        val q = findQuery.trim()
+        if (q.isEmpty()) emptyList()
+        else lines.mapIndexed { index, line -> if (line.contains(q, ignoreCase = true)) index else -1 }
+            .filter { it >= 0 }
+    }
+    // Scroll to the current match whenever it (or the match set) changes.
+    LaunchedEffect(matchPos, matchIndices) {
+        matchIndices.getOrNull(matchPos)?.let { idx -> runCatchingCancellable { listState.animateScrollToItem(idx) } }
+    }
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text(filename, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
+            FileViewTopBar(
+                filename = filename,
+                loading = state.loading,
+                content = rawText,
+                wrap = wrap,
+                onBack = onBack,
+                onReload = { vm.reload() },
+                onToggleFind = { findActive = !findActive; if (!findActive) findQuery = "" },
+                onToggleWrap = { wrap = !wrap },
+                onCopy = { copyToClipboard(context, filename, rawText) },
+                onShare = {
+                    val send = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_SUBJECT, filename)
+                        putExtra(Intent.EXTRA_TEXT, rawText)
                     }
-                },
-                actions = {
-                    // In-place refresh: a file's content can change on the server (the
-                    // agent may be editing it), so reload without requiring a back-out.
-                    // Disabled while loading to avoid stacking parallel fetches.
-                    IconButton(onClick = { vm.reload() }, enabled = !state.loading) {
-                        Icon(Icons.Filled.Refresh, contentDescription = stringResource(R.string.refresh))
-                    }
-                    val content = state.content?.content.orEmpty()
-                    if (content.isNotEmpty()) {
-                        IconButton(onClick = { copyToClipboard(context, filename, content) }) {
-                            Icon(Icons.Filled.ContentCopy, contentDescription = stringResource(R.string.copy))
-                        }
-                        IconButton(onClick = {
-                            val send = Intent(Intent.ACTION_SEND).apply {
-                                type = "text/plain"
-                                putExtra(Intent.EXTRA_SUBJECT, filename)
-                                putExtra(Intent.EXTRA_TEXT, content)
-                            }
-                            runCatchingCancellable { context.startActivity(Intent.createChooser(send, shareLabel)) }
-                                .onFailure {
-                                    showToast(context, context.getString(R.string.no_share_app))
-                                }
-                        }) {
-                            Icon(Icons.Filled.Share, contentDescription = stringResource(R.string.share))
-                        }
-                    }
+                    runCatchingCancellable { context.startActivity(Intent.createChooser(send, shareLabel)) }
+                        .onFailure { showToast(context, context.getString(R.string.no_share_app)) }
                 },
             )
         },
     ) { padding ->
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
-            // AnimatedContent cross-fades between the loading / error / content states
-            // so the viewer doesn't snap abruptly when a reload finishes or fails. The
-            // transition is short (180ms) and fade-only to avoid a slide that would
-            // disorient when the content is the same file just re-fetched.
+            // AnimatedContent cross-fades between loading / error / content states so the
+            // viewer doesn't snap abruptly when a reload finishes or fails.
             AnimatedContent(
                 targetState = state,
                 transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(180)) },
                 label = "fileViewState",
             ) { s ->
-                when {
-                    s.loading -> {
-                        val loadingLabel = stringResource(R.string.loading)
-                        CircularProgressIndicator(
-                            Modifier.align(Alignment.Center).semantics { contentDescription = loadingLabel },
-                        )
-                    }
-                    s.error != null -> Column(
-                        modifier = Modifier.align(Alignment.Center).padding(24.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        Text(
-                            s.error ?: "",
-                            color = MaterialTheme.colorScheme.error,
-                        )
-                        Spacer(Modifier.size(12.dp))
-                        TextButton(onClick = { vm.reload() }) {
-                            Text(stringResource(R.string.retry))
-                        }
-                    }
-                    s.content?.isBinary == true -> Text(
-                        stringResource(R.string.binary_file),
-                        modifier = Modifier.align(Alignment.Center).padding(24.dp),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    else -> {
-                        val content = s.content
-                        // Diff/raw toggle: when both a diff and raw content are present,
-                        // let the user switch. The chip row sits above the content so
-                        // it's always reachable while scrolling.
-                        if (showToggle) {
-                            Row(
-                                modifier = Modifier
-                                    .align(Alignment.TopCenter)
-                                    .padding(top = 4.dp),
-                                horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
-                            ) {
-                                FilterChip(
-                                    selected = showDiff,
-                                    onClick = { showDiff = true },
-                                    label = { Text(stringResource(R.string.show_diff)) },
-                                )
-                                FilterChip(
-                                    selected = !showDiff,
-                                    onClick = { showDiff = false },
-                                    label = { Text(stringResource(R.string.show_raw)) },
-                                )
-                            }
-                        }
-                        if (showDiff && content?.diff != null && content.diff.isNotBlank()) {
-                            DiffView(
-                                diff = content.diff,
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(top = if (showToggle) 48.dp else 0.dp)
-                                    .verticalScroll(rememberScrollState())
-                                    .padding(8.dp),
-                            )
-                        } else {
-                            val text = content?.content.orEmpty()
-                            if (text.isEmpty()) {
-                                Text(
-                                    stringResource(R.string.empty_file),
-                                    modifier = Modifier.align(Alignment.Center).padding(24.dp),
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            } else {
-                                FileTextContent(
-                                    text = text,
-                                    filename = filename,
-                                    topInset = if (showToggle) 48.dp else 0.dp,
-                                )
-                            }
-                        }
-                    }
-                }
+                FileViewStateContent(
+                    state = s,
+                    filename = filename,
+                    showToggle = showToggle,
+                    showDiff = showDiff,
+                    onSetShowDiff = { showDiff = it },
+                    findActive = findActive,
+                    findQuery = findQuery,
+                    onQueryChange = { findQuery = it; matchPos = 0 },
+                    matchIndices = matchIndices,
+                    matchPos = matchPos,
+                    onPrev = { if (matchIndices.isNotEmpty()) matchPos = (matchPos - 1 + matchIndices.size) % matchIndices.size },
+                    onNext = { if (matchIndices.isNotEmpty()) matchPos = (matchPos + 1) % matchIndices.size },
+                    onCloseFind = { findActive = false; findQuery = "" },
+                    wrap = wrap,
+                    listState = listState,
+                    onRetry = { vm.reload() },
+                )
             }
         }
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun FileTextContent(text: String, filename: String, topInset: androidx.compose.ui.unit.Dp) {
+private fun FileViewTopBar(
+    filename: String,
+    loading: Boolean,
+    content: String,
+    wrap: Boolean,
+    onBack: () -> Unit,
+    onReload: () -> Unit,
+    onToggleFind: () -> Unit,
+    onToggleWrap: () -> Unit,
+    onCopy: () -> Unit,
+    onShare: () -> Unit,
+) {
+    TopAppBar(
+        title = { Text(filename, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        navigationIcon = {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
+            }
+        },
+        actions = {
+            // In-place refresh: a file's content can change on the server (the agent may
+            // be editing it), so reload without requiring a back-out.
+            IconButton(onClick = onReload, enabled = !loading) {
+                Icon(Icons.Filled.Refresh, contentDescription = stringResource(R.string.refresh))
+            }
+            if (content.isNotEmpty()) {
+                // Find-in-file: toggles a search bar over the raw content.
+                IconButton(onClick = onToggleFind) {
+                    Icon(Icons.Filled.Search, contentDescription = stringResource(R.string.find_in_file))
+                }
+                // Wrap long lines instead of horizontal-scrolling, useful for prose.
+                IconButton(onClick = onToggleWrap) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.WrapText,
+                        contentDescription = stringResource(R.string.wrap_lines),
+                        tint = if (wrap) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                IconButton(onClick = onCopy) {
+                    Icon(Icons.Filled.ContentCopy, contentDescription = stringResource(R.string.copy))
+                }
+                IconButton(onClick = onShare) {
+                    Icon(Icons.Filled.Share, contentDescription = stringResource(R.string.share))
+                }
+            }
+        },
+    )
+}
+
+@Composable
+private fun BoxScope.FileViewStateContent(
+    state: FileViewState,
+    filename: String,
+    showToggle: Boolean,
+    showDiff: Boolean,
+    onSetShowDiff: (Boolean) -> Unit,
+    findActive: Boolean,
+    findQuery: String,
+    onQueryChange: (String) -> Unit,
+    matchIndices: List<Int>,
+    matchPos: Int,
+    onPrev: () -> Unit,
+    onNext: () -> Unit,
+    onCloseFind: () -> Unit,
+    wrap: Boolean,
+    listState: LazyListState,
+    onRetry: () -> Unit,
+) {
+    when {
+        state.loading -> {
+            val loadingLabel = stringResource(R.string.loading)
+            CircularProgressIndicator(
+                Modifier.align(Alignment.Center).semantics { contentDescription = loadingLabel },
+            )
+        }
+        state.error != null -> Column(
+            modifier = Modifier.align(Alignment.Center).padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(state.error ?: "", color = MaterialTheme.colorScheme.error)
+            Spacer(Modifier.size(12.dp))
+            TextButton(onClick = onRetry) { Text(stringResource(R.string.retry)) }
+        }
+        state.content?.isBinary == true -> Text(
+            stringResource(R.string.binary_file),
+            modifier = Modifier.align(Alignment.Center).padding(24.dp),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        else -> FileViewContentBody(
+            content = state.content,
+            filename = filename,
+            showToggle = showToggle,
+            showDiff = showDiff,
+            onSetShowDiff = onSetShowDiff,
+            findActive = findActive,
+            findQuery = findQuery,
+            onQueryChange = onQueryChange,
+            matchIndices = matchIndices,
+            matchPos = matchPos,
+            onPrev = onPrev,
+            onNext = onNext,
+            onCloseFind = onCloseFind,
+            wrap = wrap,
+            listState = listState,
+        )
+    }
+}
+
+@Composable
+private fun BoxScope.FileViewContentBody(
+    content: soy.iko.opencode.data.model.FileContent?,
+    filename: String,
+    showToggle: Boolean,
+    showDiff: Boolean,
+    onSetShowDiff: (Boolean) -> Unit,
+    findActive: Boolean,
+    findQuery: String,
+    onQueryChange: (String) -> Unit,
+    matchIndices: List<Int>,
+    matchPos: Int,
+    onPrev: () -> Unit,
+    onNext: () -> Unit,
+    onCloseFind: () -> Unit,
+    wrap: Boolean,
+    listState: LazyListState,
+) {
+    // Overlay bar: stacks the diff/raw chips and the find bar at the top so both stay
+    // reachable while scrolling. Each contributes a top inset so the content below
+    // isn't hidden behind the overlay.
+    val overlayRows = (if (showToggle) 1 else 0) + (if (findActive) 1 else 0)
+    val topInset = (overlayRows * 52).dp
+    if (overlayRows > 0) {
+        Column(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .fillMaxWidth()
+                .padding(top = 4.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            if (showToggle) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Center,
+                ) {
+                    FilterChip(
+                        selected = showDiff,
+                        onClick = { onSetShowDiff(true) },
+                        label = { Text(stringResource(R.string.show_diff)) },
+                    )
+                    Spacer(Modifier.size(8.dp))
+                    FilterChip(
+                        selected = !showDiff,
+                        onClick = { onSetShowDiff(false) },
+                        label = { Text(stringResource(R.string.show_raw)) },
+                    )
+                }
+            }
+            if (findActive) {
+                FindBar(
+                    query = findQuery,
+                    onQueryChange = onQueryChange,
+                    matchCount = matchIndices.size,
+                    matchPos = matchPos,
+                    onPrev = onPrev,
+                    onNext = onNext,
+                    onClose = onCloseFind,
+                )
+            }
+        }
+    }
+    if (showDiff && content?.diff != null && content.diff.isNotBlank()) {
+        DiffView(
+            diff = content.diff,
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(top = topInset)
+                .verticalScroll(rememberScrollState())
+                .padding(8.dp),
+        )
+    } else {
+        val text = content?.content.orEmpty()
+        if (text.isEmpty()) {
+            Text(
+                stringResource(R.string.empty_file),
+                modifier = Modifier.align(Alignment.Center).padding(24.dp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            FileTextContent(
+                text = text,
+                filename = filename,
+                topInset = topInset,
+                wrap = wrap,
+                findQuery = findQuery,
+                matchIndices = matchIndices,
+                listState = listState,
+            )
+        }
+    }
+}
+
+@Composable
+private fun FindBar(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    matchCount: Int,
+    matchPos: Int,
+    onPrev: () -> Unit,
+    onNext: () -> Unit,
+    onClose: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        OutlinedTextField(
+            value = query,
+            onValueChange = onQueryChange,
+            modifier = Modifier.weight(1f),
+            placeholder = { Text(stringResource(R.string.find_hint)) },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+            keyboardActions = KeyboardActions(onSearch = { onQueryChange(query) }),
+            trailingIcon = {
+                val countText = if (query.isBlank()) ""
+                else if (matchCount == 0) stringResource(R.string.no_matches_in_file)
+                else stringResource(R.string.match_count, matchPos + 1, matchCount)
+                if (countText.isNotEmpty()) {
+                    Text(
+                        countText,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+        )
+        IconButton(onClick = onPrev, enabled = matchCount > 0) {
+            Icon(Icons.Filled.KeyboardArrowUp, contentDescription = stringResource(R.string.find_in_file))
+        }
+        IconButton(onClick = onNext, enabled = matchCount > 0) {
+            Icon(Icons.Filled.KeyboardArrowDown, contentDescription = stringResource(R.string.find_in_file))
+        }
+        IconButton(onClick = onClose) {
+            Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.close))
+        }
+    }
+}
+
+@Composable
+private fun FileTextContent(
+    text: String,
+    filename: String,
+    topInset: androidx.compose.ui.unit.Dp,
+    wrap: Boolean,
+    findQuery: String,
+    matchIndices: List<Int>,
+    listState: LazyListState,
+) {
     val lines = remember(text) { text.split("\n") }
     val gutterWidth = remember(lines.size) {
         (lines.size.toString().length.coerceAtLeast(3) * 10).dp
     }
     val hScrollState = rememberScrollState()
     val palette = rememberHighlightPalette()
+    val q = findQuery.trim()
+    val matchSet = remember(matchIndices) { matchIndices.toHashSet() }
     LazyColumn(
+        state = listState,
         modifier = Modifier
             .fillMaxSize()
             .padding(top = topInset)
             .padding(8.dp),
     ) {
         itemsIndexed(lines, key = { index, _ -> index }) { index, line ->
-            Row(modifier = Modifier.horizontalScroll(hScrollState)) {
+            val isMatch = q.isNotEmpty() && index in matchSet
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .then(if (wrap) Modifier else Modifier.horizontalScroll(hScrollState))
+                    .then(if (isMatch) Modifier.background(MaterialTheme.colorScheme.secondaryContainer) else Modifier),
+            ) {
                 Text(
                     "${index + 1}",
                     modifier = Modifier.width(gutterWidth),

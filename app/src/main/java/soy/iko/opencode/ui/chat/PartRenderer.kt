@@ -18,6 +18,7 @@ import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.HelpOutline
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -42,6 +43,8 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 import soy.iko.opencode.data.model.FilePart
 import soy.iko.opencode.data.model.Part
 import soy.iko.opencode.data.model.ReasoningPart
@@ -63,9 +66,29 @@ import soy.iko.opencode.ui.components.RemoteImage
 import soy.iko.opencode.ui.components.copyToClipboard
 import soy.iko.opencode.ui.components.isImage
 import soy.iko.opencode.ui.components.looksLikeDiff
+import soy.iko.opencode.ui.components.showToast
 import soy.iko.opencode.R
 
 private const val COLLAPSED_LIMIT = 600
+
+// Pretty-printer for tool inputs. Separate from OpencodeJson (which is tuned for
+// resilient decoding) so this stays human-readable; constructed lazily and memoized.
+private val prettyJson: Json = Json { prettyPrint = true }
+
+/** Extract a human-readable title (e.g. "Reading src/main.kt") from a tool state. */
+private fun ToolState.titleText(): String? = when (this) {
+    is ToolRunning -> title
+    is ToolCompleted -> title
+    else -> null
+}
+
+/** Extract the raw input arguments of a tool call, if any. */
+private fun ToolState.inputJson(): JsonElement? = when (this) {
+    is ToolRunning -> input
+    is ToolCompleted -> input
+    is ToolError -> input
+    else -> null
+}
 
 /**
  * Renders a single message [Part]. The exhaustive `when` over the sealed type gives
@@ -152,6 +175,7 @@ private fun ReasoningBlock(text: String, streaming: Boolean, modifier: Modifier)
     }
 }
 
+@OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
 @Composable
 private fun ToolCallView(part: ToolPart, modifier: Modifier) {
     val context = LocalContext.current
@@ -171,6 +195,31 @@ private fun ToolCallView(part: ToolPart, modifier: Modifier) {
                 modifier = Modifier.padding(start = 6.dp),
             )
         }
+        // A human-readable summary of what the tool was asked to do (e.g. "Reading
+        // src/main.kt"), when the server provides one. Sits directly under the tool
+        // name so the user understands the call before diving into input/output.
+        part.state.titleText()?.takeIf { it.isNotBlank() }?.let { title ->
+            Text(
+                title,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 22.dp, top = 2.dp),
+            )
+        }
+        // The tool's arguments (pretty-printed JSON), collapsible. Rendered before the
+        // output so the call reads top-to-bottom: name → what → input → result.
+        part.state.inputJson()?.let { input ->
+            val inputLabel = stringResource(R.string.tool_input)
+            val pretty = remember(input) {
+                runCatching { prettyJson.encodeToString(JsonElement.serializer(), input) }.getOrDefault(input.toString())
+            }
+            CollapsibleDetail(
+                label = inputLabel,
+                detail = pretty,
+                isDiff = false,
+                keySuffix = "input",
+            )
+        }
         val detail = when (val s = part.state) {
             is ToolCompleted -> s.output?.takeIf { it.isNotBlank() }
             is ToolError -> s.error ?: stringResource(R.string.error_generic)
@@ -185,38 +234,97 @@ private fun ToolCallView(part: ToolPart, modifier: Modifier) {
             // looksLikeDiff scans the whole string; memoize so a recomposition that doesn't
             // change `display` (e.g. an unrelated state flip) doesn't re-scan on every pass.
             val isDiff = remember(display) { looksLikeDiff(display) }
-            if (isDiff) {
-                DiffView(display)
-            } else {
+            CollapsibleDetail(
+                label = null,
+                detail = display,
+                isDiff = isDiff,
+                keySuffix = "output",
+                expanded = expanded || detail.length <= COLLAPSED_LIMIT,
+                onToggleExpand = if (detail.length > COLLAPSED_LIMIT) {
+                    { expanded = !expanded }
+                } else null,
+                expandedState = expandedState,
+                collapsedState = collapsedState,
+                onCopy = { copyToClipboard(context, "output", detail) },
+            )
+        }
+    }
+}
+
+/**
+ * A collapsible monospace detail block shared by tool input and output. [label] is an
+ * optional heading (e.g. "Input"); when null, no heading row is drawn (used for output
+ * which follows the tool name directly). Long content is truncated to [COLLAPSED_LIMIT]
+ * with an expand/collapse affordance when [onToggleExpand] is supplied.
+ */
+@Composable
+private fun CollapsibleDetail(
+    label: String?,
+    detail: String,
+    isDiff: Boolean,
+    keySuffix: String,
+    expanded: Boolean = false,
+    onToggleExpand: (() -> Unit)? = null,
+    expandedState: String = "",
+    collapsedState: String = "",
+    onCopy: (() -> Unit)? = null,
+) {
+    Column(modifier = Modifier.fillMaxWidth().padding(top = 6.dp)) {
+        if (label != null) {
+            var inputExpanded by rememberSaveable(label + keySuffix) { mutableStateOf(false) }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .defaultMinSize(minHeight = 48.dp)
+                    .clickable(role = Role.Button) { inputExpanded = !inputExpanded }
+                    .semantics { stateDescription = if (inputExpanded) expandedState else collapsedState },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    if (inputExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 Text(
-                    display,
-                    style = MaterialTheme.typography.bodySmall,
-                    fontFamily = FontFamily.Monospace,
-                    modifier = Modifier.padding(top = 6.dp),
+                    label,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 4.dp),
                 )
             }
-            if (detail.length > COLLAPSED_LIMIT) {
-                TextButton(
-                    onClick = { expanded = !expanded },
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp),
-                    modifier = Modifier.semantics {
-                        stateDescription = if (expanded) expandedState else collapsedState
-                    },
-                ) {
-                    Icon(
-                        if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp),
-                    )
-                    Text(
-                        if (expanded) stringResource(R.string.show_less) else stringResource(R.string.show_more),
-                        style = MaterialTheme.typography.labelSmall,
-                        modifier = Modifier.padding(start = 4.dp),
-                    )
-                }
-            }
+            if (!inputExpanded) return@Column
+        }
+        if (isDiff) {
+            DiffView(detail)
+        } else {
+            Text(
+                detail,
+                style = MaterialTheme.typography.bodySmall,
+                fontFamily = FontFamily.Monospace,
+            )
+        }
+        if (onToggleExpand != null) {
             TextButton(
-                onClick = { copyToClipboard(context, "output", detail) },
+                onClick = onToggleExpand,
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp),
+                modifier = Modifier.semantics { stateDescription = if (expanded) expandedState else collapsedState },
+            ) {
+                Icon(
+                    if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                )
+                Text(
+                    if (expanded) stringResource(R.string.show_less) else stringResource(R.string.show_more),
+                    style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier.padding(start = 4.dp),
+                )
+            }
+        }
+        if (onCopy != null) {
+            TextButton(
+                onClick = onCopy,
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp),
                 modifier = Modifier.semantics(mergeDescendants = true) {},
             ) {
@@ -262,10 +370,20 @@ private fun ToolStatusIcon(state: ToolState) {
 
 @Composable
 private fun FileChip(part: FilePart, modifier: Modifier) {
+    val context = LocalContext.current
+    val path = part.source ?: part.url ?: part.filename
+    val copyLabel = stringResource(R.string.copy_path)
     Row(
         modifier = modifier
             .clip(RoundedCornerShape(12.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant)
+            .clickable(role = Role.Button) {
+                if (!path.isNullOrBlank()) {
+                    copyToClipboard(context, "path", path)
+                    showToast(context, context.getString(R.string.path_copied))
+                }
+            }
+            .semantics { contentDescription = copyLabel }
             .padding(horizontal = 12.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

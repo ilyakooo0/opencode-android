@@ -398,4 +398,67 @@ class ServerEditViewModelTest {
         // With default fake, probe succeeds → no error
         assertNull(vm.state.value.error)
     }
+
+    @Test
+    fun probe_reachable_setsProbeReachable() = testScope.runTest {
+        val container = FakeAppContainer()
+        container.probeResult = ProbeResult.Reachable
+        val vm = makeVm(container)
+        vm.update { it.copy(baseUrl = "http://localhost:3000") }
+        vm.probe()
+        testScheduler.advanceUntilIdle()
+        assertEquals(true, vm.state.value.probeReachable)
+    }
+
+    @Test
+    fun probe_needsAuth_setsProbeReachableFalse() = testScope.runTest {
+        val container = FakeAppContainer()
+        container.probeResult = ProbeResult.NeedsAuth
+        val vm = makeVm(container)
+        vm.update { it.copy(baseUrl = "http://localhost:3000") }
+        vm.probe()
+        testScheduler.advanceUntilIdle()
+        assertEquals(false, vm.state.value.probeReachable)
+    }
+
+    @Test
+    fun suggestUrlScheme_addsHttpForBareHost() {
+        assertEquals("http://192.168.1.10:4096", suggestUrlScheme("192.168.1.10:4096"))
+        assertEquals("http://localhost:3000", suggestUrlScheme("localhost:3000"))
+    }
+
+    @Test
+    fun suggestUrlScheme_returnsNullForAlreadySchemed() {
+        assertNull(suggestUrlScheme("http://localhost:3000"))
+        assertNull(suggestUrlScheme("https://example.com"))
+    }
+
+    @Test
+    fun suggestUrlScheme_returnsNullForUnparseable() {
+        assertNull(suggestUrlScheme("not a url"))
+        assertNull(suggestUrlScheme(""))
+    }
+
+    @Test
+    fun duplicate_seedsFromSourceProfileAsNew() = testScope.runTest {
+        val container = FakeAppContainer()
+        val source = ServerProfile(
+            id = "src1",
+            label = "My Server",
+            baseUrl = "http://localhost:3000",
+            username = "admin",
+            password = "secret",
+        )
+        container.fakeProfileStore.setProfiles(listOf(source))
+        val vm = ServerEditViewModel(container, profileId = null, sourceId = "src1")
+        testScope.testScheduler.advanceUntilIdle()
+        assertTrue(vm.state.value.loaded)
+        // A duplicate is a NEW profile (no id), so save() generates a fresh one.
+        assertNull(vm.state.value.id)
+        assertEquals("My Server (copy)", vm.state.value.label)
+        assertEquals("http://localhost:3000", vm.state.value.baseUrl)
+        assertEquals("admin", vm.state.value.username)
+        assertEquals("secret", vm.state.value.password)
+        assertTrue(vm.state.value.authFieldsVisible)
+    }
 }

@@ -226,4 +226,29 @@
     <string name="notif_running_text">Agent is working…</string>
     <string name="notif_completed_title">Session ready</string>
     <string name="notif_completed_text">opencode replied in “%1$s”.</string>
+
+    <!-- UX additions -->
+    <string name="tool_input">Input</string>
+    <string name="copy_path">Copy path</string>
+    <string name="path_copied">Path copied</string>
+    <string name="unknown_message">Unknown message type</string>
+    <string name="server_reachable">Server is reachable ✓</string>
+    <string name="suggest_scheme">Add http:// prefix</string>
+    <string name="sort">Sort</string>
+    <string name="sort_recent">Recent activity</string>
+    <string name="sort_title">Title</string>
+    <string name="last_used_never">Not used yet</string>
+    <string name="last_used">Last used %1$s</string>
+    <string name="duplicate_server">Duplicate</string>
+    <string name="find_in_file">Find in file</string>
+    <string name="find_hint">Find…</string>
+    <string name="no_matches_in_file">No matches</string>
+    <string name="match_count">%1$d / %2$d</string>
+    <string name="wrap_lines">Wrap lines</string>
+    <string name="send_on_enter">Send on Enter</string>
+    <string name="send_on_enter_desc">When off, Enter inserts a newline; press Ctrl+Enter to send.</string>
+    <string name="offline">You\'re offline</string>
+    <string name="run_command_title">Run /%1$s?</string>
+    <string name="run_command_text">Run the command “%1$s”?</string>
+    <string name="run">Run</string>
 </resources>

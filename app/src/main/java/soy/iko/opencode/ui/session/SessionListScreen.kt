@@ -19,11 +19,14 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.ChatBubbleOutline
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Refresh
@@ -63,6 +66,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -104,6 +108,7 @@ fun SessionListScreen(
     val creating by vm.creating.collectAsStateWithLifecycle()
     val anyRunActive by container.anyRunActive.collectAsStateWithLifecycle()
     val activeConnection by container.activeConnection.collectAsStateWithLifecycle()
+    val isOnline by container.isOnline.collectAsStateWithLifecycle()
     val connectedId = activeConnection?.profile?.id
     val haptics = LocalHapticFeedback.current
     val snackbar = remember { SnackbarHostState() }
@@ -113,6 +118,7 @@ fun SessionListScreen(
     // each card spinning up its own coroutine + lifecycle observer while scrolling.
     val timeTick = rememberRelativeTimeTick()
     var showServerMenu by rememberSaveable { mutableStateOf(false) }
+    var showSortMenu by rememberSaveable { mutableStateOf(false) }
     var pendingDeleteId by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingRenameId by rememberSaveable { mutableStateOf<String?>(null) }
     var showDisconnectConfirm by rememberSaveable { mutableStateOf(false) }
@@ -167,6 +173,21 @@ fun SessionListScreen(
                     )
                 },
                 actions = {
+                    Box {
+                        IconButton(onClick = { showSortMenu = true }) {
+                            Icon(Icons.AutoMirrored.Filled.Sort, contentDescription = stringResource(R.string.sort))
+                        }
+                        DropdownMenu(expanded = showSortMenu, onDismissRequest = { showSortMenu = false }) {
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.sort_recent)) },
+                                onClick = { vm.setSortMode(SessionSortMode.RECENT); showSortMenu = false },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.sort_title)) },
+                                onClick = { vm.setSortMode(SessionSortMode.TITLE); showSortMenu = false },
+                            )
+                        }
+                    }
                     IconButton(onClick = { vm.refresh() }) {
                         Icon(Icons.Filled.Refresh, contentDescription = stringResource(R.string.refresh))
                     }
@@ -204,6 +225,7 @@ fun SessionListScreen(
             ConnectionBanner(
                 state = connectionState,
                 modifier = Modifier.align(Alignment.TopCenter),
+                isOnline = isOnline,
                 onRetry = { vm.retryConnection() },
             )
             SessionListBody(
@@ -313,6 +335,7 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
             modifier = Modifier.align(Alignment.Center),
         )
         else -> Column(modifier = Modifier.fillMaxSize()) {
+            val keyboardController = LocalSoftwareKeyboardController.current
             OutlinedTextField(
                 value = state.query,
                 onValueChange = onQueryChange,
@@ -322,6 +345,7 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
                 leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardActions = KeyboardActions(onSearch = { keyboardController?.hide() }),
             )
             val sessions = remember(state.sessions, state.query, state.previews) {
                 // Fast-path an empty query: filtered just returns sessions, so skip

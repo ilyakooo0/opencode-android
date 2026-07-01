@@ -4,13 +4,17 @@ import soy.iko.opencode.data.model.AssistantMessage
 import soy.iko.opencode.data.model.MessageWithParts
 import soy.iko.opencode.data.model.ReasoningPart
 import soy.iko.opencode.data.model.TextPart
+import soy.iko.opencode.data.model.ToolCompleted
+import soy.iko.opencode.data.model.ToolError
+import soy.iko.opencode.data.model.ToolPart
+import soy.iko.opencode.data.model.ToolRunning
 import soy.iko.opencode.data.model.UserMessage
 
 /**
  * Render a conversation as Markdown for sharing/exporting. Each message becomes a
- * role-prefixed section containing its text parts; reasoning and tool parts are
- * omitted to keep the exported transcript readable. Pure (no Android deps) so it can
- * be unit-tested directly.
+ * role-prefixed section containing its text parts; reasoning is exported as a blockquote
+ * and tool calls are summarized so the transcript shows what the agent *did*, not just
+ * what it said. Pure (no Android deps) so it can be unit-tested directly.
  */
 fun buildConversationMarkdown(messages: List<MessageWithParts>, title: String?): String {
     val sb = StringBuilder(messages.size * 128)
@@ -28,6 +32,7 @@ fun buildConversationMarkdown(messages: List<MessageWithParts>, title: String?):
                 when (part) {
                     is TextPart -> part.text.takeIf { it.isNotBlank() }?.let { escapeMarkdown(it) }
                     is ReasoningPart -> part.text.takeIf { it.isNotBlank() }?.let { "> _${escapeMarkdown(it)}_" }
+                    is ToolPart -> formatToolCall(part)
                     else -> null
                 }
             }
@@ -38,6 +43,42 @@ fun buildConversationMarkdown(messages: List<MessageWithParts>, title: String?):
     }
     return sb.toString().trimEnd()
 }
+
+/** Render a tool call as a compact, readable blockquote summary: the tool name, its
+ *  human-readable title (if any), and a truncated output/error. Keeps the exported
+ *  transcript useful when the agent's work (edits, command runs) is the substance. */
+private fun formatToolCall(part: ToolPart): String? {
+    val title = when (val s = part.state) {
+        is ToolRunning -> s.title
+        is ToolCompleted -> s.title
+        else -> null
+    }
+    val detail = when (val s = part.state) {
+        is ToolCompleted -> s.output?.takeIf { it.isNotBlank() }?.let { truncateOutput(it) }
+        is ToolError -> s.error?.takeIf { it.isNotBlank() }?.let { "Error: ${truncateOutput(it)}" }
+        else -> null
+    }
+    val status = when (part.state) {
+        is ToolCompleted -> null
+        is ToolError -> " — error"
+        is ToolRunning -> " — running"
+        else -> null
+    }
+    val head = "**${part.tool}**${status ?: ""}"
+    val titleLine = title?.takeIf { it.isNotBlank() }?.let { escapeMarkdown(it) }
+    return buildList {
+        add("> $head")
+        if (titleLine != null) add("> $titleLine")
+        if (detail != null) add(">\n> ```\n$detail\n```")
+    }.joinToString("\n").takeIf { it.isNotBlank() }
+}
+
+private fun truncateOutput(output: String): String {
+    if (output.length <= TOOL_OUTPUT_LIMIT) return output
+    return output.take(TOOL_OUTPUT_LIMIT) + "\n… (truncated)"
+}
+
+private const val TOOL_OUTPUT_LIMIT = 2000
 
 /** Escape markdown special characters so user/model text doesn't produce malformed markdown. */
 private fun escapeMarkdown(text: String): String {

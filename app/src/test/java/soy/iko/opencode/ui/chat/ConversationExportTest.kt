@@ -7,6 +7,8 @@ import soy.iko.opencode.data.model.AssistantMessage
 import soy.iko.opencode.data.model.MessageWithParts
 import soy.iko.opencode.data.model.ReasoningPart
 import soy.iko.opencode.data.model.TextPart
+import soy.iko.opencode.data.model.ToolCompleted
+import soy.iko.opencode.data.model.ToolPart
 import soy.iko.opencode.data.model.UserMessage
 
 class ConversationExportTest {
@@ -52,5 +54,37 @@ class ConversationExportTest {
     fun emptyConversationProducesJustTheTitle() {
         // No message bodies to export, but the title header is still emitted.
         assertEquals("# x", buildConversationMarkdown(emptyList(), title = "x"))
+    }
+
+    @Test
+    fun includesToolCallSummary() {
+        val assistant = MessageWithParts(
+            AssistantMessage("a1", sid),
+            listOf(
+                TextPart(id = "t1", text = "Done"),
+                ToolPart(id = "tool1", tool = "read", state = ToolCompleted(output = "file contents")),
+            ),
+        )
+        val md = buildConversationMarkdown(listOf(user("u1", "read the file"), assistant), title = null)
+        assertTrue(md.contains("## opencode"))
+        assertTrue("tool name should appear", md.contains("**read**"))
+        assertTrue("tool output should appear", md.contains("file contents"))
+    }
+
+    @Test
+    fun includesToolCallWithTitle() {
+        val assistant = MessageWithParts(
+            AssistantMessage("a1", sid),
+            listOf(
+                ToolPart(
+                    id = "tool1",
+                    tool = "edit",
+                    state = ToolCompleted(title = "Editing src/main.kt", output = "ok"),
+                ),
+            ),
+        )
+        val md = buildConversationMarkdown(listOf(assistant), title = null)
+        assertTrue(md.contains("**edit**"))
+        assertTrue(md.contains("Editing src/main.kt"))
     }
 }

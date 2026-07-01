@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -24,13 +25,29 @@ import androidx.compose.ui.unit.dp
 import soy.iko.opencode.R
 import soy.iko.opencode.data.model.AssistantMessage
 import soy.iko.opencode.data.model.MessageWithParts
+import soy.iko.opencode.data.model.ModelOption
 import soy.iko.opencode.data.model.TextPart
 import soy.iko.opencode.data.model.Tokens
+import soy.iko.opencode.data.model.UnknownMessage
 import soy.iko.opencode.data.model.UserMessage
 import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.ui.components.ImageLoadContext
 import soy.iko.opencode.ui.components.copyToClipboard
 import soy.iko.opencode.ui.components.rememberRelativeTime
+
+/**
+ * Resolve an assistant message's model id to a friendly label from the loaded catalog,
+ * falling back to the raw id (so a model not in the catalog still shows something
+ * meaningful instead of being hidden). Returns null only when the message has no model.
+ */
+fun resolveModelLabel(info: AssistantMessage, models: List<ModelOption>): String? {
+    val id = info.modelID ?: return null
+    if (models.isEmpty()) return id
+    val byPair = models.firstOrNull { it.providerID == info.providerID && it.modelID == id }
+    return byPair?.modelLabel
+        ?: models.firstOrNull { it.modelID == id }?.modelLabel
+        ?: id
+}
 
 /** A single message: user prompts right-aligned in a bubble, assistant output full-width. */
 @Composable
@@ -39,10 +56,42 @@ fun MessageBubble(
     modifier: Modifier = Modifier,
     isRunning: Boolean = false,
     imageContext: ImageLoadContext? = null,
+    modelLabel: String? = null,
 ) {
     when (message.info) {
         is UserMessage -> UserBubble(message, imageContext, modifier)
-        else -> AssistantBlock(message, isRunning, imageContext, modifier)
+        is UnknownMessage -> UnknownMessageBlock(message, imageContext, modifier)
+        else -> AssistantBlock(message, isRunning, imageContext, modifier, modelLabel)
+    }
+}
+
+@Composable
+private fun UnknownMessageBlock(message: MessageWithParts, imageContext: ImageLoadContext?, modifier: Modifier) {
+    // Forward-compat: a role the client doesn't model. Render a muted note so the user
+    // sees *something* rather than an unlabeled block, plus any parts (e.g. text) the
+    // server attached, so content isn't silently dropped.
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                Icons.AutoMirrored.Filled.HelpOutline,
+                contentDescription = null,
+                modifier = Modifier.size(14.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                stringResource(R.string.unknown_message),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 6.dp),
+            )
+        }
+        for (part in message.parts) {
+            PartView(part, imageContext = imageContext)
+        }
+        MessageTimestampText(message.info)
     }
 }
 
@@ -80,7 +129,6 @@ private fun UserBubble(message: MessageWithParts, imageContext: ImageLoadContext
                 if (textToCopy != null) {
                     IconButton(
                         onClick = { copyToClipboard(context, "message", textToCopy) },
-                        modifier = Modifier.size(20.dp),
                     ) {
                         Icon(
                             Icons.Filled.ContentCopy,
@@ -96,18 +144,27 @@ private fun UserBubble(message: MessageWithParts, imageContext: ImageLoadContext
 }
 
 @Composable
-private fun AssistantBlock(message: MessageWithParts, isRunning: Boolean, imageContext: ImageLoadContext?, modifier: Modifier) {
+private fun AssistantBlock(
+    message: MessageWithParts,
+    isRunning: Boolean,
+    imageContext: ImageLoadContext?,
+    modifier: Modifier,
+    modelLabel: String? = null,
+) {
     Column(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         val info = message.info
-        if (info is AssistantMessage && info.modelID != null) {
-            Text(
-                info.modelID,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+        if (info is AssistantMessage) {
+            val label = modelLabel ?: info.modelID
+            if (label != null) {
+                Text(
+                    label,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
         for (part in message.parts) {
             PartView(part, isRunning = isRunning, modifier = Modifier.fillMaxWidth(), imageContext = imageContext)

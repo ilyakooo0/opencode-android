@@ -134,6 +134,12 @@ open class AppContainer private constructor(
     private val _anyRunActive = MutableStateFlow(false)
     open val anyRunActive: StateFlow<Boolean> = _anyRunActive.asStateFlow()
 
+    /** Whether the device currently has network connectivity. Distinct from the SSE
+     *  connection state so the UI can tell "you're offline" (device) from "server
+     *  unreachable" (credentials/host). Updated by the [networkCallback]. */
+    private val _isOnline = MutableStateFlow(true)
+    open val isOnline: StateFlow<Boolean> = _isOnline.asStateFlow()
+
     open fun setCurrentSession(id: String?) {
         _currentSession.value = id
         if (id != null) {
@@ -326,10 +332,12 @@ open class AppContainer private constructor(
         if (appContext == null) return null
         val cm = appContext!!.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
             ?: return null
+        // Seed the online state from the current active network so the indicator is
+        // correct on cold start rather than defaulting to "online" until a callback fires.
+        _isOnline.value = runCatching { cm.activeNetwork != null }.getOrDefault(true)
         val callback = object : ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: Network) {
-                activeConnection.value?.events?.triggerReconnect()
-            }
+            override fun onAvailable(network: Network) { _isOnline.value = true; activeConnection.value?.events?.triggerReconnect() }
+            override fun onLost(network: Network) { _isOnline.value = cm.activeNetwork != null }
         }
         runCatching { cm.registerNetworkCallback(NetworkRequest.Builder().build(), callback) }
             .onFailure { Log.w("AppContainer", "Failed to register network callback", it) }
