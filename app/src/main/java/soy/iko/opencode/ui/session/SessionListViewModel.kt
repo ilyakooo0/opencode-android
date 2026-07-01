@@ -18,6 +18,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -228,7 +229,9 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
     /**
      * Reload the preview for a single session (used by the live SSE handler).
      * Cancels any prior in-flight load for the same session so a burst of
-     * [SessionUpdated] events coalesces into a single request.
+     * [SessionUpdated] events coalesces into a single request. A short debounce
+     * delay before the fetch avoids launching one full-history download per event
+     * during active streaming — the fetch runs only after events quiet down.
      */
     private fun loadPreview(sessionId: String) {
         val conn = container.activeConnection.value ?: return
@@ -238,6 +241,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
             livePreviewJobs[sessionId] = viewModelScope.launch {
                 val job = coroutineContext[kotlinx.coroutines.Job]
                 try {
+                    delay(NetworkConfig.previewDebounceMs)
                     val preview = fetchSessionPreview(api, sessionId) ?: return@launch
                     _state.update { s -> s.copy(previews = s.previews + (sessionId to preview)) }
                 } catch (e: CancellationException) {

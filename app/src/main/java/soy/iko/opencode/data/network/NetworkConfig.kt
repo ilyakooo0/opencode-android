@@ -53,6 +53,10 @@ object NetworkConfig {
     const val maxConcurrentPreviews = 8
     /** Max characters of a session's last message to keep as a list preview. */
     const val previewTextMaxLength = 200
+    /** Debounce delay before fetching a session preview after an SSE update, so a burst
+     *  of SessionUpdated events (e.g. during active streaming) coalesces into one fetch
+     *  instead of launching one per event (each downloading the full message history). */
+    const val previewDebounceMs = 500L
 
     // --- In-memory message store (SessionRepository.MessageStore) ---
 
@@ -88,8 +92,11 @@ object NetworkConfig {
 
     // --- Markdown rendering (MarkdownText) ---
 
-    /** Throttle delay (~60fps frame) to coalesce streaming tokens into one re-parse. */
-    const val streamingThrottleMs = 16L
+    /** Throttle delay to coalesce streaming tokens into one re-parse. The markdown
+     *  library re-parses the full AST on every content change, so during a long streaming
+     *  response this is O(n²) work. 50ms (~20fps) is smooth for progressively appearing
+     *  text while cutting parse work ~3x versus a per-frame (16ms) throttle. */
+    const val streamingThrottleMs = 50L
 
     // --- Snackbar one-shot events (ViewModels) ---
 

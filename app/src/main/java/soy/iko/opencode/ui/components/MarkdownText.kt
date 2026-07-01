@@ -57,7 +57,7 @@ import soy.iko.opencode.data.network.NetworkConfig
  * During streaming, the full markdown is re-parsed on every token (the library re-parses
  * whenever the content string changes). To avoid O(n²) work during long responses, the
  * rendered content is throttled — the latest [markdown] is committed to the renderer at
- * most once per frame (~16ms), so a burst of tokens coalesces into a single re-parse.
+ * most once every ~50ms, so a burst of tokens coalesces into a single re-parse.
  *
  * The throttle uses a single long-lived `LaunchedEffect(Unit)` that observes the markdown
  * parameter via `rememberUpdatedState` + `snapshotFlow` + `conflate` + `collect`. A keyed

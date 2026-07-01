@@ -57,7 +57,7 @@ private val gitMetaPrefixes = listOf(
 /** Parse a unified diff string into typed [DiffLine]s. */
 fun parseDiff(diff: String): List<DiffLine> {
     val result = mutableListOf<DiffLine>()
-    for (raw in diff.split("\n")) {
+    for (raw in diff.lineSequence()) {
         when {
             raw.startsWith("@@") -> result.add(DiffLine.Hunk(raw))
             raw.startsWith("---") || raw.startsWith("+++") -> result.add(DiffLine.FileHeader(raw))
