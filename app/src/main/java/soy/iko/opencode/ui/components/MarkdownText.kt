@@ -66,6 +66,10 @@ import soy.iko.opencode.data.network.NetworkConfig
  * starving the render and showing stale content until the stream pauses. The conflated
  * `collect` lets the delay run to completion, then picks up the most recent buffered value,
  * so rendering always progresses even under continuous fast streaming.
+ *
+ * When [streaming] is false (the common case: every non-active message in the chat list),
+ * the throttle pipeline is skipped entirely — no `LaunchedEffect`, no `snapshotFlow`, no
+ * coroutine. This eliminates per-item coroutine churn as messages scroll in and out of view.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -73,48 +77,64 @@ fun MarkdownText(
     markdown: String,
     modifier: Modifier = Modifier,
     style: TextStyle = MaterialTheme.typography.bodyLarge,
+    streaming: Boolean = false,
 ) {
     val context = LocalContext.current
-    // Bridge the markdown parameter into snapshot state so snapshotFlow can observe it.
-    val markdownState = rememberUpdatedState(markdown)
-    // Keyed to a content-prefix so switching to a different message resets
-    // immediately instead of showing the old message for one frame.
-    var renderedContent by remember(markdown.take(32)) { mutableStateOf(markdown) }
-    // conflate() coalesces a burst of token updates into a single emission so the
-    // collector sees only the latest value after the previous delay completes. Plain
-    // collect (not collectLatest) is critical: collectLatest would cancel the delay
-    // on every new value, reintroducing the same starvation the keyed effect had.
-    LaunchedEffect(markdown.take(32)) {
-        snapshotFlow { markdownState.value }
-            .conflate()
-            .collect { md ->
-                // Only throttle when the content is growing incrementally (streaming):
-                // a content switch or initial render proceeds immediately. Checking
-                // length is O(1) vs. startsWith which is O(n) in the rendered content
-                // length — during a long streaming response this runs every throttle
-                // cycle. The keyed LaunchedEffect(markdown.take(32)) already handles
-                // content switches; within one keyed cycle, growing length means
-                // appending (streaming), not a rewrite.
-                if (renderedContent.isNotEmpty() &&
-                    md.length > renderedContent.length
-                ) {
-                    delay(NetworkConfig.streamingThrottleMs)
-                }
-                renderedContent = md
-            }
-    }
-    Markdown(
-        content = renderedContent,
-        modifier = modifier.combinedClickable(
-            onClick = {},
-            onLongClick = { copyToClipboard(context, markdown) },
-            role = Role.Button,
-        ),
-        components = markdownComponents(
+    val components = remember {
+        markdownComponents(
             codeFence = { CodeWithCopy(it) },
             codeBlock = { CodeWithCopy(it) },
-        ),
-    )
+        )
+    }
+    if (streaming) {
+        // Bridge the markdown parameter into snapshot state so snapshotFlow can observe it.
+        val markdownState = rememberUpdatedState(markdown)
+        // Keyed to a content-prefix so switching to a different message resets
+        // immediately instead of showing the old message for one frame.
+        var renderedContent by remember(markdown.take(32)) { mutableStateOf(markdown) }
+        // conflate() coalesces a burst of token updates into a single emission so the
+        // collector sees only the latest value after the previous delay completes. Plain
+        // collect (not collectLatest) is critical: collectLatest would cancel the delay
+        // on every new value, reintroducing the same starvation the keyed effect had.
+        LaunchedEffect(markdown.take(32)) {
+            snapshotFlow { markdownState.value }
+                .conflate()
+                .collect { md ->
+                    // Only throttle when the content is growing incrementally (streaming):
+                    // a content switch or initial render proceeds immediately. Checking
+                    // length is O(1) vs. startsWith which is O(n) in the rendered content
+                    // length — during a long streaming response this runs every throttle
+                    // cycle. The keyed LaunchedEffect(markdown.take(32)) already handles
+                    // content switches; within one keyed cycle, growing length means
+                    // appending (streaming), not a rewrite.
+                    if (renderedContent.isNotEmpty() &&
+                        md.length > renderedContent.length
+                    ) {
+                        delay(NetworkConfig.streamingThrottleMs)
+                    }
+                    renderedContent = md
+                }
+        }
+        Markdown(
+            content = renderedContent,
+            modifier = modifier.combinedClickable(
+                onClick = {},
+                onLongClick = { copyToClipboard(context, markdown) },
+                role = Role.Button,
+            ),
+            components = components,
+        )
+    } else {
+        Markdown(
+            content = markdown,
+            modifier = modifier.combinedClickable(
+                onClick = {},
+                onLongClick = { copyToClipboard(context, markdown) },
+                role = Role.Button,
+            ),
+            components = components,
+        )
+    }
 }
 
 /**

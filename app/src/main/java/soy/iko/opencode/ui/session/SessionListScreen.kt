@@ -43,12 +43,10 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
-import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -261,7 +259,7 @@ fun SessionListScreen(
                                         onClick = { onOpenSession(session.id) },
                                         onRename = { pendingRenameId = session.id },
                                         onDelete = { pendingDeleteId = session.id },
-                                        modifier = Modifier.animateItem().testTag("session_card"),
+                                        modifier = Modifier.testTag("session_card"),
                                     )
                                 }
                             }
@@ -348,107 +346,71 @@ private fun SessionCard(
     onDelete: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    // Swipe toward the start reveals a delete affordance; releasing snaps back and opens
-    // the same confirmation dialog the trash icon uses, so the destructive action is
-    // always confirmed.
-    val dismissState = rememberSwipeToDismissBoxState(
-        confirmValueChange = {
-            onDelete()
-            false // snap back; the dialog owns the actual deletion
-        },
-    )
-    SwipeToDismissBox(
-        state = dismissState,
-        backgroundContent = { SwipeDeleteBackground() },
-        enableDismissFromStartToEnd = false,
-        modifier = modifier,
+    Card(
+        modifier = modifier.fillMaxWidth(),
     ) {
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
+        Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                // Title area is the primary click target; the action buttons below
+                // remain separate accessibility nodes so screen readers can activate
+                // them independently.
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable(role = Role.Button) { onClick() },
                 ) {
-                    // Title area is the primary click target; the action buttons below
-                    // remain separate accessibility nodes so screen readers can activate
-                    // them independently.
-                    Column(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clickable(role = Role.Button) { onClick() },
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            if (unread) {
-                                val unreadLabel = stringResource(R.string.unread)
-                                Box(
-                                    modifier = Modifier
-                                        .padding(end = 8.dp)
-                                        .size(8.dp)
-                                        .clip(androidx.compose.foundation.shape.CircleShape)
-                                        .background(MaterialTheme.colorScheme.primary)
-                                        .semantics { contentDescription = unreadLabel },
-                                )
-                            }
-                            Text(
-                                session.displayTitle,
-                                style = MaterialTheme.typography.titleMedium,
-                                color = if (unread) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (unread) {
+                            val unreadLabel = stringResource(R.string.unread)
+                            Box(
+                                modifier = Modifier
+                                    .padding(end = 8.dp)
+                                    .size(8.dp)
+                                    .clip(androidx.compose.foundation.shape.CircleShape)
+                                    .background(MaterialTheme.colorScheme.primary)
+                                    .semantics { contentDescription = unreadLabel },
                             )
                         }
-                        val time = rememberRelativeTime(session.time?.updated ?: session.time?.created)
-                        if (time.isNotEmpty()) {
-                            Text(
-                                time,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(top = 2.dp),
-                            )
-                        }
+                        Text(
+                            session.displayTitle,
+                            style = MaterialTheme.typography.titleMedium,
+                            color = if (unread) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
                     }
-                    IconButton(onClick = onRename) {
-                        Icon(Icons.Filled.Edit, contentDescription = stringResource(R.string.rename))
-                    }
-                    IconButton(onClick = onDelete) {
-                        Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.delete))
+                    val time = rememberRelativeTime(session.time?.updated ?: session.time?.created)
+                    if (time.isNotEmpty()) {
+                        Text(
+                            time,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 2.dp),
+                        )
                     }
                 }
-                if (!preview.isNullOrBlank()) {
-                    Spacer(Modifier.size(4.dp))
-                    Text(
-                        preview,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = if (unread) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.clickable(role = Role.Button) { onClick() },
-                    )
+                IconButton(onClick = onRename) {
+                    Icon(Icons.Filled.Edit, contentDescription = stringResource(R.string.rename))
+                }
+                IconButton(onClick = onDelete) {
+                    Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.delete))
                 }
             }
+            if (!preview.isNullOrBlank()) {
+                Spacer(Modifier.size(4.dp))
+                Text(
+                    preview,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (unread) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.clickable(role = Role.Button) { onClick() },
+                )
+            }
         }
-    }
-}
-
-/** Red background with a trash icon shown behind a session card as it is swiped away. */
-@Composable
-private fun SwipeDeleteBackground() {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
-            .background(MaterialTheme.colorScheme.errorContainer)
-            .padding(horizontal = 20.dp),
-        contentAlignment = Alignment.CenterEnd,
-    ) {
-        val deleteLabel = stringResource(R.string.delete)
-        Icon(
-            Icons.Filled.Delete,
-            contentDescription = deleteLabel,
-            tint = MaterialTheme.colorScheme.onErrorContainer,
-        )
     }
 }
 

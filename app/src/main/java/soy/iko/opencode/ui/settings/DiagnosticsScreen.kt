@@ -31,6 +31,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -55,7 +56,9 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import soy.iko.opencode.R
 import soy.iko.opencode.data.repo.CrashLogger
+import soy.iko.opencode.ui.components.LocalRelativeTimeTick
 import soy.iko.opencode.ui.components.rememberRelativeTime
+import soy.iko.opencode.ui.components.rememberRelativeTimeTick
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -66,6 +69,7 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
     var viewing by rememberSaveable { mutableStateOf<String?>(null) }
     val shareScope = rememberCoroutineScope()
     val shareLabel = stringResource(R.string.share)
+    val timeTick = rememberRelativeTimeTick()
 
     Scaffold(
         topBar = {
@@ -88,6 +92,7 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
             )
         },
     ) { padding ->
+        CompositionLocalProvider(LocalRelativeTimeTick provides timeTick) {
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
             Text(
                 stringResource(R.string.diagnostics_desc),
@@ -155,6 +160,7 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                     }
                 }
             }
+        }
         }
     }
 

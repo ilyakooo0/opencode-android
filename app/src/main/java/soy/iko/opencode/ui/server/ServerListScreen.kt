@@ -121,7 +121,6 @@ fun ServerListScreen(
                         Card(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .animateItem()
                                 .testTag("server_card")
                                 .clickable(enabled = connectingId == null, role = Role.Button) {
                                     vm.connect(profile, onConnected)

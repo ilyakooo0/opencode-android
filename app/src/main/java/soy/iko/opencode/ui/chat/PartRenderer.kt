@@ -75,7 +75,7 @@ private const val COLLAPSED_LIMIT = 600
 fun PartView(part: Part, modifier: Modifier = Modifier, isRunning: Boolean = false, imageContext: ImageLoadContext? = null) {
     when (part) {
         is TextPart -> if (!part.ignored && part.text.isNotEmpty()) {
-            MarkdownText(part.text, modifier = modifier)
+            MarkdownText(part.text, modifier = modifier, streaming = isRunning)
         }
         is ReasoningPart -> ReasoningBlock(part.text, streaming = isRunning, modifier)
         is ToolPart -> ToolCallView(part, modifier)
