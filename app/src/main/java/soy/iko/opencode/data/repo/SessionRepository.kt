@@ -171,9 +171,21 @@ internal class MessageStore {
      *  (e.g. a tool going running -> completed) stayed stale until app restart. */
     private val streamedSincePivot = mutableSetOf<String>()
 
-    /** Mark the point a reconnect re-seed's REST fetch begins: parts streamed from here on
-     *  are newer than the fetched snapshot. Call under the same lock as [seed]/[reduce]. */
-    fun beginReseed() { streamedSincePivot.clear() }
+    /** Message ids whose `info` was updated via a live SSE [reduce] since the last reseed
+     *  pivot ([beginReseed]) or seed. Parallels [streamedSincePivot] but for message info:
+     *  on a reconnect re-seed these are the messages whose info changed *during* the REST
+     *  fetch, so the in-memory info is newer than the snapshot and must win; every other
+     *  message's info is taken from the authoritative REST snapshot. Without this the merge
+     *  kept the in-memory info, so a run that finished server-side during the disconnect
+     *  (e.g. cost/token totals, completion time) stayed stale until app restart. */
+    private val messageInfoUpdatedSincePivot = mutableSetOf<String>()
+
+    /** Mark the point a reconnect re-seed's REST fetch begins: parts/info streamed from here
+     *  on are newer than the fetched snapshot. Call under the same lock as [seed]/[reduce]. */
+    fun beginReseed() {
+        streamedSincePivot.clear()
+        messageInfoUpdatedSincePivot.clear()
+    }
 
     /** Monotonic counter for synthetic UnknownMessage keys, avoiding nanoTime collisions. */
     private val unknownCounter = java.util.concurrent.atomic.AtomicLong(0)
@@ -220,7 +232,11 @@ internal class MessageStore {
                 for (p in existing.parts) {
                     if (p.id !in snapshotIds) ordered.add(p)
                 }
-                val info = if (existing.info is UnknownMessage) m.info else existing.info
+                // Adopt the authoritative REST info unless the in-memory info was itself
+                // updated live since the pivot (i.e. during this fetch), in which case it's
+                // newer than the snapshot. Otherwise the REST snapshot wins, discarding
+                // in-memory info that went stale during a disconnect.
+                val info = if (existing.info is UnknownMessage || m.info.id !in messageInfoUpdatedSincePivot) m.info else existing.info
                 val merged = MessageWithParts(info = info, parts = ordered)
                 if (merged != existing) {
                     messages[m.info.id] = merged
@@ -229,9 +245,10 @@ internal class MessageStore {
             }
         }
         if (evictOldMessages()) changed = true
-        // Reset the pivot: everything just merged is now the baseline, so only parts that
-        // stream in *after* this seed can outrank the next reconnect's snapshot.
+        // Reset the pivot: everything just merged is now the baseline, so only parts/info
+        // that stream in *after* this seed can outrank the next reconnect's snapshot.
         streamedSincePivot.clear()
+        messageInfoUpdatedSincePivot.clear()
         return changed
     }
 
@@ -254,6 +271,10 @@ internal class MessageStore {
                     }
                     val existing = messages[key]
                     messages[key] = existing?.copy(info = info) ?: MessageWithParts(info)
+                    // Record that this message's info streamed in live, so a re-seed after a
+                    // reconnect knows it's newer than the REST snapshot and keeps it (see
+                    // seed()/beginReseed()).
+                    messageInfoUpdatedSincePivot.add(key)
                     if (existing == null) evictOldMessages()
                     true
                 }

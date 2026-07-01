@@ -53,7 +53,7 @@ object HttpClientFactory {
         }
 
         val normalizedUrl = normalizeBaseUrl(profile.baseUrl)
-        val isHttps = normalizedUrl.startsWith("https://")
+        val isHttps = normalizedUrl.lowercase().startsWith("https://")
 
         if (profile.hasAuth) {
             if (isHttps) {
@@ -101,7 +101,10 @@ object HttpClientFactory {
      *  sent over cleartext. Users who need plain HTTP must type the scheme explicitly. */
     fun normalizeBaseUrl(raw: String): String {
         val trimmed = raw.trim()
-        val withScheme = if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+        // Compare the scheme prefix case-insensitively (a lowercased copy) while
+        // preserving the original casing of the rest of the URL in the output.
+        val lowerTrimmed = trimmed.lowercase()
+        val withScheme = if (lowerTrimmed.startsWith("http://") || lowerTrimmed.startsWith("https://")) {
             trimmed
         } else {
             "https://$trimmed"

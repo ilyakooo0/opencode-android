@@ -223,7 +223,7 @@ open class AppContainer private constructor(
         val cm = appContext?.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
         networkCallback?.let { runCatching { cm?.unregisterNetworkCallback(it) } }
         if (!skipInit) soy.iko.opencode.data.repo.CrashLogger.get(appContext!!).shutdown()
-        draftStore.let { if (!skipInit) it.shutdown() }
+        if (!skipInit) draftStore.shutdown()
     }
 
     /**
@@ -266,6 +266,11 @@ open class AppContainer private constructor(
                         return@collect
                     }
                     val sid = sessionOf(event) ?: return@collect
+                    // Re-read currentSession here, right before mutating the badge state:
+                    // the user may have opened this session between when this event was
+                    // enqueued and now (setCurrentSession clears its badge and dedup set).
+                    // A stale earlier check would race a badge — and a dedup entry — back
+                    // in for the session that's actually on screen.
                     if (sid != _currentSession.value) {
                         // Increment the unread count once per distinct *message*, not per
                         // event: a single reply emits many message.updated / message.part.
@@ -276,7 +281,13 @@ open class AppContainer private constructor(
                             java.util.Collections.synchronizedSet(mutableSetOf())
                         }
                         if (messageId == null || counted.add(messageId)) {
-                            _unread.update { it + (sid to (it[sid] ?: 0) + 1) }
+                            _unread.update { current ->
+                                // Guard again inside the atomic update lambda so a retry
+                                // (or an open that landed just now) can't reintroduce the
+                                // badge for the session on screen.
+                                if (sid == _currentSession.value) current
+                                else current + (sid to (current[sid] ?: 0) + 1)
+                            }
                         }
                     }
                     // Track sessions actively streaming so we know which idle events

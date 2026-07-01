@@ -106,7 +106,10 @@ class CrashLogger private constructor(private val appContext: Context) {
             if (file.path.startsWith(crashDir.canonicalPath + File.separator)) {
                 file.delete()
             }
-            pendingDeletes.remove(fileName)
+            // Remove only if this job is still the registered one. A reschedule for the
+            // same name replaces the map entry with a new job; an unconditional remove
+            // here would evict that newer job's entry, leaking it from cancellation.
+            coroutineContext[Job]?.let { pendingDeletes.remove(fileName, it) }
             refresh()
         }
         pendingDeletes.put(fileName, job)?.cancel()

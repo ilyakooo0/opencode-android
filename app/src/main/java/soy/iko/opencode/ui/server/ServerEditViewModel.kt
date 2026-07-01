@@ -96,7 +96,7 @@ class ServerEditViewModel(
             if (profileId != null) {
                 val existing = withTimeoutOrNull(NetworkConfig.profileLoadTimeoutMs) {
                     container.profileStore.profiles
-                        .first { it.isNotEmpty() || it.none { p -> p.id == profileId } }
+                        .first { list -> list.any { p -> p.id == profileId } }
                         .firstOrNull { it.id == profileId }
                 }
                 if (existing != null) {
@@ -131,7 +131,7 @@ class ServerEditViewModel(
             if (sourceId != null) {
                 val source = withTimeoutOrNull(NetworkConfig.profileLoadTimeoutMs) {
                     container.profileStore.profiles
-                        .first { it.isNotEmpty() || it.none { p -> p.id == sourceId } }
+                        .first { list -> list.any { p -> p.id == sourceId } }
                         .firstOrNull { it.id == sourceId }
                 }
                 if (source != null) {

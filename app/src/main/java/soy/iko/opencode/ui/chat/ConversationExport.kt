@@ -31,7 +31,8 @@ fun buildConversationMarkdown(messages: List<MessageWithParts>, title: String?):
             .mapNotNull { part ->
                 when (part) {
                     is TextPart -> part.text.takeIf { it.isNotBlank() }?.let { escapeMarkdown(it) }
-                    is ReasoningPart -> part.text.takeIf { it.isNotBlank() }?.let { "> _${escapeMarkdown(it)}_" }
+                    is ReasoningPart -> part.text.takeIf { it.isNotBlank() }
+                        ?.let { text -> text.trim().lines().joinToString("\n") { "> _${escapeMarkdown(it)}_" } }
                     is ToolPart -> formatToolCall(part)
                     else -> null
                 }
@@ -69,7 +70,12 @@ private fun formatToolCall(part: ToolPart): String? {
     return buildList {
         add("> $head")
         if (titleLine != null) add("> $titleLine")
-        if (detail != null) add(">\n> ```\n$detail\n```")
+        // Prefix every detail line with "> " so the fenced code block stays inside the
+        // blockquote — otherwise lines after the first fall out of the quote.
+        if (detail != null) {
+            val quoted = detail.lines().joinToString("\n") { "> $it" }
+            add(">\n> ```\n$quoted\n> ```")
+        }
     }.joinToString("\n").takeIf { it.isNotBlank() }
 }
 

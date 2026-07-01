@@ -77,6 +77,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import soy.iko.opencode.data.model.ServerProfile
 import soy.iko.opencode.data.model.Session
 import soy.iko.opencode.data.network.NetworkConfig
@@ -138,18 +141,26 @@ fun SessionListScreen(
 
     // Undo snackbar: when a session is marked for deferred deletion, offer Undo. If the
     // action is taken before the delay expires, the session is restored and the REST
-    // delete never fires. Use Long (~10s) so the Undo button stays available for the
-    // full undoDeleteDelayMs window (5s); Short (~1.5s) vanished before the delete
-    // fired, leaving the user unable to cancel during the last 3.5s.
+    // delete never fires. Indefinite + a matching timed dismiss keeps the Undo button
+    // visible for exactly the undoDeleteDelayMs window (5s) and no longer: a fixed
+    // SnackbarDuration.Long (~10s) outlasted the window, leaving the button on screen
+    // but dead for its second half. Mirrors DiagnosticsScreen's undo pattern.
     LaunchedEffect(Unit) {
         vm.undoEvents.collect { sessionId ->
-            val result = snackbar.showSnackbar(
-                message = sessionDeletedLabel,
-                actionLabel = undoLabel,
-                duration = androidx.compose.material3.SnackbarDuration.Long,
-            )
-            if (result == androidx.compose.material3.SnackbarResult.ActionPerformed) {
-                vm.undoDelete(sessionId)
+            coroutineScope {
+                val dismisser = launch {
+                    delay(NetworkConfig.undoDeleteDelayMs)
+                    snackbar.currentSnackbarData?.dismiss()
+                }
+                val result = snackbar.showSnackbar(
+                    message = sessionDeletedLabel,
+                    actionLabel = undoLabel,
+                    duration = androidx.compose.material3.SnackbarDuration.Indefinite,
+                )
+                dismisser.cancel()
+                if (result == androidx.compose.material3.SnackbarResult.ActionPerformed) {
+                    vm.undoDelete(sessionId)
+                }
             }
         }
     }

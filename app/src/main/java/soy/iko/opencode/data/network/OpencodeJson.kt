@@ -25,6 +25,7 @@ val OpencodeJson: Json = Json {
     ignoreUnknownKeys = true
     isLenient = true
     coerceInputValues = true
+    encodeDefaults = true
     explicitNulls = false
     classDiscriminator = "type"
     serializersModule = SerializersModule {

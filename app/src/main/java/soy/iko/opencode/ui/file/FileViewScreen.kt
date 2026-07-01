@@ -116,6 +116,11 @@ fun FileViewScreen(
         else lines.mapIndexed { index, line -> if (line.contains(q, ignoreCase = true)) index else -1 }
             .filter { it >= 0 }
     }
+    // Keep the current match index in range when the match set shrinks (e.g. the file
+    // reloaded with fewer matches), so the counter never shows a stale "10 / 3".
+    LaunchedEffect(matchIndices.size) {
+        matchPos = matchPos.coerceIn(0, (matchIndices.size - 1).coerceAtLeast(0))
+    }
     // Scroll to the current match whenever it (or the match set) changes.
     LaunchedEffect(matchPos, matchIndices) {
         matchIndices.getOrNull(matchPos)?.let { idx -> runCatchingCancellable { listState.animateScrollToItem(idx) } }

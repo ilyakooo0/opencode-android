@@ -147,7 +147,6 @@ open class EventStreamClient(
                         }
                     },
                 ) {
-                    backoffMs = initialBackoffMs
                     // The SSE block is open — the connection is established. Mark as
                     // Connected immediately so downstream re-seed logic fires even when
                     // the server only sends keep-alive comments (no data events).
@@ -161,8 +160,19 @@ open class EventStreamClient(
                     // `incoming` is a cold Flow; bridge it to a ReceiveChannel so each
                     // element can be raced against an idle timeout via select.
                     val events = incoming.produceIn(scope)
+                    // Reset the backoff only once real data actually arrives, not on
+                    // block entry: a server that accepts the connection then immediately
+                    // drops it would otherwise loop forever at the initial backoff and
+                    // never escalate the exponential ramp.
+                    var receivedAny = false
                     try {
-                        readSseEvents(scope, events) { send(it) }
+                        readSseEvents(scope, events) {
+                            if (!receivedAny) {
+                                receivedAny = true
+                                backoffMs = initialBackoffMs
+                            }
+                            send(it)
+                        }
                     } finally {
                         events.cancel()
                     }
@@ -177,9 +187,14 @@ open class EventStreamClient(
                     // Credentials are wrong — retrying won't help. Log a scrubbed
                     // summary (class + status) instead of the full exception, whose
                     // message carries the request URL and may include auth or paths.
-                    Log.w("EventStream", "SSE auth failed (401/403), stopping retries: ${safeExceptionSummary(e)}")
+                    Log.w("EventStream", "SSE auth failed (401/403), awaiting explicit reconnect: ${safeExceptionSummary(e)}")
                     _state.value = ConnectionState.Failed
-                    break
+                    if (!isActive) break
+                    // Don't complete the flow: a subscriber may fix the profile and call
+                    // triggerReconnect(). Suspend until an explicit reconnect signal
+                    // arrives (no backoff delay), then re-attempt the connection.
+                    reconnectSignal.receive()
+                    continue
                 } else if (isActive) {
                     Log.w("EventStream", "SSE stream error, will retry: ${safeExceptionSummary(e)}")
                 }

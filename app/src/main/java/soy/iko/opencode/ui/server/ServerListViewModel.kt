@@ -16,7 +16,9 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /** A transient error surfaced as a snackbar, optionally paired with the profile that
@@ -25,8 +27,15 @@ data class ConnectError(val message: String, val profile: ServerProfile?)
 
 class ServerListViewModel(private val container: AppContainer) : ViewModel() {
 
+    /** Ids optimistically hidden while their deferred delete's undo window is open, so a
+     *  "deleted" row disappears immediately instead of lingering (tappable) for the whole
+     *  undo window. Mirrors [SessionListViewModel]'s optimistic-removal pattern. */
+    private val _hiddenIds = MutableStateFlow<Set<String>>(emptySet())
+
     val profiles: StateFlow<List<ServerProfile>> =
-        container.profileStore.profiles.stateIn(
+        combine(container.profileStore.profiles, _hiddenIds) { profiles, hidden ->
+            profiles.filterNot { it.id in hidden }
+        }.stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(NetworkConfig.stateFlowSubscriptionTimeoutMs),
             initialValue = emptyList(),
@@ -96,6 +105,8 @@ class ServerListViewModel(private val container: AppContainer) : ViewModel() {
      */
     fun delete(profile: ServerProfile) {
         pendingDeletes[profile.id] = profile
+        // Optimistically hide the row so the UI feels instant; undo re-shows it.
+        _hiddenIds.update { it + profile.id }
         if (container.activeConnection.value?.profile?.id == profile.id) {
             // disconnect() is suspend; run it on the VM scope so the optimistic removal
             // and undo emission aren't blocked on the connection close completing.
@@ -106,13 +117,23 @@ class ServerListViewModel(private val container: AppContainer) : ViewModel() {
             delay(NetworkConfig.undoServerDeleteDelayMs)
             if (pendingDeletes.remove(profile.id) != null) {
                 runCatchingCancellable { container.profileStore.delete(profile.id) }
-                    .onFailure { _errorEvents.tryEmit(ConnectError(container.friendlyError(it), null)) }
+                    .onSuccess {
+                        // Drop the optimistic hide only after the store has emitted the
+                        // removal, so the row doesn't flash back before the list updates.
+                        _hiddenIds.update { it - profile.id }
+                    }
+                    .onFailure {
+                        // Delete failed: re-show the row so it isn't hidden forever.
+                        _hiddenIds.update { it - profile.id }
+                        _errorEvents.tryEmit(ConnectError(container.friendlyError(it), null))
+                    }
             }
         }
     }
 
-    /** Cancel a pending delete (Undo snackbar action). */
+    /** Cancel a pending delete (Undo snackbar action) and re-show the hidden row. */
     fun undoDelete(profileId: String) {
         pendingDeletes.remove(profileId)
+        _hiddenIds.update { it - profileId }
     }
 }

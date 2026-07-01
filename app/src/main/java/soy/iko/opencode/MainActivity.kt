@@ -28,12 +28,16 @@ class MainActivity : ComponentActivity() {
     ) { /* Result is best-effort; notifications are silently skipped if denied. */ }
 
     private var shareIntentHandled = false
+    private var openSessionHandled = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         val splash = installSplashScreen()
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        savedInstanceState?.let { shareIntentHandled = it.getBoolean(KEY_SHARE_HANDLED, false) }
+        savedInstanceState?.let {
+            shareIntentHandled = it.getBoolean(KEY_SHARE_HANDLED, false)
+            openSessionHandled = it.getBoolean(KEY_OPEN_SESSION_HANDLED, false)
+        }
         val container = (application as OpencodeApp).container
         handleIntent(intent)
         if (savedInstanceState == null) maybeRequestNotificationPermission()
@@ -65,6 +69,7 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         shareIntentHandled = false
+        openSessionHandled = false
         handleIntent(intent)
     }
 
@@ -90,7 +95,15 @@ class MainActivity : ComponentActivity() {
         // Validate: session ids are opaque server-generated identifiers. Reject anything
         // with path separators or other traversal/control characters so a malicious deep
         // link can't inject path components into the REST URL path.
-        id?.takeIf { it.isNotBlank() && it.matches(VALID_SESSION_ID) }?.let { container.requestOpenSession(it) }
+        // Guard against re-firing the retained ACTION_VIEW intent after process-death
+        // restore: onCreate calls handleIntent again with the original intent, so without
+        // this flag (mirroring shareIntentHandled) the session would re-open unexpectedly.
+        if (!openSessionHandled) {
+            id?.takeIf { it.isNotBlank() && it.matches(VALID_SESSION_ID) }?.let {
+                container.requestOpenSession(it)
+                openSessionHandled = true
+            }
+        }
     }
 
     companion object {
@@ -101,11 +114,13 @@ class MainActivity : ComponentActivity() {
         private val VALID_SESSION_ID = Regex("[A-Za-z0-9_-]+")
 
         private const val KEY_SHARE_HANDLED = "shareIntentHandled"
+        private const val KEY_OPEN_SESSION_HANDLED = "openSessionHandled"
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         outState.putBoolean(KEY_SHARE_HANDLED, shareIntentHandled)
+        outState.putBoolean(KEY_OPEN_SESSION_HANDLED, openSessionHandled)
     }
 
     /** Ask for POST_NOTIFICATIONS once on Android 13+ so run/completion notifications show. */

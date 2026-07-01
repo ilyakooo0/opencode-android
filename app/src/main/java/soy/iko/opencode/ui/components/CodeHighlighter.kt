@@ -216,19 +216,36 @@ private fun findStringEnd(line: String, start: Int, quote: Char): Int {
     return if (i < n) i + 1 else n
 }
 
-/** Scan forward to the end of a number literal starting at [start]. */
+/** Scan forward to the end of a number literal starting at [start].
+ *
+ *  A small state machine so we don't over-consume neighbouring source: `5-3`, `1..10`
+ *  and `123abc` must split rather than merge into one token.
+ *   - `+`/`-` are consumed only immediately after an `e`/`E` (an exponent sign).
+ *   - `e`/`E` continues a decimal number at most once, and never after a `0x` prefix.
+ *   - hex digits `a-f`/`A-F` and the `x`/`X` marker are consumed only for a `0x`/`0X` literal.
+ *   - a single `.` continues a decimal number; a second `.` stops the scan (so `1..10` splits).
+ */
 private fun findNumberEnd(line: String, start: Int): Int {
-    var i = start + 1
     val n = line.length
-    while (i < n && isNumberPartChar(line[i])) i++
+    // Detect a hex prefix ("0x"/"0X") right at the number start.
+    val hex = start + 1 < n && line[start] == '0' && (line[start + 1] == 'x' || line[start + 1] == 'X')
+    var i = if (hex) start + 2 else start + 1
+    var seenDot = line[start] == '.'
+    var seenExp = false
+    while (i < n) {
+        val c = line[i]
+        val prev = line[i - 1]
+        when {
+            c.isDigit() || c == '_' -> i++
+            hex && isHexDigit(c) -> i++
+            c == '.' && !hex && !seenDot && !seenExp -> { seenDot = true; i++ }
+            !hex && !seenExp && (c == 'e' || c == 'E') -> { seenExp = true; i++ }
+            !hex && (c == '+' || c == '-') && (prev == 'e' || prev == 'E') -> i++
+            else -> break
+        }
+    }
     return i
 }
-
-private fun isNumberPartChar(c: Char): Boolean =
-    c.isDigit() || c == '.' || c == '_' || isNumberExpPart(c) || isHexDigit(c)
-
-private fun isNumberExpPart(c: Char): Boolean =
-    c == 'x' || c == 'X' || c == 'e' || c == 'E' || c == '+' || c == '-'
 
 private fun isHexDigit(c: Char): Boolean = c in 'a'..'f' || c in 'A'..'F'
 

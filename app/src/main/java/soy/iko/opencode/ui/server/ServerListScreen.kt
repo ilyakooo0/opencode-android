@@ -61,7 +61,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import soy.iko.opencode.data.model.ServerProfile
+import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
 import soy.iko.opencode.ui.components.rememberRelativeTime
@@ -104,18 +108,27 @@ fun ServerListScreen(
 
     // Undo snackbar: when a server is marked for deferred deletion, offer Undo. If the
     // action is taken before the delay expires, the profile is kept and the delete
-    // never fires — mirrors the session list's undo UX for consistency. Use Long
-    // (~10s) so the Undo button outlasts the undoServerDeleteDelayMs window (5s);
-    // Short (~1.5s) vanished before the delete fired, leaving no way to cancel.
+    // never fires — mirrors the session list's undo UX for consistency. Indefinite + a
+    // matching timed dismiss keeps the Undo button visible for exactly the
+    // undoServerDeleteDelayMs window (5s) and no longer: a fixed SnackbarDuration.Long
+    // (~10s) outlasted the window, leaving the button on screen but dead for its
+    // second half. Mirrors DiagnosticsScreen's undo pattern.
     LaunchedEffect(Unit) {
         vm.undoEvents.collect { profileId ->
-            val result = snackbar.showSnackbar(
-                message = serverRemovedLabel,
-                actionLabel = undoLabel,
-                duration = SnackbarDuration.Long,
-            )
-            if (result == SnackbarResult.ActionPerformed) {
-                vm.undoDelete(profileId)
+            coroutineScope {
+                val dismisser = launch {
+                    delay(NetworkConfig.undoServerDeleteDelayMs)
+                    snackbar.currentSnackbarData?.dismiss()
+                }
+                val result = snackbar.showSnackbar(
+                    message = serverRemovedLabel,
+                    actionLabel = undoLabel,
+                    duration = SnackbarDuration.Indefinite,
+                )
+                dismisser.cancel()
+                if (result == SnackbarResult.ActionPerformed) {
+                    vm.undoDelete(profileId)
+                }
             }
         }
     }

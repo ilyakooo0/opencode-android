@@ -386,7 +386,13 @@ class ChatViewModel(
             onSuccess = { resp ->
                 val options = resp.toOptions()
                 _models.value = options
-                _selectedModel.value = resp.defaultOption(options)
+                // Only (re)apply the server default when there's no valid current
+                // selection. On re-fetch/reconnect/Retry the user's chosen model must
+                // survive — keep it as long as it's still present in the refreshed list.
+                val current = _selectedModel.value
+                if (current == null || options.none { it.ref == current.ref }) {
+                    _selectedModel.value = resp.defaultOption(options)
+                }
             },
             onNull = { _models.value = emptyList(); _selectedModel.value = null },
             reloadTrigger = _modelsReload,
@@ -457,8 +463,14 @@ class ChatViewModel(
         // would be lost forever. The persisted draft is cleared only on success.
         // suppressDraftPersist prevents the debounced collector from persisting the
         // empty draft before the send resolves.
-        suppressDraftPersist.set(true)
-        _draft.value = ""
+        //
+        // Only clear when the text being sent IS the current draft. send() is also
+        // invoked for auto-sent queued follow-ups (SessionIdle) and retryFailed(), where
+        // the user may have typed a NEW draft since — wiping it would lose that text.
+        if (_draft.value.trim() == trimmed) {
+            suppressDraftPersist.set(true)
+            _draft.value = ""
+        }
         viewModelScope.launch {
             runCatchingCancellable {
                 conn.repository.sendPrompt(
@@ -556,6 +568,9 @@ class ChatViewModel(
 
     fun abort() {
         val conn = connection ?: return
+        // Drop any queued follow-up so the SessionIdle that follows the abort doesn't
+        // auto-send it — the user tapped Stop to halt work, not to trigger the next turn.
+        _queuedFollowUp.value = null
         if (!_aborting.compareAndSet(false, true)) return
         viewModelScope.launch {
             try {

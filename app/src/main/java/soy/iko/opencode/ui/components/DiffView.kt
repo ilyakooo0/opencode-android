@@ -53,17 +53,29 @@ private val gitMetaPrefixes = listOf(
     "copy from ", "copy to ", "Binary files ", "\\ No newline",
 )
 
+/** Does [raw] look like a real unified-diff file header ("--- a/…", "+++ b/…", "--- /dev/null")
+ *  rather than a removed/added content line that merely starts with "--- "/"+++ "? */
+private fun isDiffFileHeader(raw: String): Boolean {
+    val rest = when {
+        raw.startsWith("--- ") -> raw.substring(4)
+        raw.startsWith("+++ ") -> raw.substring(4)
+        else -> return false
+    }
+    return rest.startsWith("a/") || rest.startsWith("b/") || rest.startsWith("/")
+}
+
 /** Parse a unified diff string into typed [DiffLine]s. */
 fun parseDiff(diff: String): List<DiffLine> {
     val result = mutableListOf<DiffLine>()
     for (raw in diff.lineSequence()) {
         when {
             raw.startsWith("@@") -> result.add(DiffLine.Hunk(raw))
-            // Unified-diff file headers are always "--- <path>" / "+++ <path>" (a space
-            // follows the marker). Requiring that space avoids misclassifying removed or
-            // added *content* lines like "--foo"/"++bar" — which appear on the wire as
-            // "---foo"/"+++bar" — as headers; those fall through to the +/- branches below.
-            raw.startsWith("--- ") || raw.startsWith("+++ ") -> result.add(DiffLine.FileHeader(raw))
+            // Unified-diff file headers are "--- <path>" / "+++ <path>" where the path is
+            // "a/…", "b/…", or an absolute path (e.g. "/dev/null"). Requiring that the marker
+            // be followed by "a/", "b/", or "/" avoids misclassifying removed/added *content*
+            // lines like "-- TODO"/"++ x" — which appear on the wire as "--- TODO"/"+++ x" —
+            // as headers; those fall through to the +/- branches below.
+            isDiffFileHeader(raw) -> result.add(DiffLine.FileHeader(raw))
             raw.startsWith("+") -> result.add(DiffLine.Add(raw.removePrefix("+")))
             raw.startsWith("-") -> result.add(DiffLine.Remove(raw.removePrefix("-")))
             raw.startsWith(" ") -> result.add(DiffLine.Context(raw.removePrefix(" ")))

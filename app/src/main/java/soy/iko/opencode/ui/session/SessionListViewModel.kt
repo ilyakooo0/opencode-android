@@ -230,7 +230,11 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
     private fun flushPendingSessionUpdates() {
         val batch = pendingSessionUpdates.toMap()
         if (batch.isEmpty()) return
-        pendingSessionUpdates.clear()
+        // Remove only the snapshotted key/value pairs rather than clear()-ing the whole
+        // map: an update for a session that arrived between the toMap() snapshot and here
+        // would otherwise be dropped. The key/value remove overload also leaves a newer
+        // value for the same key in place to be flushed on the next pass.
+        batch.forEach { (k, v) -> pendingSessionUpdates.remove(k, v) }
         _state.update { s ->
             val byId = s.sessions.associateBy { it.id }.toMutableMap()
             var anyChanged = false

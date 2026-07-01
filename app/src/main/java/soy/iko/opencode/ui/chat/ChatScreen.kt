@@ -402,6 +402,22 @@ fun ChatScreen(
             if (messages.isNotEmpty()) listState.scrollToItem(messages.lastIndex)
         }
 
+        // When a run starts, the LazyColumn gains a trailing "__typing" row, so
+        // effectiveLast jumps from messages.lastIndex to messages.size and the
+        // isPinnedToBottom check flips to false the instant you send — freezing
+        // auto-scroll. If the user was pinned to the last message just before the run
+        // began, bring the typing row into view so the pin (and streaming follow) is
+        // preserved. Guard on the raw last-visible index (isPinnedToBottom has already
+        // recomputed to false by now) so we don't scroll when the user had scrolled up.
+        LaunchedEffect(running) {
+            if (running && messages.isNotEmpty()) {
+                val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+                if (lastVisible >= messages.lastIndex) {
+                    runCatchingCancellable { listState.animateScrollToItem(messages.size) }
+                }
+            }
+        }
+
         LaunchedEffect(Unit) {
             snapshotFlow {
                 // Track list size + the streaming length of the last part so we auto-scroll
