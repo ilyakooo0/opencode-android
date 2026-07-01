@@ -98,15 +98,21 @@ class FileBrowserViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    /** Re-open the current directory (manual refresh). Used by pull-to-refresh. */
+    /** Re-run the current view (manual refresh). Used by pull-to-refresh. */
     fun refresh() {
         _refreshing.value = true
-        open(_state.value.path)
+        val searching = _state.value.isSearching
+        if (searching) {
+            // Re-run the active search rather than open(), which would reset query/results
+            // and drop the user back into the directory listing — discarding their search.
+            setQuery(_state.value.query)
+        } else {
+            open(_state.value.path)
+        }
         viewModelScope.launch {
-            // Clear the spinner once the open() launch settles. open() sets loading=true
-            // synchronously and flips it false in its own coroutine; wait one frame cycle.
-            // Simpler: clear after the openJob completes by joining it.
-            openJob?.join()
+            // Clear the spinner once the in-flight load settles by joining whichever job
+            // the refresh kicked off (search or directory open).
+            (if (searching) searchJob else openJob)?.join()
             _refreshing.value = false
         }
     }

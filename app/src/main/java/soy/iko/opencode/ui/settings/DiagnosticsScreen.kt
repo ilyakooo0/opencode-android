@@ -229,7 +229,10 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
         var loadFailed by remember(reportName) { mutableStateOf(false) }
         LaunchedEffect(reportName) {
             val loaded = withContext(Dispatchers.IO) {
-                runCatching { logger.readReport(reportName) }.getOrNull()
+                // runCatchingCancellable (not runCatching) so dismissing the dialog or
+                // switching reports mid-read lets the CancellationException propagate
+                // instead of being swallowed and setting state on a torn-down effect.
+                runCatchingCancellable { logger.readReport(reportName) }.getOrNull()
             }
             if (loaded != null) reportContent = loaded else loadFailed = true
         }

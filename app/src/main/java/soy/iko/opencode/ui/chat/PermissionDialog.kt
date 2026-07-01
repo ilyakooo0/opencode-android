@@ -5,7 +5,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material3.AlertDialog
@@ -50,10 +49,13 @@ fun PermissionDialog(
             onRespond(response)
         }
     }
-    // Intercept back so the dialog can't be dismissed without an explicit choice.
-    BackHandler { respond(PermissionResponse.REJECT) }
     AlertDialog(
-        onDismissRequest = { /* require an explicit choice */ },
+        // Back press routes here (dismissOnBackPress defaults true) and is treated as an
+        // explicit reject — the safe default. Tap-outside is disabled below so it can't
+        // dismiss silently. A host-composition BackHandler doesn't work: AlertDialog
+        // renders in its own window whose back dispatcher never reaches the host.
+        onDismissRequest = { respond(PermissionResponse.REJECT) },
+        properties = androidx.compose.ui.window.DialogProperties(dismissOnClickOutside = false),
         icon = { Icon(Icons.Filled.Shield, contentDescription = null) },
         title = { Text(permission.title ?: stringResource(R.string.permission_title)) },
         text = {

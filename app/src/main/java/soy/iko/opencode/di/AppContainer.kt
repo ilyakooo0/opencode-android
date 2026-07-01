@@ -261,7 +261,12 @@ open class AppContainer private constructor(
                             }
                         }
                         if (wasRunning && idleSid != _currentSession.value) {
-                            notifySessionCompleted(idleSid)
+                            // Fire this off the collector's coroutine: notifySessionCompleted
+                            // does a network listSessions() to resolve the title, and blocking
+                            // the shared-event collector here would stall the SharedFlow,
+                            // overflowing its DROP_OLDEST buffer and silently dropping live
+                            // parts/updates for every other subscriber (e.g. the message reducer).
+                            appScope.launch { notifySessionCompleted(idleSid) }
                         }
                         return@collect
                     }

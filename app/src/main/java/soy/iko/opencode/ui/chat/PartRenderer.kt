@@ -111,7 +111,7 @@ fun PartView(
         is TextPart -> if (!part.ignored && part.text.isNotEmpty()) {
             MarkdownText(part.text, modifier = modifier, streaming = isRunning)
         }
-        is ReasoningPart -> ReasoningBlock(part.text, streaming = isRunning, modifier)
+        is ReasoningPart -> ReasoningBlock(part.text, streaming = isRunning, keyId = part.id, modifier = modifier)
         is ToolPart -> ToolCallView(part, modifier)
         is FilePart -> if (part.isImage && imageContext != null && (part.source != null || !part.url.isNullOrBlank())) {
             RemoteImage(part, imageContext, modifier)
@@ -149,13 +149,15 @@ private fun UnknownPartNote(modifier: Modifier) {
 }
 
 @Composable
-private fun ReasoningBlock(text: String, streaming: Boolean, modifier: Modifier) {
+private fun ReasoningBlock(text: String, streaming: Boolean, keyId: String, modifier: Modifier) {
     if (text.isBlank()) return
     val context = LocalContext.current
-    // Key the expanded state on a content prefix so a new ReasoningPart (e.g. a second
-    // reasoning block added during streaming) doesn't inherit the positional saveable
-    // key of a prior block and start in the wrong expanded state.
-    var expanded by rememberSaveable(text.take(64)) { mutableStateOf(false) }
+    // Key the expanded state on the part's stable id so a new ReasoningPart doesn't
+    // inherit the positional saveable key of a prior block. A content-prefix key would
+    // change on nearly every token while streaming and snap the block back to collapsed;
+    // fall back to a content prefix only when the part has no id.
+    val saveableKey = keyId.ifBlank { text.take(64) }
+    var expanded by rememberSaveable(saveableKey) { mutableStateOf(false) }
     val expandedState = stringResource(R.string.state_expanded)
     val collapsedState = stringResource(R.string.state_collapsed)
     val thinkingLabel = stringResource(R.string.thinking)

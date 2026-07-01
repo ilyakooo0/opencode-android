@@ -55,6 +55,11 @@ open class DraftStore private constructor(
     /** The full in-memory snapshot of all drafts, updated when prefs finish loading. */
     open val drafts: StateFlow<Map<String, String>> = _drafts.asStateFlow()
 
+    /** Queued follow-up messages per session, persisted under a namespaced key so a
+     *  follow-up queued mid-run survives process death (the in-memory-only StateFlow in
+     *  ChatViewModel would otherwise lose it, along with the cleared draft). */
+    private val _followUps = MutableStateFlow<Map<String, String>>(emptyMap())
+
     private val _ready = MutableStateFlow(false)
     /** True once the background prefs load has completed. */
     open val ready: StateFlow<Boolean> = _ready.asStateFlow()
@@ -65,16 +70,23 @@ open class DraftStore private constructor(
         // so callers can observe readiness without blocking.
         if (scope != null && appContext != null) {
             scope.launch(Dispatchers.IO) {
-                val snapshot = runCatching {
+                val all = runCatching {
                     prefs.all.mapValues { it.value as? String ?: "" }
                 }.getOrDefault(emptyMap())
+                // Partition persisted keys: follow-up keys carry a prefix, everything else
+                // is a plain per-session draft.
+                val drafts = mutableMapOf<String, String>()
+                val followUps = mutableMapOf<String, String>()
+                all.forEach { (k, v) ->
+                    if (k.startsWith(FOLLOWUP_PREFIX)) followUps[k.removePrefix(FOLLOWUP_PREFIX)] = v
+                    else drafts[k] = v
+                }
                 // Merge instead of overwriting: any in-memory writes that arrived before
                 // the background load completed (e.g. a share-intent draft injected via
                 // setImmediate) take priority over the persisted snapshot so they aren't
                 // clobbered.
-                _drafts.update { current ->
-                    snapshot.toMutableMap().apply { putAll(current) }
-                }
+                _drafts.update { current -> drafts.apply { putAll(current) } }
+                _followUps.update { current -> followUps.apply { putAll(current) } }
                 _ready.value = true
             }
         } else {
@@ -84,6 +96,35 @@ open class DraftStore private constructor(
 
     /** Returns the draft for [sessionId], or "" if not found or still loading. */
     open fun get(sessionId: String): String = _drafts.value[sessionId].orEmpty()
+
+    /** Returns the queued follow-up for [sessionId], or "" if none / still loading. */
+    open fun getFollowUp(sessionId: String): String = _followUps.value[sessionId].orEmpty()
+
+    /** Persist a queued follow-up immediately (fire-and-forget, main-thread-safe).
+     *  Mirrors [flushDraft]: async apply() when prefs are open, else a background thread,
+     *  so a follow-up queued just before process death is flushed before the process exits.
+     *  A blank [text] clears the stored follow-up. */
+    open fun flushFollowUp(sessionId: String, text: String) {
+        _followUps.update { current ->
+            val updated = current.toMutableMap()
+            if (text.isBlank()) updated.remove(sessionId) else updated[sessionId] = text
+            updated
+        }
+        writeAsync(FOLLOWUP_PREFIX + sessionId, text)
+    }
+
+    /** Persist [key]=[text] (or remove it when blank) without blocking the main thread on
+     *  first-time disk I/O — see [flushDraft] for the prefs-not-yet-open rationale. */
+    private fun writeAsync(key: String, text: String) {
+        val write = {
+            runCatching {
+                prefs.edit().apply {
+                    if (text.isBlank()) remove(key) else putString(key, text)
+                }.apply()
+            }.onFailure { Log.w("DraftStore", "Failed to persist $key", it) }
+        }
+        if (prefsInitialized.get()) write() else flushExecutor.execute { write() }
+    }
 
     /** Update the in-memory draft immediately without persisting to disk.
      *  Used when navigation must see the new value synchronously (e.g. share-intent
@@ -111,16 +152,22 @@ open class DraftStore private constructor(
         }
     }
 
-    /** Remove the draft for a session (call on session deletion to avoid orphaned entries). */
+    /** Remove the draft for a session (call on session deletion to avoid orphaned entries).
+     *  Also clears any queued follow-up so a deleted session leaves nothing behind. */
     open suspend fun remove(sessionId: String) {
         _drafts.update { current ->
             val updated = current.toMutableMap()
             updated.remove(sessionId)
             updated
         }
+        _followUps.update { current ->
+            val updated = current.toMutableMap()
+            updated.remove(sessionId)
+            updated
+        }
         withContext(Dispatchers.IO) {
             runCatching {
-                prefs.edit().remove(sessionId).apply()
+                prefs.edit().remove(sessionId).remove(FOLLOWUP_PREFIX + sessionId).apply()
             }.onFailure { Log.w("DraftStore", "Failed to remove draft for $sessionId", it) }
         }
     }
@@ -164,6 +211,12 @@ open class DraftStore private constructor(
                 }.onFailure { Log.w("DraftStore", "Failed to flush draft for $sessionId", it) }
             }
         }
+    }
+
+    private companion object {
+        /** Key prefix distinguishing persisted follow-ups from plain drafts in the shared
+         *  prefs file. Uses a NUL so it can't collide with a real session id. */
+        const val FOLLOWUP_PREFIX = " followup "
     }
 
     /** Shut down the background flush executor. Call from AppContainer.shutdown(). */

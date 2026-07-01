@@ -69,15 +69,22 @@ private fun FilePart.resolveModel(ctx: ImageLoadContext): Any? {
     return if (url.startsWith("http://") || url.startsWith("https://")) {
         url
     } else {
-        // Resolve relative URL against the base. Collapse any ../ segments to
-        // prevent path traversal from escaping the server's base path.
+        // Resolve the URL (relative or server-absolute like "/media/x.png") against the
+        // base, collapsing any ../ segments.
         val base = HttpClientFactory.normalizeBaseUrl(ctx.baseUrl)
+        val baseUri = runCatching { java.net.URI(base) }.getOrElse { return null }
         val resolved = runCatching {
-            java.net.URI(base).resolve(url).normalize().toString()
+            java.net.URI(base).resolve(url).normalize()
         }.getOrElse { return null }
-        // Guard: if normalization escaped the base path, return null (don't
-        // attempt to load the base URL itself as an image — it's not one).
-        if (!resolved.startsWith(base)) null else resolved
+        // Guard on same origin (scheme + host + port), not base-path prefix: the real
+        // risk is redirecting the request (with its Basic auth) to another host. A
+        // server-absolute path resolves to a different base *path* but the same origin,
+        // so it must still be allowed — a prefix check wrongly rejected those.
+        val sameOrigin = resolved.host != null &&
+            resolved.scheme.equals(baseUri.scheme, ignoreCase = true) &&
+            resolved.host.equals(baseUri.host, ignoreCase = true) &&
+            resolved.port == baseUri.port
+        if (sameOrigin) resolved.toString() else null
     }
 }
 

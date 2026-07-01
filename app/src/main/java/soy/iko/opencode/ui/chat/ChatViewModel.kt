@@ -83,6 +83,12 @@ class ChatViewModel(
      *  debounce timer firing before the send completes. */
     private val suppressDraftPersist = java.util.concurrent.atomic.AtomicBoolean(false)
 
+    /** The draft value this VM last persisted, so the drafts observer can tell its own
+     *  (debounced, possibly stale) echo apart from a genuine external write. Without this
+     *  a debounced persist of an older value could echo back and overwrite newer text the
+     *  user has since typed. */
+    @Volatile private var lastPersistedDraft: String? = null
+
     /** Per-catalog reload triggers: incrementing one causes [observeCatalog]'s
      *  collectLatest to cancel any in-flight fetch and start a fresh one, so a
      *  manual reload supersedes a stale observeCatalog fetch. */
@@ -221,8 +227,23 @@ class ChatViewModel(
         // Observe the ready signal and re-seed the draft so it appears in the UI.
         viewModelScope.launch {
             container.draftStore.ready.collect { ready ->
-                if (ready && _draft.value.isEmpty()) {
+                if (!ready) return@collect
+                if (_draft.value.isEmpty()) {
                     _draft.value = container.draftStore.get(sessionId)
+                }
+                // Recover a follow-up queued before process death (its in-memory StateFlow
+                // is gone). If the input is now free, drop it back there for review/send and
+                // consume the stored copy; otherwise re-queue it so it auto-sends when the
+                // current run next idles. Guarded on == null so it never clobbers a
+                // follow-up the user queued after opening this session.
+                val savedFollowUp = container.draftStore.getFollowUp(sessionId)
+                if (savedFollowUp.isNotEmpty() && _queuedFollowUp.value == null) {
+                    if (_draft.value.isEmpty()) {
+                        _draft.value = savedFollowUp
+                        container.draftStore.flushFollowUp(sessionId, "")
+                    } else {
+                        _queuedFollowUp.value = savedFollowUp
+                    }
                 }
             }
         }
@@ -238,7 +259,16 @@ class ChatViewModel(
         // pre-send draft until the send resolves).
         viewModelScope.launch {
             container.draftStore.drafts.collect { drafts ->
+                // Ignore emissions until the initial disk load completes: the load itself
+                // emits the persisted snapshot, and applying it here would clobber text the
+                // user typed during the async load (the `ready` observer above seeds an
+                // empty draft). After ready, emissions are external writes.
+                if (!container.draftStore.ready.value) return@collect
                 val storeValue = drafts[sessionId].orEmpty()
+                // Ignore this VM's own (debounced, possibly stale) persistence echo — only a
+                // genuine external write (e.g. a two-pane share injection) should overwrite
+                // the live draft.
+                if (storeValue == lastPersistedDraft) return@collect
                 if (storeValue != _draft.value && !suppressDraftPersist.get()) {
                     _draft.value = storeValue
                 }
@@ -322,6 +352,7 @@ class ChatViewModel(
         viewModelScope.launch {
             _draft.drop(1).debounce(NetworkConfig.draftDebounceMs).collect { text ->
                 if (text.isBlank() && suppressDraftPersist.get()) return@collect
+                lastPersistedDraft = text
                 runCatchingCancellable { container.draftStore.set(sessionId, text) }
                     .onFailure { Log.w("ChatViewModel", "Failed to persist draft", it) }
             }
@@ -335,7 +366,10 @@ class ChatViewModel(
                 _running.value = false
                 _pendingPermission.value = null
                 _failedDraft.value = null
-                _queuedFollowUp.value = null
+                // NOTE: deliberately not clearing _queuedFollowUp here. It's session-scoped
+                // user intent that is now persisted; wiping it on every (re)connect — which
+                // this collector does, including transient SSE drops and the cold-start
+                // restore path — would drop a legitimately queued/recovered follow-up.
                 _selectedAgent.value = null
                 _sessionTitle.value = null
                 try {
@@ -346,13 +380,13 @@ class ChatViewModel(
                             // so the user's drafted-while-running message isn't lost.
                             val queued = _queuedFollowUp.value
                             if (queued != null) {
-                                _queuedFollowUp.value = null
+                                setQueuedFollowUp(null)
                                 send(queued)
                             }
                         }
                         if (SessionRepository.isError(event, sessionId)) {
                             _running.value = false
-                            _queuedFollowUp.value = null
+                            setQueuedFollowUp(null)
                             _errorEvents.tryEmit(container.string(R.string.error_agent_reported))
                         }
                         when (event) {
@@ -492,7 +526,10 @@ class ChatViewModel(
                 // typed a new one while the send was in flight. Otherwise clearing the
                 // store echoes back through the draft observer and wipes the in-progress
                 // text (data loss). Mirrors the guard on the failure path above.
-                if (_draft.value.isBlank()) container.draftStore.set(sessionId, "")
+                if (_draft.value.isBlank()) {
+                    lastPersistedDraft = ""
+                    container.draftStore.set(sessionId, "")
+                }
                 // Don't reset _running here: the agent continues streaming via SSE.
                 // _running is cleared on SessionIdle/SessionError (see event collector)
                 // or when the SSE stream drops (see connection state watcher below).
@@ -520,11 +557,19 @@ class ChatViewModel(
      */
     fun queueFollowUp(text: String) {
         val trimmed = text.trim()
-        _queuedFollowUp.value = trimmed.takeIf { it.isNotEmpty() }
+        setQueuedFollowUp(trimmed.takeIf { it.isNotEmpty() })
         // The text now lives in the queued chip, so clear the input field just as a
         // normal send would. No-op for the cancel case (blank text), which must leave
         // whatever the user has since typed untouched.
         if (trimmed.isNotEmpty()) _draft.value = ""
+    }
+
+    /** Set or clear the queued follow-up and mirror it to persistence, so a follow-up
+     *  queued mid-run survives process death (recovered on the next open of this session).
+     *  Passing null / blank clears both the in-memory value and the persisted copy. */
+    private fun setQueuedFollowUp(text: String?) {
+        _queuedFollowUp.value = text
+        container.draftStore.flushFollowUp(sessionId, text.orEmpty())
     }
 
     /** Transient flag set by [refreshMessages] so the top-bar refresh icon can show
@@ -570,7 +615,7 @@ class ChatViewModel(
         val conn = connection ?: return
         // Drop any queued follow-up so the SessionIdle that follows the abort doesn't
         // auto-send it — the user tapped Stop to halt work, not to trigger the next turn.
-        _queuedFollowUp.value = null
+        setQueuedFollowUp(null)
         if (!_aborting.compareAndSet(false, true)) return
         viewModelScope.launch {
             try {

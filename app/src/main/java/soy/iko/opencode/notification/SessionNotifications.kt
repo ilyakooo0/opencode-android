@@ -73,9 +73,10 @@ object SessionNotifications {
         val notification = NotificationCompat.Builder(context, NotificationChannels.COMPLETED)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle(context.getString(R.string.notif_completed_title))
-            // Escape % characters in the title so getString formatting doesn't break
-            // when a server-controlled session title contains format-specifier-like text.
-            .setContentText(context.getString(R.string.notif_completed_text, title.replace("%", "%%")))
+            // No % escaping here: getString(id, arg) inserts the argument verbatim and
+            // never re-scans it for format specifiers, so escaping the title would show
+            // literal doubled percent signs (e.g. a "50% done" title as "50%% done").
+            .setContentText(context.getString(R.string.notif_completed_text, title))
             .setAutoCancel(true)
             .setContentIntent(pendingIntent)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)

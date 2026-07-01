@@ -192,6 +192,11 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
                         when (event) {
                             is SessionUpdated -> {
                                 val session = event.properties.info
+                                // Ignore updates for a session the user just deleted (still
+                                // within its undo window): the server hasn't deleted it yet
+                                // and can legitimately emit updates, but buffering them here
+                                // would resurrect the optimistically-hidden row mid-undo.
+                                if (pendingDeletes.containsKey(session.id)) return@collect
                                 pendingSessionUpdates[session.id] = session
                                 if (sessionUpdateJob?.isActive != true) {
                                     sessionUpdateJob = viewModelScope.launch {
@@ -204,6 +209,9 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
                                 val id = event.properties.info?.id ?: event.properties.sessionID
                                 if (id != null) {
                                     synchronized(previewLock) { livePreviewJobs.remove(id)?.cancel() }
+                                    // Drop any buffered update for this id so a pending flush
+                                    // can't re-add the just-deleted session to the list.
+                                    pendingSessionUpdates.remove(id)
                                     container.draftStore.remove(id)
                                     _state.update { s ->
                                         s.copy(
@@ -239,6 +247,9 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
             val byId = s.sessions.associateBy { it.id }.toMutableMap()
             var anyChanged = false
             batch.forEach { (id, session) ->
+                // Final guard: never re-add a session that's pending deletion (its undo
+                // window is still open), even if an update slipped into this batch.
+                if (id in pendingDeletes) return@forEach
                 if (byId[id] != session) { byId[id] = session; anyChanged = true }
             }
             // No-op update: skip the rebuild entirely so the StateFlow doesn't emit a
@@ -399,6 +410,9 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         }
         // Hold the pending delete so the snackbar can undo it.
         pendingDeletes[session.id] = session
+        // Drop any already-buffered update for this session so a pending flush during the
+        // undo window can't re-add the row we just optimistically hid.
+        pendingSessionUpdates.remove(session.id)
         _undoEvents.tryEmit(session.id)
         viewModelScope.launch {
             delay(NetworkConfig.undoDeleteDelayMs)

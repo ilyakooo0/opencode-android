@@ -61,7 +61,12 @@ private fun isDiffFileHeader(raw: String): Boolean {
         raw.startsWith("+++ ") -> raw.substring(4)
         else -> return false
     }
-    return rest.startsWith("a/") || rest.startsWith("b/") || rest.startsWith("/")
+    // Header paths are "a/…", "b/…", or the literal "/dev/null" (optionally followed by a
+    // tab/space-separated timestamp). Restricting the absolute-path case to /dev/null avoids
+    // misclassifying a removed content line like "-- /usr/local/foo" (on the wire
+    // "--- /usr/local/foo"), whose rest starts with "/", as a file header.
+    return rest.startsWith("a/") || rest.startsWith("b/") ||
+        rest == "/dev/null" || rest.startsWith("/dev/null\t") || rest.startsWith("/dev/null ")
 }
 
 /** Parse a unified diff string into typed [DiffLine]s. */

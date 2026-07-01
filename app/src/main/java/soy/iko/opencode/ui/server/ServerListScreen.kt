@@ -62,6 +62,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import soy.iko.opencode.data.model.ServerProfile
@@ -114,7 +115,12 @@ fun ServerListScreen(
     // (~10s) outlasted the window, leaving the button on screen but dead for its
     // second half. Mirrors DiagnosticsScreen's undo pattern.
     LaunchedEffect(Unit) {
-        vm.undoEvents.collect { profileId ->
+        // collectLatest (not collect): a serialized collect queues each snackbar behind
+        // the previous one's full window, so under rapid deletes a later profile's VM
+        // delete timer (started at emit time) fires before its snackbar is ever shown —
+        // a dead Undo button. collectLatest instead cancels the current snackbar and
+        // shows the newest immediately, keeping its Undo window aligned with its timer.
+        vm.undoEvents.collectLatest { profileId ->
             coroutineScope {
                 val dismisser = launch {
                     delay(NetworkConfig.undoServerDeleteDelayMs)
