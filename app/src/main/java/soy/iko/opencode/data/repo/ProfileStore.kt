@@ -108,16 +108,21 @@ open class ProfileStore private constructor(
         // Migrate any orphaned plaintext passwords to secure prefs on first load.
         migrateFallbackPasswords()
         val json = prefs[profilesKey] ?: return@map emptyList()
-        runCatching {
+        val stored = runCatching {
             OpencodeJson.decodeFromString(ListSerializer(StoredProfile.serializer()), json)
         }.onFailure { Log.w("ProfileStore", "Failed to decode stored profiles, ignoring", it) }
             .getOrDefault(emptyList())
             .sortedByDescending { it.lastUsed }
-            .map { it.toProfile() }
+        // Batch all password lookups into a single IO dispatch instead of one
+        // withContext round-trip per profile (N dispatches → 1). DataStore already
+        // runs this map block on IO, but each passwordFor() call still pays the
+        // suspend + redispatch overhead.
+        val pwPrefs = prefsForPasswords()
+        stored.map { it.toProfile(pwPrefs) }
     } ?: kotlinx.coroutines.flow.flowOf(emptyList())
 
-    private suspend fun StoredProfile.toProfile(): ServerProfile {
-        val pw = username?.let { passwordFor(id) }
+    private fun StoredProfile.toProfile(pwPrefs: SharedPreferences): ServerProfile {
+        val pw = username?.let { pwPrefs.getString(passwordKey(id), null) }
         return ServerProfile(
             id = id,
             label = label,
@@ -129,12 +134,13 @@ open class ProfileStore private constructor(
     }
 
     open suspend fun resolve(profile: ServerProfile): ServerProfile {
-        val pw = if (profile.hasAuth) passwordFor(profile.id) else null
+        val pw = if (profile.hasAuth) {
+            withContext(Dispatchers.IO) { prefsForPasswords().getString(passwordKey(profile.id), null) }
+        } else {
+            null
+        }
         return profile.copy(password = pw)
     }
-
-    private suspend fun passwordFor(id: String): String? =
-        withContext(Dispatchers.IO) { prefsForPasswords().getString(passwordKey(id), null) }
 
     open suspend fun save(profile: ServerProfile) {
         // Write the password first so that if the DataStore write fails, we're left

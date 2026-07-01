@@ -103,6 +103,7 @@ open class SessionRepository(
                         val fresh = runCatchingCancellable { api.listMessages(sessionId) }
                             .onFailure { Log.w("SessionRepository", "Re-seed message load failed for $sessionId; relying on SSE: ${safeExceptionSummary(it)}") }
                             .getOrDefault(emptyList())
+                        var seedChanged = false
                         lock.withLock {
                             if (generation == seedGeneration) {
                                 // Merge without pruning: SSE events arriving during the
@@ -111,10 +112,10 @@ open class SessionRepository(
                                 // Stale messages from deletions during the disconnect
                                 // gap are eventually removed via MessageRemoved events
                                 // or on the next app restart.
-                                store.seed(fresh, prune = false)
+                                seedChanged = store.seed(fresh, prune = false)
                             }
                         }
-                        publish()
+                        if (seedChanged) publish()
                     }
                     hasConnectedBefore = true
                 }
@@ -159,7 +160,8 @@ internal class MessageStore {
 
     fun snapshot(): List<MessageWithParts> = messages.values.toList()
 
-    fun seed(initial: List<MessageWithParts>, prune: Boolean = false) {
+    fun seed(initial: List<MessageWithParts>, prune: Boolean = false): Boolean {
+        var changed = false
         // On re-seed (after SSE reconnect), remove messages that are no longer in the
         // server snapshot (e.g. deleted during the disconnection gap). This keeps the
         // in-memory state in sync with the authoritative REST snapshot rather than
@@ -167,13 +169,16 @@ internal class MessageStore {
         // racing with just-arrived SSE events whose messages may not yet be in REST.
         if (prune) {
             val incomingIds = initial.mapTo(mutableSetOf()) { it.info.id }
+            val before = messages.size
             messages.keys.retainAll(incomingIds)
+            if (messages.size != before) changed = true
         }
 
         for (m in initial) {
             val existing = messages[m.info.id]
             if (existing == null) {
                 messages[m.info.id] = m
+                changed = true
             } else {
                 // A part streamed in between subscribe and this initial load may already
                 // have populated this message (see observeMessages). Merge instead of
@@ -187,10 +192,15 @@ internal class MessageStore {
                     if (p.id !in snapshotIds) ordered.add(p)
                 }
                 val info = if (existing.info is UnknownMessage) m.info else existing.info
-                messages[m.info.id] = MessageWithParts(info = info, parts = ordered)
+                val merged = MessageWithParts(info = info, parts = ordered)
+                if (merged != existing) {
+                    messages[m.info.id] = merged
+                    changed = true
+                }
             }
         }
-        evictOldMessages()
+        if (evictOldMessages()) changed = true
+        return changed
     }
 
     /** Returns true if the state changed (and a new snapshot should be published). */
@@ -280,11 +290,15 @@ internal class MessageStore {
         return true
     }
 
-    /** Evict the oldest messages when the store exceeds [maxMessages], keeping memory bounded. */
-    private fun evictOldMessages() {
+    /** Evict the oldest messages when the store exceeds [maxMessages], keeping memory bounded.
+     *  Returns true if any messages were evicted. */
+    private fun evictOldMessages(): Boolean {
+        var evicted = false
         while (messages.size > maxMessages) {
             val oldestKey = messages.keys.iterator().next()
             messages.remove(oldestKey)
+            evicted = true
         }
+        return evicted
     }
 }

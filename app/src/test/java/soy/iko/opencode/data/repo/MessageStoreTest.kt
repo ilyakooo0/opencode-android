@@ -249,6 +249,54 @@ class MessageStoreTest {
         assertEquals(listOf("m1"), store.snapshot().map { it.info.id })
     }
 
+    // --- seed return value (skip unnecessary snapshot on reconnect) ---
+
+    @Test
+    fun seedReturnsTrueWhenAddingNewMessages() {
+        val store = MessageStore()
+        val changed = store.seed(listOf(MessageWithParts(UserMessage("u1", session))))
+        assertTrue(changed)
+    }
+
+    @Test
+    fun seedReturnsFalseWhenReSeedingIdenticalMessages() {
+        val store = MessageStore()
+        val messages = listOf(MessageWithParts(UserMessage("u1", session)))
+        store.seed(messages)
+        val changed = store.seed(messages)
+        assertFalse(changed)
+    }
+
+    @Test
+    fun seedReturnsTrueWhenMessagePartsDiffer() {
+        val store = MessageStore()
+        store.seed(listOf(MessageWithParts(UserMessage("u1", session))))
+        val changed = store.seed(
+            listOf(MessageWithParts(UserMessage("u1", session), listOf(TextPart(id = "t1")))),
+        )
+        assertTrue(changed)
+    }
+
+    @Test
+    fun seedPruneReturnsTrueWhenMessagesRemoved() {
+        val store = MessageStore()
+        store.seed(listOf(
+            MessageWithParts(UserMessage("u1", session)),
+            MessageWithParts(AssistantMessage("a1", session)),
+        ))
+        val changed = store.seed(listOf(MessageWithParts(UserMessage("u1", session))), prune = true)
+        assertTrue(changed)
+    }
+
+    @Test
+    fun seedPruneReturnsFalseWhenNoMessagesRemoved() {
+        val store = MessageStore()
+        val messages = listOf(MessageWithParts(UserMessage("u1", session)))
+        store.seed(messages)
+        val changed = store.seed(messages, prune = true)
+        assertFalse(changed)
+    }
+
     // --- seed prune (re-seed after SSE reconnect) ---
 
     @Test

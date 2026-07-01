@@ -52,8 +52,10 @@ object HttpClientFactory {
             requestTimeoutMillis = NetworkConfig.restRequestTimeoutMs
         }
 
+        val normalizedUrl = normalizeBaseUrl(profile.baseUrl)
+        val isHttps = normalizedUrl.startsWith("https://")
+
         if (profile.hasAuth) {
-            val isHttps = normalizeBaseUrl(profile.baseUrl).startsWith("https://")
             if (isHttps) {
                 install(Auth) {
                     basic {
@@ -80,12 +82,12 @@ object HttpClientFactory {
         }
 
         defaultRequest {
-            url.takeFrom(URLBuilder().takeFrom(normalizeBaseUrl(profile.baseUrl)))
+            url.takeFrom(URLBuilder().takeFrom(normalizedUrl))
             // For HTTP profiles with auth, attach the Basic auth header proactively on
             // every request (the Auth plugin is skipped for non-HTTPS). The user chose
             // cleartext explicitly, so we honor that — but without the reactive challenge
             // logic that could re-send credentials silently.
-            if (profile.hasAuth && !normalizeBaseUrl(profile.baseUrl).startsWith("https://")) {
+            if (profile.hasAuth && !isHttps) {
                 val credentials = java.util.Base64.getEncoder().encodeToString(
                     "${profile.username.orEmpty()}:${profile.password.orEmpty()}".toByteArray(),
                 )
