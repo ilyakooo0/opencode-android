@@ -125,8 +125,9 @@ fun SessionListScreen(
     val pendingDelete = pendingDeleteId?.let { id -> state.sessions.firstOrNull { it.id == id } }
     val pendingRename = pendingRenameId?.let { id -> state.sessions.firstOrNull { it.id == id } }
 
-    // Close the server dropdown on back press instead of navigating away.
+    // Close the open dropdown on back press instead of navigating away.
     BackHandler(enabled = showServerMenu) { showServerMenu = false }
+    BackHandler(enabled = showSortMenu) { showSortMenu = false }
 
     LaunchedEffect(Unit) {
         vm.transientErrors.collect { msg ->
@@ -350,7 +351,6 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
                 value = state.query,
                 onValueChange = onQueryChange,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).testTag("session_search"),
-                placeholder = { Text(stringResource(R.string.search_sessions)) },
                 label = { Text(stringResource(R.string.search_sessions)) },
                 leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                 singleLine = true,
@@ -515,7 +515,7 @@ private fun SessionCard(
                                 Box(
                                     modifier = Modifier
                                         .padding(end = 8.dp)
-                                        .size(8.dp)
+                                        .size(10.dp)
                                         .clip(androidx.compose.foundation.shape.CircleShape)
                                         .background(MaterialTheme.colorScheme.primary)
                                         .semantics { contentDescription = unreadLabel },

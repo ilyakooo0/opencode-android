@@ -58,11 +58,19 @@ fun OpencodeApp(container: AppContainer) {
 
         // Open a session requested by a notification tap or deep link, once connected.
         // In two-pane mode the detail pane consumes the request instead of navigating.
+        // Ensure SESSIONS is on the back stack below the chat destination so backing
+        // out of the chat lands on the session list (not the server list). The
+        // ServerListScreen's auto-connect also navigates to SESSIONS; without this
+        // popUpTo guard the two navigations race and can leave the stack as
+        // SERVERS -> chat (missing SESSIONS) or chat buried under SESSIONS.
         LaunchedEffect(pendingOpenSession, connection, isTwoPane) {
             val id = pendingOpenSession ?: return@LaunchedEffect
             if (connection == null || isTwoPane) return@LaunchedEffect
             container.consumePendingOpenSession()
-            navController.navigate(Routes.chat(id)) { launchSingleTop = true }
+            navController.navigate(Routes.chat(id)) {
+                launchSingleTop = true
+                popUpTo(Routes.SERVERS) { inclusive = false }
+            }
         }
 
         NavHost(

@@ -53,8 +53,12 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
+import soy.iko.opencode.data.network.EventStreamClient
 import soy.iko.opencode.data.repo.CrashLogger
 import soy.iko.opencode.data.repo.ThemeMode
 import soy.iko.opencode.di.AppContainer
@@ -63,7 +67,7 @@ import soy.iko.opencode.ui.theme.LightPaletteSwatches
 import soy.iko.opencode.ui.theme.DarkPaletteSwatches
 import soy.iko.opencode.util.runCatchingCancellable
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalCoroutinesApi::class)
 @Composable
 fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onManageServers: () -> Unit, onOpenDiagnostics: () -> Unit) {
     val scope = rememberCoroutineScope()
@@ -78,6 +82,17 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onManageServers:
         .collectAsStateWithLifecycle(initialValue = null)
     val dynamicColorAvailable = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
     val activeProfile = container.activeConnection.collectAsStateWithLifecycle().value?.profile
+    // SSE connection state so the Settings screen can show a dropped stream (the
+    // ConnectionBanner surfaces this on the chat and session screens; without it here,
+    // a user who opens Settings during a reconnect wouldn't know the stream dropped).
+    // Wrapped in remember so the Flow operator isn't re-created every recomposition
+    // (which would reset collectAsStateWithLifecycle and cause flicker).
+    val connectionStateFlow = remember {
+        container.activeConnection
+            .flatMapLatest { it?.events?.state ?: flowOf(EventStreamClient.ConnectionState.Disconnected) }
+    }
+    val connectionState by connectionStateFlow
+        .collectAsStateWithLifecycle(initialValue = EventStreamClient.ConnectionState.Disconnected)
     val context = LocalContext.current
     // Crash count badge: surface that there are reports to look at without making the
     // user open the screen to find out.
@@ -208,6 +223,25 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onManageServers:
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                // Surface the SSE stream state so a user who opens Settings during a
+                // reconnect sees it (the ConnectionBanner on other screens handles this
+                // elsewhere). Only show non-Connected states to avoid clutter.
+                val stateText = when (connectionState) {
+                    EventStreamClient.ConnectionState.Connecting -> stringResource(R.string.connecting)
+                    EventStreamClient.ConnectionState.Disconnected -> stringResource(R.string.reconnecting)
+                    EventStreamClient.ConnectionState.Failed -> stringResource(R.string.connection_failed)
+                    EventStreamClient.ConnectionState.Connected -> null
+                }
+                stateText?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (connectionState == EventStreamClient.ConnectionState.Failed)
+                            MaterialTheme.colorScheme.error
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
             } else {
                 Text(
                     stringResource(R.string.not_connected),

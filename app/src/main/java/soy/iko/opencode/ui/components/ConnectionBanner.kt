@@ -86,7 +86,7 @@ fun ConnectionBanner(
             ) {
                 if (!isFailed) {
                     CircularProgressIndicator(
-                        Modifier.size(12.dp),
+                        Modifier.size(16.dp),
                         strokeWidth = 2.dp,
                     )
                 }

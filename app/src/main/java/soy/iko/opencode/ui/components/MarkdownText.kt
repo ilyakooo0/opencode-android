@@ -4,9 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.widget.Toast
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -14,6 +12,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material3.Icon
@@ -33,7 +32,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
@@ -54,6 +52,11 @@ import soy.iko.opencode.data.network.NetworkConfig
  * Long-press copies the raw markdown to the system clipboard. Code blocks/fences get an
  * inline copy button.
  *
+ * The rendered text is wrapped in a [SelectionContainer] so the user can select and
+ * copy a portion of the response (e.g. a single code snippet or paragraph) instead of
+ * the all-or-nothing long-press copy. The per-message copy button in [MessageBubble]
+ * copies all TextParts; this complements it with partial selection.
+ *
  * During streaming, the full markdown is re-parsed on every token (the library re-parses
  * whenever the content string changes). To avoid O(n²) work during long responses, the
  * rendered content is throttled — the latest [markdown] is committed to the renderer at
@@ -71,7 +74,6 @@ import soy.iko.opencode.data.network.NetworkConfig
  * the throttle pipeline is skipped entirely — no `LaunchedEffect`, no `snapshotFlow`, no
  * coroutine. This eliminates per-item coroutine churn as messages scroll in and out of view.
  */
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun MarkdownText(
     markdown: String,
@@ -116,25 +118,23 @@ fun MarkdownText(
                     renderedContent = md
                 }
         }
+        // SelectionContainer is intentionally omitted during streaming: the content is
+        // changing every ~50ms, and an active selection would be invalidated (and the
+        // selection handles would flicker) on each throttle commit. Long-press still
+        // copies the full raw markdown via the onLongClick below.
         Markdown(
             content = renderedContent,
-            modifier = modifier.combinedClickable(
-                onClick = {},
-                onLongClick = { copyToClipboard(context, markdown) },
-                role = Role.Button,
-            ),
+            modifier = modifier,
             components = components,
         )
     } else {
-        Markdown(
-            content = markdown,
-            modifier = modifier.combinedClickable(
-                onClick = {},
-                onLongClick = { copyToClipboard(context, markdown) },
-                role = Role.Button,
-            ),
-            components = components,
-        )
+        SelectionContainer {
+            Markdown(
+                content = markdown,
+                modifier = modifier,
+                components = components,
+            )
+        }
     }
 }
 

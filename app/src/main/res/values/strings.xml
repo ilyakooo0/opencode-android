@@ -190,6 +190,8 @@
     <!-- Message metadata -->
     <string name="image">image</string>
     <string name="tokens_in_out">%1$s in · %2$s out</string>
+    <string name="cost_format_short">$%1$.2f</string>
+    <string name="cost_format_long">$%1$.4f</string>
 
     <!-- Settings -->
     <string name="appearance">Appearance</string>
@@ -232,6 +234,8 @@
     <string name="copy_path">Copy path</string>
     <string name="path_copied">Path copied</string>
     <string name="unknown_message">Unknown message type</string>
+    <string name="unknown_part">Unsupported content</string>
+    <string name="tool_preview">🔧 %1$s</string>
     <string name="server_reachable">Server is reachable ✓</string>
     <string name="suggest_scheme">Add http:// prefix</string>
     <string name="sort">Sort</string>

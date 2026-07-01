@@ -17,6 +17,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -51,6 +52,7 @@ fun TwoPaneSessionChat(
     var selected by rememberSaveable { mutableStateOf<String?>(null) }
     val pendingOpenSession by container.pendingOpenSession.collectAsStateWithLifecycle()
     val pendingShare by container.pendingShare.collectAsStateWithLifecycle()
+    val activeConnection by container.activeConnection.collectAsStateWithLifecycle()
 
     // A notification tap / deep link requests a session: open it in the detail pane.
     LaunchedEffect(pendingOpenSession) {
@@ -58,6 +60,19 @@ fun TwoPaneSessionChat(
             selected = it
             container.consumePendingOpenSession()
         }
+    }
+
+    // Clear the selection when the active server profile changes (a server switch via
+    // the ServerSwitcherMenu). Without this, `selected` still points at the old
+    // server's session id and the detail pane renders a ChatScreen for a session that
+    // doesn't exist on the new server, showing a load error with no explanation.
+    // Skips the initial transition (null -> a profile id) so a deep link / pending
+    // open session that sets `selected` on the same first composition isn't clobbered.
+    var lastProfileId by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(activeConnection?.profile?.id) {
+        val currentId = activeConnection?.profile?.id
+        if (lastProfileId != null && lastProfileId != currentId) selected = null
+        lastProfileId = currentId
     }
 
     // Inject a pending share into the currently selected session's draft (if any).

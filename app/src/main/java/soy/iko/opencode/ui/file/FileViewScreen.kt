@@ -59,7 +59,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -304,14 +306,19 @@ private fun BoxScope.FileViewContentBody(
 ) {
     // Overlay bar: stacks the diff/raw chips and the find bar at the top so both stay
     // reachable while scrolling. Each contributes a top inset so the content below
-    // isn't hidden behind the overlay.
+    // isn't hidden behind the overlay. The inset is measured from the actual overlay
+    // height (not a hardcoded 52dp/row) so accessibility font scaling — which can
+    // make the FilterChip labels and FindBar text field taller than 52dp — doesn't
+    // cause the first lines of content to hide behind the overlay.
     val overlayRows = (if (showToggle) 1 else 0) + (if (findActive) 1 else 0)
-    val topInset = (overlayRows * 52).dp
+    var overlayHeightPx by remember { mutableIntStateOf(0) }
+    val topInset = with(androidx.compose.ui.platform.LocalDensity.current) { overlayHeightPx.toDp() }
     if (overlayRows > 0) {
         Column(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .fillMaxWidth()
+                .onSizeChanged { overlayHeightPx = it.height }
                 .padding(top = 4.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
@@ -436,8 +443,13 @@ private fun FileTextContent(
     listState: LazyListState,
 ) {
     val lines = remember(text) { text.split("\n") }
-    val gutterWidth = remember(lines.size) {
-        (lines.size.toString().length.coerceAtLeast(3) * 10).dp
+    // Gutter width scales with the digit count and the font scale so accessibility
+    // text scaling (e.g. 1.3x) doesn't make line numbers overflow the gutter and
+    // collide with the code text. 10dp/digit covers bodySmall at 1.0x; scale up
+    // proportionally for larger font scales.
+    val fontScale = androidx.compose.ui.platform.LocalDensity.current.fontScale
+    val gutterWidth = remember(lines.size, fontScale) {
+        ((lines.size.toString().length.coerceAtLeast(3) * 10) * fontScale.coerceAtLeast(1f)).dp
     }
     val hScrollState = rememberScrollState()
     val palette = rememberHighlightPalette()

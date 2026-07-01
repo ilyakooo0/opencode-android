@@ -182,7 +182,7 @@ private fun ServerEditForm(
                     }
                 }
             },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Next),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done),
             modifier = Modifier.fillMaxWidth().testTag("server_url"),
         )
         OutlinedButton(

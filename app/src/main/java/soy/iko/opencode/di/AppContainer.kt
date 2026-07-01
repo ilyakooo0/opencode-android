@@ -148,12 +148,13 @@ open class AppContainer private constructor(
         }
     }
 
-    /** Restore a session's unread badge (preserving its prior count) after a failed
-     *  server switch reconnects. Falls back to a count of 1 when the prior count isn't
-     *  known, since the restore path only runs for sessions that were badged before. */
-    open fun restoreUnread(id: String) {
+    /** Restore a session's unread badge after a failed server switch reconnects.
+     *  Preserves the prior [count] so a session badged with "5 unread" before the
+     *  switch attempt still shows 5 (not 1) after the restore. No-op for the session
+     *  the user is currently viewing, since a viewed session is never badged. */
+    open fun restoreUnread(id: String, count: Int) {
         if (id != _currentSession.value) {
-            _unread.update { it + (id to (it[id] ?: 1)) }
+            _unread.update { it + (id to count) }
         }
     }
 

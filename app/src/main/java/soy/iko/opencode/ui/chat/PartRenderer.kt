@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentCopy
@@ -18,7 +19,6 @@ import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
-import androidx.compose.material.icons.filled.HelpOutline
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -109,7 +109,31 @@ fun PartView(part: Part, modifier: Modifier = Modifier, isRunning: Boolean = fal
         }
         is StepStartPart -> {} // boundary marker — nothing to draw
         is StepFinishPart -> {} // metrics handled at message level
-        is UnknownPart -> {} // forward-compat: unknown part types are ignored
+        is UnknownPart -> UnknownPartNote(modifier)
+    }
+}
+
+@Composable
+private fun UnknownPartNote(modifier: Modifier) {
+    // Forward-compat: a part type the client doesn't model. Render a muted note (matching
+    // UnknownMessageBlock's pattern) so the user can tell content was dropped instead of
+    // the part vanishing silently — important when a new server release adds a part type.
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            Icons.AutoMirrored.Filled.HelpOutline,
+            contentDescription = null,
+            modifier = Modifier.size(14.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            stringResource(R.string.unknown_part),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 6.dp),
+        )
     }
 }
 
@@ -117,7 +141,10 @@ fun PartView(part: Part, modifier: Modifier = Modifier, isRunning: Boolean = fal
 private fun ReasoningBlock(text: String, streaming: Boolean, modifier: Modifier) {
     if (text.isBlank()) return
     val context = LocalContext.current
-    var expanded by rememberSaveable { mutableStateOf(false) }
+    // Key the expanded state on a content prefix so a new ReasoningPart (e.g. a second
+    // reasoning block added during streaming) doesn't inherit the positional saveable
+    // key of a prior block and start in the wrong expanded state.
+    var expanded by rememberSaveable(text.take(64)) { mutableStateOf(false) }
     val expandedState = stringResource(R.string.state_expanded)
     val collapsedState = stringResource(R.string.state_collapsed)
     val thinkingLabel = stringResource(R.string.thinking)

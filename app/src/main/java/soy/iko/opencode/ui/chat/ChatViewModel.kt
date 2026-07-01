@@ -135,6 +135,11 @@ class ChatViewModel(
     private val _running = MutableStateFlow(false)
     val running: StateFlow<Boolean> = _running.asStateFlow()
 
+    /** True while an abort REST call is in flight, so the Stop button can show a
+     *  spinner and prevent double-taps from firing a second abort. */
+    private val _aborting = MutableStateFlow(false)
+    val aborting: StateFlow<Boolean> = _aborting.asStateFlow()
+
     /** A follow-up the user typed while a run was active. send() queues it here and
      *  auto-sends once the run completes (SessionIdle), so the user isn't blocked with
      *  no way to send and no indication why the Send button is gone. */
@@ -218,6 +223,24 @@ class ChatViewModel(
             container.draftStore.ready.collect { ready ->
                 if (ready && _draft.value.isEmpty()) {
                     _draft.value = container.draftStore.get(sessionId)
+                }
+            }
+        }
+        // Observe the drafts store for external mutations to this session's draft
+        // (e.g. a share injected via draftStore.set in two-pane mode, or setImmediate
+        // before navigation in single-pane mode). Without this, a share injected into
+        // an already-open session never appears in the input field — the init-time
+        // read and the ready-only re-seed miss it when the draft is non-empty.
+        // The VM's own debounced persist writes the same value _draft already holds,
+        // so those updates are no-ops here (storeValue == _draft.value). The
+        // suppressDraftPersist guard prevents a stale store value from clobbering
+        // the deliberate draft clear during a send (the store still holds the
+        // pre-send draft until the send resolves).
+        viewModelScope.launch {
+            container.draftStore.drafts.collect { drafts ->
+                val storeValue = drafts[sessionId].orEmpty()
+                if (storeValue != _draft.value && !suppressDraftPersist.get()) {
+                    _draft.value = storeValue
                 }
             }
         }
@@ -526,10 +549,15 @@ class ChatViewModel(
 
     fun abort() {
         val conn = connection ?: return
+        if (!_aborting.compareAndSet(false, true)) return
         viewModelScope.launch {
-            runCatchingCancellable { conn.repository.abort(sessionId) }
-                .onSuccess { _running.value = false }
-                .onFailure { _errorEvents.tryEmit(container.friendlyError(it)) }
+            try {
+                runCatchingCancellable { conn.repository.abort(sessionId) }
+                    .onSuccess { _running.value = false }
+                    .onFailure { _errorEvents.tryEmit(container.friendlyError(it)) }
+            } finally {
+                _aborting.value = false
+            }
         }
     }
 

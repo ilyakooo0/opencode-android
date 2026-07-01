@@ -122,7 +122,7 @@ private fun UserBubble(message: MessageWithParts, imageContext: ImageLoadContext
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                MessageTimestamp(message.info)
+                MessageTimestampText(message.info)
                 // Copy affordance for user prompts, mirroring the assistant block.
                 // Without it, reusing a prior prompt requires discovering the
                 // long-press on the markdown text (and only TextParts support that).
@@ -173,14 +173,16 @@ private fun AssistantBlock(
             val cost = info.cost
             val tokens = info.tokens
             val tokenFormat = stringResource(R.string.tokens_in_out)
+            val costShort = stringResource(R.string.cost_format_short)
+            val costLong = stringResource(R.string.cost_format_long)
             // Memoize the formatted cost/tokens line so a scroll-induced or unrelated
             // state-flip recomposition doesn't re-run NumberFormat + buildList +
             // joinToString for every visible assistant bubble.
-            val costSummary = remember(info.isComplete, tokens, cost, tokenFormat) {
+            val costSummary = remember(info.isComplete, tokens, cost, tokenFormat, costShort, costLong) {
                 if (!info.isComplete || (cost == null && tokens == null)) null
                 else buildList {
                     tokens?.let { add(formatTokens(it, tokenFormat)) }
-                    cost?.takeIf { it > 0 }?.let { add(formatCost(it)) }
+                    cost?.takeIf { it > 0 }?.let { add(formatCost(it, costShort, costLong)) }
                 }.takeIf { it.isNotEmpty() }?.joinToString("  •  ")
             }
             Row(
@@ -239,11 +241,6 @@ private fun MessageTimestampText(info: soy.iko.opencode.data.model.MessageInfo) 
     }
 }
 
-@Composable
-private fun MessageTimestamp(info: soy.iko.opencode.data.model.MessageInfo) {
-    MessageTimestampText(info)
-}
-
 // NumberFormat.getNumberInstance performs an expensive ICU locale lookup + object
 // construction on every call. Reuse a thread-local instance so repeated calls (e.g.
 // when the message list re-seeds after a reconnect and every visible assistant bubble
@@ -258,8 +255,10 @@ private fun formatTokens(tokens: Tokens, format: String): String {
     return format.format(nf.format(tokens.input), nf.format(tokens.output))
 }
 
-private fun formatCost(cost: Double): String =
+private fun formatCost(cost: Double, shortFormat: String, longFormat: String): String =
     // Locale.US so the formatting is stable regardless of device locale (avoids
-    // non-ASCII digits or comma decimal separators in a dollar amount).
-    if (cost < 0.01) String.format(java.util.Locale.US, "$%.4f", cost)
-    else String.format(java.util.Locale.US, "$%.2f", cost)
+    // non-ASCII digits or comma decimal separators in a dollar amount). The format
+    // string itself is localized via strings.xml so the currency symbol can be
+    // adapted by translators.
+    if (cost < 0.01) String.format(java.util.Locale.US, longFormat, cost)
+    else String.format(java.util.Locale.US, shortFormat, cost)

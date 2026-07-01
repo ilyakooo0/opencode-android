@@ -98,7 +98,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         )
 
     private val _serverLabel = MutableStateFlow(
-        container.activeConnection.value?.profile?.displayLabel ?: "opencode"
+        container.activeConnection.value?.profile?.displayLabel ?: container.string(R.string.app_name)
     )
     val serverLabel: StateFlow<String> = _serverLabel.asStateFlow()
 
@@ -312,13 +312,14 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
     private fun loadPreview(sessionId: String) {
         val conn = container.activeConnection.value ?: return
         val api = conn.api
+        val toolFormat = container.string(R.string.tool_preview)
         synchronized(previewLock) {
             livePreviewJobs.remove(sessionId)?.cancel()
             livePreviewJobs[sessionId] = viewModelScope.launch {
                 val job = coroutineContext[kotlinx.coroutines.Job]
                 try {
                     delay(NetworkConfig.previewDebounceMs)
-                    val preview = fetchSessionPreview(api, sessionId) ?: return@launch
+                    val preview = fetchSessionPreview(api, sessionId, toolFormat) ?: return@launch
                     _state.update { s -> s.copy(previews = s.previews + (sessionId to preview)) }
                 } catch (e: CancellationException) {
                     throw e
@@ -340,6 +341,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         previewJob?.cancel()
         val conn = container.activeConnection.value ?: return
         val api = conn.api
+        val toolFormat = container.string(R.string.tool_preview)
         // Keep previews for sessions still in the list; drop stale ones without
         // clearing the whole map (which would cause a visual flash).
         val keepIds = sessions.mapTo(mutableSetOf()) { it.id }
@@ -352,7 +354,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
             toFetch.map { session ->
                 launch {
                     semaphore.withPermit {
-                        val preview = fetchSessionPreview(api, session.id) ?: return@withPermit
+                        val preview = fetchSessionPreview(api, session.id, toolFormat) ?: return@withPermit
                         _state.update { s -> s.copy(previews = s.previews + (session.id to preview)) }
                     }
                 }
@@ -466,7 +468,9 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
                         val restored = runCatchingCancellable { container.connect(previousProfile) }
                         // connect() clears unread state; restore what we saved so the
                         // user doesn't lose unread badges on a failed server switch.
-                        savedUnread.forEach { (id) -> container.restoreUnread(id) }
+                        // Pass the real captured count so a session badged with "5
+                        // unread" is restored as 5, not 1.
+                        savedUnread.forEach { (id, count) -> container.restoreUnread(id, count) }
                         if (restored.isSuccess) {
                             // Clear stale sessions from the old server; the SSE observer
                             // will reload from the restored connection via refresh().
@@ -506,10 +510,15 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
  * a short summary of the last tool call (e.g. "🔧 read") so a session whose last activity
  * was a tool call (no assistant text yet) still shows a meaningful preview instead of
  * stale/empty. Returns null on failure or when there's nothing usable.
+ *
+ * [toolPreviewFormat] is a format string (from resources) with a %1$s placeholder for
+ * the tool title/name, so the wrench emoji prefix is a presentation concern resolved
+ * by the caller rather than hardcoded here.
  */
 private suspend fun fetchSessionPreview(
     api: soy.iko.opencode.data.network.OpencodeApiClient,
     sessionId: String,
+    toolPreviewFormat: String,
 ): String? = runCatchingCancellable {
     api.listMessages(sessionId).lastOrNull()?.let { msg ->
         val text = msg.parts.filterIsInstance<TextPart>().lastOrNull()?.text
@@ -522,7 +531,8 @@ private suspend fun fetchSessionPreview(
                 is ToolError -> st.error
                 else -> null
             }
-            return@let title?.takeIf { it.isNotBlank() }?.let { "🔧 $it" } ?: "🔧 ${tool.tool}"
+            return@let title?.takeIf { it.isNotBlank() }?.let { toolPreviewFormat.format(it) }
+                ?: toolPreviewFormat.format(tool.tool)
         }
         null
     }

@@ -67,6 +67,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isCtrlPressed
@@ -113,6 +114,7 @@ fun ChatScreen(
     val vm: ChatViewModel = viewModel(key = sessionId, factory = vmFactory { ChatViewModel(container, sessionId) })
     val hasMessages by vm.hasMessages.collectAsStateWithLifecycle()
     val running by vm.running.collectAsStateWithLifecycle()
+    val aborting by vm.aborting.collectAsStateWithLifecycle()
     val loading by vm.loading.collectAsStateWithLifecycle()
     val loadError by vm.loadError.collectAsStateWithLifecycle()
     val refreshing by vm.refreshing.collectAsStateWithLifecycle()
@@ -177,6 +179,7 @@ fun ChatScreen(
 
     val snackbar = remember { SnackbarHostState() }
     val retryLabel = stringResource(R.string.retry)
+    val inputFocusRequester = remember { androidx.compose.ui.focus.FocusRequester() }
     var showModelPicker by rememberSaveable { mutableStateOf(false) }
     var showAgentPicker by rememberSaveable { mutableStateOf(false) }
     var showCommandPicker by rememberSaveable { mutableStateOf(false) }
@@ -352,6 +355,7 @@ fun ChatScreen(
                 value = draft,
                 onValueChange = vm::updateDraft,
                 running = running,
+                aborting = aborting,
                 enabled = activeConnection != null,
                 sendOnEnter = sendOnEnter,
                 onSend = ::doSend,
@@ -359,6 +363,7 @@ fun ChatScreen(
                 queuedFollowUp = queuedFollowUp,
                 onQueueFollowUp = vm::queueFollowUp,
                 onCancelQueue = { vm.queueFollowUp("") },
+                focusRequester = inputFocusRequester,
             )
         },
     ) { padding ->
@@ -373,7 +378,13 @@ fun ChatScreen(
         val isPinnedToBottom by remember {
             derivedStateOf {
                 val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
-                lastVisible >= messages.lastIndex || messages.isEmpty()
+                // When a run is active, the LazyColumn has one trailing "__typing"
+                // item after the last message. Account for it so "pinned to bottom"
+                // includes the working indicator — otherwise the pin check targets
+                // messages.lastIndex, the typing row sits just below the viewport,
+                // and the user never sees the progress indicator even when pinned.
+                val effectiveLast = if (running) messages.size else messages.lastIndex
+                lastVisible >= effectiveLast || messages.isEmpty()
             }
         }
 
@@ -392,7 +403,11 @@ fun ChatScreen(
                 AutoScrollSignal(messages.size, lastText?.text?.length ?: 0, isPinnedToBottom)
             }.collect { signal ->
                 if (signal.size > 0 && signal.pinned) {
-                    listState.scrollToItem(messages.lastIndex)
+                    // Scroll to the effective last index, including the trailing
+                    // "__typing" row when a run is active so the working indicator
+                    // is brought into view (not just the last message).
+                    val target = if (running) messages.size else messages.lastIndex
+                    listState.scrollToItem(target)
                 }
             }
         }
@@ -477,7 +492,12 @@ fun ChatScreen(
                     }
                 } else if (messages.isEmpty()) {
                     EmptyConversation(
-                        onSuggestion = { vm.updateDraft(it) },
+                        onSuggestion = {
+                            vm.updateDraft(it)
+                            // Focus the input so the user can edit the suggestion before
+                            // sending, instead of having to manually tap the field.
+                            runCatching { inputFocusRequester.requestFocus() }
+                        },
                         modifier = Modifier.align(Alignment.Center),
                     )
                 } else {
@@ -535,7 +555,10 @@ fun ChatScreen(
                     ExtendedFloatingActionButton(
                         onClick = {
                             if (messages.isNotEmpty()) {
-                                contentScope.launch { runCatchingCancellable { listState.animateScrollToItem(messages.lastIndex) } }
+                                // Scroll to the effective last index, including the
+                                // trailing "__typing" row when a run is active.
+                                val target = if (running) messages.size else messages.lastIndex
+                                contentScope.launch { runCatchingCancellable { listState.animateScrollToItem(target) } }
                             }
                         },
                         icon = { Icon(Icons.Filled.KeyboardArrowDown, contentDescription = stringResource(R.string.latest)) },
@@ -557,6 +580,7 @@ fun ChatScreen(
             confirmButton = {
                 TextButton(onClick = {
                     showExitConfirm = false
+                    haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                     vm.abort()
                     onBack()
                 }) { Text(stringResource(R.string.stop_and_exit)) }
@@ -575,6 +599,7 @@ fun ChatScreen(
             confirmButton = {
                 TextButton(onClick = {
                     showStopConfirm = false
+                    haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                     vm.abort()
                 }) { Text(stringResource(R.string.stop), color = MaterialTheme.colorScheme.error) }
             },
@@ -632,6 +657,7 @@ private fun ChatInputBar(
     value: String,
     onValueChange: (String) -> Unit,
     running: Boolean,
+    aborting: Boolean,
     enabled: Boolean,
     sendOnEnter: Boolean,
     onSend: () -> Unit,
@@ -639,6 +665,7 @@ private fun ChatInputBar(
     queuedFollowUp: String?,
     onQueueFollowUp: (String) -> Unit,
     onCancelQueue: () -> Unit,
+    focusRequester: androidx.compose.ui.focus.FocusRequester,
 ) {
     Surface(tonalElevation = 3.dp, modifier = Modifier.imePadding()) {
         Column(modifier = Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.navigationBars)) {
@@ -683,6 +710,7 @@ private fun ChatInputBar(
                     },
                     modifier = Modifier
                         .weight(1f)
+                        .focusRequester(focusRequester)
                         .testTag("chat_input")
                         .onPreviewKeyEvent { event ->
                             if (event.type != KeyEventType.KeyDown || event.key != Key.Enter) return@onPreviewKeyEvent false
@@ -730,8 +758,22 @@ private fun ChatInputBar(
                     }),
                 )
                 if (running) {
-                    IconButton(onClick = onAbort, modifier = Modifier.padding(start = 4.dp).testTag("stop_button")) {
-                        Icon(Icons.Filled.Stop, contentDescription = stringResource(R.string.stop))
+                    // Show a spinner while the abort REST call is in flight so the user
+                    // sees the stop was sent, and disable to prevent a double-tap.
+                    IconButton(
+                        onClick = onAbort,
+                        enabled = !aborting,
+                        modifier = Modifier.padding(start = 4.dp).testTag("stop_button"),
+                    ) {
+                        if (aborting) {
+                            val stopLabel = stringResource(R.string.stop)
+                            CircularProgressIndicator(
+                                Modifier.size(18.dp).semantics { contentDescription = stopLabel },
+                                strokeWidth = 2.dp,
+                            )
+                        } else {
+                            Icon(Icons.Filled.Stop, contentDescription = stringResource(R.string.stop))
+                        }
                     }
                 } else {
                     IconButton(

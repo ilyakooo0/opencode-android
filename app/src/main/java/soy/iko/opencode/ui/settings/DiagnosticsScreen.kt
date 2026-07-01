@@ -91,7 +91,12 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
     val reportDeletedLabel = stringResource(R.string.report_deleted)
     // Track report names whose deletion has been deferred for an undo window, so a
     // swipe-triggered delete can be cancelled before the file is actually removed.
-    val deferredDeletes = remember { mutableStateOf<Set<String>>(emptySet()) }
+    // rememberSaveable (not remember) so the list survives rotation: otherwise a
+    // rotation mid-undo-window resets it to empty, the deferred-delete coroutine is
+    // cancelled by dispose, and a report the user swiped to delete silently survives
+    // (or in edge cases is deleted without an undo path). Uses a SnapshotStateList
+    // (saveable) instead of a plain Set so it round-trips through the state registry.
+    val deferredDeletes = rememberSaveable { androidx.compose.runtime.mutableStateListOf<String>() }
     val shareLabel = stringResource(R.string.share)
     val timeTick = rememberRelativeTimeTick()
 
@@ -304,17 +309,14 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                     viewing = null
                     // Defer the actual delete so the Undo snackbar can cancel it. The
                     // report stays in the list until the window expires; the undo
-                    // action removes the name from the deferred set.
-                    deferredDeletes.value = deferredDeletes.value + name
-                    shareScope.launch {
-                        delay(NetworkConfig.undoReportDeleteDelayMs)
-                        if (name in deferredDeletes.value) {
-                            deferredDeletes.value = deferredDeletes.value - name
-                            logger.deleteReport(name)
-                        }
-                    }
-                    // showSnackbar is suspend; run it on the screen's scope so the
-                    // undo action can race the deferred delete window.
+                    // action removes the name from the deferred list.
+                    deferredDeletes.add(name)
+                    // The deferred delete is scheduled by a LaunchedEffect keyed on
+                    // deferredDeletes (below), which survives rotation because
+                    // deferredDeletes is rememberSaveable. Only the snackbar runs in
+                    // shareScope here — if a rotation cancels it, the undo window is
+                    // lost but the report is still deleted after the delay (the safer
+                    // failure mode) rather than silently surviving.
                     shareScope.launch {
                         val result = snackbar.showSnackbar(
                             message = reportDeletedLabel,
@@ -322,7 +324,7 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                             duration = SnackbarDuration.Short,
                         )
                         if (result == SnackbarResult.ActionPerformed) {
-                            deferredDeletes.value = deferredDeletes.value - name
+                            deferredDeletes.remove(name)
                         }
                     }
                 }) { Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error) }
@@ -331,6 +333,26 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                 TextButton(onClick = { pendingReportDelete = null }) { Text(stringResource(R.string.cancel)) }
             },
         )
+    }
+
+    // Schedule the deferred delete for every entry in the deferred list. Keyed on the
+    // list so a rotation (which restores the list via rememberSaveable) re-schedules
+    // any pending deletes that were cancelled when shareScope was disposed. Each
+    // entry gets its own delay; undo removes the name from the list, which re-keys
+    // this effect and cancels the in-flight delays for remaining entries (they're
+    // re-launched, but the removed name is no longer present so its delete is
+    // skipped). collectLatest would cancel sibling deletes, so we launch per-name.
+    LaunchedEffect(deferredDeletes.toList()) {
+        val pending = deferredDeletes.toList()
+        pending.forEach { name ->
+            shareScope.launch {
+                delay(NetworkConfig.undoReportDeleteDelayMs)
+                if (name in deferredDeletes) {
+                    deferredDeletes.remove(name)
+                    logger.deleteReport(name)
+                }
+            }
+        }
     }
 
     if (showClearAll) {

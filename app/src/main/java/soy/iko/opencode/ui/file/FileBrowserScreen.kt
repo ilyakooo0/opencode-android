@@ -103,7 +103,6 @@ fun FileBrowserScreen(
                 value = state.query,
                 onValueChange = vm::setQuery,
                 modifier = Modifier.fillMaxWidth().padding(12.dp).testTag("file_search"),
-                placeholder = { Text(stringResource(R.string.search_files)) },
                 label = { Text(stringResource(R.string.search_files)) },
                 leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                 singleLine = true,
@@ -179,6 +178,7 @@ private fun Breadcrumbs(path: String, onNavigate: (String) -> Unit, modifier: Mo
                 color = if (index == segments.lastIndex) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.primary,
                 modifier = Modifier
                     .clickable(role = Role.Button) { onNavigate(target) }
+                    .defaultMinSize(minHeight = 48.dp)
                     .padding(horizontal = 6.dp, vertical = 14.dp),
             )
         }
