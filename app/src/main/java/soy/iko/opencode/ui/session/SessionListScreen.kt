@@ -235,7 +235,7 @@ fun SessionListScreen(
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                     )
-                    val sessions = state.filtered
+                    val sessions = remember(state) { state.filtered }
                     if (sessions.isEmpty()) {
                         Text(
                             stringResource(R.string.no_sessions_match, state.query),

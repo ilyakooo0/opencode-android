@@ -347,6 +347,7 @@ fun ChatScreen(
                         modifier = Modifier.align(Alignment.Center),
                     )
                 } else {
+                val lastMessageId = messages.lastOrNull()?.info?.id
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize(),
@@ -354,7 +355,10 @@ fun ChatScreen(
                     verticalArrangement = Arrangement.spacedBy(16.dp),
                 ) {
                     items(messages, key = { it.info.id }, contentType = { it.info::class }) { message ->
-                        MessageBubble(message, isRunning = running, imageContext = imageContext)
+                        // Only the last (streaming) message needs isRunning — it drives the
+                        // reasoning-block spinner. Passing the live flag to every bubble
+                        // makes all visible messages recompose whenever a run starts or stops.
+                        MessageBubble(message, isRunning = running && message.info.id == lastMessageId, imageContext = imageContext)
                     }
                     if (running) {
                         item(key = "__typing") {

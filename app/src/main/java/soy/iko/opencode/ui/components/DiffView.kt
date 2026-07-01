@@ -129,33 +129,38 @@ fun DiffView(diff: String, modifier: Modifier = Modifier) {
         }
         val visibleLines = if (lines.size <= COLLAPSED_DIFF_LINES || expanded) lines
             else lines.subList(0, COLLAPSED_DIFF_LINES)
-        visibleLines.forEach { line ->
-            Row(modifier = Modifier.horizontalScroll(hScrollState).padding(horizontal = 10.dp)) {
-                when (line) {
-                    is DiffLine.Hunk -> Text(
-                        line.text,
-                        style = MaterialTheme.typography.bodySmall,
-                        fontFamily = FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.tertiary,
-                        modifier = Modifier.padding(vertical = 2.dp),
-                    )
-                    is DiffLine.FileHeader -> Text(
-                        line.text,
-                        style = MaterialTheme.typography.bodySmall,
-                        fontFamily = FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(vertical = 1.dp),
-                    )
-                    is DiffLine.Meta -> Text(
-                        line.text,
-                        style = MaterialTheme.typography.bodySmall,
-                        fontFamily = FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                        modifier = Modifier.padding(vertical = 1.dp),
-                    )
-                    is DiffLine.Add -> DiffRow(line.text, "+", addColor, addText)
-                    is DiffLine.Remove -> DiffRow(line.text, "-", removeColor, removeText)
-                    is DiffLine.Context -> DiffRow(line.text, " ", Color.Transparent, MaterialTheme.colorScheme.onSurface)
+        // One horizontalScroll on the container instead of one per row: each modifier
+        // adds a layout node + clip + offset pass, so a 200-line collapsed diff was
+        // paying for 200 of them. The shared scroll state still synchronizes all rows.
+        Column(modifier = Modifier.horizontalScroll(hScrollState)) {
+            visibleLines.forEach { line ->
+                Row(modifier = Modifier.padding(horizontal = 10.dp)) {
+                    when (line) {
+                        is DiffLine.Hunk -> Text(
+                            line.text,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.tertiary,
+                            modifier = Modifier.padding(vertical = 2.dp),
+                        )
+                        is DiffLine.FileHeader -> Text(
+                            line.text,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(vertical = 1.dp),
+                        )
+                        is DiffLine.Meta -> Text(
+                            line.text,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                            modifier = Modifier.padding(vertical = 1.dp),
+                        )
+                        is DiffLine.Add -> DiffRow(line.text, "+", addColor, addText)
+                        is DiffLine.Remove -> DiffRow(line.text, "-", removeColor, removeText)
+                        is DiffLine.Context -> DiffRow(line.text, " ", Color.Transparent, MaterialTheme.colorScheme.onSurface)
+                    }
                 }
             }
         }
