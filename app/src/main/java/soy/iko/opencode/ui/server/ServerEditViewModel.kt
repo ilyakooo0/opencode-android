@@ -144,7 +144,15 @@ class ServerEditViewModel(
                         password = source.password.orEmpty(),
                         loaded = true,
                         authFieldsVisible = source.hasAuth,
-                        initial = InitialProfile("", "", "", ""),
+                        // Snapshot the seeded (copy) values so an untouched duplicate isn't
+                        // immediately dirty — an empty initial would make backing out of a
+                        // freshly opened duplicate always trigger the discard-changes dialog.
+                        initial = InitialProfile(
+                            label = dupLabel.trim(),
+                            baseUrl = source.baseUrl.trim(),
+                            username = source.username.orEmpty().trim(),
+                            password = source.password.orEmpty().trim(),
+                        ),
                     )
                     return@launch
                 }
@@ -162,7 +170,10 @@ class ServerEditViewModel(
     }
 
     fun update(transform: (ServerEditState) -> ServerEditState) {
-        _state.update { transform(it).copy(credentialsResult = null) }
+        // Clear both the inline credential note and the bottom-of-form error when any field
+        // changes: once the user starts editing (e.g. correcting a rejected password), a stale
+        // "Credentials rejected" / test-failure message no longer describes the current input.
+        _state.update { transform(it).copy(credentialsResult = null, error = null) }
     }
 
     fun probe() {

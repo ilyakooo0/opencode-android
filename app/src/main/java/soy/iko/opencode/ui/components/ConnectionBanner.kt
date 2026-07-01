@@ -14,6 +14,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -58,8 +60,14 @@ fun ConnectionBanner(
     // AnimatedVisibility so the banner slides/fades in and out instead of appearing
     // and disappearing instantly — a state change that's especially jarring when the
     // connection flaps, and was called out as a rough edge in the UX audit.
+    // Retain the last non-null banner text so the exit fade-out has content to render.
+    // The content lambda recomposes with the now-null `text` during the exit animation;
+    // early-returning on null there would leave nothing to fade, so the banner would just
+    // vanish instead of fading out.
+    val lastText = remember { mutableStateOf(text) }
+    if (text != null) lastText.value = text
     AnimatedVisibility(visible = text != null, enter = fadeIn(), exit = fadeOut()) {
-        if (text == null) return@AnimatedVisibility
+        val shown = lastText.value ?: return@AnimatedVisibility
         // Distinguish a hard failure (e.g. bad credentials) and an offline device from
         // transient connecting/reconnecting states by switching to the error palette,
         // so the banner conveys urgency without relying on text alone.
@@ -75,7 +83,7 @@ fun ConnectionBanner(
                     // Announce connection state changes to TalkBack users so they're
                     // aware the stream dropped/reconnecting without visual cues.
                     liveRegion = LiveRegionMode.Polite
-                    contentDescription = text
+                    contentDescription = shown
                 },
             color = container,
         ) {
@@ -91,7 +99,7 @@ fun ConnectionBanner(
                     )
                 }
                 Text(
-                    text,
+                    shown,
                     style = MaterialTheme.typography.labelMedium,
                     color = onContainer,
                     modifier = Modifier

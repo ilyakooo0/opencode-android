@@ -259,4 +259,5 @@
     <string name="run_command_title">Run /%1$s?</string>
     <string name="run_command_text">Run the command “%1$s”?</string>
     <string name="run">Run</string>
+    <string name="command_busy">Wait for the current response to finish before running a command.</string>
 </resources>

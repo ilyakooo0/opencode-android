@@ -64,6 +64,24 @@ open class DraftStore private constructor(
     /** True once the background prefs load has completed. */
     open val ready: StateFlow<Boolean> = _ready.asStateFlow()
 
+    /** Keys written in-memory (set / cleared / removed) *before* the async prefs load
+     *  finished. For these the in-memory state is authoritative — the load must not
+     *  resurrect a persisted value the user has since cleared, which a plain putAll(current)
+     *  merge cannot express (it can add/override, but not delete). Consulted once, in the
+     *  init merge. Separate sets because drafts and follow-ups share the session-id key space
+     *  but live under different prefs keys. */
+    // ConcurrentHashMap-backed sets: weakly-consistent iteration so the init merge's forEach
+    // can't throw ConcurrentModificationException if a mutator adds a key concurrently.
+    private val touchedDraftKeys: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+    private val touchedFollowUpKeys: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+
+    private fun markDraftTouched(sessionId: String) {
+        if (!_ready.value) touchedDraftKeys.add(sessionId)
+    }
+    private fun markFollowUpTouched(sessionId: String) {
+        if (!_ready.value) touchedFollowUpKeys.add(sessionId)
+    }
+
     init {
         // Eagerly load the prefs file on a background thread so the first main-thread
         // get() doesn't block on disk I/O. The loaded snapshot is published via [_drafts]
@@ -84,9 +102,21 @@ open class DraftStore private constructor(
                 // Merge instead of overwriting: any in-memory writes that arrived before
                 // the background load completed (e.g. a share-intent draft injected via
                 // setImmediate) take priority over the persisted snapshot so they aren't
-                // clobbered.
-                _drafts.update { current -> drafts.apply { putAll(current) } }
-                _followUps.update { current -> followUps.apply { putAll(current) } }
+                // clobbered. For keys the user explicitly touched before the load finished,
+                // drop the persisted entry first so a value they *cleared* isn't resurrected
+                // (the cleared key is absent from `current`, so putAll alone can't remove it).
+                _drafts.update { current ->
+                    drafts.apply {
+                        touchedDraftKeys.forEach { remove(it) }
+                        putAll(current)
+                    }
+                }
+                _followUps.update { current ->
+                    followUps.apply {
+                        touchedFollowUpKeys.forEach { remove(it) }
+                        putAll(current)
+                    }
+                }
                 _ready.value = true
             }
         } else {
@@ -105,6 +135,7 @@ open class DraftStore private constructor(
      *  so a follow-up queued just before process death is flushed before the process exits.
      *  A blank [text] clears the stored follow-up. */
     open fun flushFollowUp(sessionId: String, text: String) {
+        markFollowUpTouched(sessionId)
         _followUps.update { current ->
             val updated = current.toMutableMap()
             if (text.isBlank()) updated.remove(sessionId) else updated[sessionId] = text
@@ -130,6 +161,7 @@ open class DraftStore private constructor(
      *  Used when navigation must see the new value synchronously (e.g. share-intent
      *  injection before ChatScreen composes). Call [set] afterwards to persist. */
     open fun setImmediate(sessionId: String, text: String) {
+        markDraftTouched(sessionId)
         _drafts.update { current ->
             val updated = current.toMutableMap()
             if (text.isBlank()) updated.remove(sessionId) else updated[sessionId] = text
@@ -138,6 +170,7 @@ open class DraftStore private constructor(
     }
 
     open suspend fun set(sessionId: String, text: String) {
+        markDraftTouched(sessionId)
         _drafts.update { current ->
             val updated = current.toMutableMap()
             if (text.isBlank()) updated.remove(sessionId) else updated[sessionId] = text
@@ -155,6 +188,8 @@ open class DraftStore private constructor(
     /** Remove the draft for a session (call on session deletion to avoid orphaned entries).
      *  Also clears any queued follow-up so a deleted session leaves nothing behind. */
     open suspend fun remove(sessionId: String) {
+        markDraftTouched(sessionId)
+        markFollowUpTouched(sessionId)
         _drafts.update { current ->
             val updated = current.toMutableMap()
             updated.remove(sessionId)
@@ -187,6 +222,7 @@ open class DraftStore private constructor(
      * preferable to an ANR.
      */
     open fun flushDraft(sessionId: String, text: String) {
+        markDraftTouched(sessionId)
         _drafts.update { current ->
             val updated = current.toMutableMap()
             if (text.isBlank()) updated.remove(sessionId) else updated[sessionId] = text
@@ -215,7 +251,8 @@ open class DraftStore private constructor(
 
     private companion object {
         /** Key prefix distinguishing persisted follow-ups from plain drafts in the shared
-         *  prefs file. Uses a NUL so it can't collide with a real session id. */
+         *  prefs file. The leading/trailing spaces can't collide with a real opencode session
+         *  id (which are non-blank, space-free tokens like "ses_..."). */
         const val FOLLOWUP_PREFIX = " followup "
     }
 

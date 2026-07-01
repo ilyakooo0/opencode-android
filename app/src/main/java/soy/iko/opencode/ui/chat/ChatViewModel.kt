@@ -25,13 +25,13 @@ import soy.iko.opencode.util.safeExceptionSummary
 import android.util.Log
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.BufferOverflow
-import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.debounce
@@ -47,6 +47,14 @@ import kotlinx.coroutines.flow.retryWhen
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+
+/**
+ * A user-facing error to surface as a snackbar. [retryable] is true only for a failed
+ * message *send* (whose draft is held in [ChatViewModel.failedDraft]); the snackbar attaches
+ * a Retry action solely for those so an unrelated error (e.g. a message-load failure) can't
+ * inherit a Retry that silently re-submits the last prompt.
+ */
+data class ChatError(val message: String, val retryable: Boolean = false)
 
 @OptIn(ExperimentalCoroutinesApi::class, kotlinx.coroutines.FlowPreview::class)
 class ChatViewModel(
@@ -72,6 +80,11 @@ class ChatViewModel(
      *  [loadError] (nothing shown yet → error screen) or just emit a snackbar
      *  (already showing messages → don't replace the conversation with an error). */
     private var hasShownMessages = false
+
+    /** True once we've surfaced a snackbar for the current message-load failure streak.
+     *  Reset on any successful emission so a persistent failure doesn't spam a fresh
+     *  snackbar every retry cycle (every few seconds). */
+    private var loadErrorSnackbarShown = false
 
     /** Separate from [loading]: tracks the manual reconnect() flow so its spinner
      *  doesn't conflict with the messages flow's loading state. */
@@ -103,6 +116,9 @@ class ChatViewModel(
             }
             .onEach {
                 _loading.value = false
+                // A value flowed through: the stream recovered, so allow the next distinct
+                // failure to surface a fresh snackbar again.
+                loadErrorSnackbarShown = false
                 if (it.isNotEmpty()) {
                     hasShownMessages = true
                     _loadError.value = false
@@ -115,7 +131,13 @@ class ChatViewModel(
                 // is better surfaced as a snackbar (via errorEvents) than by
                 // replacing the visible conversation with an error screen.
                 if (!hasShownMessages) _loadError.value = true
-                _errorEvents.tryEmit(container.friendlyError(cause))
+                // Surface the snackbar only once per failure streak — retryWhen loops
+                // every retryInitialDelayMs, so emitting here unconditionally would spam a
+                // new snackbar every few seconds on a persistent load failure.
+                if (!loadErrorSnackbarShown) {
+                    _errorEvents.trySend(ChatError(container.friendlyError(cause)))
+                    loadErrorSnackbarShown = true
+                }
                 // Delay before retrying to avoid a tight loop on persistent errors.
                 delay(NetworkConfig.retryInitialDelayMs)
                 true
@@ -152,14 +174,16 @@ class ChatViewModel(
     private val _queuedFollowUp = MutableStateFlow<String?>(null)
     val queuedFollowUp: StateFlow<String?> = _queuedFollowUp.asStateFlow()
 
-    /** One-shot error events surfaced as snackbars. A SharedFlow (not StateFlow) so each
-     *  emission is delivered independently — two rapid failures both get a snackbar
-     *  instead of the second silently overwriting the first. */
-    private val _errorEvents = MutableSharedFlow<String>(
-        extraBufferCapacity = NetworkConfig.snackbarEventBufferCapacity,
+    /** One-shot error events surfaced as snackbars. A Channel (not SharedFlow) so an event
+     *  emitted before the UI subscribes is buffered and still delivered — a SharedFlow with
+     *  replay=0 would drop it (e.g. a VM-init catalog fetch failing before first
+     *  composition). Each event is delivered exactly once and not replayed to a
+     *  re-subscribing collector, so rotation doesn't re-show a stale snackbar. */
+    private val _errorEvents = Channel<ChatError>(
+        capacity = NetworkConfig.snackbarEventBufferCapacity,
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
-    val errorEvents: SharedFlow<String> = _errorEvents.asSharedFlow()
+    val errorEvents: Flow<ChatError> = _errorEvents.receiveAsFlow()
 
     private val _models = MutableStateFlow<List<ModelOption>>(emptyList())
     val models: StateFlow<List<ModelOption>> = _models.asStateFlow()
@@ -362,7 +386,17 @@ class ChatViewModel(
         // persist into the new one.
         viewModelScope.launch {
             container.activeConnection.collectLatest { conn ->
-                if (conn == null) return@collectLatest
+                if (conn == null) {
+                    // The connection dropped (e.g. disconnect() mid-run). No SSE stream will
+                    // arrive to deliver SessionIdle/SessionError, so reset the run state here —
+                    // otherwise the working spinner sticks on, ChatScreen keeps keepScreenOn +
+                    // the RunForegroundService alive, and the Stop button no-ops (abort() early-
+                    // returns with no connection) until a later reconnect happens to clear it.
+                    _running.value = false
+                    _aborting.value = false
+                    _pendingPermission.value = null
+                    return@collectLatest
+                }
                 _running.value = false
                 _pendingPermission.value = null
                 _failedDraft.value = null
@@ -386,8 +420,15 @@ class ChatViewModel(
                         }
                         if (SessionRepository.isError(event, sessionId)) {
                             _running.value = false
+                            // The run errored, so the queued follow-up won't auto-send.
+                            // Restore it to the input (if free) so the user's typed text
+                            // isn't silently lost; otherwise just clear the queue.
+                            val queued = _queuedFollowUp.value
+                            if (!queued.isNullOrEmpty() && _draft.value.isEmpty()) {
+                                _draft.value = queued
+                            }
                             setQueuedFollowUp(null)
-                            _errorEvents.tryEmit(container.string(R.string.error_agent_reported))
+                            _errorEvents.trySend(ChatError(container.string(R.string.error_agent_reported)))
                         }
                         when (event) {
                             is PermissionUpdated ->
@@ -518,7 +559,8 @@ class ChatViewModel(
                 _failedDraft.value = trimmed
                 // Only restore the draft if the user hasn't typed anything new since.
                 if (_draft.value.isBlank()) updateDraft(trimmed)
-                _errorEvents.tryEmit(container.friendlyError(it))
+                // Retryable: this is the failed send whose prompt Retry re-submits.
+                _errorEvents.trySend(ChatError(container.friendlyError(it), retryable = true))
                 _running.value = false
             }.onSuccess {
                 suppressDraftPersist.set(false)
@@ -600,12 +642,17 @@ class ChatViewModel(
     /** Invoke a slash-command by name via the server's /command endpoint. */
     fun runCommand(command: Command) {
         val conn = connection ?: return
-        if (!_running.compareAndSet(false, true)) return
+        // A run is already in flight — surface feedback instead of silently dropping the
+        // command (the picker stays openable during a run and dismisses on select).
+        if (!_running.compareAndSet(false, true)) {
+            _errorEvents.trySend(ChatError(container.string(R.string.command_busy)))
+            return
+        }
         viewModelScope.launch {
             runCatchingCancellable {
                 conn.repository.runCommand(sessionId, command.name, agent = command.agent)
             }.onFailure {
-                _errorEvents.tryEmit(container.friendlyError(it))
+                _errorEvents.trySend(ChatError(container.friendlyError(it)))
                 _running.value = false
             }
         }
@@ -621,7 +668,7 @@ class ChatViewModel(
             try {
                 runCatchingCancellable { conn.repository.abort(sessionId) }
                     .onSuccess { _running.value = false }
-                    .onFailure { _errorEvents.tryEmit(container.friendlyError(it)) }
+                    .onFailure { _errorEvents.trySend(ChatError(container.friendlyError(it))) }
             } finally {
                 _aborting.value = false
             }
@@ -642,7 +689,7 @@ class ChatViewModel(
                     .getOrDefault(emptyList())
                     .firstOrNull()
                 if (recent == null) {
-                    _errorEvents.tryEmit(container.string(R.string.no_servers_to_reconnect))
+                    _errorEvents.trySend(ChatError(container.string(R.string.no_servers_to_reconnect)))
                     return@launch
                 }
                 runCatchingCancellable {
@@ -650,7 +697,7 @@ class ChatViewModel(
                     conn.api.ping()
                 }.onFailure {
                     container.disconnect()
-                    _errorEvents.tryEmit(container.friendlyError(it))
+                    _errorEvents.trySend(ChatError(container.friendlyError(it)))
                 }
             } finally {
                 _reconnecting.value = false
@@ -667,7 +714,7 @@ class ChatViewModel(
         viewModelScope.launch {
             runCatchingCancellable { conn.api.respondPermission(sessionId, permission.id, response) }
                 .onFailure {
-                    _errorEvents.tryEmit(container.friendlyError(it))
+                    _errorEvents.trySend(ChatError(container.friendlyError(it)))
                     // Only restore if no new permission has arrived in the meantime.
                     if (_pendingPermission.value == null) _pendingPermission.value = permission
                 }
@@ -680,9 +727,11 @@ class ChatViewModel(
         // asynchronous apply() (not a synchronous commit) so the main thread isn't
         // blocked on disk I/O — Android's SharedPreferences framework guarantees
         // pending apply() writes are flushed before the process exits.
-        val pending = _draft.value
-        if (pending.isNotEmpty()) {
-            container.draftStore.flushDraft(sessionId, pending)
-        }
+        // Always flush — including an empty draft. Persistence is otherwise debounced, so if
+        // the user cleared the input and navigated back within the debounce window, the
+        // debounce coroutine was cancelled with viewModelScope and the prefs still hold the
+        // previous non-empty draft. flushDraft() removes the key when the text is blank, so an
+        // unconditional flush commits the clear instead of resurrecting the deleted text.
+        container.draftStore.flushDraft(sessionId, _draft.value)
     }
 }

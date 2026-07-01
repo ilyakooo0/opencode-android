@@ -66,26 +66,23 @@ private fun FilePart.resolveModel(ctx: ImageLoadContext): Any? {
         return runCatching { Base64.decode(payload, Base64.DEFAULT) }.getOrNull()
     }
     val url = url ?: return null
-    return if (url.startsWith("http://") || url.startsWith("https://")) {
-        url
-    } else {
-        // Resolve the URL (relative or server-absolute like "/media/x.png") against the
-        // base, collapsing any ../ segments.
-        val base = HttpClientFactory.normalizeBaseUrl(ctx.baseUrl)
-        val baseUri = runCatching { java.net.URI(base) }.getOrElse { return null }
-        val resolved = runCatching {
-            java.net.URI(base).resolve(url).normalize()
-        }.getOrElse { return null }
-        // Guard on same origin (scheme + host + port), not base-path prefix: the real
-        // risk is redirecting the request (with its Basic auth) to another host. A
-        // server-absolute path resolves to a different base *path* but the same origin,
-        // so it must still be allowed — a prefix check wrongly rejected those.
-        val sameOrigin = resolved.host != null &&
-            resolved.scheme.equals(baseUri.scheme, ignoreCase = true) &&
-            resolved.host.equals(baseUri.host, ignoreCase = true) &&
-            resolved.port == baseUri.port
-        if (sameOrigin) resolved.toString() else null
-    }
+    // Resolve the URL (absolute, relative, or server-absolute like "/media/x.png") against
+    // the base, collapsing any ../ segments. Both absolute and relative forms must clear the
+    // same-origin check below — an absolute foreign URL (e.g. "https://evil.com/x.png") would
+    // otherwise get the server's Basic auth attached and leak the credentials to that host.
+    val base = HttpClientFactory.normalizeBaseUrl(ctx.baseUrl)
+    val baseUri = runCatching { java.net.URI(base) }.getOrElse { return null }
+    val resolved = runCatching {
+        java.net.URI(base).resolve(url).normalize()
+    }.getOrElse { return null }
+    // Guard on same origin (scheme + host + port), not base-path prefix: the real risk is
+    // sending the request (with its Basic auth) to another host. A server-absolute path
+    // resolves to a different base *path* but the same origin, so it must still be allowed.
+    val sameOrigin = resolved.host != null &&
+        resolved.scheme.equals(baseUri.scheme, ignoreCase = true) &&
+        resolved.host.equals(baseUri.host, ignoreCase = true) &&
+        resolved.port == baseUri.port
+    return if (sameOrigin) resolved.toString() else null
 }
 
 /**

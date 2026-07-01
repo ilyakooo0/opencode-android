@@ -27,10 +27,15 @@ fun buildConversationMarkdown(messages: List<MessageWithParts>, title: String?):
             is AssistantMessage -> "## opencode"
             else -> null
         } ?: continue
+        // The assistant's reply text is already Markdown (code fences, bold, headings);
+        // escaping it would render the export as backslash noise. Only escape user-authored
+        // text, which isn't expected to be Markdown.
+        val escapeText = message.info is UserMessage
         val body = message.parts
             .mapNotNull { part ->
                 when (part) {
-                    is TextPart -> part.text.takeIf { it.isNotBlank() }?.let { escapeMarkdown(it) }
+                    is TextPart -> part.text.takeIf { it.isNotBlank() }
+                        ?.let { if (escapeText) escapeMarkdown(it) else it }
                     is ReasoningPart -> part.text.takeIf { it.isNotBlank() }
                         ?.let { text -> text.trim().lines().joinToString("\n") { "> _${escapeMarkdown(it)}_" } }
                     is ToolPart -> formatToolCall(part)
@@ -74,9 +79,28 @@ private fun formatToolCall(part: ToolPart): String? {
         // blockquote — otherwise lines after the first fall out of the quote.
         if (detail != null) {
             val quoted = detail.lines().joinToString("\n") { "> $it" }
-            add(">\n> ```\n$quoted\n> ```")
+            // Use a fence longer than the longest backtick run in the content, so tool output
+            // that itself contains a ``` sequence (shell output echoing markdown, etc.) can't
+            // prematurely close the block and make the rest of the transcript render broken.
+            val fence = "`".repeat(maxOf(3, longestBacktickRun(detail) + 1))
+            add(">\n> $fence\n$quoted\n> $fence")
         }
     }.joinToString("\n").takeIf { it.isNotBlank() }
+}
+
+/** Length of the longest consecutive run of backticks in [text] (0 if none). */
+private fun longestBacktickRun(text: String): Int {
+    var max = 0
+    var current = 0
+    for (c in text) {
+        if (c == '`') {
+            current++
+            if (current > max) max = current
+        } else {
+            current = 0
+        }
+    }
+    return max
 }
 
 private fun truncateOutput(output: String): String {

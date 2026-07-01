@@ -109,7 +109,17 @@ fun AgentPickerSheet(
                         it.displayDescription.contains(q, ignoreCase = true)
                 }
             }
-            if (filtered.isEmpty()) {
+            // The "Default" option participates in the search too: show it when the query is
+            // empty or matches its label/description. Without this it either always showed
+            // (ignoring the filter) or, when a query matched no named agent, disappeared with
+            // the whole list — leaving the default unselectable.
+            val defaultLabel = stringResource(R.string.default_agent)
+            val defaultDesc = stringResource(R.string.default_agent_desc)
+            val q = query.trim()
+            val defaultMatches = q.isEmpty() ||
+                defaultLabel.contains(q, ignoreCase = true) ||
+                defaultDesc.contains(q, ignoreCase = true)
+            if (filtered.isEmpty() && !defaultMatches) {
                 Text(
                     stringResource(R.string.no_agents_match, query.trim()),
                     style = MaterialTheme.typography.bodyMedium,
@@ -118,6 +128,7 @@ fun AgentPickerSheet(
                 )
             } else {
                 LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
+                if (defaultMatches) {
                 item(key = "__default") {
                     Column(
                         modifier = Modifier
@@ -150,6 +161,7 @@ fun AgentPickerSheet(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
+                }
                 }
                 items(filtered, key = { it.name }) { agent ->
                     val isSelected = agent.name == selected

@@ -135,11 +135,14 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
     )
     val undoEvents: SharedFlow<String> = _undoEvents.asSharedFlow()
 
-    /** Session awaiting the undo window to expire before its REST delete fires. */
+    /** Session awaiting the undo window to expire before its REST delete fires. Holds the
+     *  Session so Undo can restore it. */
     // Keyed by session id, not a single field: the undo window lets several deletes be
     // in flight at once, and a single field would let a second delete overwrite the
     // first — dropping the first's server-side delete while it stays removed from the UI.
-    private val pendingDeletes = mutableMapOf<String, Session>()
+    // Concurrent because the delete timer's completion callbacks run on the container's
+    // process-lived scope while the SSE collector mutates this on viewModelScope.
+    private val pendingDeletes = java.util.concurrent.ConcurrentHashMap<String, Session>()
 
     private var previewJob: Job? = null
     private var refreshJob: Job? = null
@@ -183,6 +186,14 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
                 }
                 sessionUpdateJob?.cancel()
                 pendingSessionUpdates.clear()
+                // Cancel any deferred deletes still pending from the previous connection.
+                // Their captured connection is now closed, so they can only fail; letting
+                // them run would fire onError and re-inject a session belonging to the old
+                // server into this (new) server's list. Cancelling drops them cleanly — the
+                // session simply survives on its original server (unavoidable once we've
+                // switched away) rather than appearing as a foreign row here.
+                pendingDeletes.keys.toList().forEach { container.cancelSessionDelete(it) }
+                pendingDeletes.clear()
                 // Reload the session list when a connection becomes available so the
                 // initial load (which may have run before auto-reconnect finished and
                 // found no connection) doesn't leave a stale "not connected" error.
@@ -212,6 +223,10 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
                                     // Drop any buffered update for this id so a pending flush
                                     // can't re-add the just-deleted session to the list.
                                     pendingSessionUpdates.remove(id)
+                                    // The session is gone server-side; cancel any pending local
+                                    // delete so its deferred REST call doesn't later 404 and
+                                    // trigger the failure-restore path that resurrects the row.
+                                    pendingDeletes.remove(id)
                                     container.draftStore.remove(id)
                                     _state.update { s ->
                                         s.copy(
@@ -243,19 +258,22 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         // would otherwise be dropped. The key/value remove overload also leaves a newer
         // value for the same key in place to be flushed on the next pass.
         batch.forEach { (k, v) -> pendingSessionUpdates.remove(k, v) }
+        val changedIds = mutableSetOf<String>()
         _state.update { s ->
+            // Reset per-attempt: MutableStateFlow.update may re-run this lambda on CAS
+            // contention, and we only want the ids that changed in the winning attempt.
+            changedIds.clear()
             val byId = s.sessions.associateBy { it.id }.toMutableMap()
-            var anyChanged = false
             batch.forEach { (id, session) ->
                 // Final guard: never re-add a session that's pending deletion (its undo
                 // window is still open), even if an update slipped into this batch.
-                if (id in pendingDeletes) return@forEach
-                if (byId[id] != session) { byId[id] = session; anyChanged = true }
+                if (pendingDeletes.containsKey(id)) return@forEach
+                if (byId[id] != session) { byId[id] = session; changedIds += id }
             }
             // No-op update: skip the rebuild entirely so the StateFlow doesn't emit a
             // new state (and trigger recomposition) when the batch held no real changes
             // (e.g. a duplicate SessionUpdated for an unchanged session).
-            if (!anyChanged) return@update s
+            if (changedIds.isEmpty()) return@update s
             val sorted = byId.values.sortedByMode(s.sortMode)
             // If the new ordering matches the existing one (e.g. only the already-newest
             // session updated its timestamp), reuse the same list instance so downstream
@@ -263,7 +281,9 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
             val sessions = if (sorted == s.sessions) s.sessions else sorted
             s.copy(sessions = sessions)
         }
-        batch.keys.forEach { loadPreview(it) }
+        // Only refetch previews for sessions that actually changed — a duplicate
+        // SessionUpdated for an unchanged session shouldn't trigger a full-history download.
+        changedIds.forEach { loadPreview(it) }
     }
 
     fun setQuery(query: String) {
@@ -290,7 +310,11 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
             return
         }
         _serverLabel.value = conn.profile.displayLabel
-        _state.update { it.copy(loading = true, error = null) }
+        // Only show the full-screen spinner on the initial load (empty list). For a
+        // pull-to-refresh or SSE-reconnect refresh with an existing list, the dedicated
+        // PullToRefreshBox indicator (_refreshing) covers it — flipping `loading` here
+        // would blank the populated list behind a centered spinner.
+        _state.update { it.copy(loading = it.sessions.isEmpty(), error = null) }
         _refreshing.value = true
         refreshJob?.cancel()
         refreshJob = viewModelScope.launch {
@@ -298,7 +322,11 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
             try {
                 runCatchingCancellable { conn.repository.listSessions() }
                     .onSuccess { list ->
-                        val sorted = list.sortedByMode(_state.value.sortMode)
+                        // Drop sessions that were optimistically deleted but whose deferred
+                        // REST delete hasn't fired yet — the server still returns them, and
+                        // re-adding them here would resurrect a just-hidden row (and later
+                        // collide on the LazyColumn id key when undo/restore re-appends it).
+                        val sorted = list.filterNot { pendingDeletes.containsKey(it.id) }.sortedByMode(_state.value.sortMode)
                         _state.update { it.copy(sessions = sorted, loading = false, error = null) }
                         loadPreviews(sorted)
                     }
@@ -414,33 +442,44 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         // undo window can't re-add the row we just optimistically hid.
         pendingSessionUpdates.remove(session.id)
         _undoEvents.tryEmit(session.id)
-        viewModelScope.launch {
-            delay(NetworkConfig.undoDeleteDelayMs)
-            // If undo ran, this id was already removed — remove() returning null means
-            // "don't delete". Removing by id also can't be clobbered by a later delete.
-            if (pendingDeletes.remove(session.id) != null) {
-                val conn = container.activeConnection.value ?: return@launch
-                runCatchingCancellable { conn.repository.deleteSession(session.id) }
-                    .onSuccess {
-                        container.draftStore.remove(session.id)
-                        refresh()
-                    }
-                    .onFailure {
-                        // Restore the session to the list since the delete failed.
-                        _state.update { s -> s.copy(sessions = (s.sessions + session).sortedByMode(s.sortMode)) }
-                        _transientErrors.tryEmit(container.friendlyError(it))
-                    }
-            }
-        }
+        // Run the deferred delete on the container's process-lived scope, not viewModelScope:
+        // if this VM is cleared during the undo window (e.g. a disconnect pops the session
+        // list), a viewModelScope job would be cancelled and the server-side delete would
+        // never fire — the row was already optimistically hidden, so the session would
+        // silently resurrect on the next refresh. The container also clears the stored draft.
+        container.scheduleSessionDelete(
+            id = session.id,
+            delayMs = NetworkConfig.undoDeleteDelayMs,
+            onDeleted = {
+                pendingDeletes.remove(session.id)
+                refresh()
+            },
+            onError = {
+                // Restore the session since the delete failed (or there was no connection to
+                // delete on). Guard against a concurrent refresh having already re-added it so
+                // we never produce two rows with the same id.
+                pendingDeletes.remove(session.id)
+                _state.update { s ->
+                    s.copy(sessions = (s.sessions.filterNot { it.id == session.id } + session).sortedByMode(s.sortMode))
+                }
+                _transientErrors.tryEmit(container.friendlyError(it))
+            },
+        )
     }
 
     /** Cancel a pending delete (Undo snackbar action) and restore the session. */
     fun undoDelete(sessionId: String) {
-        val pending = pendingDeletes.remove(sessionId)
-        if (pending != null) {
-            _state.update { s ->
-                s.copy(sessions = (s.sessions + pending).sortedByMode(s.sortMode))
-            }
+        // Cancel the deferred container-scoped delete first. If it already fired (cancel
+        // returns false), the delete is committing/committed — drop the token and don't
+        // restore, so we never re-add a session that's gone on the server.
+        if (!container.cancelSessionDelete(sessionId)) {
+            pendingDeletes.remove(sessionId)
+            return
+        }
+        val pending = pendingDeletes.remove(sessionId) ?: return
+        _state.update { s ->
+            // Dedup by id in case a refresh during the undo window already re-added it.
+            s.copy(sessions = (s.sessions.filterNot { it.id == pending.id } + pending).sortedByMode(s.sortMode))
         }
     }
 
@@ -492,12 +531,16 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
                         savedUnread.forEach { (id, count) -> container.restoreUnread(id, count) }
                         if (restored.isSuccess) {
                             // Clear stale sessions from the old server; the SSE observer
-                            // will reload from the restored connection via refresh().
+                            // will reload from the restored connection via refresh(). Preserve
+                            // the user's sort mode and search query — the switch failed and they
+                            // were bounced back to the same server, so resetting those (via a
+                            // fresh SessionListState) would be an unexpected loss on an error path.
                             _state.update {
-                                SessionListState(
+                                it.copy(
                                     sessions = emptyList(),
                                     previews = emptyMap(),
                                     loading = false,
+                                    error = null,
                                 )
                             }
                             // Surface the switch failure as a transient snackbar — refresh()

@@ -178,8 +178,13 @@ private fun AssistantBlock(
                 )
             }
         }
-        for (part in message.parts) {
-            PartView(part, isRunning = isRunning, modifier = Modifier.fillMaxWidth(), imageContext = imageContext, onOpenFile = onOpenFile)
+        message.parts.forEachIndexed { index, part ->
+            // Only the final part of a running message is actively streaming; earlier parts
+            // (a finished reasoning block, a completed tool call) are already done, so passing
+            // isRunning to all of them would keep a completed reasoning block showing the
+            // "Thinking…" spinner until the whole message finishes.
+            val partStreaming = isRunning && index == message.parts.lastIndex
+            PartView(part, isRunning = partStreaming, modifier = Modifier.fillMaxWidth(), imageContext = imageContext, onOpenFile = onOpenFile)
         }
         if (info is AssistantMessage) {
             val cost = info.cost
@@ -193,7 +198,9 @@ private fun AssistantBlock(
             val costSummary = remember(info.isComplete, tokens, cost, tokenFormat, costShort, costLong) {
                 if (!info.isComplete || (cost == null && tokens == null)) null
                 else buildList {
-                    tokens?.let { add(formatTokens(it, tokenFormat)) }
+                    // Skip an all-zero token count (e.g. a completed message that reported no
+                    // usage) so the bubble doesn't show a meaningless "0 in · 0 out".
+                    tokens?.takeIf { it.input > 0 || it.output > 0 }?.let { add(formatTokens(it, tokenFormat)) }
                     cost?.takeIf { it > 0 }?.let { add(formatCost(it, costShort, costLong)) }
                 }.takeIf { it.isNotEmpty() }?.joinToString("  •  ")
             }

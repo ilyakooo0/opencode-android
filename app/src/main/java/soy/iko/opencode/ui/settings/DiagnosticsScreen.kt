@@ -51,7 +51,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import soy.iko.opencode.util.runCatchingCancellable
@@ -95,6 +99,35 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
     val shareLabel = stringResource(R.string.share)
     val shareSubject = stringResource(R.string.crash_report_share_subject)
     val timeTick = rememberRelativeTimeTick()
+
+    // Report-delete undo events, shown via a single collectLatest collector rather than a
+    // per-confirm launch. A serialized showSnackbar would queue each report's undo behind
+    // the previous one's full window, so under rapid deletes a later report's delete timer
+    // (started at confirm time) fires before its snackbar is ever shown — a dead Undo
+    // button. collectLatest cancels the current snackbar and shows the newest immediately,
+    // keeping each Undo window aligned with its own timer. Mirrors ServerListScreen.
+    val reportDeleteEvents = remember {
+        MutableSharedFlow<String>(extraBufferCapacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+    }
+    LaunchedEffect(Unit) {
+        reportDeleteEvents.collectLatest { name ->
+            coroutineScope {
+                val dismisser = launch {
+                    delay(NetworkConfig.undoReportDeleteDelayMs)
+                    snackbar.currentSnackbarData?.dismiss()
+                }
+                val result = snackbar.showSnackbar(
+                    message = reportDeletedLabel,
+                    actionLabel = undoLabel,
+                    duration = SnackbarDuration.Indefinite,
+                )
+                dismisser.cancel()
+                if (result == SnackbarResult.ActionPerformed) {
+                    logger.cancelScheduledDelete(name)
+                }
+            }
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -244,18 +277,24 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
             },
             dismissButton = {
                 Row {
-                    TextButton(onClick = {
-                        val send = Intent(Intent.ACTION_SEND).apply {
-                            type = "text/plain"
-                            putExtra(Intent.EXTRA_SUBJECT, shareSubject)
-                            putExtra(Intent.EXTRA_TEXT, content.orEmpty())
-                        }
-                        runCatchingCancellable { context.startActivity(Intent.createChooser(send, shareLabel)) }
-                            .onFailure {
-                                Log.w("Diagnostics", "Failed to share crash report", it)
-                                showToast(context, context.getString(R.string.no_share_app))
+                    TextButton(
+                        // Disable Share until the report has loaded — otherwise tapping it
+                        // while the async read is still in flight (content == null) shares an
+                        // empty body instead of the report.
+                        enabled = content != null,
+                        onClick = {
+                            val send = Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(Intent.EXTRA_SUBJECT, shareSubject)
+                                putExtra(Intent.EXTRA_TEXT, content.orEmpty())
                             }
-                    }) { Text(stringResource(R.string.share)) }
+                            runCatchingCancellable { context.startActivity(Intent.createChooser(send, shareLabel)) }
+                                .onFailure {
+                                    Log.w("Diagnostics", "Failed to share crash report", it)
+                                    showToast(context, context.getString(R.string.no_share_app))
+                                }
+                        },
+                    ) { Text(stringResource(R.string.share)) }
                     Spacer(Modifier.size(8.dp))
                     TextButton(onClick = {
                         // Confirm before deleting a single report, matching clear-all.
@@ -308,28 +347,11 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                     viewing = null
                     // Defer the actual delete so the Undo snackbar can cancel it. The
                     // deletion is owned by the CrashLogger's own scope, so it commits even
-                    // if the user navigates away during the undo window (the screen's
-                    // shareScope would otherwise cancel it, silently dropping the delete).
+                    // if the user navigates away during the undo window. The Undo snackbar
+                    // is shown by the single collectLatest collector above (not a per-confirm
+                    // launch) so rapid consecutive deletes don't produce a dead Undo button.
                     logger.scheduleDelete(name, NetworkConfig.undoReportDeleteDelayMs)
-                    shareScope.launch {
-                        // Indefinite + a matching timed dismiss keeps the Undo button
-                        // visible for exactly the undo window and no longer: a fixed
-                        // SnackbarDuration.Long (~10s) outlasted the 5s window, leaving
-                        // the button on screen but dead for its second half.
-                        val dismisser = launch {
-                            delay(NetworkConfig.undoReportDeleteDelayMs)
-                            snackbar.currentSnackbarData?.dismiss()
-                        }
-                        val result = snackbar.showSnackbar(
-                            message = reportDeletedLabel,
-                            actionLabel = undoLabel,
-                            duration = SnackbarDuration.Indefinite,
-                        )
-                        dismisser.cancel()
-                        if (result == SnackbarResult.ActionPerformed) {
-                            logger.cancelScheduledDelete(name)
-                        }
-                    }
+                    reportDeleteEvents.tryEmit(name)
                 }) { Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = {

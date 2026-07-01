@@ -11,6 +11,8 @@ import androidx.security.crypto.MasterKey
 import soy.iko.opencode.data.model.ServerProfile
 import soy.iko.opencode.data.network.OpencodeJson
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
@@ -33,8 +35,12 @@ open class ProfileStore private constructor(
 
     private val profilesKey = stringPreferencesKey("profiles_json")
 
-    /** Guards [migrateFallbackPasswords] so it runs at most once per process, not on every DataStore emission. */
-    private val migrationDone = java.util.concurrent.atomic.AtomicBoolean(false)
+    /** Guards [migrateFallbackPasswords] so it runs at most once per process, not on every
+     *  DataStore emission. The mutex serializes concurrent callers so a second collector waits
+     *  for the migration's writes to land (rather than skipping ahead and reading empty secure
+     *  prefs mid-migration); [migrationDone] is only set true *after* the writes complete. */
+    private val migrationMutex = Mutex()
+    @Volatile private var migrationDone = false
 
     private val securePrefs: SharedPreferences? by lazy {
         val ctx = appContext ?: return@lazy null
@@ -71,26 +77,42 @@ open class ProfileStore private constructor(
      *  then clear the fallback. Runs at most once per process — subsequent calls
      *  are no-ops — so DataStore re-emissions don't repeatedly scan SharedPreferences. */
     private suspend fun migrateFallbackPasswords() {
-        if (!migrationDone.compareAndSet(false, true)) return
-        val secure = securePrefs ?: return
-        withContext(Dispatchers.IO) {
-            val fallbackKeys = fallbackPrefs.all.keys.filter { it.startsWith("pw_") }
-            if (fallbackKeys.isEmpty()) return@withContext
-            // Write passwords to the secure store FIRST, then remove them from the
-            // plaintext fallback. SharedPreferences.apply() persists to disk
-            // asynchronously, so removing from fallback before the secure batch lands
-            // could lose the password if the process dies between the two writes.
-            // Writing secure first makes the worst case a harmless duplicate (both
-            // stores hold it; the migration is idempotent) rather than data loss.
-            secure.edit().apply {
-                for (key in fallbackKeys) {
-                    val pw = fallbackPrefs.getString(key, null) ?: continue
-                    putString(key, pw)
+        if (migrationDone) return
+        migrationMutex.withLock {
+            // Re-check inside the lock: a concurrent caller may have completed the migration
+            // while we were waiting. Serializing here (rather than a bare compareAndSet that
+            // marks done before doing the work) ensures a second collector doesn't read the
+            // secure store before the first caller's write has populated it.
+            if (migrationDone) return
+            val secure = securePrefs
+            if (secure == null) {
+                // No secure store to migrate into; nothing to do, and no point retrying.
+                migrationDone = true
+                return
+            }
+            withContext(Dispatchers.IO) {
+                val fallbackKeys = fallbackPrefs.all.keys.filter { it.startsWith("pw_") }
+                if (fallbackKeys.isNotEmpty()) {
+                    // Write passwords to the secure store FIRST, then remove them from the
+                    // plaintext fallback. SharedPreferences.apply() persists to disk
+                    // asynchronously, so removing from fallback before the secure batch lands
+                    // could lose the password if the process dies between the two writes.
+                    // Writing secure first makes the worst case a harmless duplicate (both
+                    // stores hold it; the migration is idempotent) rather than data loss.
+                    secure.edit().apply {
+                        for (key in fallbackKeys) {
+                            val pw = fallbackPrefs.getString(key, null) ?: continue
+                            putString(key, pw)
+                        }
+                    }.apply()
+                    fallbackPrefs.edit().apply {
+                        for (key in fallbackKeys) remove(key)
+                    }.apply()
                 }
-            }.apply()
-            fallbackPrefs.edit().apply {
-                for (key in fallbackKeys) remove(key)
-            }.apply()
+            }
+            // Only mark done once the writes are in the secure store's in-memory cache (apply()
+            // updates it synchronously), so the next collector past the mutex reads real values.
+            migrationDone = true
         }
     }
 

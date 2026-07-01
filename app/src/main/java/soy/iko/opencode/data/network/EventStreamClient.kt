@@ -68,10 +68,22 @@ open class EventStreamClient(
     /** Conflated channel used to cut the reconnect backoff short when network returns. */
     private val reconnectSignal = Channel<Unit>(Channel.CONFLATED)
 
-    /** Returns true if the exception is an SSE auth failure (401/403) that should stop retrying. */
+    /** Returns true if the exception is an SSE auth failure (401/403) that should stop retrying.
+     *  ktor's SSE builder wraps establishment failures in [io.ktor.client.plugins.sse.SSEClientException]
+     *  (an IllegalStateException, NOT a ClientRequestException), attaching the response and keeping any
+     *  underlying ClientRequestException only as the cause — so we inspect the wrapper's response status
+     *  and walk the whole cause chain rather than matching a single exception type. */
     private fun isSseAuthFailure(e: Throwable): Boolean =
-        e is io.ktor.client.plugins.ClientRequestException &&
-            (e.response.status.value == 401 || e.response.status.value == 403)
+        generateSequence(e as Throwable?) { it.cause.takeIf { c -> c !== it } }
+            .take(16)
+            .mapNotNull { t ->
+                when (t) {
+                    is io.ktor.client.plugins.sse.SSEClientException -> t.response?.status?.value
+                    is io.ktor.client.plugins.ClientRequestException -> t.response.status.value
+                    else -> null
+                }
+            }
+            .any { it == 401 || it == 403 }
 
     /** Request an immediate reconnect, skipping any in-progress backoff. */
     open fun triggerReconnect() { reconnectSignal.trySend(Unit) }

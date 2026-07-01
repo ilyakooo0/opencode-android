@@ -133,7 +133,7 @@ fun FileViewScreen(
                 loading = state.loading,
                 content = rawText,
                 wrap = wrap,
-                showDiff = showDiff,
+                inDiffMode = showToggle && showDiff,
                 onBack = onBack,
                 onReload = { vm.reload() },
                 onToggleFind = { findActive = !findActive; if (!findActive) findQuery = "" },
@@ -159,6 +159,17 @@ fun FileViewScreen(
                 transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(180)) },
                 label = "fileViewState",
             ) { s ->
+                // Derive match indices from THIS layer's content (s), not the outer/newest
+                // state. During the crossfade the exiting layer still renders the old
+                // content; passing the outer matchIndices (computed from the new content)
+                // would highlight and scroll the wrong lines until the animation settles.
+                val sMatchIndices = remember(s.content?.content, findQuery) {
+                    val q = findQuery.trim()
+                    if (q.isEmpty()) emptyList()
+                    else (s.content?.content.orEmpty()).split("\n")
+                        .mapIndexed { index, line -> if (line.contains(q, ignoreCase = true)) index else -1 }
+                        .filter { it >= 0 }
+                }
                 FileViewStateContent(
                     state = s,
                     filename = filename,
@@ -175,7 +186,7 @@ fun FileViewScreen(
                     findActive = findActive,
                     findQuery = findQuery,
                     onQueryChange = { findQuery = it; matchPos = 0 },
-                    matchIndices = matchIndices,
+                    matchIndices = sMatchIndices,
                     matchPos = matchPos,
                     onPrev = { if (matchIndices.isNotEmpty()) matchPos = (matchPos - 1 + matchIndices.size) % matchIndices.size },
                     onNext = { if (matchIndices.isNotEmpty()) matchPos = (matchPos + 1) % matchIndices.size },
@@ -196,7 +207,7 @@ private fun FileViewTopBar(
     loading: Boolean,
     content: String,
     wrap: Boolean,
-    showDiff: Boolean,
+    inDiffMode: Boolean,
     onBack: () -> Unit,
     onReload: () -> Unit,
     onToggleFind: () -> Unit,
@@ -218,11 +229,12 @@ private fun FileViewTopBar(
                 Icon(Icons.Filled.Refresh, contentDescription = stringResource(R.string.refresh))
             }
             if (content.isNotEmpty()) {
-                // Find-in-file: toggles a search bar over the raw content. Disabled in
-                // diff mode — the find bar searches the raw text and scrolls the line
-                // LazyColumn, neither of which is visible when the DiffView is shown, so
-                // find would silently no-op. The user can switch to Raw to find.
-                IconButton(onClick = onToggleFind, enabled = !showDiff) {
+                // Find-in-file: toggles a search bar over the raw content. Disabled only when
+                // the DiffView is actually on screen ([inDiffMode]) — the find bar searches the
+                // raw text and scrolls the line LazyColumn, neither of which is visible under a
+                // diff, so find would silently no-op there. A plain file with no diff (the common
+                // case) shows raw text, so find must stay enabled. The user can switch to Raw to find.
+                IconButton(onClick = onToggleFind, enabled = !inDiffMode) {
                     Icon(Icons.Filled.Search, contentDescription = stringResource(R.string.find_in_file))
                 }
                 // Wrap long lines instead of horizontal-scrolling, useful for prose.
@@ -327,9 +339,21 @@ private fun BoxScope.FileViewContentBody(
     // height (not a hardcoded 52dp/row) so accessibility font scaling — which can
     // make the FilterChip labels and FindBar text field taller than 52dp — doesn't
     // cause the first lines of content to hide behind the overlay.
-    val overlayRows = (if (showToggle) 1 else 0) + (if (findActive && !showDiff) 1 else 0)
+    // The raw text is on screen whenever we're NOT rendering the diff — i.e. either the
+    // file has no diff toggle at all (plain file: showToggle == false) or the toggle is
+    // set to Raw. Gate the find bar on this rather than on !showDiff: for a plain file
+    // showDiff stays at its `true` default forever (nothing ever flips it), so !showDiff
+    // would keep the find bar — and therefore find-in-file — permanently hidden.
+    val rawOnScreen = !(showToggle && showDiff)
+    val overlayRows = (if (showToggle) 1 else 0) + (if (findActive && rawOnScreen) 1 else 0)
     var overlayHeightPx by remember { mutableIntStateOf(0) }
-    val topInset = with(androidx.compose.ui.platform.LocalDensity.current) { overlayHeightPx.toDp() }
+    // Only apply the measured inset while an overlay is actually composed. When overlayRows
+    // drops to 0 the overlay Column is removed and onSizeChanged never fires to zero the
+    // height, so keying the inset off overlayRows (rather than the stale measurement) avoids
+    // a phantom top gap on the content below — e.g. after closing find on a plain file.
+    val topInset = if (overlayRows > 0) {
+        with(androidx.compose.ui.platform.LocalDensity.current) { overlayHeightPx.toDp() }
+    } else 0.dp
     if (overlayRows > 0) {
         Column(
             modifier = Modifier
@@ -357,7 +381,7 @@ private fun BoxScope.FileViewContentBody(
                     )
                 }
             }
-            if (findActive && !showDiff) {
+            if (findActive && rawOnScreen) {
                 FindBar(
                     query = findQuery,
                     onQueryChange = onQueryChange,

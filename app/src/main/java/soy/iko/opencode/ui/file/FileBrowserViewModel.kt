@@ -72,8 +72,11 @@ class FileBrowserViewModel(private val container: AppContainer) : ViewModel() {
                 loadStatus()
                 // Re-open the current directory when a connection becomes available
                 // so the initial open("") (which may have run before auto-reconnect
-                // finished and found no connection) doesn't leave a stale error.
-                open(_state.value.path)
+                // finished and found no connection) doesn't leave a stale error. But if
+                // the user is mid-search, re-run the search instead — open() resets
+                // query/results and would silently discard their in-progress search.
+                if (_state.value.isSearching) setQuery(_state.value.query)
+                else open(_state.value.path)
             }
         }
     }

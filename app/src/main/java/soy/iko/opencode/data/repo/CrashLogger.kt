@@ -60,8 +60,14 @@ class CrashLogger private constructor(private val appContext: Context) {
         scope.launch { runCatchingCancellable { refresh() } }
     }
 
+    /** Monotonic guard so a slower earlier scan can't overwrite a newer one's result.
+     *  refresh() runs on the multi-threaded IO dispatcher from several call sites
+     *  (install/deleteReport/scheduleDelete/clearAll), so two scans can overlap. */
+    private val refreshGeneration = java.util.concurrent.atomic.AtomicLong(0)
+
     fun refresh() {
-        _reports.value = crashDir.listFiles { f -> f.isFile && f.name.endsWith(".txt") }
+        val generation = refreshGeneration.incrementAndGet()
+        val scanned = crashDir.listFiles { f -> f.isFile && f.name.endsWith(".txt") }
             ?.sortedByDescending { it.lastModified() }
             ?.map { f ->
                 CrashReport(
@@ -71,6 +77,9 @@ class CrashLogger private constructor(private val appContext: Context) {
                 )
             }
             .orEmpty()
+        // Publish only if no newer refresh has started meanwhile, so a stale scan (e.g. one
+        // that started before a delete) can't momentarily re-show a just-removed report.
+        if (generation == refreshGeneration.get()) _reports.value = scanned
     }
 
     fun readReport(fileName: String): String? {
@@ -102,14 +111,19 @@ class CrashLogger private constructor(private val appContext: Context) {
     fun scheduleDelete(fileName: String, delayMs: Long) {
         val job = scope.launch {
             delay(delayMs)
+            // Atomically claim the delete by removing our own map entry BEFORE deleting.
+            // The remove is the synchronization point with cancelScheduledDelete: whichever
+            // removes the entry first wins. If an undo raced the timer and removed it first,
+            // this returns false and we skip the delete — so the file survives, matching the
+            // `true` that cancel returned to the UI. Deleting first (then removing) would let
+            // a cancel land in the gap and falsely report "undo succeeded" for a gone file.
+            // remove(name, thisJob) also no-ops for a stale job after a reschedule.
+            val claimed = coroutineContext[Job]?.let { pendingDeletes.remove(fileName, it) } == true
+            if (!claimed) return@launch
             val file = File(crashDir, fileName).canonicalFile
             if (file.path.startsWith(crashDir.canonicalPath + File.separator)) {
                 file.delete()
             }
-            // Remove only if this job is still the registered one. A reschedule for the
-            // same name replaces the map entry with a new job; an unconditional remove
-            // here would evict that newer job's entry, leaking it from cancellation.
-            coroutineContext[Job]?.let { pendingDeletes.remove(fileName, it) }
             refresh()
         }
         pendingDeletes.put(fileName, job)?.cancel()

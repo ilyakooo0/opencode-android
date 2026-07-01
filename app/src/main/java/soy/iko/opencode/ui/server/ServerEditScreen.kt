@@ -71,10 +71,13 @@ fun ServerEditScreen(
     var passwordVisible by rememberSaveable { mutableStateOf(false) }
 
     fun safeExit() {
-        if (state.isDirty && !state.saving) {
-            showDiscardConfirm = true
-        } else {
-            onDone()
+        when {
+            // A save is in flight: ignore the back gesture (matching the BackHandler guard
+            // below). Popping here would cancel the save's viewModelScope coroutine and
+            // silently abandon the write; the VM calls onDone itself once the save lands.
+            state.saving -> Unit
+            state.isDirty -> showDiscardConfirm = true
+            else -> onDone()
         }
     }
 
@@ -319,7 +322,10 @@ private fun AuthFields(
         )
         OutlinedButton(
             onClick = onTestCredentials,
-            enabled = state.canSave && !state.testingCredentials && !state.saving,
+            // Require at least one credential field: testCredentials() no-ops when both are
+            // blank, so without this the button is tappable but silently does nothing.
+            enabled = state.canSave && !state.testingCredentials && !state.saving &&
+                (state.username.isNotBlank() || state.password.isNotBlank()),
             modifier = Modifier.fillMaxWidth().testTag("server_test_creds"),
         ) {
             if (state.testingCredentials) {

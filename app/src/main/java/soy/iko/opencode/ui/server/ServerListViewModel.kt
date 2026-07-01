@@ -8,7 +8,6 @@ import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
 import soy.iko.opencode.util.runCatchingCancellable
 import kotlinx.coroutines.channels.BufferOverflow
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -60,12 +59,6 @@ class ServerListViewModel(private val container: AppContainer) : ViewModel() {
     )
     val undoEvents: SharedFlow<String> = _undoEvents.asSharedFlow()
 
-    /** Profile awaiting the undo window to expire before its REST delete fires. */
-    // Keyed by profile id, not a single field: several deletes can overlap within the
-    // undo window, and a single field would let the second overwrite the first — leaving
-    // the first profile in the store forever while it's hidden from the list.
-    private val pendingDeletes = mutableMapOf<String, ServerProfile>()
-
     fun connect(profile: ServerProfile, onConnected: () -> Unit) {
         if (_connecting.value != null) return
         _connecting.value = profile.id
@@ -104,7 +97,6 @@ class ServerListViewModel(private val container: AppContainer) : ViewModel() {
      * hidden by the optimistic removal, and the undo re-shows it without reconnecting.
      */
     fun delete(profile: ServerProfile) {
-        pendingDeletes[profile.id] = profile
         // Optimistically hide the row so the UI feels instant; undo re-shows it.
         _hiddenIds.update { it + profile.id }
         if (container.activeConnection.value?.profile?.id == profile.id) {
@@ -113,27 +105,29 @@ class ServerListViewModel(private val container: AppContainer) : ViewModel() {
             viewModelScope.launch { container.disconnect() }
         }
         _undoEvents.tryEmit(profile.id)
-        viewModelScope.launch {
-            delay(NetworkConfig.undoServerDeleteDelayMs)
-            if (pendingDeletes.remove(profile.id) != null) {
-                runCatchingCancellable { container.profileStore.delete(profile.id) }
-                    .onSuccess {
-                        // Drop the optimistic hide only after the store has emitted the
-                        // removal, so the row doesn't flash back before the list updates.
-                        _hiddenIds.update { it - profile.id }
-                    }
-                    .onFailure {
-                        // Delete failed: re-show the row so it isn't hidden forever.
-                        _hiddenIds.update { it - profile.id }
-                        _errorEvents.tryEmit(ConnectError(container.friendlyError(it), null))
-                    }
-            }
-        }
+        // Run the deferred delete on the container's process-lived scope, not viewModelScope:
+        // if the user navigates away from the server list within the undo window, a
+        // viewModelScope job would be cancelled and the profile would never be deleted
+        // (reappearing on return). The container owns the timer and the undo cancellation.
+        container.scheduleProfileDelete(
+            id = profile.id,
+            delayMs = NetworkConfig.undoServerDeleteDelayMs,
+            onDeleted = {
+                // Drop the optimistic hide only after the store has emitted the
+                // removal, so the row doesn't flash back before the list updates.
+                _hiddenIds.update { it - profile.id }
+            },
+            onError = {
+                // Delete failed: re-show the row so it isn't hidden forever.
+                _hiddenIds.update { it - profile.id }
+                _errorEvents.tryEmit(ConnectError(container.friendlyError(it), null))
+            },
+        )
     }
 
     /** Cancel a pending delete (Undo snackbar action) and re-show the hidden row. */
     fun undoDelete(profileId: String) {
-        pendingDeletes.remove(profileId)
+        container.cancelProfileDelete(profileId)
         _hiddenIds.update { it - profileId }
     }
 }

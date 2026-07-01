@@ -132,7 +132,12 @@ fun FileBrowserScreen(
                                 color = MaterialTheme.colorScheme.error,
                             )
                             androidx.compose.foundation.layout.Spacer(Modifier.size(12.dp))
-                            androidx.compose.material3.TextButton(onClick = { vm.open(state.path) }) {
+                            // Retry the operation that actually failed: re-run the search
+                            // when one was active (open() would reset the query and drop the
+                            // user back into the directory listing), otherwise reload the dir.
+                            androidx.compose.material3.TextButton(
+                                onClick = { if (state.isSearching) vm.setQuery(state.query) else vm.open(state.path) },
+                            ) {
                                 Text(stringResource(R.string.retry))
                             }
                         }

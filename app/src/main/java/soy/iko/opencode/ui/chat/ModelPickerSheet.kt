@@ -111,7 +111,7 @@ fun ModelPickerSheet(
             }
             if (filtered.isEmpty()) {
                 Text(
-                    stringResource(R.string.no_models_match),
+                    stringResource(R.string.no_models_match, query.trim()),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp),

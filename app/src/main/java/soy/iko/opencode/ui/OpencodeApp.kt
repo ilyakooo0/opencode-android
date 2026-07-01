@@ -70,20 +70,30 @@ fun OpencodeApp(container: AppContainer) {
         val isTwoPane = maxWidth >= NetworkConfig.twoPaneWidthThresholdDp.dp && connection != null
 
         // Open a session requested by a notification tap or deep link, once connected.
-        // In two-pane mode the detail pane consumes the request instead of navigating.
-        // Ensure SESSIONS is on the back stack below the chat destination so backing
-        // out of the chat lands on the session list (not the server list). The
-        // ServerListScreen's auto-connect also navigates to SESSIONS; without this
-        // popUpTo guard the two navigations race and can leave the stack as
-        // SERVERS -> chat (missing SESSIONS) or chat buried under SESSIONS.
         LaunchedEffect(pendingOpenSession, connection, isTwoPane) {
             val id = pendingOpenSession ?: return@LaunchedEffect
-            if (connection == null || isTwoPane) return@LaunchedEffect
-            container.consumePendingOpenSession()
-            navController.navigate(Routes.chat(id)) {
-                launchSingleTop = true
-                popUpTo(Routes.SERVERS) { inclusive = false }
+            if (connection == null) return@LaunchedEffect
+            // In two-pane mode the detail pane (TwoPaneSessionChat, hosted on the SESSIONS
+            // route) consumes the request and opens it in the detail pane. But it only
+            // exists while the NavHost is on SESSIONS, so if the user is currently on
+            // Files/Settings/FileView bring SESSIONS back to front first — otherwise the
+            // pending request is never consumed and the session never opens. Don't consume
+            // here; let TwoPaneSessionChat's effect do it once it's composed.
+            if (isTwoPane) {
+                if (!navController.popBackStack(Routes.SESSIONS, inclusive = false)) {
+                    navController.navigate(Routes.SESSIONS) { launchSingleTop = true }
+                }
+                return@LaunchedEffect
             }
+            container.consumePendingOpenSession()
+            // Ensure SESSIONS sits on the back stack below the chat destination so backing
+            // out of the chat lands on the session list (not the server list). Bring SESSIONS
+            // to front (or push it if a cold-start deep link left only SERVERS on the stack),
+            // then push chat on top — yielding SERVERS -> SESSIONS -> chat.
+            if (!navController.popBackStack(Routes.SESSIONS, inclusive = false)) {
+                navController.navigate(Routes.SESSIONS) { launchSingleTop = true }
+            }
+            navController.navigate(Routes.chat(id)) { launchSingleTop = true }
         }
 
         NavHost(
@@ -100,7 +110,17 @@ fun OpencodeApp(container: AppContainer) {
         composable(Routes.SERVERS) {
             ServerListScreen(
                 container = container,
-                onConnected = { navController.navigate(Routes.SESSIONS) },
+                onConnected = {
+                    // Only leave the server list if we're still on it. A pending deep-link /
+                    // notification open sets activeConnection (which drives the open-session
+                    // effect: SERVERS -> SESSIONS -> chat) *before* autoConnectDone fires this
+                    // callback, so a blind navigate(SESSIONS) here would slam a second SESSIONS
+                    // on top of the chat it just opened, burying it. Order-independent: if the
+                    // deep link already navigated away from SERVERS, this is a no-op.
+                    if (navController.currentDestination?.route == Routes.SERVERS) {
+                        navController.navigate(Routes.SESSIONS) { launchSingleTop = true }
+                    }
+                },
                 onAddProfile = { navController.navigate(Routes.serverEdit()) },
                 onEditProfile = { id -> navController.navigate(Routes.serverEdit(id)) },
                 onDuplicateProfile = { id -> navController.navigate(Routes.serverEditDuplicate(id)) },

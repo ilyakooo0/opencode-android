@@ -263,6 +263,11 @@ private fun ToolCallView(part: ToolPart, modifier: Modifier) {
                 detail = pretty,
                 isDiff = false,
                 keySuffix = "input",
+                // The input block has a label row whose collapse toggle announces its state
+                // via stateDescription; pass the strings so TalkBack reads "expanded"/"collapsed"
+                // rather than an empty state (the defaults are "").
+                expandedState = stringResource(R.string.state_expanded),
+                collapsedState = stringResource(R.string.state_collapsed),
             )
         }
         val detail = when (val s = part.state) {

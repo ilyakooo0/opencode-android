@@ -42,7 +42,11 @@ fun PermissionDialog(
     val haptics = LocalHapticFeedback.current
     // Guard against double-respond: back press + button tap, or rapid double-tap,
     // could call onRespond twice. Once a response is sent, subsequent calls are no-ops.
-    var responded by rememberSaveable { mutableStateOf(false) }
+    // Keyed on permission.id: the host mounts this dialog against a conflating StateFlow,
+    // so a null -> permissionB transition can collapse to just permissionB, reusing this
+    // composable for a different permission. Without the key `responded` would stay true
+    // and every button (and back-press) would be a no-op — an undismissable modal.
+    var responded by rememberSaveable(permission.id) { mutableStateOf(false) }
     val respond: (PermissionResponse) -> Unit = { response ->
         if (!responded) {
             responded = true

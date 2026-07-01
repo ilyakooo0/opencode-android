@@ -3,11 +3,14 @@ package soy.iko.opencode.di
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
+import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.util.Log
+import soy.iko.opencode.data.model.AssistantMessage
 import soy.iko.opencode.data.model.BusEvent
 import soy.iko.opencode.data.model.MessagePartUpdated
 import soy.iko.opencode.data.model.MessageUpdated
+import soy.iko.opencode.data.model.StepFinishPart
 import soy.iko.opencode.data.model.ServerProfile
 import soy.iko.opencode.data.model.SessionIdle
 import soy.iko.opencode.data.repo.DraftStore
@@ -35,6 +38,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
@@ -297,7 +301,7 @@ open class AppContainer private constructor(
                     }
                     // Track sessions actively streaming so we know which idle events
                     // represent a finished run worth notifying about.
-                    if (event is MessagePartUpdated || event is MessageUpdated) {
+                    if (isLiveRunActivity(event)) {
                         synchronized(activeRuns) {
                             if (activeRuns.size >= activeRunsLimit) {
                                 activeRuns.remove(activeRuns.iterator().next())
@@ -311,6 +315,24 @@ open class AppContainer private constructor(
                 delay(NetworkConfig.observerRetryDelayMs)
             }
         }
+    }
+
+    /** True if [event] is live streaming activity worth tracking as an active run. A
+     *  trailing message.updated that lands *after* the run finished (final cost/token totals,
+     *  carrying a completion time) is NOT live streaming: with no further SessionIdle to
+     *  follow it, re-adding the session would pin anyRunActive true indefinitely. */
+    private fun isLiveRunActivity(event: BusEvent): Boolean {
+        if (event !is MessagePartUpdated && event !is MessageUpdated) return false
+        val info = (event as? MessageUpdated)?.properties?.info
+        if (info is AssistantMessage && info.isComplete) return false
+        // A step-finish part is the trailing completion marker for a run (it carries the
+        // final cost/token totals) and arrives after the last stream delta. Like a completed
+        // message.updated, treating it as live would re-add the session to activeRuns with no
+        // following SessionIdle to clear it — pinning anyRunActive true indefinitely when such
+        // a part is replayed/reordered after the run already went idle.
+        val part = (event as? MessagePartUpdated)?.properties?.part
+        if (part is StepFinishPart) return false
+        return true
     }
 
     /** Session ids currently streaming an assistant run (best-effort, in-process). */
@@ -379,7 +401,13 @@ open class AppContainer private constructor(
             override fun onAvailable(network: Network) { _isOnline.value = true; activeConnection.value?.events?.triggerReconnect() }
             override fun onLost(network: Network) { _isOnline.value = cm.activeNetwork != null }
         }
-        runCatching { cm.registerNetworkCallback(NetworkRequest.Builder().build(), callback) }
+        // Only match networks that actually provide internet — a capability-less request
+        // fires onAvailable for transports that can't reach the server (and would trigger
+        // spurious reconnects), so require NET_CAPABILITY_INTERNET.
+        val request = NetworkRequest.Builder()
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .build()
+        runCatching { cm.registerNetworkCallback(request, callback) }
             .onFailure { Log.w("AppContainer", "Failed to register network callback", it) }
         return callback
     }
@@ -411,7 +439,114 @@ open class AppContainer private constructor(
         connectionMutex.withLock {
             _activeConnection.value?.close()
             _activeConnection.value = null
+            // Reset run/unread state on disconnect too. With no SSE stream there's no
+            // SessionIdle to drain activeRuns, so without this the working indicator
+            // (anyRunActive) and unread badges would stay pinned until the next connect().
+            activeRuns.clear()
+            _anyRunActive.value = false
+            _unread.value = emptyMap()
+            unreadMessageIds.clear()
         }
+    }
+
+    /** Deferred profile deletions keyed by id, run on the process-lived [appScope] (not a
+     *  ViewModel scope) so navigating away during the undo window still commits the delete
+     *  instead of silently cancelling it — mirroring [CrashLogger.scheduleDelete]. */
+    private val pendingProfileDeletes = java.util.concurrent.ConcurrentHashMap<String, Job>()
+
+    /**
+     * Schedule the profile [id] for deletion after [delayMs], cancellable via
+     * [cancelProfileDelete] (the Undo action). [onDeleted]/[onError] run on [appScope]
+     * after the delete resolves so the caller can clear its optimistic-hide state. A
+     * repeated schedule for the same id replaces the prior timer.
+     */
+    open fun scheduleProfileDelete(
+        id: String,
+        delayMs: Long,
+        onDeleted: () -> Unit,
+        onError: (Throwable) -> Unit,
+    ) {
+        val job = appScope.launch {
+            delay(delayMs)
+            // Claim the delete by removing our own entry BEFORE committing it — the atomic
+            // remove is the sync point with cancelProfileDelete. Losing the race (an undo
+            // removed us first) means we skip, honouring cancel's `true`; deleting first
+            // would let a cancel land in the gap and falsely report undo of a gone profile.
+            // remove(id, thisJob) also no-ops for a stale job after a reschedule.
+            val claimed = coroutineContext[Job]?.let { pendingProfileDeletes.remove(id, it) } == true
+            if (!claimed) return@launch
+            runCatchingCancellable { profileStore.delete(id) }
+                .onSuccess { onDeleted() }
+                .onFailure { onError(it) }
+        }
+        pendingProfileDeletes.put(id, job)?.cancel()
+    }
+
+    /** Cancel a pending deferred profile delete (the Undo action). Returns true if it was
+     *  still pending (undo succeeded), false if the delete had already fired. */
+    open fun cancelProfileDelete(id: String): Boolean {
+        val job = pendingProfileDeletes.remove(id) ?: return false
+        job.cancel()
+        return true
+    }
+
+    /** Deferred session deletions keyed by id, run on the process-lived [appScope] (not a
+     *  ViewModel scope) so navigating away during the undo window still commits the delete
+     *  instead of silently cancelling it (which would leave the session deleted-in-UI but
+     *  alive on the server, reappearing on the next refresh). */
+    private val pendingSessionDeletes = java.util.concurrent.ConcurrentHashMap<String, Job>()
+
+    /**
+     * Schedule session [id] for deletion after [delayMs], cancellable via [cancelSessionDelete]
+     * (the Undo action). Also clears the session's stored draft on a successful delete.
+     * [onDeleted]/[onError] run on [appScope] after the delete resolves so the caller can update
+     * its optimistic-hide state. A repeated schedule for the same id replaces the prior timer.
+     *
+     * The owning connection is captured now, at schedule time — NOT re-resolved when the timer
+     * fires. Otherwise a server switch during the undo window would send the delete to whichever
+     * server happens to be active at fire time: the original session would never be deleted (its
+     * row reappears on the next refresh) and, in the rare id-collision case, an unrelated session
+     * on the new server could be deleted instead. A disconnect closes the captured connection's
+     * HTTP client, so a delete deferred across a disconnect fails and is surfaced via [onError]
+     * (the session cannot be deleted on a server we're no longer connected to). No-ops (as an
+     * error) if there is no active connection at schedule time.
+     */
+    open fun scheduleSessionDelete(
+        id: String,
+        delayMs: Long,
+        onDeleted: () -> Unit,
+        onError: (Throwable) -> Unit,
+    ) {
+        val conn = _activeConnection.value
+        val job = appScope.launch {
+            delay(delayMs)
+            // Claim the delete by removing our own entry BEFORE committing it — the atomic
+            // remove is the sync point with cancelSessionDelete. Losing the race (an undo
+            // removed us first) means we skip, honouring cancel's `true`; deleting first
+            // would let a cancel land in the gap and falsely report undo of a gone session.
+            // remove(id, thisJob) also no-ops for a stale job after a reschedule.
+            val claimed = coroutineContext[Job]?.let { pendingSessionDeletes.remove(id, it) } == true
+            if (!claimed) return@launch
+            if (conn == null) {
+                onError(IllegalStateException("No active connection"))
+            } else {
+                runCatchingCancellable { conn.repository.deleteSession(id) }
+                    .onSuccess {
+                        draftStore.remove(id)
+                        onDeleted()
+                    }
+                    .onFailure { onError(it) }
+            }
+        }
+        pendingSessionDeletes.put(id, job)?.cancel()
+    }
+
+    /** Cancel a pending deferred session delete (the Undo action). Returns true if it was
+     *  still pending (undo succeeded), false if the delete had already fired. */
+    open fun cancelSessionDelete(id: String): Boolean {
+        val job = pendingSessionDeletes.remove(id) ?: return false
+        job.cancel()
+        return true
     }
 
     /**

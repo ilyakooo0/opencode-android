@@ -80,6 +80,11 @@ open class SessionRepository(
             }
         }
 
+        // Seed generation counter, shared between the initial load and the reconnect
+        // re-seed. Guards against a stale fetch (from an earlier reconnect, or from a slow
+        // initial load) clobbering a newer seed. Only mutated/read under [lock].
+        var seedGeneration = 0
+
         // Re-seed from REST when the SSE stream reconnects after a drop. The REST fetch
         // is performed *outside* the lock so events arriving via SSE during the fetch are
         // not blocked. The seed itself is under the lock; a seed generation counter ensures
@@ -95,15 +100,18 @@ open class SessionRepository(
             // newer one: if two reconnects fire in quick succession, the older fetch
             // (which returns later) is discarded because its generation no longer matches.
             var hasConnectedBefore = false
-            var seedGeneration = 0
             eventStream.state.collect { state ->
                 if (state == EventStreamClient.ConnectionState.Connected) {
                     if (hasConnectedBefore) {
-                        val generation = ++seedGeneration
                         // Pivot before the fetch: parts already in memory predate this
                         // snapshot and must yield to it, while parts that stream in during
                         // the fetch (added to streamedSincePivot via reduce) outrank it.
-                        lock.withLock { store.beginReseed() }
+                        // Bump the generation under the same lock so the compare in the
+                        // initial seed sees a consistent value.
+                        val generation = lock.withLock {
+                            store.beginReseed()
+                            ++seedGeneration
+                        }
                         val fresh = runCatchingCancellable { api.listMessages(sessionId) }
                             .onFailure { Log.w("SessionRepository", "Re-seed message load failed for $sessionId; relying on SSE: ${safeExceptionSummary(it)}") }
                             .getOrDefault(emptyList())
@@ -129,8 +137,18 @@ open class SessionRepository(
         val initial = runCatchingCancellable { api.listMessages(sessionId) }
             .onFailure { Log.w("SessionRepository", "Initial message load failed for $sessionId; relying on SSE: ${safeExceptionSummary(it)}") }
             .getOrDefault(emptyList())
-        lock.withLock { store.seed(initial) }
-        publish()
+        // Apply the initial seed only if no reconnect re-seed has run yet (generation still 0).
+        // A re-seed is always a fresher full snapshot, so if the (possibly slow) initial fetch
+        // returns after one has applied, seeding this older REST data would clobber the newer
+        // state — reverting a completed run to "running", regressing cost/token/part state —
+        // until the next SSE event or reconnect healed it.
+        val seeded = lock.withLock {
+            if (seedGeneration == 0) {
+                store.seed(initial)
+                true
+            } else false
+        }
+        if (seeded) publish()
 
         // Single drain: one snapshot+send per conflated dirty signal. The snapshot is
         // taken under the lock so a reader never sees a half-reduced state; send() runs
@@ -244,12 +262,32 @@ internal class MessageStore {
                 }
             }
         }
+        // A part that streamed in *before* this initial load (observeMessages subscribes to
+        // SSE before fetching) inserts its message at the front of the insertion-ordered map,
+        // and the merge above keeps that position — pinning a running message above the older
+        // history that seed() inserts afterward. Restore chronological order by creation time
+        // FIRST, so eviction below drops the genuinely-oldest entries: evictOldMessages()
+        // removes from the map's front, which before reordering is the newest streamed message.
+        if (reorderByTime()) changed = true
         if (evictOldMessages()) changed = true
         // Reset the pivot: everything just merged is now the baseline, so only parts/info
         // that stream in *after* this seed can outrank the next reconnect's snapshot.
         streamedSincePivot.clear()
         messageInfoUpdatedSincePivot.clear()
         return changed
+    }
+
+    /** Reorder the message map by message creation time (stable). Ties and entries with no
+     *  server time yet (e.g. a brand-new message still streaming and not in REST) keep their
+     *  relative order, so such a message stays last. Preserves each entry's map key so the
+     *  synthetic UnknownMessage keys aren't collapsed. Returns true if the order changed. */
+    private fun reorderByTime(): Boolean {
+        val entries = messages.entries.map { it.key to it.value }
+        val sorted = entries.sortedBy { it.second.info.time?.created ?: Long.MAX_VALUE }
+        if (sorted.map { it.first } == entries.map { it.first }) return false
+        messages.clear()
+        for ((k, v) in sorted) messages[k] = v
+        return true
     }
 
     /** Returns true if the state changed (and a new snapshot should be published). */
@@ -319,7 +357,10 @@ internal class MessageStore {
     private fun handleMessageRemoved(sessionId: String, event: MessageRemoved): Boolean {
         val id = event.properties.messageID ?: return false
         if (!matchesSession(event.properties.sessionID, sessionId)) return false
-        return messages.remove(id) != null
+        val removed = messages.remove(id) ?: return false
+        messageInfoUpdatedSincePivot.remove(id)
+        removed.parts.forEach { streamedSincePivot.remove(it.id) }
+        return true
     }
 
     private fun upsertPart(messageId: String, part: Part): Boolean {
@@ -358,7 +399,12 @@ internal class MessageStore {
         var evicted = false
         while (messages.size > maxMessages) {
             val oldestKey = messages.keys.iterator().next()
-            messages.remove(oldestKey)
+            val removed = messages.remove(oldestKey)
+            // Prune the evicted message's pivot bookkeeping so these sets don't grow
+            // unbounded over a long-running session that never reconnects (they're only
+            // otherwise cleared on reseed/seed).
+            messageInfoUpdatedSincePivot.remove(oldestKey)
+            removed?.parts?.forEach { streamedSincePivot.remove(it.id) }
             evicted = true
         }
         return evicted

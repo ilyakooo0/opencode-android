@@ -196,8 +196,12 @@ private fun keywordsFor(lang: Language): Set<String> = when (lang) {
 }
 
 private fun isLineCommentStart(c: Char, line: String, i: Int, lang: Language): Boolean =
-    (c == '/' && i + 1 < line.length && line[i + 1] == '/') ||
-        (c == '#' && lang != Language.MARKUP)
+    // `//` is a line comment only in C-family languages. Elsewhere it isn't: e.g. Python's
+    // `a // b` is floor division, which must not be dimmed as a comment to end-of-line.
+    (c == '/' && lang == Language.C_FAMILY && i + 1 < line.length && line[i + 1] == '/') ||
+        // `#` is a line comment only in Python and shell. It is NOT one in C-family
+        // (`#include`, `#define`, C# `#region`, JS/TS `this.#field`) or markup.
+        (c == '#' && (lang == Language.PYTHON || lang == Language.SHELL))
 
 private fun isMarkupDelim(c: Char): Boolean = c == '<' || c == '>' || c == '/' || c == '='
 

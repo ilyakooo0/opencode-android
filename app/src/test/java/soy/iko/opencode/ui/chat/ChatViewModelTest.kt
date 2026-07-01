@@ -135,7 +135,7 @@ class ChatViewModelTest {
         assertEquals("hello", vm.draft.value)
         assertEquals("hello", vm.failedDraft.value)
         assertFalse(vm.running.value)
-        val errors = mutableListOf<String>()
+        val errors = mutableListOf<ChatError>()
         val collectJob = launch { vm.errorEvents.toList(errors) }
         assertTrue(vm.send("hello"))
         testScheduler.advanceUntilIdle()
@@ -252,7 +252,7 @@ class ChatViewModelTest {
         testScope.testScheduler.advanceUntilIdle()
         assertEquals("p1", vm.pendingPermission.value?.id)
 
-        val errors = mutableListOf<String>()
+        val errors = mutableListOf<ChatError>()
         val collectJob = launch { vm.errorEvents.toList(errors) }
         vm.respondPermission(perm, PermissionResponse.ONCE)
         assertNull(vm.pendingPermission.value)
@@ -281,7 +281,7 @@ class ChatViewModelTest {
         val events = FakeEventStreamClient()
         val container = makeContainer(events = events)
         val vm = makeVm(container)
-        val errors = mutableListOf<String>()
+        val errors = mutableListOf<ChatError>()
         val collectJob = launch { vm.errorEvents.toList(errors) }
         assertTrue(vm.send("hello"))
         testScope.testScheduler.advanceUntilIdle()
@@ -485,7 +485,7 @@ class ChatViewModelTest {
         val container = makeContainer(api = api, events = events, repo = repo)
         val vm = makeVm(container)
 
-        val errors = mutableListOf<String>()
+        val errors = mutableListOf<ChatError>()
         val collectJob = launch { vm.errorEvents.toList(errors) }
 
         // Two rapid sends that both fail — both should produce independent error
@@ -511,7 +511,7 @@ class ChatViewModelTest {
         repo.observeMessagesOverride = messagesFlow
         val container = makeContainer(api = api, events = events, repo = repo)
         val vm = makeVm(container)
-        val errors = mutableListOf<String>()
+        val errors = mutableListOf<ChatError>()
         val collectJob = launch { vm.errorEvents.toList(errors) }
         // Subscribe to messages so the flow's retryWhen is active.
         val collector = launch { vm.messages.collect { /* keep subscribed */ } }

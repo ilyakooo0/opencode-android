@@ -71,11 +71,18 @@ open class OpencodeApiClient private constructor(
         client!!.get("session").body()
     }
 
-    open suspend fun createSession(title: String? = null): Session = withRetry {
-        client!!.post("session") {
-            contentType(ContentType.Application.Json)
-            setBody(CreateSessionRequest(title = title))
-        }.body()
+    open suspend fun createSession(title: String? = null): Session {
+        // Generate the idempotency key before entering withRetry so every retry attempt
+        // shares it. Without this, a POST that reached the server but whose response was
+        // lost (reset/timeout) would be retried and create a second orphan session.
+        val idempotencyKey = java.util.UUID.randomUUID().toString()
+        return withRetry {
+            client!!.post("session") {
+                contentType(ContentType.Application.Json)
+                header("Idempotency-Key", idempotencyKey)
+                setBody(CreateSessionRequest(title = title))
+            }.body()
+        }
     }
 
     open suspend fun updateSession(id: String, title: String): Session = withRetry {
@@ -86,7 +93,14 @@ open class OpencodeApiClient private constructor(
     }
 
     open suspend fun deleteSession(id: String) {
-        withRetry { client!!.delete("session/${encode(id)}").body<String>() }
+        try {
+            withRetry { client!!.delete("session/${encode(id)}").body<String>() }
+        } catch (t: ClientRequestException) {
+            // A DELETE that succeeded but whose response was lost gets retried; the retry
+            // hits an already-gone session and returns 404. Deleting a non-existent session
+            // is effectively success, so swallow 404 rather than surfacing a spurious failure.
+            if (t.response.status.value != 404) throw t
+        }
     }
 
     open suspend fun listMessages(sessionId: String): List<MessageWithParts> = withRetry {
@@ -200,11 +214,20 @@ open class OpencodeApiClient private constructor(
         sessionId: String,
         permissionId: String,
         response: PermissionResponse,
-    ) = withRetry {
-        client!!.post("session/${encode(sessionId)}/permissions/${encode(permissionId)}") {
-            contentType(ContentType.Application.Json)
-            setBody(PermissionReplyBody(response.wire))
-        }.body<String>()
+    ): String = try {
+        withRetry {
+            client!!.post("session/${encode(sessionId)}/permissions/${encode(permissionId)}") {
+                contentType(ContentType.Application.Json)
+                setBody(PermissionReplyBody(response.wire))
+            }.body<String>()
+        }
+    } catch (t: ClientRequestException) {
+        // A response that reached the server but whose reply was lost gets retried; the
+        // retry finds the permission already resolved (404 gone / 409 conflict). Both mean
+        // the answer landed, so treat them as success instead of a spurious failure.
+        val code = t.response.status.value
+        if (code != 404 && code != 409) throw t
+        ""
     }
 
     // --- Files ---

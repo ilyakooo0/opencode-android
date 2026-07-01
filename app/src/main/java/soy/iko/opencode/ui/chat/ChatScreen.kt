@@ -208,11 +208,13 @@ fun ChatScreen(
     }
 
     LaunchedEffect(Unit) {
-        vm.errorEvents.collect { msg ->
-            val result = if (vm.failedDraft.value != null) {
-                snackbar.showSnackbar(message = msg, actionLabel = retryLabel)
+        vm.errorEvents.collect { event ->
+            // Only a failed *send* is retryable; attaching Retry to any other error (e.g. a
+            // message-load failure) would silently re-submit the last prompt on tap.
+            val result = if (event.retryable) {
+                snackbar.showSnackbar(message = event.message, actionLabel = retryLabel)
             } else {
-                snackbar.showSnackbar(msg)
+                snackbar.showSnackbar(event.message)
             }
             if (result == androidx.compose.material3.SnackbarResult.ActionPerformed) vm.retryFailed()
         }
@@ -398,8 +400,19 @@ fun ChatScreen(
             }
         }
 
+        // Jump to the newest message once, when the conversation first loads. Guarded by a
+        // saveable one-shot flag so it doesn't re-fire on recomposition after a config change
+        // (rotation) — rememberLazyListState restores the user's scroll offset, and an
+        // unconditional scrollToItem here would clobber it, snapping them back to the bottom.
+        var didInitialScroll by rememberSaveable { mutableStateOf(false) }
         LaunchedEffect(messages.isNotEmpty()) {
-            if (messages.isNotEmpty()) listState.scrollToItem(messages.lastIndex)
+            if (messages.isNotEmpty() && !didInitialScroll) {
+                // When a run is active the LazyColumn has a trailing "__typing" row at
+                // messages.size; target it (not messages.lastIndex) so deep-linking into a
+                // running session lands truly pinned to bottom and streaming auto-scroll engages.
+                listState.scrollToItem(if (running) messages.size else messages.lastIndex)
+                didInitialScroll = true
+            }
         }
 
         // When a run starts, the LazyColumn gains a trailing "__typing" row, so

@@ -58,9 +58,11 @@ fun relativeTime(epochMillis: Long?): String {
     // rare timestamps (older than a week) and the numeric value is the primary signal.
     val weeks = days / 7
     if (weeks < 5) return "${weeks}w"
-    val months = days / 30
-    if (months < 12) return "${months}mo"
-    val years = (days / 365).coerceAtLeast(1)
+    // Switch to years only past a full 365 days. Gating on `months < 12` (with months =
+    // days/30) instead misfires for 360–364 days: months == 12 fails the check and falls
+    // through to years, rendering "1y" for a span that's under a year (~11.9 months).
+    if (days < 365) return "${days / 30}mo"
+    val years = days / 365
     return "${years}y"
 }
 
