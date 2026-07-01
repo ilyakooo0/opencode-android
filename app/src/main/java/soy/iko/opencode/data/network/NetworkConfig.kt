@@ -116,6 +116,11 @@ object NetworkConfig {
     /** Buffer capacity for transient error SharedFlows that drive snackbars. */
     const val snackbarEventBufferCapacity = 16
 
+    /** How long the chat top-bar refresh icon stays in its "refreshing" spinner state
+     *  after a tap, giving immediate feedback that the refresh was triggered even when
+     *  the connection state is already Connected (so the ConnectionBanner doesn't change). */
+    const val refreshFeedbackMs = 1_200L
+
     // --- UI layout constants ---
 
     /** Minimum window width (dp) for two-pane layout on tablets / unfolded foldables. */

@@ -105,7 +105,15 @@ fun AgentPickerSheet(
                         it.displayDescription.contains(q, ignoreCase = true)
                 }
             }
-            LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
+            if (filtered.isEmpty()) {
+                Text(
+                    stringResource(R.string.no_agents_match, query.trim()),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp),
+                )
+            } else {
+                LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
                 item(key = "__default") {
                     Column(
                         modifier = Modifier
@@ -173,6 +181,7 @@ fun AgentPickerSheet(
                         )
                     }
                 }
+            }
             }
         }
     }

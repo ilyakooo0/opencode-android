@@ -61,6 +61,18 @@ class ChatViewModel(
     private val _loading = MutableStateFlow(true)
     val loading: StateFlow<Boolean> = _loading.asStateFlow()
 
+    /** Set when the messages flow failed to load (and the list is empty), so the UI
+     *  can render a distinct error state instead of masquerading as an empty
+     *  conversation. Cleared on a successful non-empty emission. */
+    private val _loadError = MutableStateFlow(false)
+    val loadError: StateFlow<Boolean> = _loadError.asStateFlow()
+
+    /** Tracks whether the messages flow has ever emitted a non-empty list, so
+     *  [messages]' retryWhen can decide whether a re-fetch failure should set
+     *  [loadError] (nothing shown yet → error screen) or just emit a snackbar
+     *  (already showing messages → don't replace the conversation with an error). */
+    private var hasShownMessages = false
+
     /** Separate from [loading]: tracks the manual reconnect() flow so its spinner
      *  doesn't conflict with the messages flow's loading state. */
     private val _reconnecting = MutableStateFlow(false)
@@ -85,9 +97,18 @@ class ChatViewModel(
             }
             .onEach {
                 _loading.value = false
+                if (it.isNotEmpty()) {
+                    hasShownMessages = true
+                    _loadError.value = false
+                }
             }
             .retryWhen { cause, _ ->
                 _loading.value = false
+                // Only surface the persistent error state when there's nothing to
+                // show — if we already have messages, a transient re-fetch failure
+                // is better surfaced as a snackbar (via errorEvents) than by
+                // replacing the visible conversation with an error screen.
+                if (!hasShownMessages) _loadError.value = true
                 _errorEvents.tryEmit(container.friendlyError(cause))
                 // Delay before retrying to avoid a tight loop on persistent errors.
                 delay(NetworkConfig.retryInitialDelayMs)
@@ -464,14 +485,29 @@ class ChatViewModel(
         _queuedFollowUp.value = trimmed.takeIf { it.isNotEmpty() }
     }
 
+    /** Transient flag set by [refreshMessages] so the top-bar refresh icon can show
+     *  a brief spinner as immediate tap feedback. The SSE reconnect triggered by
+     *  refreshMessages may not visibly change [connectionState] (it's already
+     *  Connected), so without this the tap appears to do nothing. Clears after a
+     *  short delay or when the connection state next becomes Connected. */
+    private val _refreshing = MutableStateFlow(false)
+    val refreshing: StateFlow<Boolean> = _refreshing.asStateFlow()
+
     /** Manually re-fetch messages by forcing the SSE stream to reconnect, which
      *  triggers the repository's re-seed-from-REST logic. Gives the user a recovery
      *  path when the SSE stream silently drops and the auto-reconnect re-seed is slow
      *  or fails — a pull-to-refresh or top-bar refresh forces a fresh fetch under the
-     *  existing generation-guarded merge. */
+     *  existing generation-guarded merge. Also clears [loadError] optimistically and
+     *  sets [refreshing] for immediate tap feedback. */
     fun refreshMessages() {
         val conn = connection ?: return
+        _loadError.value = false
+        _refreshing.value = true
         conn.events.triggerReconnect()
+        viewModelScope.launch {
+            delay(NetworkConfig.refreshFeedbackMs)
+            _refreshing.value = false
+        }
     }
 
     /** Invoke a slash-command by name via the server's /command endpoint. */

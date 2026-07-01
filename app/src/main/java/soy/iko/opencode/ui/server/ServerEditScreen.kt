@@ -139,6 +139,7 @@ private fun ServerEditForm(
     vm: ServerEditViewModel,
     onDone: () -> Unit,
 ) {
+    val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
     Column(
         modifier = Modifier
             .padding(padding)
@@ -209,7 +210,10 @@ private fun ServerEditForm(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Button(
-                onClick = { vm.save(onDone) },
+                onClick = {
+                    haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                    vm.save(onDone)
+                },
                 enabled = state.canSave && !state.saving,
                 modifier = Modifier.weight(1f),
             ) {
@@ -225,7 +229,10 @@ private fun ServerEditForm(
                 }
             }
             Button(
-                onClick = { vm.saveAndConnect(onDone) },
+                onClick = {
+                    haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                    vm.saveAndConnect(onDone)
+                },
                 enabled = state.canSave && !state.saving,
                 modifier = Modifier.weight(1f),
             ) {

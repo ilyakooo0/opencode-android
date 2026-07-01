@@ -131,6 +131,7 @@ fun ServerListScreen(
                                 .fillMaxWidth()
                                 .testTag("server_card")
                                 .clickable(enabled = connectingId == null, role = Role.Button) {
+                                    haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                                     vm.connect(profile, onConnected)
                                 },
                         ) {

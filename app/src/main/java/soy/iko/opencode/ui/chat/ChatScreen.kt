@@ -110,6 +110,8 @@ fun ChatScreen(
     val hasMessages by vm.hasMessages.collectAsStateWithLifecycle()
     val running by vm.running.collectAsStateWithLifecycle()
     val loading by vm.loading.collectAsStateWithLifecycle()
+    val loadError by vm.loadError.collectAsStateWithLifecycle()
+    val refreshing by vm.refreshing.collectAsStateWithLifecycle()
     val models by vm.models.collectAsStateWithLifecycle()
     val modelsLoading by vm.modelsLoading.collectAsStateWithLifecycle()
     val modelsError by vm.modelsError.collectAsStateWithLifecycle()
@@ -260,9 +262,23 @@ fun ChatScreen(
                     }
                     // Manual refresh: forces an SSE reconnect, which re-seeds messages
                     // from REST. A recovery path when the stream silently drops and the
-                    // auto-reconnect re-seed is slow or fails.
-                    IconButton(onClick = { vm.refreshMessages() }, enabled = activeConnection != null) {
-                        Icon(Icons.Filled.Refresh, contentDescription = stringResource(R.string.refresh))
+                    // auto-reconnect re-seed is slow or fails. Shows a brief spinner as
+                    // immediate tap feedback — the SSE reconnect may not visibly change
+                    // the connection state when already Connected, so without it the tap
+                    // appears to do nothing.
+                    val refreshLabel = stringResource(R.string.refresh)
+                    IconButton(
+                        onClick = { vm.refreshMessages() },
+                        enabled = activeConnection != null && !refreshing,
+                    ) {
+                        if (refreshing) {
+                            CircularProgressIndicator(
+                                Modifier.size(18.dp).semantics { contentDescription = refreshLabel },
+                                strokeWidth = 2.dp,
+                            )
+                        } else {
+                            Icon(Icons.Filled.Refresh, contentDescription = refreshLabel)
+                        }
                     }
                     IconButton(
                         onClick = {
@@ -384,6 +400,24 @@ fun ChatScreen(
                             .align(Alignment.Center)
                             .semantics { contentDescription = loadingLabel },
                     )
+                } else if (loadError && messages.isEmpty()) {
+                    // A failed load with nothing to show. Distinct from the empty
+                    // conversation state below — the conversation isn't empty, it
+                    // failed to load, and offering "Start a conversation" here is
+                    // misleading. Offer a Retry instead, mirroring SessionListScreen.
+                    Column(
+                        modifier = Modifier.align(Alignment.Center).padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Text(
+                            stringResource(R.string.load_messages_failed),
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                        Spacer(Modifier.size(12.dp))
+                        Button(onClick = { vm.refreshMessages() }) {
+                            Text(stringResource(R.string.retry))
+                        }
+                    }
                 } else if (messages.isEmpty() && running) {
                     // A run just started but no parts have arrived yet — the empty
                     // list with only the trailing "working…" row looks broken, so

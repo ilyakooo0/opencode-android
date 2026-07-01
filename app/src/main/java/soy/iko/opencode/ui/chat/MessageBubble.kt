@@ -49,6 +49,16 @@ fun MessageBubble(
 
 @Composable
 private fun UserBubble(message: MessageWithParts, imageContext: ImageLoadContext?, modifier: Modifier) {
+    val context = LocalContext.current
+    val copyLabel = stringResource(R.string.copy)
+    // Collect text from all TextParts for copying, so a user can reuse/repost their
+    // own prompt. Memoized so a scroll-induced recomposition doesn't re-scan the list.
+    val textToCopy = remember(message.parts) {
+        message.parts
+            .filterIsInstance<TextPart>()
+            .joinToString("\n\n") { it.text }
+            .takeIf { it.isNotBlank() }
+    }
     Row(modifier = modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
         Column(
             modifier = Modifier
@@ -59,7 +69,29 @@ private fun UserBubble(message: MessageWithParts, imageContext: ImageLoadContext
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             for (part in message.parts) PartView(part, imageContext = imageContext)
-            MessageTimestamp(message.info)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                MessageTimestamp(message.info)
+                // Copy affordance for user prompts, mirroring the assistant block.
+                // Without it, reusing a prior prompt requires discovering the
+                // long-press on the markdown text (and only TextParts support that).
+                if (textToCopy != null) {
+                    IconButton(
+                        onClick = { copyToClipboard(context, "message", textToCopy) },
+                        modifier = Modifier.size(20.dp),
+                    ) {
+                        Icon(
+                            Icons.Filled.ContentCopy,
+                            contentDescription = copyLabel,
+                            modifier = Modifier.size(14.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
         }
     }
 }

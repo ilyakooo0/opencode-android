@@ -18,6 +18,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -72,6 +73,12 @@ fun FileViewScreen(
                     }
                 },
                 actions = {
+                    // In-place refresh: a file's content can change on the server (the
+                    // agent may be editing it), so reload without requiring a back-out.
+                    // Disabled while loading to avoid stacking parallel fetches.
+                    IconButton(onClick = { vm.reload() }, enabled = !state.loading) {
+                        Icon(Icons.Filled.Refresh, contentDescription = stringResource(R.string.refresh))
+                    }
                     val content = state.content?.content.orEmpty()
                     if (content.isNotEmpty()) {
                         IconButton(onClick = { copyToClipboard(context, filename, content) }) {
