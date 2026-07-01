@@ -79,6 +79,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import soy.iko.opencode.data.model.ServerProfile
 import soy.iko.opencode.data.model.Session
+import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
 import soy.iko.opencode.ui.components.ConnectionBanner
@@ -137,13 +138,15 @@ fun SessionListScreen(
 
     // Undo snackbar: when a session is marked for deferred deletion, offer Undo. If the
     // action is taken before the delay expires, the session is restored and the REST
-    // delete never fires.
+    // delete never fires. Use Long (~10s) so the Undo button stays available for the
+    // full undoDeleteDelayMs window (5s); Short (~1.5s) vanished before the delete
+    // fired, leaving the user unable to cancel during the last 3.5s.
     LaunchedEffect(Unit) {
         vm.undoEvents.collect { sessionId ->
             val result = snackbar.showSnackbar(
                 message = sessionDeletedLabel,
                 actionLabel = undoLabel,
-                duration = androidx.compose.material3.SnackbarDuration.Short,
+                duration = androidx.compose.material3.SnackbarDuration.Long,
             )
             if (result == androidx.compose.material3.SnackbarResult.ActionPerformed) {
                 vm.undoDelete(sessionId)
@@ -465,7 +468,7 @@ private fun RenameSessionDialog(
         text = {
             OutlinedTextField(
                 value = title,
-                onValueChange = onTitleChange,
+                onValueChange = { v -> onTitleChange(v.take(NetworkConfig.maxSessionTitleChars)) },
                 modifier = Modifier.fillMaxWidth(),
                 placeholder = { Text(stringResource(R.string.session_title_hint)) },
                 label = { Text(stringResource(R.string.rename_session)) },

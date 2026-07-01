@@ -4,7 +4,7 @@
   <CurrentIssues>
     <ID>ComplexCondition:ChatScreen.kt$event.type == KeyEventType.KeyDown &amp;&amp; event.key == Key.Enter &amp;&amp; !event.isShiftPressed &amp;&amp; enabled &amp;&amp; value.isNotBlank()</ID>
     <ID>ComplexCondition:PartRenderer.kt$part.isImage &amp;&amp; imageContext != null &amp;&amp; (part.source != null || !part.url.isNullOrBlank())</ID>
-    <ID>CyclomaticComplexMethod:ChatScreen.kt$@OptIn(ExperimentalMaterial3Api::class) @Composable fun ChatScreen( container: AppContainer, sessionId: String, onBack: () -&gt; Unit, )</ID>
+    <ID>CyclomaticComplexMethod:ChatScreen.kt$@OptIn(ExperimentalMaterial3Api::class) @Composable fun ChatScreen( container: AppContainer, sessionId: String, onBack: () -&gt; Unit, onOpenFile: ((String) -&gt; Unit)? = null, )</ID>
     <ID>InstanceOfCheckForException:OpencodeApiClient.kt$t is ClientRequestException</ID>
     <ID>MatchingDeclarationName:DiffView.kt$DiffLine</ID>
     <ID>MatchingDeclarationName:RemoteImage.kt$ImageLoadContext</ID>

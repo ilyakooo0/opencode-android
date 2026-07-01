@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
@@ -49,8 +48,7 @@ import soy.iko.opencode.data.network.NetworkConfig
 /**
  * Renders markdown using [multiplatform-markdown-renderer](https://github.com/mikepenz/multiplatform-markdown-renderer)
  * (commonmark-java under the hood). Keeps a local API so callers don't import the library directly.
- * Long-press copies the raw markdown to the system clipboard. Code blocks/fences get an
- * inline copy button.
+ * Code blocks/fences get an inline copy button.
  *
  * The rendered text is wrapped in a [SelectionContainer] so the user can select and
  * copy a portion of the response (e.g. a single code snippet or paragraph) instead of
@@ -120,8 +118,9 @@ fun MarkdownText(
         }
         // SelectionContainer is intentionally omitted during streaming: the content is
         // changing every ~50ms, and an active selection would be invalidated (and the
-        // selection handles would flicker) on each throttle commit. Long-press still
-        // copies the full raw markdown via the onLongClick below.
+        // selection handles would flicker) on each throttle commit. Partial selection
+        // becomes available once the stream finishes; the per-message Copy button in
+        // MessageBubble copies all TextParts at any time.
         Markdown(
             content = renderedContent,
             modifier = modifier,
@@ -156,7 +155,7 @@ private fun CodeWithCopy(model: MarkdownComponentModel) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
+            .clip(MaterialTheme.shapes.small)
             .background(MaterialTheme.colorScheme.surfaceVariant),
     ) {
         Text(
@@ -169,7 +168,7 @@ private fun CodeWithCopy(model: MarkdownComponentModel) {
         )
         Surface(
             color = MaterialTheme.colorScheme.surface,
-            shape = RoundedCornerShape(6.dp),
+            shape = MaterialTheme.shapes.extraSmall,
             modifier = Modifier
                 .align(Alignment.TopEnd)
                 .padding(4.dp),

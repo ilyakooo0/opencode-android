@@ -98,6 +98,7 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
     // (saveable) instead of a plain Set so it round-trips through the state registry.
     val deferredDeletes = rememberSaveable { androidx.compose.runtime.mutableStateListOf<String>() }
     val shareLabel = stringResource(R.string.share)
+    val shareSubject = stringResource(R.string.crash_report_share_subject)
     val timeTick = rememberRelativeTimeTick()
 
     Scaffold(
@@ -205,7 +206,7 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                                         }
                                         val send = Intent(Intent.ACTION_SEND).apply {
                                             type = "text/plain"
-                                            putExtra(Intent.EXTRA_SUBJECT, shareLabel)
+                                            putExtra(Intent.EXTRA_SUBJECT, shareSubject)
                                             putExtra(Intent.EXTRA_TEXT, content)
                                         }
                                         runCatchingCancellable { context.startActivity(Intent.createChooser(send, shareLabel)) }
@@ -248,7 +249,7 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                     TextButton(onClick = {
                         val send = Intent(Intent.ACTION_SEND).apply {
                             type = "text/plain"
-                            putExtra(Intent.EXTRA_SUBJECT, shareLabel)
+                            putExtra(Intent.EXTRA_SUBJECT, shareSubject)
                             putExtra(Intent.EXTRA_TEXT, content.orEmpty())
                         }
                         runCatchingCancellable { context.startActivity(Intent.createChooser(send, shareLabel)) }
@@ -321,7 +322,11 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                         val result = snackbar.showSnackbar(
                             message = reportDeletedLabel,
                             actionLabel = undoLabel,
-                            duration = SnackbarDuration.Short,
+                            // Long (~10s) outlasts the undoReportDeleteDelayMs window
+                            // (5s) so the Undo button remains available for the whole
+                            // undo period; Short (~1.5s) vanished before the delete
+                            // fired, leaving no way to cancel during the last 3.5s.
+                            duration = SnackbarDuration.Long,
                         )
                         if (result == SnackbarResult.ActionPerformed) {
                             deferredDeletes.remove(name)

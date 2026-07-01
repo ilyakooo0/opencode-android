@@ -57,16 +57,22 @@ fun MessageBubble(
     isRunning: Boolean = false,
     imageContext: ImageLoadContext? = null,
     modelLabel: String? = null,
+    onOpenFile: ((String) -> Unit)? = null,
 ) {
     when (message.info) {
-        is UserMessage -> UserBubble(message, imageContext, modifier)
-        is UnknownMessage -> UnknownMessageBlock(message, imageContext, modifier)
-        else -> AssistantBlock(message, isRunning, imageContext, modifier, modelLabel)
+        is UserMessage -> UserBubble(message, imageContext, modifier, onOpenFile)
+        is UnknownMessage -> UnknownMessageBlock(message, imageContext, modifier, onOpenFile)
+        else -> AssistantBlock(message, isRunning, imageContext, modifier, modelLabel, onOpenFile)
     }
 }
 
 @Composable
-private fun UnknownMessageBlock(message: MessageWithParts, imageContext: ImageLoadContext?, modifier: Modifier) {
+private fun UnknownMessageBlock(
+    message: MessageWithParts,
+    imageContext: ImageLoadContext?,
+    modifier: Modifier,
+    onOpenFile: ((String) -> Unit)? = null,
+) {
     // Forward-compat: a role the client doesn't model. Render a muted note so the user
     // sees *something* rather than an unlabeled block, plus any parts (e.g. text) the
     // server attached, so content isn't silently dropped.
@@ -89,14 +95,19 @@ private fun UnknownMessageBlock(message: MessageWithParts, imageContext: ImageLo
             )
         }
         for (part in message.parts) {
-            PartView(part, imageContext = imageContext)
+            PartView(part, imageContext = imageContext, onOpenFile = onOpenFile)
         }
         MessageTimestampText(message.info)
     }
 }
 
 @Composable
-private fun UserBubble(message: MessageWithParts, imageContext: ImageLoadContext?, modifier: Modifier) {
+private fun UserBubble(
+    message: MessageWithParts,
+    imageContext: ImageLoadContext?,
+    modifier: Modifier,
+    onOpenFile: ((String) -> Unit)? = null,
+) {
     val context = LocalContext.current
     val copyLabel = stringResource(R.string.copy)
     // Collect text from all TextParts for copying, so a user can reuse/repost their
@@ -116,7 +127,7 @@ private fun UserBubble(message: MessageWithParts, imageContext: ImageLoadContext
                 .padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            for (part in message.parts) PartView(part, imageContext = imageContext)
+            for (part in message.parts) PartView(part, imageContext = imageContext, onOpenFile = onOpenFile)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -133,7 +144,7 @@ private fun UserBubble(message: MessageWithParts, imageContext: ImageLoadContext
                         Icon(
                             Icons.Filled.ContentCopy,
                             contentDescription = copyLabel,
-                            modifier = Modifier.size(14.dp),
+                            modifier = Modifier.size(18.dp),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
@@ -150,6 +161,7 @@ private fun AssistantBlock(
     imageContext: ImageLoadContext?,
     modifier: Modifier,
     modelLabel: String? = null,
+    onOpenFile: ((String) -> Unit)? = null,
 ) {
     Column(
         modifier = modifier.fillMaxWidth(),
@@ -167,7 +179,7 @@ private fun AssistantBlock(
             }
         }
         for (part in message.parts) {
-            PartView(part, isRunning = isRunning, modifier = Modifier.fillMaxWidth(), imageContext = imageContext)
+            PartView(part, isRunning = isRunning, modifier = Modifier.fillMaxWidth(), imageContext = imageContext, onOpenFile = onOpenFile)
         }
         if (info is AssistantMessage) {
             val cost = info.cost
@@ -217,7 +229,7 @@ private fun AssistantBlock(
                         Icon(
                             Icons.Filled.ContentCopy,
                             contentDescription = copyLabel,
-                            modifier = Modifier.size(14.dp),
+                            modifier = Modifier.size(18.dp),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }

@@ -44,6 +44,7 @@ import soy.iko.opencode.ui.chat.ChatScreen
 fun TwoPaneSessionChat(
     container: AppContainer,
     onOpenFiles: () -> Unit,
+    onOpenFile: (String) -> Unit,
     onOpenSettings: () -> Unit,
     onDisconnect: () -> Unit,
     onAddServer: () -> Unit,
@@ -116,6 +117,7 @@ fun TwoPaneSessionChat(
                     container = container,
                     sessionId = sessionId,
                     onBack = { selected = null },
+                    onOpenFile = onOpenFile,
                 )
             }
         }

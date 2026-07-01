@@ -3,13 +3,14 @@ package soy.iko.opencode.ui.chat
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.filled.Bolt
@@ -93,9 +94,19 @@ private fun ToolState.inputJson(): JsonElement? = when (this) {
 /**
  * Renders a single message [Part]. The exhaustive `when` over the sealed type gives
  * compile-time coverage; the [UnknownPart] arm keeps the UI forward-compatible.
+ *
+ * [onOpenFile] is invoked when the user taps a [FilePart] chip that references a
+ * source path the viewer can open; null leaves the chip as a copy-path affordance
+ * (used when no file navigation is wired, e.g. in tests).
  */
 @Composable
-fun PartView(part: Part, modifier: Modifier = Modifier, isRunning: Boolean = false, imageContext: ImageLoadContext? = null) {
+fun PartView(
+    part: Part,
+    modifier: Modifier = Modifier,
+    isRunning: Boolean = false,
+    imageContext: ImageLoadContext? = null,
+    onOpenFile: ((path: String) -> Unit)? = null,
+) {
     when (part) {
         is TextPart -> if (!part.ignored && part.text.isNotEmpty()) {
             MarkdownText(part.text, modifier = modifier, streaming = isRunning)
@@ -105,7 +116,7 @@ fun PartView(part: Part, modifier: Modifier = Modifier, isRunning: Boolean = fal
         is FilePart -> if (part.isImage && imageContext != null && (part.source != null || !part.url.isNullOrBlank())) {
             RemoteImage(part, imageContext, modifier)
         } else {
-            FileChip(part, modifier)
+            FileChip(part, modifier, onOpenFile)
         }
         is StepStartPart -> {} // boundary marker — nothing to draw
         is StepFinishPart -> {} // metrics handled at message level
@@ -184,11 +195,16 @@ private fun ReasoningBlock(text: String, streaming: Boolean, modifier: Modifier)
         }
         AnimatedVisibility(visible = expanded) {
             Column {
-                Text(
-                    text,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                // Wrap in SelectionContainer so the user can select a portion of the
+                // reasoning (e.g. a single step) instead of the all-or-nothing copy
+                // button below. Matches the markdown text's selectability.
+                SelectionContainer {
+                    Text(
+                        text,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 TextButton(
                     onClick = { copyToClipboard(context, "reasoning", text) },
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp),
@@ -209,7 +225,7 @@ private fun ToolCallView(part: ToolPart, modifier: Modifier) {
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
+            .clip(MaterialTheme.shapes.small)
             .background(MaterialTheme.colorScheme.surfaceVariant)
             .padding(10.dp),
     ) {
@@ -325,11 +341,15 @@ private fun CollapsibleDetail(
         if (isDiff) {
             DiffView(detail)
         } else {
-            Text(
-                detail,
-                style = MaterialTheme.typography.bodySmall,
-                fontFamily = FontFamily.Monospace,
-            )
+            // SelectionContainer so the user can select a portion of the output (e.g.
+            // a single line of stdout) instead of only copy-all via the button below.
+            SelectionContainer {
+                Text(
+                    detail,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
+                )
+            }
         }
         if (onToggleExpand != null) {
             TextButton(
@@ -395,22 +415,46 @@ private fun ToolStatusIcon(state: ToolState) {
     }
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-private fun FileChip(part: FilePart, modifier: Modifier) {
+private fun FileChip(part: FilePart, modifier: Modifier, onOpenFile: ((String) -> Unit)?) {
     val context = LocalContext.current
     val path = part.source ?: part.url ?: part.filename
     val copyLabel = stringResource(R.string.copy_path)
+    val openLabel = stringResource(R.string.open_file)
+    // When a source path is available and a navigation callback is wired, tapping the
+    // chip opens the file in the viewer (the action a user tapping a file reference
+    // most likely expects). Long-press still copies the path to the clipboard, so the
+    // copy affordance is preserved without being the default tap action. When no
+    // navigation is wired (e.g. tests), falls back to copy-path on tap.
+    val source = part.source
+    val opener = onOpenFile
+    val openPath: String? = if (opener != null && !source.isNullOrBlank()) source else null
+    val canOpen = openPath != null
+    val semanticsLabel = if (canOpen) openLabel else copyLabel
     Row(
         modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
+            .clip(MaterialTheme.shapes.small)
             .background(MaterialTheme.colorScheme.surfaceVariant)
-            .clickable(role = Role.Button) {
-                if (!path.isNullOrBlank()) {
-                    copyToClipboard(context, "path", path)
-                    showToast(context, context.getString(R.string.path_copied))
-                }
-            }
-            .semantics { contentDescription = copyLabel }
+            .combinedClickable(
+                role = Role.Button,
+                onClick = {
+                    val toOpen = openPath
+                    if (toOpen != null) {
+                        opener?.invoke(toOpen)
+                    } else if (!path.isNullOrBlank()) {
+                        copyToClipboard(context, "path", path)
+                        showToast(context, context.getString(R.string.path_copied))
+                    }
+                },
+                onLongClick = {
+                    if (!path.isNullOrBlank()) {
+                        copyToClipboard(context, "path", path)
+                        showToast(context, context.getString(R.string.path_copied))
+                    }
+                },
+            )
+            .semantics { contentDescription = semanticsLabel }
             .padding(horizontal = 12.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

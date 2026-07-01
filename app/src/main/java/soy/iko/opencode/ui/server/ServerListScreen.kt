@@ -104,13 +104,15 @@ fun ServerListScreen(
 
     // Undo snackbar: when a server is marked for deferred deletion, offer Undo. If the
     // action is taken before the delay expires, the profile is kept and the delete
-    // never fires — mirrors the session list's undo UX for consistency.
+    // never fires — mirrors the session list's undo UX for consistency. Use Long
+    // (~10s) so the Undo button outlasts the undoServerDeleteDelayMs window (5s);
+    // Short (~1.5s) vanished before the delete fired, leaving no way to cancel.
     LaunchedEffect(Unit) {
         vm.undoEvents.collect { profileId ->
             val result = snackbar.showSnackbar(
                 message = serverRemovedLabel,
                 actionLabel = undoLabel,
-                duration = SnackbarDuration.Short,
+                duration = SnackbarDuration.Long,
             )
             if (result == SnackbarResult.ActionPerformed) {
                 vm.undoDelete(profileId)
@@ -207,12 +209,19 @@ fun ServerListScreen(
                                         modifier = Modifier.size(22.dp),
                                     )
                                     // Keep edit available on the active server so credentials can be
-                                    // fixed without disconnecting first. Only delete is hidden.
+                                    // fixed without disconnecting first. Delete is also offered: the
+                                    // confirmation dialog warns that removing the active server also
+                                    // disconnects (remove_server_active_text), and the ViewModel
+                                    // disconnects immediately on confirm. Swipe remains disabled for
+                                    // the active row so an accidental swipe can't disconnect.
                                     IconButton(onClick = { onEditProfile(profile.id) }) {
                                         Icon(Icons.Filled.Edit, contentDescription = stringResource(R.string.edit))
                                     }
                                     IconButton(onClick = { onDuplicateProfile(profile.id) }) {
                                         Icon(Icons.Filled.ContentCopy, contentDescription = stringResource(R.string.duplicate_server))
+                                    }
+                                    IconButton(onClick = { pendingDeleteId = profile.id }) {
+                                        Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.delete))
                                     }
                                 }
                             }

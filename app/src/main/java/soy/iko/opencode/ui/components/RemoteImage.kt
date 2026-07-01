@@ -4,7 +4,6 @@ import android.util.Base64
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
@@ -109,7 +108,7 @@ fun RemoteImage(part: FilePart, ctx: ImageLoadContext, modifier: Modifier = Modi
         contentScale = ContentScale.FillWidth,
         modifier = modifier
             .heightIn(max = 320.dp)
-            .clip(RoundedCornerShape(12.dp)),
+            .clip(MaterialTheme.shapes.small),
         loading = {
             Box(
                 modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp),

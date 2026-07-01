@@ -9,7 +9,10 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -43,9 +46,19 @@ fun OpencodeApp(container: AppContainer) {
     // (or create) a conversation to drop it into. The chosen session's draft is set
     // in [onOpenSession] below. Keyed on `connection` too so a share that arrives
     // before auto-reconnect completes is retried once the connection is established.
+    // Tracks the last connection id seen so a server switch (a non-null -> non-null
+    // change) doesn't re-bounce the user to the session list for a share they've
+    // already decided to abandon; only the null -> non-null initial connect retries.
+    var lastConnectionId by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(pendingShare, connection) {
         if (pendingShare == null) return@LaunchedEffect
-        if (connection == null) return@LaunchedEffect
+        if (connection == null) { lastConnectionId = null; return@LaunchedEffect }
+        val currentId = connection?.profile?.id
+        // Only (re)navigate on the initial null -> non-null connect. A subsequent
+        // server switch while a share is pending (rare) leaves the user where they
+        // are instead of yanking them back to the session list.
+        if (lastConnectionId != null && lastConnectionId == currentId) return@LaunchedEffect
+        lastConnectionId = currentId
         if (!navController.popBackStack(Routes.SESSIONS, inclusive = false)) {
             navController.navigate(Routes.SESSIONS) { launchSingleTop = true }
         }
@@ -114,6 +127,7 @@ fun OpencodeApp(container: AppContainer) {
                 TwoPaneSessionChat(
                     container = container,
                     onOpenFiles = { navController.navigate(Routes.FILES) },
+                    onOpenFile = { path -> navController.navigate(Routes.fileView(path)) },
                     onOpenSettings = { navController.navigate(Routes.SETTINGS) },
                     onDisconnect = {
                         scope.launch { runCatchingCancellable { container.disconnect() } }
@@ -153,6 +167,7 @@ fun OpencodeApp(container: AppContainer) {
                 container = container,
                 sessionId = entry.arguments?.getString("sessionId").orEmpty(),
                 onBack = { navController.popBackStack() },
+                onOpenFile = { path -> navController.navigate(Routes.fileView(path)) },
             )
         }
 

@@ -128,6 +128,7 @@ fun FileViewScreen(
                 loading = state.loading,
                 content = rawText,
                 wrap = wrap,
+                showDiff = showDiff,
                 onBack = onBack,
                 onReload = { vm.reload() },
                 onToggleFind = { findActive = !findActive; if (!findActive) findQuery = "" },
@@ -158,7 +159,14 @@ fun FileViewScreen(
                     filename = filename,
                     showToggle = showToggle,
                     showDiff = showDiff,
-                    onSetShowDiff = { showDiff = it },
+                    onSetShowDiff = {
+                        showDiff = it
+                        // Close any open find bar when entering diff mode: find searches
+                        // the raw content and scrolls the line LazyColumn, neither of
+                        // which is visible in diff mode, so leaving it open would be a
+                        // confusing no-op.
+                        if (it) { findActive = false; findQuery = "" }
+                    },
                     findActive = findActive,
                     findQuery = findQuery,
                     onQueryChange = { findQuery = it; matchPos = 0 },
@@ -183,6 +191,7 @@ private fun FileViewTopBar(
     loading: Boolean,
     content: String,
     wrap: Boolean,
+    showDiff: Boolean,
     onBack: () -> Unit,
     onReload: () -> Unit,
     onToggleFind: () -> Unit,
@@ -204,8 +213,11 @@ private fun FileViewTopBar(
                 Icon(Icons.Filled.Refresh, contentDescription = stringResource(R.string.refresh))
             }
             if (content.isNotEmpty()) {
-                // Find-in-file: toggles a search bar over the raw content.
-                IconButton(onClick = onToggleFind) {
+                // Find-in-file: toggles a search bar over the raw content. Disabled in
+                // diff mode — the find bar searches the raw text and scrolls the line
+                // LazyColumn, neither of which is visible when the DiffView is shown, so
+                // find would silently no-op. The user can switch to Raw to find.
+                IconButton(onClick = onToggleFind, enabled = !showDiff) {
                     Icon(Icons.Filled.Search, contentDescription = stringResource(R.string.find_in_file))
                 }
                 // Wrap long lines instead of horizontal-scrolling, useful for prose.
@@ -310,7 +322,7 @@ private fun BoxScope.FileViewContentBody(
     // height (not a hardcoded 52dp/row) so accessibility font scaling — which can
     // make the FilterChip labels and FindBar text field taller than 52dp — doesn't
     // cause the first lines of content to hide behind the overlay.
-    val overlayRows = (if (showToggle) 1 else 0) + (if (findActive) 1 else 0)
+    val overlayRows = (if (showToggle) 1 else 0) + (if (findActive && !showDiff) 1 else 0)
     var overlayHeightPx by remember { mutableIntStateOf(0) }
     val topInset = with(androidx.compose.ui.platform.LocalDensity.current) { overlayHeightPx.toDp() }
     if (overlayRows > 0) {
@@ -340,7 +352,7 @@ private fun BoxScope.FileViewContentBody(
                     )
                 }
             }
-            if (findActive) {
+            if (findActive && !showDiff) {
                 FindBar(
                     query = findQuery,
                     onQueryChange = onQueryChange,
@@ -412,10 +424,14 @@ private fun FindBar(
                 else if (matchCount == 0) stringResource(R.string.no_matches_in_file)
                 else stringResource(R.string.match_count, matchPos + 1, matchCount)
                 if (countText.isNotEmpty()) {
+                    // Use error color for "no matches" so the zero-result state is
+                    // distinguishable from a positive match count at a glance.
+                    val color = if (query.isNotBlank() && matchCount == 0) MaterialTheme.colorScheme.error
+                        else MaterialTheme.colorScheme.onSurfaceVariant
                     Text(
                         countText,
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = color,
                     )
                 }
             },

@@ -218,6 +218,7 @@
     <string name="crash_count_format">%1$d</string>
     <string name="crash_count_overflow">99+</string>
     <string name="report_deleted">Crash report deleted</string>
+    <string name="crash_report_share_subject">opencode crash report</string>
 
     <!-- Notifications -->
     <string name="notif_channel_status">Agent activity</string>
@@ -233,6 +234,7 @@
     <string name="tool_input">Input</string>
     <string name="copy_path">Copy path</string>
     <string name="path_copied">Path copied</string>
+    <string name="open_file">Open file</string>
     <string name="unknown_message">Unknown message type</string>
     <string name="unknown_part">Unsupported content</string>
     <string name="tool_preview">🔧 %1$s</string>

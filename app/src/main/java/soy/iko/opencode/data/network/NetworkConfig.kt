@@ -104,6 +104,10 @@ object NetworkConfig {
      *  visible before it silently kicks in but doesn't clutter a normal short prompt. */
     const val draftCountdownThresholdFraction = 0.8f
 
+    /** Maximum characters allowed in a session title (rename dialog). Prevents the
+     *  server from rejecting an overly long title and keeps list rows readable. */
+    const val maxSessionTitleChars = 200
+
     // --- Profile store (ServerEditViewModel) ---
 
     /** Timeout for loading a profile from DataStore before giving up. */

@@ -65,6 +65,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.focusRequester
@@ -110,6 +111,7 @@ fun ChatScreen(
     container: AppContainer,
     sessionId: String,
     onBack: () -> Unit,
+    onOpenFile: ((String) -> Unit)? = null,
 ) {
     val vm: ChatViewModel = viewModel(key = sessionId, factory = vmFactory { ChatViewModel(container, sessionId) })
     val hasMessages by vm.hasMessages.collectAsStateWithLifecycle()
@@ -212,7 +214,9 @@ fun ChatScreen(
 
     fun doSend() {
         if (vm.send(draft)) {
-            haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+            // TextHandleMove (a light tick) is semantically right for a send commit;
+            // LongPress is reserved for long-press/swipe gestures.
+            haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
         }
     }
 
@@ -529,6 +533,7 @@ fun ChatScreen(
                             isRunning = running && message.info.id == lastMessageId,
                             imageContext = imageContext,
                             modelLabel = modelLabel,
+                            onOpenFile = onOpenFile,
                         )
                     }
                     if (running) {
@@ -580,7 +585,7 @@ fun ChatScreen(
             confirmButton = {
                 TextButton(onClick = {
                     showExitConfirm = false
-                    haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                    haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
                     vm.abort()
                     onBack()
                 }) { Text(stringResource(R.string.stop_and_exit)) }
@@ -599,7 +604,7 @@ fun ChatScreen(
             confirmButton = {
                 TextButton(onClick = {
                     showStopConfirm = false
-                    haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                    haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
                     vm.abort()
                 }) { Text(stringResource(R.string.stop), color = MaterialTheme.colorScheme.error) }
             },
@@ -750,7 +755,10 @@ private fun ChatInputBar(
                             )
                         }
                     },
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                    keyboardOptions = KeyboardOptions(
+                        imeAction = ImeAction.Send,
+                        capitalization = KeyboardCapitalization.Sentences,
+                    ),
                     keyboardActions = KeyboardActions(onSend = {
                         if (enabled && value.isNotBlank()) {
                             if (running) onQueueFollowUp(value) else onSend()
