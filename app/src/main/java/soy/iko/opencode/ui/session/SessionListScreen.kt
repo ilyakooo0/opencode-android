@@ -353,21 +353,16 @@ private fun SessionCard(
     modifier: Modifier = Modifier,
 ) {
     Card(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable(role = Role.Button) { onClick() },
     ) {
         Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                // Title area is the primary click target; the action buttons below
-                // remain separate accessibility nodes so screen readers can activate
-                // them independently.
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clickable(role = Role.Button) { onClick() },
-                ) {
+                Column(modifier = Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         if (unread) {
                             val unreadLabel = stringResource(R.string.unread)
@@ -413,7 +408,6 @@ private fun SessionCard(
                     color = if (unread) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.clickable(role = Role.Button) { onClick() },
                 )
             }
         }

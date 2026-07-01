@@ -486,7 +486,6 @@ private fun ChatInputBar(
                         }
                     },
                 placeholder = { Text(stringResource(R.string.message_placeholder)) },
-                label = { Text(stringResource(R.string.message_placeholder)) },
                 enabled = enabled,
                 maxLines = 6,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),

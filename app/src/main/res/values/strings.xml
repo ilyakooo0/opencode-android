@@ -132,6 +132,9 @@
     <string name="load_failed">Failed to load. Tap retry.</string>
     <string name="saving">Saving…</string>
     <string name="image_failed">Failed to load image</string>
+    <string name="search_models">Search models…</string>
+    <string name="search_agents">Search agents…</string>
+    <string name="no_models_match">No models match "%1$s".</string>
 
     <!-- File browser -->
     <string name="search_files">Search files…</string>

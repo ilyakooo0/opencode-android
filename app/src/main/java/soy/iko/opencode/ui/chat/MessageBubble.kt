@@ -6,7 +6,12 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -14,15 +19,18 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import soy.iko.opencode.R
 import soy.iko.opencode.data.model.AssistantMessage
 import soy.iko.opencode.data.model.MessageWithParts
+import soy.iko.opencode.data.model.TextPart
 import soy.iko.opencode.data.model.Tokens
 import soy.iko.opencode.data.model.UserMessage
 import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.ui.components.ImageLoadContext
+import soy.iko.opencode.ui.components.copyToClipboard
 import soy.iko.opencode.ui.components.rememberRelativeTime
 
 /** A single message: user prompts right-aligned in a bubble, assistant output full-width. */
@@ -87,20 +95,53 @@ private fun AssistantBlock(message: MessageWithParts, isRunning: Boolean, imageC
                     cost?.takeIf { it > 0 }?.let { add(formatCost(it)) }
                 }.takeIf { it.isNotEmpty() }?.joinToString("  •  ")
             }
-            costSummary?.let {
-                Text(
-                    it,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    costSummary?.let {
+                        Text(
+                            it,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    MessageTimestampText(message.info)
+                }
+                val context = LocalContext.current
+                val copyLabel = stringResource(R.string.copy)
+                // Collect text from all TextParts for copying. Memoized so a
+                // scroll-induced recomposition doesn't re-scan the parts list.
+                val textToCopy = remember(message.parts) {
+                    message.parts
+                        .filterIsInstance<TextPart>()
+                        .joinToString("\n\n") { it.text }
+                        .takeIf { it.isNotBlank() }
+                }
+                if (textToCopy != null) {
+                    IconButton(
+                        onClick = { copyToClipboard(context, "message", textToCopy) },
+                        modifier = Modifier.size(28.dp),
+                    ) {
+                        Icon(
+                            Icons.Filled.ContentCopy,
+                            contentDescription = copyLabel,
+                            modifier = Modifier.size(14.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
             }
+        } else {
+            MessageTimestampText(message.info)
         }
-        MessageTimestamp(message.info)
     }
 }
 
 @Composable
-private fun MessageTimestamp(info: soy.iko.opencode.data.model.MessageInfo) {
+private fun MessageTimestampText(info: soy.iko.opencode.data.model.MessageInfo) {
     val t = rememberRelativeTime(info.time?.created)
     if (t.isNotEmpty()) {
         Text(
@@ -109,6 +150,11 @@ private fun MessageTimestamp(info: soy.iko.opencode.data.model.MessageInfo) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
+}
+
+@Composable
+private fun MessageTimestamp(info: soy.iko.opencode.data.model.MessageInfo) {
+    MessageTimestampText(info)
 }
 
 // NumberFormat.getNumberInstance performs an expensive ICU locale lookup + object

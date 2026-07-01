@@ -9,15 +9,23 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -26,6 +34,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.Box
 import soy.iko.opencode.data.model.Agent
@@ -75,6 +84,24 @@ fun AgentPickerSheet(
                 modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp),
             )
         } else {
+            var query by rememberSaveable { mutableStateOf("") }
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 8.dp),
+                placeholder = { Text(stringResource(R.string.search_agents)) },
+                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+            )
+            val filtered = remember(agents, query) {
+                val q = query.trim()
+                if (q.isEmpty()) agents
+                else agents.filter {
+                    it.name.contains(q, ignoreCase = true) ||
+                        it.displayDescription.contains(q, ignoreCase = true)
+                }
+            }
             LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
                 item(key = "__default") {
                     Column(
@@ -109,7 +136,7 @@ fun AgentPickerSheet(
                         )
                     }
                 }
-                items(agents, key = { it.name }) { agent ->
+                items(filtered, key = { it.name }) { agent ->
                     val isSelected = agent.name == selected
                     Column(
                         modifier = Modifier
