@@ -17,8 +17,10 @@ import soy.iko.opencode.data.network.OpencodeApiClient
 import soy.iko.opencode.util.runCatchingCancellable
 import soy.iko.opencode.util.safeExceptionSummary
 import android.util.Log
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.flow.consumeAsFlow
 import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -58,25 +60,23 @@ open class SessionRepository(
     open fun observeMessages(sessionId: String): Flow<List<MessageWithParts>> = channelFlow {
         val store = MessageStore()
         val lock = Mutex()
+        // Conflated dirty signal: a burst of reduce()/seed() calls coalesces into a
+        // single snapshot+send per demand cycle. Previously every changed event called
+        // snapshot() — allocating an O(N) copy of the whole message list — and ~97% of
+        // those copies were immediately discarded by the outer .conflate() during fast
+        // streaming (hundreds of tokens/sec). Marking dirty and snapshotting in one
+        // drain loop means N events in a burst allocate ~1 snapshot, not N.
+        val dirty = Channel<Unit>(Channel.CONFLATED)
 
-        // Collect the snapshot under the lock, then publish outside it so a slow
-        // downstream collector can't stall event processing.
-        suspend fun publish() {
-            val snapshot = lock.withLock { store.snapshot() }
-            send(snapshot)
-        }
+        // Mark the store dirty; the drain loop below snapshots and publishes. CONFLATED
+        // collapses repeated marks into a single pending signal, so a tight burst of
+        // events doesn't even allocate N marks.
+        fun publish() { dirty.trySend(Unit) }
 
         // Subscribe to events first so we don't miss early deltas during the initial load.
-        val job = launch {
+        launch {
             eventStream.events.collect { event ->
-                // Reduce and snapshot in a single lock acquisition: during fast streaming
-                // (hundreds of tokens/sec) this halves mutex contention vs. acquiring the
-                // lock once for reduce and again for snapshot. send() is called outside the
-                // lock so a slow downstream collector can't stall event processing.
-                val snapshot = lock.withLock {
-                    if (store.reduce(sessionId, event)) store.snapshot() else null
-                }
-                if (snapshot != null) send(snapshot)
+                if (lock.withLock { store.reduce(sessionId, event) }) publish()
             }
         }
 
@@ -128,8 +128,15 @@ open class SessionRepository(
         lock.withLock { store.seed(initial) }
         publish()
 
-        // Keep the flow alive until the collector cancels; the launched job is torn down with it.
-        job.join()
+        // Single drain: one snapshot+send per conflated dirty signal. The snapshot is
+        // taken under the lock so a reader never sees a half-reduced state; send() runs
+        // outside the lock so a slow downstream collector can't stall the drain. This
+        // loop also keeps the flow alive until the collector cancels; the launched jobs
+        // above are children of this scope and are torn down with it.
+        dirty.consumeAsFlow().collect {
+            val snapshot = lock.withLock { store.snapshot() }
+            send(snapshot)
+        }
     }.conflate()
 
     companion object {

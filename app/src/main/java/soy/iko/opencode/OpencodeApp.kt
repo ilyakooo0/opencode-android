@@ -1,11 +1,15 @@
 package soy.iko.opencode
 
 import android.app.Application
+import coil.ImageLoader
+import coil.ImageLoaderFactory
+import coil.disk.DiskCache
+import coil.memory.MemoryCache
 import soy.iko.opencode.data.repo.CrashLogger
 import soy.iko.opencode.di.AppContainer
 import java.util.concurrent.atomic.AtomicBoolean
 
-class OpencodeApp : Application() {
+class OpencodeApp : Application(), ImageLoaderFactory {
     lateinit var container: AppContainer
         private set
 
@@ -22,6 +26,24 @@ class OpencodeApp : Application() {
             shutdown()
         })
     }
+
+    // Process-wide Coil singleton. The defaults are sane; the explicit factory adds a
+    // disk cache so scrolling back to an image-bearing message doesn't re-fetch it over
+    // the (auth-protected) network every time. Data-URI (base64) images skip the disk
+    // cache automatically; only resolved HTTP/S URLs are cached, keyed by URL.
+    override fun newImageLoader(): ImageLoader = ImageLoader.Builder(this)
+        .memoryCache {
+            MemoryCache.Builder(this)
+                .maxSizePercent(0.25)
+                .build()
+        }
+        .diskCache {
+            DiskCache.Builder()
+                .directory(cacheDir.resolve("image_cache"))
+                .maxSizeBytes(50L * 1024 * 1024)
+                .build()
+        }
+        .build()
 
     override fun onTerminate() {
         super.onTerminate()

@@ -285,13 +285,15 @@ fun ChatScreen(
 
         LaunchedEffect(Unit) {
             snapshotFlow {
-                Triple(
-                    messages.size,
-                    messages.lastOrNull()?.parts?.sumOf { (it as? TextPart)?.text?.length ?: 0 } ?: 0,
-                    isPinnedToBottom,
-                )
-            }.collect { (_, _, pinned) ->
-                if (messages.isNotEmpty() && pinned) {
+                // Track list size + the streaming text length of the last message so we
+                // auto-scroll as tokens arrive, plus the pinned flag. A small data class
+                // with primitive fields avoids the per-frame boxing that Triple<Int,Int,Boolean>
+                // pays (snapshotFlow re-evaluates this lambda every snapshot), and reading
+                // the last TextPart's length is O(1) vs. the prior sumOf over every part.
+                val lastText = messages.lastOrNull()?.parts?.lastOrNull() as? TextPart
+                AutoScrollSignal(messages.size, lastText?.text?.length ?: 0, isPinnedToBottom)
+            }.collect { signal ->
+                if (signal.size > 0 && signal.pinned) {
                     listState.scrollToItem(messages.lastIndex)
                 }
             }
@@ -532,3 +534,10 @@ private fun EmptyConversation(modifier: Modifier = Modifier) {
         )
     }
 }
+
+/**
+ * Change signal for the auto-scroll-on-stream watcher. Primitive fields avoid the
+ * boxing `Triple<Int, Int, Boolean>` would impose on every snapshot evaluation, and
+ * equality is structural so `snapshotFlow` emits only when something relevant changes.
+ */
+private data class AutoScrollSignal(val size: Int, val lastTextLength: Int, val pinned: Boolean)

@@ -196,12 +196,20 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         pendingSessionUpdates.clear()
         _state.update { s ->
             val byId = s.sessions.associateBy { it.id }.toMutableMap()
-            batch.forEach { (id, session) -> byId[id] = session }
-            s.copy(
-                sessions = byId.values
-                    .sortedByDescending { it.time?.updated ?: it.time?.created ?: 0 }
-                    .toList(),
-            )
+            var anyChanged = false
+            batch.forEach { (id, session) ->
+                if (byId[id] != session) { byId[id] = session; anyChanged = true }
+            }
+            // No-op update: skip the rebuild entirely so the StateFlow doesn't emit a
+            // new state (and trigger recomposition) when the batch held no real changes
+            // (e.g. a duplicate SessionUpdated for an unchanged session).
+            if (!anyChanged) return@update s
+            val sorted = byId.values.sortedByDescending { it.time?.updated ?: it.time?.created ?: 0 }
+            // If the new ordering matches the existing one (e.g. only the already-newest
+            // session updated its timestamp), reuse the same list instance so downstream
+            // skips a recomposition for an identical reference.
+            val sessions = if (sorted == s.sessions) s.sessions else sorted
+            s.copy(sessions = sessions)
         }
         batch.keys.forEach { loadPreview(it) }
     }

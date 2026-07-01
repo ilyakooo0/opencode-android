@@ -10,6 +10,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -75,19 +76,23 @@ private fun AssistantBlock(message: MessageWithParts, isRunning: Boolean, imageC
         if (info is AssistantMessage) {
             val cost = info.cost
             val tokens = info.tokens
-            if (info.isComplete && (cost != null || tokens != null)) {
-                val tokenFormat = stringResource(R.string.tokens_in_out)
-                val parts = buildList {
+            val tokenFormat = stringResource(R.string.tokens_in_out)
+            // Memoize the formatted cost/tokens line so a scroll-induced or unrelated
+            // state-flip recomposition doesn't re-run NumberFormat + buildList +
+            // joinToString for every visible assistant bubble.
+            val costSummary = remember(info.isComplete, tokens, cost, tokenFormat) {
+                if (!info.isComplete || (cost == null && tokens == null)) null
+                else buildList {
                     tokens?.let { add(formatTokens(it, tokenFormat)) }
                     cost?.takeIf { it > 0 }?.let { add(formatCost(it)) }
-                }
-                if (parts.isNotEmpty()) {
-                    Text(
-                        parts.joinToString("  •  "),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+                }.takeIf { it.isNotEmpty() }?.joinToString("  •  ")
+            }
+            costSummary?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
         MessageTimestamp(message.info)
