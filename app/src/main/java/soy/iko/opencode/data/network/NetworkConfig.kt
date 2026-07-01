@@ -62,6 +62,10 @@ object NetworkConfig {
      *  triggers a full list filter + sort + recomposition, causing scroll jank. */
     const val sessionUpdateDebounceMs = 300L
 
+    /** Grace period before a deferred session delete actually fires, during which an
+     *  Undo snackbar lets the user cancel it. */
+    const val undoDeleteDelayMs = 5_000L
+
     // --- In-memory message store (SessionRepository.MessageStore) ---
 
     /** Max messages to keep in memory per observed session; oldest are evicted beyond this. */
@@ -81,6 +85,11 @@ object NetworkConfig {
 
     /** Debounce delay before persisting a draft to disk after the user stops typing. */
     const val draftDebounceMs = 500L
+
+    /** Maximum characters allowed in the chat input field. A generous cap that prevents
+     *  a huge paste from stalling the UI (the field would otherwise buffer and lay out
+     *  an unbounded string) while leaving plenty of room for long prompts. */
+    const val maxDraftLengthChars = 32_000
 
     // --- Profile store (ServerEditViewModel) ---
 

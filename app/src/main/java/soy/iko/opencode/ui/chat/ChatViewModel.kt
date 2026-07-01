@@ -114,6 +114,12 @@ class ChatViewModel(
     private val _running = MutableStateFlow(false)
     val running: StateFlow<Boolean> = _running.asStateFlow()
 
+    /** A follow-up the user typed while a run was active. send() queues it here and
+     *  auto-sends once the run completes (SessionIdle), so the user isn't blocked with
+     *  no way to send and no indication why the Send button is gone. */
+    private val _queuedFollowUp = MutableStateFlow<String?>(null)
+    val queuedFollowUp: StateFlow<String?> = _queuedFollowUp.asStateFlow()
+
     /** One-shot error events surfaced as snackbars. A SharedFlow (not StateFlow) so each
      *  emission is delivered independently — two rapid failures both get a snackbar
      *  instead of the second silently overwriting the first. */
@@ -285,13 +291,24 @@ class ChatViewModel(
                 _running.value = false
                 _pendingPermission.value = null
                 _failedDraft.value = null
+                _queuedFollowUp.value = null
                 _selectedAgent.value = null
                 _sessionTitle.value = null
                 try {
                     conn.events.events.collect { event ->
-                        if (SessionRepository.isIdle(event, sessionId)) _running.value = false
+                        if (SessionRepository.isIdle(event, sessionId)) {
+                            _running.value = false
+                            // Auto-send a queued follow-up once the previous run finishes,
+                            // so the user's drafted-while-running message isn't lost.
+                            val queued = _queuedFollowUp.value
+                            if (queued != null) {
+                                _queuedFollowUp.value = null
+                                send(queued)
+                            }
+                        }
                         if (SessionRepository.isError(event, sessionId)) {
                             _running.value = false
+                            _queuedFollowUp.value = null
                             _errorEvents.tryEmit(container.string(R.string.error_agent_reported))
                         }
                         when (event) {
@@ -433,6 +450,28 @@ class ChatViewModel(
         if (send(draft)) {
             _failedDraft.value = null
         }
+    }
+
+    /**
+     * Queue [text] to be sent automatically when the current run finishes, or clear any
+     * queued follow-up when [text] is blank. Used when the user taps Send while a run
+     * is already active — the Send button is replaced by Stop during a run, but the
+     * input field stays enabled, so a follow-up typed mid-run would otherwise have
+     * nowhere to go.
+     */
+    fun queueFollowUp(text: String) {
+        val trimmed = text.trim()
+        _queuedFollowUp.value = trimmed.takeIf { it.isNotEmpty() }
+    }
+
+    /** Manually re-fetch messages by forcing the SSE stream to reconnect, which
+     *  triggers the repository's re-seed-from-REST logic. Gives the user a recovery
+     *  path when the SSE stream silently drops and the auto-reconnect re-seed is slow
+     *  or fails — a pull-to-refresh or top-bar refresh forces a fresh fetch under the
+     *  existing generation-guarded merge. */
+    fun refreshMessages() {
+        val conn = connection ?: return
+        conn.events.triggerReconnect()
     }
 
     /** Invoke a slash-command by name via the server's /command endpoint. */

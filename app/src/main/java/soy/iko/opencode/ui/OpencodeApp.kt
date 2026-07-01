@@ -164,8 +164,18 @@ fun OpencodeApp(container: AppContainer) {
             SettingsScreen(
                 container = container,
                 onBack = { navController.popBackStack() },
+                // Navigate to the server list as a new entry on top of Sessions so the
+                // user can back out to their conversations. Previously this popped back
+                // to the root SERVERS destination, which removed Sessions from the stack
+                // and left the user unable to return to their conversations without
+                // reconnecting. Pop only Settings, then push SERVERS; back from the
+                // server list lands on Sessions (the screen the user was on before
+                // Settings), and connecting pushes a fresh SESSIONS as usual.
                 onManageServers = {
-                    navController.popBackStack(Routes.SERVERS, inclusive = false)
+                    navController.navigate(Routes.SERVERS) {
+                        popUpTo(Routes.SETTINGS) { inclusive = true }
+                        launchSingleTop = true
+                    }
                 },
                 onOpenDiagnostics = { navController.navigate(Routes.DIAGNOSTICS) },
             )

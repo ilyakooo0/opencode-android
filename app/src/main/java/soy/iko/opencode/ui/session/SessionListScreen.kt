@@ -22,6 +22,7 @@ import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.ChatBubbleOutline
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
@@ -72,6 +73,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import soy.iko.opencode.data.model.ServerProfile
 import soy.iko.opencode.data.model.Session
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
@@ -98,14 +100,21 @@ fun SessionListScreen(
     val switchingId by vm.switchingId.collectAsStateWithLifecycle()
     val connectionState by vm.connectionState.collectAsStateWithLifecycle()
     val unread by vm.unread.collectAsStateWithLifecycle()
+    val creating by vm.creating.collectAsStateWithLifecycle()
+    val anyRunActive by container.anyRunActive.collectAsStateWithLifecycle()
+    val activeConnection by container.activeConnection.collectAsStateWithLifecycle()
+    val connectedId = activeConnection?.profile?.id
     val haptics = LocalHapticFeedback.current
     val snackbar = remember { SnackbarHostState() }
+    val undoLabel = stringResource(R.string.undo)
+    val sessionDeletedLabel = stringResource(R.string.session_deleted)
     // One shared timer drives every relative-time label in the session list instead of
     // each card spinning up its own coroutine + lifecycle observer while scrolling.
     val timeTick = rememberRelativeTimeTick()
     var showServerMenu by rememberSaveable { mutableStateOf(false) }
     var pendingDeleteId by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingRenameId by rememberSaveable { mutableStateOf<String?>(null) }
+    var showDisconnectConfirm by rememberSaveable { mutableStateOf(false) }
     val pendingDelete = pendingDeleteId?.let { id -> state.sessions.firstOrNull { it.id == id } }
     val pendingRename = pendingRenameId?.let { id -> state.sessions.firstOrNull { it.id == id } }
 
@@ -118,63 +127,39 @@ fun SessionListScreen(
         }
     }
 
+    // Undo snackbar: when a session is marked for deferred deletion, offer Undo. If the
+    // action is taken before the delay expires, the session is restored and the REST
+    // delete never fires.
+    LaunchedEffect(Unit) {
+        vm.undoEvents.collect { sessionId ->
+            val result = snackbar.showSnackbar(
+                message = sessionDeletedLabel,
+                actionLabel = undoLabel,
+                duration = androidx.compose.material3.SnackbarDuration.Short,
+            )
+            if (result == androidx.compose.material3.SnackbarResult.ActionPerformed) {
+                vm.undoDelete(sessionId)
+            }
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
-                    Column {
-                        Box {
-                            Row(
-                                modifier = Modifier
-                                    .clickable(role = Role.Button) { showServerMenu = true },
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Text(serverLabel, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Icon(Icons.Filled.ArrowDropDown, contentDescription = stringResource(R.string.switch_server))
-                            }
-                            DropdownMenu(
-                                expanded = showServerMenu,
-                                onDismissRequest = { showServerMenu = false },
-                            ) {
-                                profiles.forEach { profile ->
-                                    DropdownMenuItem(
-                                        text = {
-                                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                                Column(modifier = Modifier.weight(1f)) {
-                                                    Text(
-                                                        profile.displayLabel,
-                                                        style = MaterialTheme.typography.bodyLarge,
-                                                        maxLines = 1,
-                                                        overflow = TextOverflow.Ellipsis,
-                                                    )
-                                                    Text(
-                                                        profile.baseUrl,
-                                                        style = MaterialTheme.typography.bodySmall,
-                                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                        maxLines = 1,
-                                                        overflow = TextOverflow.Ellipsis,
-                                                    )
-                                                }
-                                                if (switchingId == profile.id) {
-                                                    val switchingLabel = stringResource(R.string.loading)
-                                                    CircularProgressIndicator(
-                                                        Modifier
-                                                            .size(18.dp)
-                                                            .semantics { contentDescription = switchingLabel },
-                                                        strokeWidth = 2.dp,
-                                                    )
-                                                }
-                                            }
-                                        },
-                                        onClick = {
-                                            showServerMenu = false
-                                            vm.switchServer(profile)
-                                        },
-                                    )
-                                }
-                            }
-                        }
-                    }
+                    ServerSwitcherMenu(
+                        serverLabel = serverLabel,
+                        profiles = profiles,
+                        connectedId = connectedId,
+                        switchingId = switchingId,
+                        expanded = showServerMenu,
+                        onExpand = { showServerMenu = true },
+                        onDismiss = { showServerMenu = false },
+                        onSelect = { profile ->
+                            showServerMenu = false
+                            vm.switchServer(profile)
+                        },
+                    )
                 },
                 actions = {
                     IconButton(onClick = { vm.refresh() }) {
@@ -186,7 +171,11 @@ fun SessionListScreen(
                     IconButton(onClick = onOpenSettings) {
                         Icon(Icons.Filled.Settings, contentDescription = stringResource(R.string.settings))
                     }
-                    IconButton(onClick = onDisconnect) {
+                    IconButton(onClick = {
+                        // Confirm before disconnecting if an agent run is active in any
+                        // session — disconnecting kills the SSE stream and the run.
+                        if (anyRunActive) showDisconnectConfirm = true else onDisconnect()
+                    }) {
                         Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = stringResource(R.string.disconnect))
                     }
                 },
@@ -198,6 +187,10 @@ fun SessionListScreen(
                 onClick = { vm.createSession(onCreated = onOpenSession) },
                 icon = { Icon(Icons.Filled.Add, contentDescription = null) },
                 text = { Text(stringResource(R.string.new_session)) },
+                // Disable while a creation is in flight so a double-tap can't spawn two
+                // sessions. The container guard in createSession is the real protection;
+                // this is the visual signal.
+                expanded = !creating,
             )
         },
     ) { padding ->
@@ -275,6 +268,10 @@ fun SessionListScreen(
                                     // and the dialog guards against accidental data loss.
                                     val swipeState = rememberSwipeToDismissBoxState(
                                         confirmValueChange = {
+                                            // Haptic at the trigger so the swipe path matches the icon-path
+                                            // delete, which vibrates on confirm. Returns false (snap back) so
+                                            // the dialog guards the actual deletion.
+                                            haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                                             pendingDeleteId = session.id
                                             false
                                         },
@@ -348,6 +345,23 @@ fun SessionListScreen(
                 if (newName.isNotEmpty() && newName != session.title) vm.renameSession(session, newName)
             },
             onDismiss = { pendingRenameId = null },
+        )
+    }
+
+    if (showDisconnectConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDisconnectConfirm = false },
+            title = { Text(stringResource(R.string.disconnect_active_title)) },
+            text = { Text(stringResource(R.string.disconnect_active_text)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    showDisconnectConfirm = false
+                    onDisconnect()
+                }) { Text(stringResource(R.string.disconnect), color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDisconnectConfirm = false }) { Text(stringResource(R.string.cancel)) }
+            },
         )
     }
 }
@@ -480,6 +494,82 @@ private fun EmptySessions(onCreate: () -> Unit, modifier: Modifier = Modifier) {
         Button(onClick = onCreate) {
             Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
             Text(stringResource(R.string.new_session), modifier = Modifier.padding(start = 6.dp))
+        }
+    }
+}
+
+/** Title + dropdown for quick-switching between saved servers. Highlights the active
+ *  server with a check mark and primary color so the user can tell which one they're
+ *  on at a glance. */
+@Composable
+private fun ServerSwitcherMenu(
+    serverLabel: String,
+    profiles: List<ServerProfile>,
+    connectedId: String?,
+    switchingId: String?,
+    expanded: Boolean,
+    onExpand: () -> Unit,
+    onDismiss: () -> Unit,
+    onSelect: (ServerProfile) -> Unit,
+) {
+    Column {
+        Box {
+            Row(
+                modifier = Modifier
+                    .clickable(role = Role.Button) { onExpand() },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(serverLabel, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Icon(Icons.Filled.ArrowDropDown, contentDescription = stringResource(R.string.switch_server))
+            }
+            DropdownMenu(
+                expanded = expanded,
+                onDismissRequest = onDismiss,
+            ) {
+                profiles.forEach { profile ->
+                    val isActiveProfile = profile.id == connectedId
+                    DropdownMenuItem(
+                        text = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        profile.displayLabel,
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = if (isActiveProfile) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    Text(
+                                        profile.baseUrl,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                                if (isActiveProfile) {
+                                    Icon(
+                                        Icons.Filled.CheckCircle,
+                                        contentDescription = stringResource(R.string.connected),
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(18.dp),
+                                    )
+                                }
+                                if (switchingId == profile.id) {
+                                    val switchingLabel = stringResource(R.string.loading)
+                                    CircularProgressIndicator(
+                                        Modifier
+                                            .size(18.dp)
+                                            .semantics { contentDescription = switchingLabel },
+                                        strokeWidth = 2.dp,
+                                    )
+                                }
+                            }
+                        },
+                        onClick = { onSelect(profile) },
+                    )
+                }
+            }
         }
     }
 }

@@ -2,8 +2,10 @@ package soy.iko.opencode.ui.settings
 
 import android.content.pm.PackageManager
 import android.os.Build
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -16,6 +18,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -38,15 +41,18 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
+import soy.iko.opencode.data.repo.CrashLogger
 import soy.iko.opencode.data.repo.ThemeMode
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
@@ -60,6 +66,11 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onManageServers:
     val dynamicColor by container.settingsStore.dynamicColor.collectAsStateWithLifecycle(initialValue = true)
     val activeProfile = container.activeConnection.collectAsStateWithLifecycle().value?.profile
     val context = LocalContext.current
+    // Crash count badge: surface that there are reports to look at without making the
+    // user open the screen to find out.
+    val crashLogger = remember { CrashLogger.get(context) }
+    val crashReports by crashLogger.reports.collectAsStateWithLifecycle()
+    val crashCount = crashReports.size
     val unknownVersion = stringResource(R.string.unknown_version)
     val versionName = remember {
         runCatching {
@@ -195,6 +206,12 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onManageServers:
             ) {
                 Icon(Icons.Filled.BugReport, contentDescription = null, tint = MaterialTheme.colorScheme.error)
                 Text(stringResource(R.string.diagnostics), modifier = Modifier.weight(1f).padding(start = 8.dp))
+                // Badge with the crash count so the user can tell at a glance whether
+                // there's something worth investigating.
+                if (crashCount > 0) {
+                    Badge(count = crashCount)
+                    Spacer(Modifier.size(8.dp))
+                }
                 Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
@@ -219,6 +236,25 @@ private fun ThemeRow(mode: ThemeMode, selected: Boolean, onSelect: () -> Unit) {
                 ThemeMode.DARK -> stringResource(R.string.theme_dark)
             },
             style = MaterialTheme.typography.bodyLarge,
+        )
+    }
+}
+
+/** Small circular count badge used to indicate pending crash reports. */
+@Composable
+private fun Badge(count: Int) {
+    Box(
+        modifier = Modifier
+            .size(20.dp)
+            .clip(CircleShape)
+            .background(MaterialTheme.colorScheme.error),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            if (count > 99) "99+" else count.toString(),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onError,
+            textAlign = TextAlign.Center,
         )
     }
 }

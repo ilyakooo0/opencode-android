@@ -72,12 +72,20 @@ fun ServerListScreen(
     val reconnecting by container.reconnecting.collectAsStateWithLifecycle()
     val haptics = LocalHapticFeedback.current
     val snackbar = remember { SnackbarHostState() }
+    val retryLabel = stringResource(R.string.retry)
     var pendingDeleteId by rememberSaveable { mutableStateOf<String?>(null) }
     val connectedId = activeConnection?.profile?.id
 
     LaunchedEffect(Unit) {
-        vm.errorEvents.collect { msg ->
-            snackbar.showSnackbar(msg)
+        vm.errorEvents.collect { event ->
+            val result = if (event.profile != null) {
+                snackbar.showSnackbar(message = event.message, actionLabel = retryLabel)
+            } else {
+                snackbar.showSnackbar(event.message)
+            }
+            if (result == androidx.compose.material3.SnackbarResult.ActionPerformed && event.profile != null) {
+                vm.connect(event.profile, onConnected)
+            }
         }
     }
 
@@ -159,6 +167,12 @@ fun ServerListScreen(
                                         tint = MaterialTheme.colorScheme.primary,
                                         modifier = Modifier.size(22.dp),
                                     )
+                                    // Keep edit available on the active server so credentials can be
+                                    // fixed without disconnecting first. Only delete is hidden, since
+                                    // deleting the active server also disconnects (SV1 warns about that).
+                                    IconButton(onClick = { onEditProfile(profile.id) }) {
+                                        Icon(Icons.Filled.Edit, contentDescription = stringResource(R.string.edit))
+                                    }
                                 } else if (connectingId == profile.id) {
                                     val connectingLabel = stringResource(R.string.connecting)
                                     CircularProgressIndicator(
@@ -181,10 +195,16 @@ fun ServerListScreen(
     }
 
     profiles.find { it.id == pendingDeleteId }?.let { profile ->
+        val isActiveProfile = profile.id == connectedId
         AlertDialog(
             onDismissRequest = { pendingDeleteId = null },
             title = { Text(stringResource(R.string.remove_server_title)) },
-            text = { Text(stringResource(R.string.remove_server_text, profile.displayLabel)) },
+            text = {
+                Text(
+                    if (isActiveProfile) stringResource(R.string.remove_server_active_text, profile.displayLabel)
+                    else stringResource(R.string.remove_server_text, profile.displayLabel),
+                )
+            },
             confirmButton = {
                 TextButton(onClick = {
                     haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)

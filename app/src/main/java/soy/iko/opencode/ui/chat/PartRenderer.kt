@@ -142,6 +142,7 @@ private fun ReasoningBlock(text: String, streaming: Boolean, modifier: Modifier)
                 TextButton(
                     onClick = { copyToClipboard(context, "reasoning", text) },
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp),
+                    modifier = Modifier.semantics(mergeDescendants = true) {},
                 ) {
                     Icon(Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(14.dp))
                     Text(stringResource(R.string.copy), style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(start = 4.dp))
@@ -217,6 +218,7 @@ private fun ToolCallView(part: ToolPart, modifier: Modifier) {
             TextButton(
                 onClick = { copyToClipboard(context, "output", detail) },
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp),
+                modifier = Modifier.semantics(mergeDescendants = true) {},
             ) {
                 Icon(Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(14.dp))
                 Text(stringResource(R.string.copy), style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(start = 4.dp))

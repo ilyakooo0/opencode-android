@@ -126,6 +126,11 @@ open class AppContainer private constructor(
     private val _unread = MutableStateFlow<Set<String>>(emptySet())
     open val unread: StateFlow<Set<String>> = _unread.asStateFlow()
 
+    /** True when any assistant run is actively streaming across all sessions. Drives the
+     *  disconnect confirmation on the session list (disconnecting mid-run kills it). */
+    private val _anyRunActive = MutableStateFlow(false)
+    open val anyRunActive: StateFlow<Boolean> = _anyRunActive.asStateFlow()
+
     open fun setCurrentSession(id: String?) {
         _currentSession.value = id
         if (id != null) {
@@ -233,6 +238,7 @@ open class AppContainer private constructor(
                     if (event is SessionIdle) {
                         val idleSid = event.properties.sessionID ?: return@collect
                         if (idleSid != _currentSession.value && activeRuns.remove(idleSid)) {
+                            _anyRunActive.value = activeRuns.isNotEmpty()
                             notifySessionCompleted(idleSid)
                         }
                         return@collect
@@ -245,14 +251,12 @@ open class AppContainer private constructor(
                     // represent a finished run worth notifying about.
                     if (event is MessagePartUpdated || event is MessageUpdated) {
                         synchronized(activeRuns) {
-                            // Evict the oldest entry when the cap is reached instead of
-                            // clearing everything, so completion notifications for the
-                            // remaining active runs still fire on SessionIdle.
                             if (activeRuns.size >= activeRunsLimit) {
                                 activeRuns.remove(activeRuns.iterator().next())
                             }
                             activeRuns.add(sid)
                         }
+                        _anyRunActive.value = true
                     }
                 } }.onFailure { Log.w("AppContainer", "Message activity observer failed, will retry: ${safeExceptionSummary(it)}") }
                 if (!isActive) break
@@ -333,6 +337,7 @@ open class AppContainer private constructor(
             _activeConnection.value?.close()
             _activeConnection.value = null
             activeRuns.clear()
+            _anyRunActive.value = false
             _unread.value = emptySet()
             val now = System.currentTimeMillis()
             val resolved = profileStore.resolve(profile)
@@ -367,14 +372,44 @@ open class AppContainer private constructor(
      * touch the active connection or the profile store.
      */
     open suspend fun probeServer(baseUrl: String): ProbeResult {
-        val probeProfile = ServerProfile(
+        return probeWithProfile(ServerProfile(
             id = "probe",
             label = "",
             baseUrl = baseUrl.trim(),
             username = null,
             password = null,
+        ))
+    }
+
+    /**
+     * Probe a server URL *with* credentials to validate them. Returns true if the
+     * server accepts the credentials (ping succeeds), false on 401/403, and throws
+     * on other failures (unreachable, timeout) so the caller can surface a friendly
+     * message. Mirrors [probeServer]'s short-lived-client pattern.
+     */
+    open suspend fun probeWithCredentials(baseUrl: String, username: String, password: String): Boolean {
+        val probeProfile = ServerProfile(
+            id = "probe-auth",
+            label = "",
+            baseUrl = baseUrl.trim(),
+            username = username.trim().takeIf { it.isNotBlank() },
+            password = password.trim().takeIf { it.isNotEmpty() },
         )
         val client = HttpClientFactory.create(probeProfile)
+        return try {
+            val api = OpencodeApiClient(client)
+            api.ping()
+            true
+        } catch (e: Exception) {
+            val status = responseStatusCode(e)
+            if (status == 401 || status == 403) false else throw e
+        } finally {
+            runCatching { client.close() }
+        }
+    }
+
+    private suspend fun probeWithProfile(profile: ServerProfile): ProbeResult {
+        val client = HttpClientFactory.create(profile)
         return try {
             val api = OpencodeApiClient(client)
             api.ping()
@@ -384,7 +419,7 @@ open class AppContainer private constructor(
             if (status == 401 || status == 403) {
                 ProbeResult.NeedsAuth
             } else {
-                ProbeResult.Unreachable(friendlyErrorFor(e, baseUrl))
+                ProbeResult.Unreachable(friendlyErrorFor(e, profile.baseUrl))
             }
         } finally {
             runCatching { client.close() }

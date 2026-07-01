@@ -46,6 +46,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import soy.iko.opencode.util.runCatchingCancellable
+import soy.iko.opencode.ui.components.showToast
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -71,6 +72,7 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
     val reports by logger.reports.collectAsStateWithLifecycle()
     var viewing by rememberSaveable { mutableStateOf<String?>(null) }
     var showClearAll by rememberSaveable { mutableStateOf(false) }
+    var pendingReportDelete by rememberSaveable { mutableStateOf<String?>(null) }
     val shareScope = rememberCoroutineScope()
     val shareLabel = stringResource(R.string.share)
     val timeTick = rememberRelativeTimeTick()
@@ -154,7 +156,10 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                                         putExtra(Intent.EXTRA_TEXT, content)
                                     }
                                     runCatchingCancellable { context.startActivity(Intent.createChooser(send, shareLabel)) }
-                                        .onFailure { Log.w("Diagnostics", "Failed to share crash report", it) }
+                                        .onFailure {
+                                            Log.w("Diagnostics", "Failed to share crash report", it)
+                                            showToast(context, context.getString(R.string.no_share_app))
+                                        }
                                 }
                             }) {
                                 Icon(Icons.Filled.Share, contentDescription = stringResource(R.string.share))
@@ -171,16 +176,18 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
     val reportName = viewing
     if (reportName != null) {
         var reportContent by remember(reportName) { mutableStateOf<String?>(null) }
+        var loadFailed by remember(reportName) { mutableStateOf(false) }
         LaunchedEffect(reportName) {
-            reportContent = withContext(Dispatchers.IO) {
+            val loaded = withContext(Dispatchers.IO) {
                 runCatching { logger.readReport(reportName) }.getOrNull()
             }
+            if (loaded != null) reportContent = loaded else loadFailed = true
         }
         val content = reportContent
         AlertDialog(
             onDismissRequest = { viewing = null },
             confirmButton = {
-                TextButton(onClick = { viewing = null }) { Text(stringResource(R.string.back)) }
+                TextButton(onClick = { viewing = null }) { Text(stringResource(R.string.close)) }
             },
             dismissButton = {
                 Row {
@@ -192,19 +199,22 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                             putExtra(Intent.EXTRA_TEXT, content.orEmpty())
                         }
                         runCatchingCancellable { context.startActivity(Intent.createChooser(send, shareLabel2)) }
-                            .onFailure { Log.w("Diagnostics", "Failed to share crash report", it) }
+                            .onFailure {
+                                Log.w("Diagnostics", "Failed to share crash report", it)
+                                showToast(context, context.getString(R.string.no_share_app))
+                            }
                     }) { Text(stringResource(R.string.share)) }
                     Spacer(Modifier.size(8.dp))
                     TextButton(onClick = {
-                        logger.deleteReport(reportName)
-                        viewing = null
-                    }) { Text(stringResource(R.string.delete)) }
+                        // Confirm before deleting a single report, matching clear-all.
+                        pendingReportDelete = reportName
+                    }) { Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error) }
                 }
             },
             title = { Text(stringResource(R.string.crash_report)) },
             text = {
-                if (content != null) {
-                    Box(
+                when {
+                    content != null -> Box(
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(max = 400.dp)
@@ -216,15 +226,39 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                             modifier = Modifier.fillMaxWidth(),
                         )
                     }
-                } else {
-                    val loadingLabel = stringResource(R.string.loading)
-                    Box(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        CircularProgressIndicator(Modifier.semantics { contentDescription = loadingLabel })
+                    loadFailed -> Text(
+                        stringResource(R.string.report_load_failed),
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(vertical = 24.dp),
+                    )
+                    else -> {
+                        val loadingLabel = stringResource(R.string.loading)
+                        Box(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            CircularProgressIndicator(Modifier.semantics { contentDescription = loadingLabel })
+                        }
                     }
                 }
+            },
+        )
+    }
+
+    if (pendingReportDelete != null) {
+        AlertDialog(
+            onDismissRequest = { pendingReportDelete = null },
+            title = { Text(stringResource(R.string.delete_report_title)) },
+            text = { Text(stringResource(R.string.delete_report_text)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingReportDelete?.let { logger.deleteReport(it) }
+                    pendingReportDelete = null
+                    viewing = null
+                }) { Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingReportDelete = null }) { Text(stringResource(R.string.cancel)) }
             },
         )
     }

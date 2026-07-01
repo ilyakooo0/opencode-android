@@ -45,6 +45,10 @@ class FileBrowserViewModel(private val container: AppContainer) : ViewModel() {
     private val _state = MutableStateFlow(FileBrowserState())
     val state: StateFlow<FileBrowserState> = _state.asStateFlow()
 
+    /** Tracks an in-flight manual refresh so pull-to-refresh can show its indicator. */
+    private val _refreshing = MutableStateFlow(false)
+    val refreshing: StateFlow<Boolean> = _refreshing.asStateFlow()
+
     /** One-shot transient errors (failed VCS status fetch, etc.) surfaced as snackbars without
      *  hiding the file list. A SharedFlow (not StateFlow) so each emission is delivered independently. */
     private val _transientErrors = MutableSharedFlow<String>(
@@ -91,6 +95,19 @@ class FileBrowserViewModel(private val container: AppContainer) : ViewModel() {
                     // a transient error so the user knows why badges are missing.
                     _transientErrors.tryEmit(container.friendlyError(it))
                 }
+        }
+    }
+
+    /** Re-open the current directory (manual refresh). Used by pull-to-refresh. */
+    fun refresh() {
+        _refreshing.value = true
+        open(_state.value.path)
+        viewModelScope.launch {
+            // Clear the spinner once the open() launch settles. open() sets loading=true
+            // synchronously and flips it false in its own coroutine; wait one frame cycle.
+            // Simpler: clear after the openJob completes by joining it.
+            openJob?.join()
+            _refreshing.value = false
         }
     }
 

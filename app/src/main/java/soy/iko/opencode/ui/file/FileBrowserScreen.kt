@@ -5,6 +5,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -65,6 +66,7 @@ fun FileBrowserScreen(
 ) {
     val vm: FileBrowserViewModel = viewModel(factory = vmFactory { FileBrowserViewModel(container) })
     val state by vm.state.collectAsStateWithLifecycle()
+    val refreshing by vm.refreshing.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
 
     LaunchedEffect(Unit) {
@@ -104,34 +106,40 @@ fun FileBrowserScreen(
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
             )
 
-            Box(modifier = Modifier.fillMaxSize()) {
-                when {
-                    state.loading || state.searching -> {
-                        val loadingLabel = stringResource(R.string.loading)
-                        CircularProgressIndicator(
-                            Modifier.align(Alignment.Center).semantics { contentDescription = loadingLabel },
-                        )
-                    }
-                    state.error != null -> Column(
-                        modifier = Modifier.align(Alignment.Center).padding(24.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        Text(
-                            state.error ?: "",
-                            color = MaterialTheme.colorScheme.error,
-                        )
-                        androidx.compose.foundation.layout.Spacer(Modifier.size(12.dp))
-                        androidx.compose.material3.TextButton(onClick = { vm.open(state.path) }) {
-                            Text(stringResource(R.string.retry))
+            androidx.compose.material3.pulltorefresh.PullToRefreshBox(
+                isRefreshing = refreshing,
+                onRefresh = { vm.refresh() },
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    when {
+                        state.loading || state.searching -> {
+                            val loadingLabel = stringResource(R.string.loading)
+                            CircularProgressIndicator(
+                                Modifier.align(Alignment.Center).semantics { contentDescription = loadingLabel },
+                            )
                         }
+                        state.error != null -> Column(
+                            modifier = Modifier.align(Alignment.Center).padding(24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Text(
+                                state.error ?: "",
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                            androidx.compose.foundation.layout.Spacer(Modifier.size(12.dp))
+                            androidx.compose.material3.TextButton(onClick = { vm.open(state.path) }) {
+                                Text(stringResource(R.string.retry))
+                            }
+                        }
+                        state.isSearching -> SearchResults(state.results, onOpenFile)
+                        else -> DirectoryListing(
+                            state = state,
+                            onOpenDir = vm::open,
+                            onUp = vm::up,
+                            onOpenFile = onOpenFile,
+                        )
                     }
-                    state.isSearching -> SearchResults(state.results, onOpenFile)
-                    else -> DirectoryListing(
-                        state = state,
-                        onOpenDir = vm::open,
-                        onUp = vm::up,
-                        onOpenFile = onOpenFile,
-                    )
                 }
             }
         }
@@ -180,7 +188,16 @@ private fun SearchResults(results: List<String>, onOpenFile: (String) -> Unit) {
     }
     LazyColumn(modifier = Modifier.fillMaxSize()) {
         items(results, key = { it }) { path ->
-            FileRow(icon = false, label = path, onClick = { onOpenFile(path) })
+            // Split the path into directory (muted) + filename (emphasized) so results
+            // are scannable instead of a wall of identical-looking full paths.
+            val dir = path.substringBeforeLast('/', missingDelimiterValue = "").trimEnd('/')
+            val name = path.substringAfterLast('/')
+            FileRow(
+                icon = false,
+                label = name,
+                sublabel = dir.takeIf { it.isNotEmpty() },
+                onClick = { onOpenFile(path) },
+            )
             HorizontalDivider()
         }
     }
@@ -226,6 +243,7 @@ private fun FileRow(
     label: String,
     onClick: () -> Unit,
     status: FileStatusEntry? = null,
+    sublabel: String? = null,
 ) {
     val desc = if (label == "..") stringResource(R.string.parent_dir)
         else if (icon) stringResource(R.string.folder, label)
@@ -233,6 +251,7 @@ private fun FileRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .defaultMinSize(minHeight = 48.dp)
             .clickable(role = Role.Button, onClick = onClick)
             .semantics(mergeDescendants = true) { contentDescription = desc }
             .padding(horizontal = 16.dp, vertical = 14.dp),
@@ -244,13 +263,23 @@ private fun FileRow(
             modifier = Modifier.size(20.dp),
             tint = if (icon) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Text(
-            label,
-            style = MaterialTheme.typography.bodyLarge,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f).padding(start = 8.dp),
-        )
+        Column(modifier = Modifier.weight(1f).padding(start = 8.dp)) {
+            Text(
+                label,
+                style = MaterialTheme.typography.bodyLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (sublabel != null) {
+                Text(
+                    sublabel,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
         if (status != null) StatusBadge(status)
     }
 }

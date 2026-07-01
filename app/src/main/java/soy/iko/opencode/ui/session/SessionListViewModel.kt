@@ -87,6 +87,11 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
     private val _switchingId = MutableStateFlow<String?>(null)
     val switchingId: StateFlow<String?> = _switchingId.asStateFlow()
 
+    /** True while a session creation is in flight, so the FAB can disable itself and
+     *  prevent double-taps from firing two createSession calls. */
+    private val _creating = MutableStateFlow(false)
+    val creating: StateFlow<Boolean> = _creating.asStateFlow()
+
     private val _state = MutableStateFlow(SessionListState())
     val state: StateFlow<SessionListState> = _state.asStateFlow()
 
@@ -103,6 +108,17 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
     val transientErrors: SharedFlow<String> = _transientErrors.asSharedFlow()
+
+    /** One-shot events carrying the id of a session marked for deferred deletion, so the
+     *  UI can show an Undo snackbar. */
+    private val _undoEvents = MutableSharedFlow<String>(
+        extraBufferCapacity = NetworkConfig.snackbarEventBufferCapacity,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+    val undoEvents: SharedFlow<String> = _undoEvents.asSharedFlow()
+
+    /** Session awaiting the undo window to expire before its REST delete fires. */
+    private var pendingDelete: Session? = null
 
     private var previewJob: Job? = null
     private var refreshJob: Job? = null
@@ -321,28 +337,64 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
 
     fun createSession(onCreated: (String) -> Unit) {
         val conn = container.activeConnection.value ?: return
+        if (!_creating.compareAndSet(false, true)) return
         viewModelScope.launch {
-            runCatchingCancellable { conn.repository.createSession() }
-                .onSuccess { onCreated(it.id); refresh() }
-                .onFailure {
-                    _state.update { it.copy(error = null) }
-                    _transientErrors.tryEmit(container.friendlyError(it))
-                }
+            try {
+                runCatchingCancellable { conn.repository.createSession() }
+                    .onSuccess { onCreated(it.id); refresh() }
+                    .onFailure {
+                        _state.update { it.copy(error = null) }
+                        _transientErrors.tryEmit(container.friendlyError(it))
+                    }
+            } finally {
+                _creating.value = false
+            }
         }
     }
 
+    /**
+     * Mark [session] as pending deletion and hide it from the list immediately, then
+     * surface an Undo via [undoEvents]. The actual REST delete is deferred by
+     * [NetworkConfig.undoDeleteDelayMs]; if [undoDelete] is called before it fires,
+     * the session is restored. Otherwise the delete proceeds.
+     */
     fun deleteSession(session: Session) {
-        val conn = container.activeConnection.value ?: return
+        // Optimistically remove from the visible list so the UI feels instant.
+        _state.update { s ->
+            s.copy(sessions = s.sessions.filterNot { it.id == session.id })
+        }
+        // Hold the pending delete so the snackbar can undo it.
+        pendingDelete = session
+        _undoEvents.tryEmit(session.id)
         viewModelScope.launch {
-            runCatchingCancellable { conn.repository.deleteSession(session.id) }
-                .onSuccess {
-                    container.draftStore.remove(session.id)
-                    refresh()
-                }
-                .onFailure {
-                    _state.update { it.copy(error = null) }
-                    _transientErrors.tryEmit(container.friendlyError(it))
-                }
+            delay(NetworkConfig.undoDeleteDelayMs)
+            // If undo was called, pendingDelete was cleared — don't delete.
+            val toDelete = pendingDelete
+            if (toDelete != null && toDelete.id == session.id) {
+                pendingDelete = null
+                val conn = container.activeConnection.value ?: return@launch
+                runCatchingCancellable { conn.repository.deleteSession(session.id) }
+                    .onSuccess {
+                        container.draftStore.remove(session.id)
+                        refresh()
+                    }
+                    .onFailure {
+                        // Restore the session to the list since the delete failed.
+                        _state.update { s -> s.copy(sessions = (s.sessions + session).sortedByDescending { it.time?.updated ?: it.time?.created ?: 0 }) }
+                        _transientErrors.tryEmit(container.friendlyError(it))
+                    }
+            }
+        }
+    }
+
+    /** Cancel a pending delete (Undo snackbar action) and restore the session. */
+    fun undoDelete(sessionId: String) {
+        val pending = pendingDelete
+        if (pending != null && pending.id == sessionId) {
+            pendingDelete = null
+            _state.update { s ->
+                s.copy(sessions = (s.sessions + pending).sortedByDescending { it.time?.updated ?: it.time?.created ?: 0 })
+            }
         }
     }
 

@@ -26,6 +26,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Stop
@@ -87,6 +88,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import soy.iko.opencode.data.model.TextPart
 import soy.iko.opencode.data.network.EventStreamClient
+import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
 import soy.iko.opencode.ui.components.ConnectionBanner
@@ -154,9 +156,15 @@ fun ChatScreen(
     }
 
     // Navigate away when the session is deleted via SSE so the user isn't left
-    // on a zombie screen showing a conversation that no longer exists.
+    // on a zombie screen showing a conversation that no longer exists. Surface a
+    // toast (not a snackbar) because the screen is about to be popped — a snackbar
+    // would be torn down before the user could read it, while a toast survives.
+    val deletedContext = LocalContext.current
     LaunchedEffect(sessionDeleted) {
-        if (sessionDeleted) onBack()
+        if (sessionDeleted) {
+            showToast(deletedContext, deletedContext.getString(R.string.session_deleted_msg))
+            onBack()
+        }
     }
 
     val snackbar = remember { SnackbarHostState() }
@@ -165,6 +173,7 @@ fun ChatScreen(
     var showAgentPicker by rememberSaveable { mutableStateOf(false) }
     var showCommandPicker by rememberSaveable { mutableStateOf(false) }
     var showExitConfirm by rememberSaveable { mutableStateOf(false) }
+    var showStopConfirm by rememberSaveable { mutableStateOf(false) }
 
     // Keep the screen awake and hold a foreground priority while the agent is working,
     // so backgrounding mid-run doesn't let Doze choke the SSE stream.
@@ -249,6 +258,12 @@ fun ChatScreen(
                             strokeWidth = 2.dp,
                         )
                     }
+                    // Manual refresh: forces an SSE reconnect, which re-seeds messages
+                    // from REST. A recovery path when the stream silently drops and the
+                    // auto-reconnect re-seed is slow or fails.
+                    IconButton(onClick = { vm.refreshMessages() }, enabled = activeConnection != null) {
+                        Icon(Icons.Filled.Refresh, contentDescription = stringResource(R.string.refresh))
+                    }
                     IconButton(
                         onClick = {
                             scope.launch {
@@ -282,13 +297,17 @@ fun ChatScreen(
         },
         snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
+            val queuedFollowUp by vm.queuedFollowUp.collectAsStateWithLifecycle()
             ChatInputBar(
                 value = draft,
                 onValueChange = vm::updateDraft,
                 running = running,
                 enabled = activeConnection != null,
                 onSend = ::doSend,
-                onAbort = { vm.abort() },
+                onAbort = { showStopConfirm = true },
+                queuedFollowUp = queuedFollowUp,
+                onQueueFollowUp = vm::queueFollowUp,
+                onCancelQueue = { vm.queueFollowUp("") },
             )
         },
     ) { padding ->
@@ -328,7 +347,9 @@ fun ChatScreen(
         }
 
         CompositionLocalProvider(LocalRelativeTimeTick provides timeTick) {
-        Box(modifier = Modifier.fillMaxSize().padding(padding)) {
+        // imePadding so the jump-to-latest FAB (aligned BottomEnd) is pushed above the
+        // IME instead of being hidden behind it when the keyboard is open.
+        Box(modifier = Modifier.fillMaxSize().padding(padding).imePadding()) {
             if (activeConnection == null) {
                 Column(
                     modifier = Modifier.align(Alignment.Center).padding(24.dp),
@@ -449,6 +470,23 @@ fun ChatScreen(
         )
     }
 
+    if (showStopConfirm) {
+        AlertDialog(
+            onDismissRequest = { showStopConfirm = false },
+            title = { Text(stringResource(R.string.stop_run_title)) },
+            text = { Text(stringResource(R.string.stop_run_text)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    showStopConfirm = false
+                    vm.abort()
+                }) { Text(stringResource(R.string.stop), color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showStopConfirm = false }) { Text(stringResource(R.string.cancel)) }
+            },
+        )
+    }
+
     if (showModelPicker) {
         ModelPickerSheet(
             options = models,
@@ -500,49 +538,80 @@ private fun ChatInputBar(
     enabled: Boolean,
     onSend: () -> Unit,
     onAbort: () -> Unit,
+    queuedFollowUp: String?,
+    onQueueFollowUp: (String) -> Unit,
+    onCancelQueue: () -> Unit,
 ) {
     Surface(tonalElevation = 3.dp, modifier = Modifier.imePadding()) {
-        Row(
-            modifier = Modifier.fillMaxWidth()
-                .windowInsetsPadding(WindowInsets.navigationBars)
-                .padding(8.dp),
-            verticalAlignment = Alignment.Bottom,
-        ) {
-            OutlinedTextField(
-                value = value,
-                onValueChange = onValueChange,
-                modifier = Modifier
-                    .weight(1f)
-                    .testTag("chat_input")
-                    .onPreviewKeyEvent { event ->
-                        if (event.type == KeyEventType.KeyDown &&
-                            event.key == Key.Enter &&
-                            !event.isShiftPressed &&
-                            enabled && value.isNotBlank()
-                        ) {
-                            onSend()
-                            true
-                        } else {
-                            false
-                        }
-                    },
-                placeholder = { Text(stringResource(R.string.message_placeholder)) },
-                enabled = enabled,
-                maxLines = 6,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                keyboardActions = KeyboardActions(onSend = { if (enabled && value.isNotBlank()) onSend() }),
-            )
-            if (running) {
-                IconButton(onClick = onAbort, modifier = Modifier.padding(start = 4.dp).testTag("stop_button")) {
-                    Icon(Icons.Filled.Stop, contentDescription = stringResource(R.string.stop))
-                }
-            } else {
-                IconButton(
-                    onClick = onSend,
-                    enabled = enabled && value.isNotBlank(),
-                    modifier = Modifier.padding(start = 4.dp).testTag("send_button"),
+        Column(modifier = Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.navigationBars)) {
+            // A queued follow-up replaces the Stop button with a "queued" chip so the
+            // user sees their message will be sent when the run finishes, and can cancel.
+            if (queuedFollowUp != null) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 12.dp, top = 6.dp, end = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = stringResource(R.string.send))
+                    Text(
+                        stringResource(R.string.queued),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = onCancelQueue, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp)) {
+                        Text(stringResource(R.string.cancel))
+                    }
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(8.dp),
+                verticalAlignment = Alignment.Bottom,
+            ) {
+                OutlinedTextField(
+                    value = value,
+                    onValueChange = { v ->
+                        // Cap input length so a huge paste can't stall the UI. Shares are
+                        // capped separately in MainActivity; this guards typed/pasted drafts.
+                        onValueChange(v.take(NetworkConfig.maxDraftLengthChars))
+                    },
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("chat_input")
+                        .onPreviewKeyEvent { event ->
+                            if (event.type == KeyEventType.KeyDown &&
+                                event.key == Key.Enter &&
+                                !event.isShiftPressed &&
+                                enabled && value.isNotBlank()
+                            ) {
+                                if (running) onQueueFollowUp(value) else onSend()
+                                true
+                            } else {
+                                false
+                            }
+                        },
+                    placeholder = { Text(stringResource(R.string.message_placeholder)) },
+                    enabled = enabled,
+                    maxLines = 6,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                    keyboardActions = KeyboardActions(onSend = {
+                        if (enabled && value.isNotBlank()) {
+                            if (running) onQueueFollowUp(value) else onSend()
+                        }
+                    }),
+                )
+                if (running) {
+                    IconButton(onClick = onAbort, modifier = Modifier.padding(start = 4.dp).testTag("stop_button")) {
+                        Icon(Icons.Filled.Stop, contentDescription = stringResource(R.string.stop))
+                    }
+                } else {
+                    IconButton(
+                        onClick = onSend,
+                        enabled = enabled && value.isNotBlank(),
+                        modifier = Modifier.padding(start = 4.dp).testTag("send_button"),
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.Send, contentDescription = stringResource(R.string.send))
+                    }
                 }
             }
         }

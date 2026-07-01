@@ -324,6 +324,11 @@ class FakeAppContainer : AppContainer() {
     var probeCalls: List<String> = emptyList()
         private set
 
+    /** When non-null, [probeWithCredentials] returns this directly. */
+    var probeWithCredentialsResult: Boolean? = null
+    var probeWithCredentialsCalls: List<Triple<String, String, String>> = emptyList()
+        private set
+
     override fun string(id: Int, vararg formatArgs: Any): String = "test-string-$id"
 
     override fun friendlyError(t: Throwable): String = "test-error: ${t.message ?: t::class.simpleName}"
@@ -334,9 +339,6 @@ class FakeAppContainer : AppContainer() {
     override suspend fun connect(profile: ServerProfile): OpencodeConnection {
         connectCalls = connectCalls + profile
         connectException?.let { throw it }
-        // Mirror the real AppContainer: connect() publishes the new connection so
-        // collectors (SSE observer, refresh) see it immediately. This lets the
-        // switchServer failure/restore paths be exercised end-to-end.
         val conn = connectResult ?: run {
             val api = FakeOpencodeApiClient()
             val events = FakeEventStreamClient()
@@ -355,6 +357,11 @@ class FakeAppContainer : AppContainer() {
     override suspend fun probeServer(baseUrl: String): ProbeResult {
         probeCalls = probeCalls + baseUrl
         return probeResult ?: ProbeResult.Reachable
+    }
+
+    override suspend fun probeWithCredentials(baseUrl: String, username: String, password: String): Boolean {
+        probeWithCredentialsCalls = probeWithCredentialsCalls + Triple(baseUrl, username, password)
+        return probeWithCredentialsResult ?: true
     }
 
     fun setActiveConnection(conn: OpencodeConnection?) {
