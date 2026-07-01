@@ -105,7 +105,7 @@ fun ChatScreen(
     onBack: () -> Unit,
 ) {
     val vm: ChatViewModel = viewModel(key = sessionId, factory = vmFactory { ChatViewModel(container, sessionId) })
-    val messages by vm.messages.collectAsStateWithLifecycle()
+    val hasMessages by vm.hasMessages.collectAsStateWithLifecycle()
     val running by vm.running.collectAsStateWithLifecycle()
     val loading by vm.loading.collectAsStateWithLifecycle()
     val models by vm.models.collectAsStateWithLifecycle()
@@ -151,11 +151,6 @@ fun ChatScreen(
         if (sessionDeleted) onBack()
     }
 
-    val listState = rememberLazyListState()
-    // One shared timer drives every relative-time label in the list (see MessageTimestamp)
-    // instead of each bubble spinning up its own coroutine + lifecycle observer, which
-    // churns as items scroll in and out of the viewport.
-    val timeTick = rememberRelativeTimeTick()
     val snackbar = remember { SnackbarHostState() }
     val retryLabel = stringResource(R.string.retry)
     var showModelPicker by rememberSaveable { mutableStateOf(false) }
@@ -176,48 +171,6 @@ fun ChatScreen(
         }
     }
 
-    // Track whether the list is pinned to the bottom so streaming auto-scroll
-    // doesn't fight a user who scrolled up to read earlier output.
-    val isPinnedToBottom by remember {
-        derivedStateOf {
-            val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
-            lastVisible >= messages.lastIndex || messages.isEmpty()
-        }
-    }
-
-    // Jump to the latest message when the conversation first loads so the user
-    // lands on recent context, not the oldest.
-    LaunchedEffect(messages.isNotEmpty()) {
-        if (messages.isNotEmpty()) listState.scrollToItem(messages.lastIndex)
-    }
-
-    // Keep the newest content in view as parts stream in — only if already at the bottom.
-    // A single LaunchedEffect(Unit) + snapshotFlow avoids the rapid cancel/re-launch
-    // churn that keying on lastPartLen (which changes on every streaming token) caused.
-    // Snapping (not animating) to the bottom keeps the newest content in view: animating
-    // per token cancels/relaunches the spring constantly and stutters (see collect below).
-    //
-    // The second Triple component tracks the total text length of the last message's
-    // parts. When a streaming token updates an existing TextPart (same part ID, longer
-    // text), messages.size and parts.size don't change — without the text length, the
-    // snapshotFlow wouldn't emit and the view wouldn't auto-scroll to follow the stream.
-    LaunchedEffect(Unit) {
-        snapshotFlow {
-            Triple(
-                messages.size,
-                messages.lastOrNull()?.parts?.sumOf { (it as? TextPart)?.text?.length ?: 0 } ?: 0,
-                isPinnedToBottom,
-            )
-        }.collect { (_, _, pinned) ->
-            // Snap (don't animate) to the latest content as it streams in. Animating on
-            // every token cancels and relaunches the spring dozens of times per second,
-            // which never settles and visibly stutters. An instant scroll is one cheap
-            // layout pass per coalesced snapshot and tracks the stream smoothly.
-            if (messages.isNotEmpty() && pinned) {
-                listState.scrollToItem(messages.lastIndex)
-            }
-        }
-    }
     LaunchedEffect(Unit) {
         vm.errorEvents.collect { msg ->
             val result = if (vm.failedDraft.value != null) {
@@ -267,7 +220,7 @@ fun ChatScreen(
                         onClick = {
                             scope.launch {
                                 val md = withContext(Dispatchers.Default) {
-                                    buildConversationMarkdown(messages, sessionTitle)
+                                    buildConversationMarkdown(vm.messages.value, sessionTitle)
                                 }
                                 val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
                                     type = "text/markdown"
@@ -278,7 +231,7 @@ fun ChatScreen(
                                     .onFailure { showToast(shareContext, shareContext.getString(R.string.no_share_app)) }
                             }
                         },
-                        enabled = messages.isNotEmpty(),
+                        enabled = hasMessages,
                     ) {
                         Icon(Icons.Filled.Share, contentDescription = stringResource(R.string.share_conversation))
                     }
@@ -306,6 +259,39 @@ fun ChatScreen(
             )
         },
     ) { padding ->
+        // Collect messages inside the content lambda so streaming token updates
+        // recompose only this subtree, not the top bar / input bar / 20+ other
+        // state reads in the ChatScreen body.
+        val messages by vm.messages.collectAsStateWithLifecycle()
+        val listState = rememberLazyListState()
+        val contentScope = rememberCoroutineScope()
+        val timeTick = rememberRelativeTimeTick()
+
+        val isPinnedToBottom by remember {
+            derivedStateOf {
+                val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+                lastVisible >= messages.lastIndex || messages.isEmpty()
+            }
+        }
+
+        LaunchedEffect(messages.isNotEmpty()) {
+            if (messages.isNotEmpty()) listState.scrollToItem(messages.lastIndex)
+        }
+
+        LaunchedEffect(Unit) {
+            snapshotFlow {
+                Triple(
+                    messages.size,
+                    messages.lastOrNull()?.parts?.sumOf { (it as? TextPart)?.text?.length ?: 0 } ?: 0,
+                    isPinnedToBottom,
+                )
+            }.collect { (_, _, pinned) ->
+                if (messages.isNotEmpty() && pinned) {
+                    listState.scrollToItem(messages.lastIndex)
+                }
+            }
+        }
+
         CompositionLocalProvider(LocalRelativeTimeTick provides timeTick) {
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
             if (activeConnection == null) {
@@ -383,7 +369,7 @@ fun ChatScreen(
                     ExtendedFloatingActionButton(
                         onClick = {
                             if (messages.isNotEmpty()) {
-                                scope.launch { runCatchingCancellable { listState.animateScrollToItem(messages.lastIndex) } }
+                                contentScope.launch { runCatchingCancellable { listState.animateScrollToItem(messages.lastIndex) } }
                             }
                         },
                         icon = { Icon(Icons.Filled.KeyboardArrowDown, contentDescription = stringResource(R.string.latest)) },

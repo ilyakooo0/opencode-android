@@ -114,6 +114,12 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
     private val livePreviewJobs = java.util.concurrent.ConcurrentHashMap<String, Job>()
     private val previewLock = Any()
 
+    /** Accumulates SessionUpdated events between debounce flushes so a burst of SSE
+     *  updates during active streaming coalesces into one list rebuild + recomposition
+     *  instead of one per event. */
+    private val pendingSessionUpdates = java.util.concurrent.ConcurrentHashMap<String, Session>()
+    private var sessionUpdateJob: Job? = null
+
     private val activeProfileId: String?
         get() = container.activeConnection.value?.profile?.id
 
@@ -138,6 +144,8 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
                     livePreviewJobs.values.forEach { it.cancel() }
                     livePreviewJobs.clear()
                 }
+                sessionUpdateJob?.cancel()
+                pendingSessionUpdates.clear()
                 // Reload the session list when a connection becomes available so the
                 // initial load (which may have run before auto-reconnect finished and
                 // found no connection) doesn't leave a stale "not connected" error.
@@ -147,12 +155,13 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
                         when (event) {
                             is SessionUpdated -> {
                                 val session = event.properties.info
-                                _state.update { s ->
-                                    val updated = (s.sessions.filterNot { it.id == session.id } + session)
-                                        .sortedByDescending { it.time?.updated ?: it.time?.created ?: 0 }
-                                    s.copy(sessions = updated)
+                                pendingSessionUpdates[session.id] = session
+                                if (sessionUpdateJob?.isActive != true) {
+                                    sessionUpdateJob = viewModelScope.launch {
+                                        delay(NetworkConfig.sessionUpdateDebounceMs)
+                                        flushPendingSessionUpdates()
+                                    }
                                 }
-                                loadPreview(session.id)
                             }
                             is SessionDeleted -> {
                                 val id = event.properties.info?.id ?: event.properties.sessionID
@@ -177,6 +186,24 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
                 }
             }
         }
+    }
+
+    /** Apply all buffered SessionUpdated events at once: upsert into the sessions list,
+     *  re-sort by recency, and kick off preview fetches. Called after the debounce delay. */
+    private fun flushPendingSessionUpdates() {
+        val batch = pendingSessionUpdates.toMap()
+        if (batch.isEmpty()) return
+        pendingSessionUpdates.clear()
+        _state.update { s ->
+            val byId = s.sessions.associateBy { it.id }.toMutableMap()
+            batch.forEach { (id, session) -> byId[id] = session }
+            s.copy(
+                sessions = byId.values
+                    .sortedByDescending { it.time?.updated ?: it.time?.created ?: 0 }
+                    .toList(),
+            )
+        }
+        batch.keys.forEach { loadPreview(it) }
     }
 
     fun setQuery(query: String) {

@@ -57,6 +57,10 @@ object NetworkConfig {
      *  of SessionUpdated events (e.g. during active streaming) coalesces into one fetch
      *  instead of launching one per event (each downloading the full message history). */
     const val previewDebounceMs = 500L
+    /** Debounce for applying SessionUpdated SSE events to the session list state. During
+     *  active streaming the server emits these frequently; without debouncing each one
+     *  triggers a full list filter + sort + recomposition, causing scroll jank. */
+    const val sessionUpdateDebounceMs = 300L
 
     // --- In-memory message store (SessionRepository.MessageStore) ---
 

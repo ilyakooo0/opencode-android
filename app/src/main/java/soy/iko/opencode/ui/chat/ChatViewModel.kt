@@ -37,8 +37,10 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.retryWhen
@@ -96,6 +98,18 @@ class ChatViewModel(
                 started = SharingStarted.WhileSubscribed(NetworkConfig.stateFlowSubscriptionTimeoutMs),
                 initialValue = emptyList(),
             )
+
+    /** Whether the conversation has any messages. Derived separately so the top bar
+     *  (share button enabled state) can observe this cheap boolean instead of the
+     *  full messages list, avoiding per-token recomposition of the app bar during
+     *  streaming. */
+    val hasMessages: StateFlow<Boolean> = messages
+        .map { it.isNotEmpty() }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(NetworkConfig.stateFlowSubscriptionTimeoutMs),
+            initialValue = false,
+        )
 
     private val _running = MutableStateFlow(false)
     val running: StateFlow<Boolean> = _running.asStateFlow()
