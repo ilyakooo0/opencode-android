@@ -59,7 +59,11 @@ fun parseDiff(diff: String): List<DiffLine> {
     for (raw in diff.lineSequence()) {
         when {
             raw.startsWith("@@") -> result.add(DiffLine.Hunk(raw))
-            raw.startsWith("---") || raw.startsWith("+++") -> result.add(DiffLine.FileHeader(raw))
+            // Unified-diff file headers are always "--- <path>" / "+++ <path>" (a space
+            // follows the marker). Requiring that space avoids misclassifying removed or
+            // added *content* lines like "--foo"/"++bar" — which appear on the wire as
+            // "---foo"/"+++bar" — as headers; those fall through to the +/- branches below.
+            raw.startsWith("--- ") || raw.startsWith("+++ ") -> result.add(DiffLine.FileHeader(raw))
             raw.startsWith("+") -> result.add(DiffLine.Add(raw.removePrefix("+")))
             raw.startsWith("-") -> result.add(DiffLine.Remove(raw.removePrefix("-")))
             raw.startsWith(" ") -> result.add(DiffLine.Context(raw.removePrefix(" ")))

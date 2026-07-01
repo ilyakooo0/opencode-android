@@ -74,12 +74,17 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onManageServers:
     // Combine the three settings into a single nullable state so the appearance section
     // renders only after the persisted values have loaded, avoiding a brief flash of
     // hardcoded defaults (SYSTEM/light/dynamic-on) on cold start.
-    val settings by combine(
-        container.settingsStore.themeMode,
-        container.settingsStore.dynamicColor,
-        container.settingsStore.sendOnEnter,
-    ) { theme, dyn, enter -> SettingsValues(theme, dyn, enter) as SettingsValues? }
-        .collectAsStateWithLifecycle(initialValue = null)
+    // Wrapped in remember so the combined Flow isn't re-created on every recomposition
+    // (which would cancel and relaunch the DataStore collection each time — see the
+    // connectionStateFlow below, remembered for the same reason).
+    val settingsFlow = remember(container) {
+        combine(
+            container.settingsStore.themeMode,
+            container.settingsStore.dynamicColor,
+            container.settingsStore.sendOnEnter,
+        ) { theme, dyn, enter -> SettingsValues(theme, dyn, enter) as SettingsValues? }
+    }
+    val settings by settingsFlow.collectAsStateWithLifecycle(initialValue = null)
     val dynamicColorAvailable = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
     val activeProfile = container.activeConnection.collectAsStateWithLifecycle().value?.profile
     // SSE connection state so the Settings screen can show a dropped stream (the

@@ -136,7 +136,10 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
     val undoEvents: SharedFlow<String> = _undoEvents.asSharedFlow()
 
     /** Session awaiting the undo window to expire before its REST delete fires. */
-    private var pendingDelete: Session? = null
+    // Keyed by session id, not a single field: the undo window lets several deletes be
+    // in flight at once, and a single field would let a second delete overwrite the
+    // first — dropping the first's server-side delete while it stays removed from the UI.
+    private val pendingDeletes = mutableMapOf<String, Session>()
 
     private var previewJob: Job? = null
     private var refreshJob: Job? = null
@@ -391,14 +394,13 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
             s.copy(sessions = s.sessions.filterNot { it.id == session.id })
         }
         // Hold the pending delete so the snackbar can undo it.
-        pendingDelete = session
+        pendingDeletes[session.id] = session
         _undoEvents.tryEmit(session.id)
         viewModelScope.launch {
             delay(NetworkConfig.undoDeleteDelayMs)
-            // If undo was called, pendingDelete was cleared — don't delete.
-            val toDelete = pendingDelete
-            if (toDelete != null && toDelete.id == session.id) {
-                pendingDelete = null
+            // If undo ran, this id was already removed — remove() returning null means
+            // "don't delete". Removing by id also can't be clobbered by a later delete.
+            if (pendingDeletes.remove(session.id) != null) {
                 val conn = container.activeConnection.value ?: return@launch
                 runCatchingCancellable { conn.repository.deleteSession(session.id) }
                     .onSuccess {
@@ -416,9 +418,8 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
 
     /** Cancel a pending delete (Undo snackbar action) and restore the session. */
     fun undoDelete(sessionId: String) {
-        val pending = pendingDelete
-        if (pending != null && pending.id == sessionId) {
-            pendingDelete = null
+        val pending = pendingDeletes.remove(sessionId)
+        if (pending != null) {
             _state.update { s ->
                 s.copy(sessions = (s.sessions + pending).sortedByMode(s.sortMode))
             }

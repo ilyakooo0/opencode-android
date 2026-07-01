@@ -7,8 +7,10 @@ import android.util.Log
 import androidx.core.content.pm.PackageInfoCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -85,6 +87,37 @@ class CrashLogger private constructor(private val appContext: Context) {
             }
             refresh()
         }
+    }
+
+    /** Deferred deletions keyed by file name, so an Undo can cancel one before it fires. */
+    private val pendingDeletes = java.util.concurrent.ConcurrentHashMap<String, Job>()
+
+    /**
+     * Schedule [fileName] for deletion after [delayMs], cancellable via
+     * [cancelScheduledDelete]. Runs on the logger's own long-lived scope — not the
+     * Diagnostics screen's composition scope — so navigating away during the undo window
+     * still commits the delete instead of silently dropping it. A repeated schedule for
+     * the same name replaces the prior timer.
+     */
+    fun scheduleDelete(fileName: String, delayMs: Long) {
+        val job = scope.launch {
+            delay(delayMs)
+            val file = File(crashDir, fileName).canonicalFile
+            if (file.path.startsWith(crashDir.canonicalPath + File.separator)) {
+                file.delete()
+            }
+            pendingDeletes.remove(fileName)
+            refresh()
+        }
+        pendingDeletes.put(fileName, job)?.cancel()
+    }
+
+    /** Cancel a pending deferred delete (the Undo action). Returns true if it was still
+     *  pending (undo succeeded), false if the delete had already fired. */
+    fun cancelScheduledDelete(fileName: String): Boolean {
+        val job = pendingDeletes.remove(fileName) ?: return false
+        job.cancel()
+        return true
     }
 
     fun clearAll() {

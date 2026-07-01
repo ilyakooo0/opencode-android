@@ -52,7 +52,12 @@ fun CommandPickerSheet(
     onRetry: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    var pendingCommand by rememberSaveable { mutableStateOf<Command?>(null) }
+    // Persist only the command *name* (a savable String), not the Command itself: a
+    // kotlinx @Serializable Command is neither Parcelable nor java.io.Serializable, so
+    // routing it through rememberSaveable crashes on rotation while the confirm dialog
+    // is open. Re-resolve the full Command from the current list for rendering.
+    var pendingCommandName by rememberSaveable { mutableStateOf<String?>(null) }
+    val pendingCommand = pendingCommandName?.let { name -> commands.firstOrNull { it.name == name } }
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Text(
             stringResource(R.string.commands),
@@ -122,7 +127,7 @@ fun CommandPickerSheet(
                                 .fillMaxWidth()
                                 .clickable(role = Role.Button) {
                                     if (isDestructiveCommand(cmd.name)) {
-                                        pendingCommand = cmd
+                                        pendingCommandName = cmd.name
                                     } else {
                                         onSelect(cmd)
                                         onDismiss()
@@ -159,18 +164,18 @@ fun CommandPickerSheet(
     // so a tap doesn't irrevocably run e.g. /clear or /compact without consent.
     pendingCommand?.let { cmd ->
         AlertDialog(
-            onDismissRequest = { pendingCommand = null },
+            onDismissRequest = { pendingCommandName = null },
             title = { Text(stringResource(R.string.run_command_title, cmd.name)) },
             text = { Text(stringResource(R.string.run_command_text, "/${cmd.name}")) },
             confirmButton = {
                 TextButton(onClick = {
-                    pendingCommand = null
+                    pendingCommandName = null
                     onSelect(cmd)
                     onDismiss()
                 }) { Text(stringResource(R.string.run)) }
             },
             dismissButton = {
-                TextButton(onClick = { pendingCommand = null }) { Text(stringResource(R.string.cancel)) }
+                TextButton(onClick = { pendingCommandName = null }) { Text(stringResource(R.string.cancel)) }
             },
         )
     }

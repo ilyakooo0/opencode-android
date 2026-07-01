@@ -4,8 +4,8 @@ import androidx.compose.runtime.Immutable
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.jsonArray
 
 /**
  * A permission request from `permission.updated`. The tool detail lives in [type] +
@@ -29,7 +29,11 @@ data class Permission(
         get() = when (val p = pattern) {
             null -> null
             is JsonPrimitive -> p.content
-            else -> p.jsonArray.mapNotNull { (it as? JsonPrimitive)?.content }.joinToString(", ").ifEmpty { null }
+            // Only a JSON array is flattened; any other shape (e.g. an object) would make
+            // the previous unguarded `p.jsonArray` throw during composition, so treat it
+            // as "no displayable pattern" instead.
+            is JsonArray -> p.mapNotNull { (it as? JsonPrimitive)?.content }.joinToString(", ").ifEmpty { null }
+            else -> null
         }
 }
 

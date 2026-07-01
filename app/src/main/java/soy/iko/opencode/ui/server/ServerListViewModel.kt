@@ -52,7 +52,10 @@ class ServerListViewModel(private val container: AppContainer) : ViewModel() {
     val undoEvents: SharedFlow<String> = _undoEvents.asSharedFlow()
 
     /** Profile awaiting the undo window to expire before its REST delete fires. */
-    private var pendingDelete: ServerProfile? = null
+    // Keyed by profile id, not a single field: several deletes can overlap within the
+    // undo window, and a single field would let the second overwrite the first — leaving
+    // the first profile in the store forever while it's hidden from the list.
+    private val pendingDeletes = mutableMapOf<String, ServerProfile>()
 
     fun connect(profile: ServerProfile, onConnected: () -> Unit) {
         if (_connecting.value != null) return
@@ -92,7 +95,7 @@ class ServerListViewModel(private val container: AppContainer) : ViewModel() {
      * hidden by the optimistic removal, and the undo re-shows it without reconnecting.
      */
     fun delete(profile: ServerProfile) {
-        pendingDelete = profile
+        pendingDeletes[profile.id] = profile
         if (container.activeConnection.value?.profile?.id == profile.id) {
             // disconnect() is suspend; run it on the VM scope so the optimistic removal
             // and undo emission aren't blocked on the connection close completing.
@@ -101,9 +104,7 @@ class ServerListViewModel(private val container: AppContainer) : ViewModel() {
         _undoEvents.tryEmit(profile.id)
         viewModelScope.launch {
             delay(NetworkConfig.undoServerDeleteDelayMs)
-            val toDelete = pendingDelete
-            if (toDelete != null && toDelete.id == profile.id) {
-                pendingDelete = null
+            if (pendingDeletes.remove(profile.id) != null) {
                 runCatchingCancellable { container.profileStore.delete(profile.id) }
                     .onFailure { _errorEvents.tryEmit(ConnectError(container.friendlyError(it), null)) }
             }
@@ -112,9 +113,6 @@ class ServerListViewModel(private val container: AppContainer) : ViewModel() {
 
     /** Cancel a pending delete (Undo snackbar action). */
     fun undoDelete(profileId: String) {
-        val pending = pendingDelete
-        if (pending != null && pending.id == profileId) {
-            pendingDelete = null
-        }
+        pendingDeletes.remove(profileId)
     }
 }

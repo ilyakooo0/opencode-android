@@ -476,8 +476,11 @@ class ChatViewModel(
                 _running.value = false
             }.onSuccess {
                 suppressDraftPersist.set(false)
-                // Send succeeded — now it's safe to persist the empty draft.
-                container.draftStore.set(sessionId, "")
+                // Send succeeded — persist the cleared draft, but only if the user hasn't
+                // typed a new one while the send was in flight. Otherwise clearing the
+                // store echoes back through the draft observer and wipes the in-progress
+                // text (data loss). Mirrors the guard on the failure path above.
+                if (_draft.value.isBlank()) container.draftStore.set(sessionId, "")
                 // Don't reset _running here: the agent continues streaming via SSE.
                 // _running is cleared on SessionIdle/SessionError (see event collector)
                 // or when the SSE stream drops (see connection state watcher below).
@@ -506,6 +509,10 @@ class ChatViewModel(
     fun queueFollowUp(text: String) {
         val trimmed = text.trim()
         _queuedFollowUp.value = trimmed.takeIf { it.isNotEmpty() }
+        // The text now lives in the queued chip, so clear the input field just as a
+        // normal send would. No-op for the cancel case (blank text), which must leave
+        // whatever the user has since typed untouched.
+        if (trimmed.isNotEmpty()) _draft.value = ""
     }
 
     /** Transient flag set by [refreshMessages] so the top-bar refresh icon can show

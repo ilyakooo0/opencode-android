@@ -89,14 +89,9 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
     val snackbar = remember { SnackbarHostState() }
     val undoLabel = stringResource(R.string.undo)
     val reportDeletedLabel = stringResource(R.string.report_deleted)
-    // Track report names whose deletion has been deferred for an undo window, so a
-    // swipe-triggered delete can be cancelled before the file is actually removed.
-    // rememberSaveable (not remember) so the list survives rotation: otherwise a
-    // rotation mid-undo-window resets it to empty, the deferred-delete coroutine is
-    // cancelled by dispose, and a report the user swiped to delete silently survives
-    // (or in edge cases is deleted without an undo path). Uses a SnapshotStateList
-    // (saveable) instead of a plain Set so it round-trips through the state registry.
-    val deferredDeletes = rememberSaveable { androidx.compose.runtime.mutableStateListOf<String>() }
+    // Deferred report deletions are owned by the CrashLogger (its process-lived scope),
+    // so they survive both rotation and navigating away from this screen. The screen only
+    // shows the Undo snackbar and asks the logger to cancel a pending delete on undo.
     val shareLabel = stringResource(R.string.share)
     val shareSubject = stringResource(R.string.crash_report_share_subject)
     val timeTick = rememberRelativeTimeTick()
@@ -309,27 +304,27 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                     pendingReportDelete = null
                     viewing = null
                     // Defer the actual delete so the Undo snackbar can cancel it. The
-                    // report stays in the list until the window expires; the undo
-                    // action removes the name from the deferred list.
-                    deferredDeletes.add(name)
-                    // The deferred delete is scheduled by a LaunchedEffect keyed on
-                    // deferredDeletes (below), which survives rotation because
-                    // deferredDeletes is rememberSaveable. Only the snackbar runs in
-                    // shareScope here — if a rotation cancels it, the undo window is
-                    // lost but the report is still deleted after the delay (the safer
-                    // failure mode) rather than silently surviving.
+                    // deletion is owned by the CrashLogger's own scope, so it commits even
+                    // if the user navigates away during the undo window (the screen's
+                    // shareScope would otherwise cancel it, silently dropping the delete).
+                    logger.scheduleDelete(name, NetworkConfig.undoReportDeleteDelayMs)
                     shareScope.launch {
+                        // Indefinite + a matching timed dismiss keeps the Undo button
+                        // visible for exactly the undo window and no longer: a fixed
+                        // SnackbarDuration.Long (~10s) outlasted the 5s window, leaving
+                        // the button on screen but dead for its second half.
+                        val dismisser = launch {
+                            delay(NetworkConfig.undoReportDeleteDelayMs)
+                            snackbar.currentSnackbarData?.dismiss()
+                        }
                         val result = snackbar.showSnackbar(
                             message = reportDeletedLabel,
                             actionLabel = undoLabel,
-                            // Long (~10s) outlasts the undoReportDeleteDelayMs window
-                            // (5s) so the Undo button remains available for the whole
-                            // undo period; Short (~1.5s) vanished before the delete
-                            // fired, leaving no way to cancel during the last 3.5s.
-                            duration = SnackbarDuration.Long,
+                            duration = SnackbarDuration.Indefinite,
                         )
+                        dismisser.cancel()
                         if (result == SnackbarResult.ActionPerformed) {
-                            deferredDeletes.remove(name)
+                            logger.cancelScheduledDelete(name)
                         }
                     }
                 }) { Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error) }
@@ -338,26 +333,6 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                 TextButton(onClick = { pendingReportDelete = null }) { Text(stringResource(R.string.cancel)) }
             },
         )
-    }
-
-    // Schedule the deferred delete for every entry in the deferred list. Keyed on the
-    // list so a rotation (which restores the list via rememberSaveable) re-schedules
-    // any pending deletes that were cancelled when shareScope was disposed. Each
-    // entry gets its own delay; undo removes the name from the list, which re-keys
-    // this effect and cancels the in-flight delays for remaining entries (they're
-    // re-launched, but the removed name is no longer present so its delete is
-    // skipped). collectLatest would cancel sibling deletes, so we launch per-name.
-    LaunchedEffect(deferredDeletes.toList()) {
-        val pending = deferredDeletes.toList()
-        pending.forEach { name ->
-            shareScope.launch {
-                delay(NetworkConfig.undoReportDeleteDelayMs)
-                if (name in deferredDeletes) {
-                    deferredDeletes.remove(name)
-                    logger.deleteReport(name)
-                }
-            }
-        }
     }
 
     if (showClearAll) {

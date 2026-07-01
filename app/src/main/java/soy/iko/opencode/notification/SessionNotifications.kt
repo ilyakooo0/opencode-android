@@ -33,9 +33,13 @@ object SessionNotifications {
         val digest = runCatching { MessageDigest.getInstance("SHA-256") }
             .getOrNull()?.digest(sessionId.toByteArray()) ?: return NOTIF_ID_PREFIX
         // Take the first 4 bytes, mask to 31 bits (always positive) to fit an Int id.
-        val hash = ((digest[0].toInt() and 0xFF) shl 24 or
-            (digest[1].toInt() and 0xFF) shl 16 or
-            (digest[2].toInt() and 0xFF) shl 8 or
+        // Kotlin's shl/or/and are equal-precedence infix functions evaluated strictly
+        // left-to-right, so the shifts MUST be parenthesized individually — otherwise
+        // `a shl 24 or b shl 16` parses as `((a shl 24) or b) shl 16`, shifting the first
+        // byte out of the Int entirely and collapsing the id's entropy.
+        val hash = (((digest[0].toInt() and 0xFF) shl 24) or
+            ((digest[1].toInt() and 0xFF) shl 16) or
+            ((digest[2].toInt() and 0xFF) shl 8) or
             (digest[3].toInt() and 0xFF)).and(0x7FFFFFFF)
         // Offset by NOTIF_ID_PREFIX, staying within the positive Int range.
         // Using modulo ensures the prefix is preserved without Int overflow.

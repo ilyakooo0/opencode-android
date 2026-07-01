@@ -144,6 +144,7 @@ open class AppContainer private constructor(
         _currentSession.value = id
         if (id != null) {
             _unread.update { it - id }
+            unreadMessageIds.remove(id)
             appContext?.let { SessionNotifications.cancel(it, id) }
         }
     }
@@ -249,17 +250,34 @@ open class AppContainer private constructor(
                     // session isn't currently being viewed and was actively streaming.
                     if (event is SessionIdle) {
                         val idleSid = event.properties.sessionID ?: return@collect
-                        if (idleSid != _currentSession.value && activeRuns.remove(idleSid)) {
-                            _anyRunActive.value = activeRuns.isNotEmpty()
+                        // Clear the run state unconditionally — even for the session on
+                        // screen. Gating the removal on `idleSid != currentSession` (as
+                        // this once did) leaks the id in activeRuns and pins anyRunActive
+                        // true forever whenever a run finishes while being viewed. Only
+                        // the completion *notification* is suppressed for the viewed one.
+                        val wasRunning = synchronized(activeRuns) {
+                            activeRuns.remove(idleSid).also { removed ->
+                                if (removed) _anyRunActive.value = activeRuns.isNotEmpty()
+                            }
+                        }
+                        if (wasRunning && idleSid != _currentSession.value) {
                             notifySessionCompleted(idleSid)
                         }
                         return@collect
                     }
                     val sid = sessionOf(event) ?: return@collect
                     if (sid != _currentSession.value) {
-                        // Increment the unread count for this session so the badge can
-                        // show "N unread" instead of just a dot.
-                        _unread.update { it + (sid to (it[sid] ?: 0) + 1) }
+                        // Increment the unread count once per distinct *message*, not per
+                        // event: a single reply emits many message.updated / message.part.
+                        // updated events (one per streamed token, plus cost/token refreshes),
+                        // which would otherwise inflate the badge into the dozens/hundreds.
+                        val messageId = messageIdOfEvent(event)
+                        val counted = unreadMessageIds.getOrPut(sid) {
+                            java.util.Collections.synchronizedSet(mutableSetOf())
+                        }
+                        if (messageId == null || counted.add(messageId)) {
+                            _unread.update { it + (sid to (it[sid] ?: 0) + 1) }
+                        }
                     }
                     // Track sessions actively streaming so we know which idle events
                     // represent a finished run worth notifying about.
@@ -281,6 +299,11 @@ open class AppContainer private constructor(
 
     /** Session ids currently streaming an assistant run (best-effort, in-process). */
     private val activeRuns: MutableSet<String> = java.util.Collections.synchronizedSet(mutableSetOf())
+
+    /** Per non-viewed session, the set of message ids already reflected in its unread
+     *  count. De-duplicates the many streaming events that share one message id so the
+     *  badge counts messages, not deltas. Cleared when a session is viewed or on connect. */
+    private val unreadMessageIds = java.util.concurrent.ConcurrentHashMap<String, MutableSet<String>>()
 
     /** Upper bound on [activeRuns] to prevent unbounded growth if SessionIdle never arrives. */
     private val activeRunsLimit = NetworkConfig.activeRunsLimit
@@ -355,6 +378,7 @@ open class AppContainer private constructor(
             activeRuns.clear()
             _anyRunActive.value = false
             _unread.value = emptyMap()
+            unreadMessageIds.clear()
             val now = System.currentTimeMillis()
             val resolved = profileStore.resolve(profile)
             val needsSave = (now - resolved.lastUsed) > LAST_USED_SAVE_THRESHOLD_MS
@@ -453,5 +477,16 @@ open class AppContainer private constructor(
 internal fun sessionOfEvent(event: BusEvent): String? = when (event) {
     is MessageUpdated -> event.properties.info.sessionID
     is MessagePartUpdated -> event.properties.part.sessionID ?: event.properties.sessionID
+    else -> null
+}
+
+/**
+ * The message id a message-activity event pertains to, used to de-duplicate the unread
+ * badge so a reply's many streaming events count once. Null for events that carry no
+ * message id (those fall back to being counted individually).
+ */
+internal fun messageIdOfEvent(event: BusEvent): String? = when (event) {
+    is MessageUpdated -> event.properties.info.id
+    is MessagePartUpdated -> event.properties.messageID ?: event.properties.part.messageID
     else -> null
 }

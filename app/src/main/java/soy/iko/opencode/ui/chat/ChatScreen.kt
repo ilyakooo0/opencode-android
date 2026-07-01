@@ -92,7 +92,13 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import soy.iko.opencode.data.model.Part
+import soy.iko.opencode.data.model.ReasoningPart
 import soy.iko.opencode.data.model.TextPart
+import soy.iko.opencode.data.model.ToolCompleted
+import soy.iko.opencode.data.model.ToolError
+import soy.iko.opencode.data.model.ToolPart
+import soy.iko.opencode.data.model.ToolRunning
 import soy.iko.opencode.data.network.EventStreamClient
 import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.di.AppContainer
@@ -398,13 +404,15 @@ fun ChatScreen(
 
         LaunchedEffect(Unit) {
             snapshotFlow {
-                // Track list size + the streaming text length of the last message so we
-                // auto-scroll as tokens arrive, plus the pinned flag. A small data class
-                // with primitive fields avoids the per-frame boxing that Triple<Int,Int,Boolean>
-                // pays (snapshotFlow re-evaluates this lambda every snapshot), and reading
-                // the last TextPart's length is O(1) vs. the prior sumOf over every part.
-                val lastText = messages.lastOrNull()?.parts?.lastOrNull() as? TextPart
-                AutoScrollSignal(messages.size, lastText?.text?.length ?: 0, isPinnedToBottom)
+                // Track list size + the streaming length of the last part so we auto-scroll
+                // as content arrives, plus the pinned flag. A small data class with primitive
+                // fields avoids the per-frame boxing that Triple<Int,Int,Boolean> pays
+                // (snapshotFlow re-evaluates this lambda every snapshot), and reading only the
+                // last part's length is O(1) vs. a sumOf over every part. Covering reasoning
+                // and tool output — not just TextPart — keeps a pinned view following a long
+                // reasoning/tool block while it streams (previously it stalled at 0).
+                val lastLen = streamingContentLength(messages.lastOrNull()?.parts?.lastOrNull())
+                AutoScrollSignal(messages.size, lastLen, isPinnedToBottom)
             }.collect { signal ->
                 if (signal.size > 0 && signal.pinned) {
                     // Scroll to the effective last index, including the trailing
@@ -859,3 +867,18 @@ private fun EmptyConversation(
  * equality is structural so `snapshotFlow` emits only when something relevant changes.
  */
 private data class AutoScrollSignal(val size: Int, val lastTextLength: Int, val pinned: Boolean)
+
+/** Length of the streaming content carried by [part], driving auto-scroll as it grows.
+ *  Covers text, reasoning, and tool output so a pinned view keeps following non-text
+ *  streaming, not just plain assistant text. O(1). */
+private fun streamingContentLength(part: Part?): Int = when (part) {
+    is TextPart -> part.text.length
+    is ReasoningPart -> part.text.length
+    is ToolPart -> when (val st = part.state) {
+        is ToolCompleted -> st.output?.length ?: 0
+        is ToolError -> st.error?.length ?: 0
+        is ToolRunning -> st.title?.length ?: 0
+        else -> 0
+    }
+    else -> 0
+}

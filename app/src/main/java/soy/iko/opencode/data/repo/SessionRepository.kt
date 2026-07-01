@@ -100,6 +100,10 @@ open class SessionRepository(
                 if (state == EventStreamClient.ConnectionState.Connected) {
                     if (hasConnectedBefore) {
                         val generation = ++seedGeneration
+                        // Pivot before the fetch: parts already in memory predate this
+                        // snapshot and must yield to it, while parts that stream in during
+                        // the fetch (added to streamedSincePivot via reduce) outrank it.
+                        lock.withLock { store.beginReseed() }
                         val fresh = runCatchingCancellable { api.listMessages(sessionId) }
                             .onFailure { Log.w("SessionRepository", "Re-seed message load failed for $sessionId; relying on SSE: ${safeExceptionSummary(it)}") }
                             .getOrDefault(emptyList())
@@ -159,6 +163,18 @@ internal class MessageStore {
     // messageId -> (info + parts), insertion-ordered.
     private val messages = LinkedHashMap<String, MessageWithParts>()
 
+    /** Part ids upserted via [reduce] since the last reseed pivot ([beginReseed]) or seed.
+     *  On a reconnect re-seed these are the parts that streamed in *during* the REST fetch,
+     *  so they're newer than the snapshot and must win over it; every other part is taken
+     *  from the authoritative REST snapshot. Without this distinction the merge kept every
+     *  overlapping in-memory part, so a part that changed server-side during the disconnect
+     *  (e.g. a tool going running -> completed) stayed stale until app restart. */
+    private val streamedSincePivot = mutableSetOf<String>()
+
+    /** Mark the point a reconnect re-seed's REST fetch begins: parts streamed from here on
+     *  are newer than the fetched snapshot. Call under the same lock as [seed]/[reduce]. */
+    fun beginReseed() { streamedSincePivot.clear() }
+
     /** Monotonic counter for synthetic UnknownMessage keys, avoiding nanoTime collisions. */
     private val unknownCounter = java.util.concurrent.atomic.AtomicLong(0)
 
@@ -194,7 +210,13 @@ internal class MessageStore {
                 // append any streamed-only parts, and adopt the authoritative REST info.
                 val streamedById = existing.parts.associateBy { it.id }
                 val snapshotIds = m.parts.mapTo(mutableSetOf()) { it.id }
-                val ordered = m.parts.map { p -> streamedById[p.id] ?: p }.toMutableList()
+                // Prefer the in-memory version of an overlapping part ONLY if it streamed
+                // in since the reseed pivot (i.e. during this fetch), so it's newer than
+                // the snapshot. Otherwise the REST snapshot is authoritative and wins,
+                // discarding an in-memory part that went stale during a disconnect.
+                val ordered = m.parts.map { p ->
+                    if (p.id in streamedSincePivot) streamedById[p.id] ?: p else p
+                }.toMutableList()
                 for (p in existing.parts) {
                     if (p.id !in snapshotIds) ordered.add(p)
                 }
@@ -207,6 +229,9 @@ internal class MessageStore {
             }
         }
         if (evictOldMessages()) changed = true
+        // Reset the pivot: everything just merged is now the baseline, so only parts that
+        // stream in *after* this seed can outrank the next reconnect's snapshot.
+        streamedSincePivot.clear()
         return changed
     }
 
@@ -238,10 +263,16 @@ internal class MessageStore {
                 val part = event.properties.part
                 val messageId = part.messageID ?: event.properties.messageID
                 val partSession = part.sessionID ?: event.properties.sessionID
-                if (messageId == null || (partSession != null && partSession != sessionId)) {
-                    false
-                } else {
-                    upsertPart(messageId, part)
+                when {
+                    messageId == null -> false
+                    partSession != null -> if (partSession == sessionId) upsertPart(messageId, part) else false
+                    // No session id anywhere on the event: a null session is NOT a wildcard
+                    // (mirroring isIdle/isError). Every open session's store sees the shared
+                    // event stream, so accepting it unconditionally would leak the part into
+                    // unrelated conversations (e.g. both panes in two-pane mode). Attribute it
+                    // only if this store already holds the parent message — MessageUpdated,
+                    // which always carries a session id, will have created it here first.
+                    else -> if (messages.containsKey(messageId)) upsertPart(messageId, part) else false
                 }
             }
 
@@ -285,6 +316,9 @@ internal class MessageStore {
                 info = UnknownMessage(id = messageId, sessionID = part.sessionID ?: ""),
                 parts = newParts,
             )
+        // Record that this part streamed in, so a re-seed after a reconnect knows it's
+        // newer than the REST snapshot and keeps it (see seed()/beginReseed()).
+        streamedSincePivot.add(part.id)
         if (current == null) evictOldMessages()
         return true
     }

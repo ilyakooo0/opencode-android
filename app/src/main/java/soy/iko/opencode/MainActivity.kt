@@ -10,7 +10,10 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import kotlinx.coroutines.flow.combine
 import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -27,25 +30,33 @@ class MainActivity : ComponentActivity() {
     private var shareIntentHandled = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        installSplashScreen()
+        val splash = installSplashScreen()
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         savedInstanceState?.let { shareIntentHandled = it.getBoolean(KEY_SHARE_HANDLED, false) }
         val container = (application as OpencodeApp).container
         handleIntent(intent)
         if (savedInstanceState == null) maybeRequestNotificationPermission()
+        // Hold the splash until the persisted theme settings load, so we never paint a
+        // frame with the default (dynamicColor=true / SYSTEM) that then snaps to the
+        // user's real choice — the flash the SettingsScreen's null-gate already avoids.
+        var themeLoaded = false
+        splash.setKeepOnScreenCondition { !themeLoaded }
         setContent {
-            val themeMode by container.settingsStore.themeMode
-                .collectAsStateWithLifecycle(initialValue = ThemeMode.SYSTEM)
-            val dynamicColor by container.settingsStore.dynamicColor
-                .collectAsStateWithLifecycle(initialValue = true)
-            val dark = when (themeMode) {
-                ThemeMode.SYSTEM -> isSystemInDarkTheme()
-                ThemeMode.LIGHT -> false
-                ThemeMode.DARK -> true
-            }
-            OpencodeTheme(darkTheme = dark, dynamicColor = dynamicColor) {
-                OpencodeAppUi(container = container)
+            val theme by remember(container) {
+                container.settingsStore.themeMode
+                    .combine(container.settingsStore.dynamicColor, ::Pair)
+            }.collectAsStateWithLifecycle(initialValue = null)
+            LaunchedEffect(theme) { if (theme != null) themeLoaded = true }
+            theme?.let { (themeMode, dynamicColor) ->
+                val dark = when (themeMode) {
+                    ThemeMode.SYSTEM -> isSystemInDarkTheme()
+                    ThemeMode.LIGHT -> false
+                    ThemeMode.DARK -> true
+                }
+                OpencodeTheme(darkTheme = dark, dynamicColor = dynamicColor) {
+                    OpencodeAppUi(container = container)
+                }
             }
         }
     }
