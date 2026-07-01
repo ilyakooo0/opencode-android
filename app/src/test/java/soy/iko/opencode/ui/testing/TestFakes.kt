@@ -303,13 +303,13 @@ class FakeOpencodeConnection(
 class FakeAppContainer : AppContainer() {
     val fakeDraftStore = FakeDraftStore()
     val fakeProfileStore = FakeProfileStore()
-    val fakeUnread = MutableStateFlow<Set<String>>(emptySet())
+    val fakeUnread = MutableStateFlow<Map<String, Int>>(emptyMap())
     private val fakeActiveConnection = MutableStateFlow<OpencodeConnection?>(null)
 
     override val draftStore: DraftStore = fakeDraftStore
     override val profileStore: ProfileStore = fakeProfileStore
     override val activeConnection: StateFlow<OpencodeConnection?> = fakeActiveConnection.asStateFlow()
-    override val unread: StateFlow<Set<String>> = fakeUnread.asStateFlow()
+    override val unread: StateFlow<Map<String, Int>> = fakeUnread.asStateFlow()
 
     var connectResult: OpencodeConnection? = null
     /** When non-null, [connect] throws this instead of returning a connection. */

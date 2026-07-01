@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">opencode</string>
-    <string name="unknown_version">0.1.0</string>
+    <!-- Non-numeric fallback so a PackageManager failure can\'t show a stale version number. -->
+    <string name="unknown_version">—</string>
 
     <!-- Common -->
     <string name="back">Back</string>
@@ -37,6 +38,7 @@
     <string name="reconnect">Reconnect</string>
     <string name="not_connected">Not connected.</string>
     <string name="no_servers_to_reconnect">No saved server to reconnect to.</string>
+    <string name="retry_now">Retry now</string>
 
     <!-- Server list -->
     <string name="servers_title">opencode servers</string>
@@ -50,6 +52,7 @@
     <string name="remove_server_active_text">“%1$s” is your current server. Removing it will also disconnect you.</string>
     <string name="server_auth_short">  •  auth</string>
     <string name="server_auth_basic">  •  Basic auth</string>
+    <string name="server_removed">Server removed</string>
 
     <!-- Server edit -->
     <string name="label_optional">Label (optional)</string>
@@ -77,6 +80,7 @@
     <!-- Session list -->
     <string name="new_session">New session</string>
     <string name="unread">Unread</string>
+    <string name="unread_count">%1$d unread</string>
     <string name="no_sessions_yet">No sessions yet</string>
     <string name="no_sessions_hint">Start a conversation with opencode.</string>
     <string name="search_sessions">Search sessions…</string>
@@ -97,6 +101,10 @@
     <string name="message_placeholder">Message opencode…</string>
     <string name="empty_chat_title">Start a conversation</string>
     <string name="empty_chat_hint">Type a message below to begin.</string>
+    <string name="empty_chat_suggest_1">Explain what this codebase does</string>
+    <string name="empty_chat_suggest_2">Find and fix a bug</string>
+    <string name="empty_chat_suggest_3">Add a feature</string>
+    <string name="draft_chars_remaining">%1$d / %2$d</string>
     <string name="load_messages_failed">Couldn\'t load messages.</string>
     <string name="empty_detail_pane">Select a session to view the conversation.</string>
     <string name="working">working…</string>
@@ -176,6 +184,8 @@
     <string name="folder">Folder: %1$s</string>
     <string name="file_label">File: %1$s</string>
     <string name="file">File</string>
+    <string name="show_diff">Show diff</string>
+    <string name="show_raw">Show raw</string>
 
     <!-- Message metadata -->
     <string name="image">image</string>
@@ -195,7 +205,7 @@
     <string name="diagnostics">Diagnostics</string>
     <string name="diagnostics_desc">Crash reports are stored locally on this device.</string>
     <string name="crash_reports">Crash reports</string>
-    <string name="no_crash_reports">No crashes recorded. \ud83d\udc4d</string>
+    <string name="no_crash_reports">No crashes recorded.</string>
     <string name="clear_all">Clear all</string>
     <string name="clear_all_confirm">Delete all stored crash reports? This cannot be undone.</string>
     <string name="crash_report">Crash report</string>
@@ -204,6 +214,8 @@
     <string name="delete_report_text">This report will be permanently deleted.</string>
     <string name="report_load_failed">Failed to load crash report.</string>
     <string name="crash_count_format">%1$d</string>
+    <string name="crash_count_overflow">99+</string>
+    <string name="report_deleted">Crash report deleted</string>
 
     <!-- Notifications -->
     <string name="notif_channel_status">Agent activity</string>

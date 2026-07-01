@@ -45,6 +45,7 @@ fun TwoPaneSessionChat(
     onOpenFiles: () -> Unit,
     onOpenSettings: () -> Unit,
     onDisconnect: () -> Unit,
+    onAddServer: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var selected by rememberSaveable { mutableStateOf<String?>(null) }
@@ -86,6 +87,7 @@ fun TwoPaneSessionChat(
                 onDisconnect = onDisconnect,
                 onOpenFiles = onOpenFiles,
                 onOpenSettings = onOpenSettings,
+                onAddServer = onAddServer,
             )
         }
 

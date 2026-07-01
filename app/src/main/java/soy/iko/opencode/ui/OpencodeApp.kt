@@ -106,6 +106,7 @@ fun OpencodeApp(container: AppContainer) {
                         scope.launch { runCatchingCancellable { container.disconnect() } }
                         navController.popBackStack(Routes.SERVERS, inclusive = false)
                     },
+                    onAddServer = { navController.navigate(Routes.serverEdit()) },
                 )
             } else {
                 SessionListScreen(
@@ -126,6 +127,7 @@ fun OpencodeApp(container: AppContainer) {
                     },
                     onOpenFiles = { navController.navigate(Routes.FILES) },
                     onOpenSettings = { navController.navigate(Routes.SETTINGS) },
+                    onAddServer = { navController.navigate(Routes.serverEdit()) },
                 )
             }
         }

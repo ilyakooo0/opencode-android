@@ -5,6 +5,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -183,7 +184,11 @@ private fun Breadcrumbs(path: String, onNavigate: (String) -> Unit, modifier: Mo
 @Composable
 private fun SearchResults(results: List<String>, onOpenFile: (String) -> Unit) {
     if (results.isEmpty()) {
-        Text(stringResource(R.string.no_matches), modifier = Modifier.padding(24.dp))
+        EmptyFileState(
+            icon = Icons.Filled.Search,
+            message = stringResource(R.string.no_matches),
+            modifier = Modifier.fillMaxWidth().padding(24.dp),
+        )
         return
     }
     LazyColumn(modifier = Modifier.fillMaxSize()) {
@@ -211,10 +216,10 @@ private fun DirectoryListing(
     onOpenFile: (String) -> Unit,
 ) {
     if (state.entries.isEmpty()) {
-        Text(
-            stringResource(R.string.empty_folder),
+        EmptyFileState(
+            icon = Icons.Filled.Folder,
+            message = stringResource(R.string.empty_folder),
             modifier = Modifier.fillMaxWidth().padding(24.dp),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         return
     }
@@ -234,6 +239,30 @@ private fun DirectoryListing(
             )
             HorizontalDivider()
         }
+    }
+}
+
+/** Shared empty-state for the file browser: icon + message, matching the icon+text
+ *  pattern used by the session and server lists (the prior versions were bare Text
+ *  lines that read as status messages rather than intentional empty states). */
+@Composable
+private fun EmptyFileState(icon: androidx.compose.ui.graphics.vector.ImageVector, message: String, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Icon(
+            icon,
+            contentDescription = null,
+            modifier = Modifier.size(48.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.size(12.dp))
+        Text(
+            message,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 

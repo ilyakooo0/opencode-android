@@ -42,6 +42,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -56,6 +57,8 @@ import soy.iko.opencode.data.repo.CrashLogger
 import soy.iko.opencode.data.repo.ThemeMode
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
+import soy.iko.opencode.ui.theme.LightPaletteSwatches
+import soy.iko.opencode.ui.theme.DarkPaletteSwatches
 import soy.iko.opencode.util.runCatchingCancellable
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -220,6 +223,17 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onManageServers:
 
 @Composable
 private fun ThemeRow(mode: ThemeMode, selected: Boolean, onSelect: () -> Unit) {
+    // Preview swatches so the user can see what each mode looks like before selecting,
+    // instead of choosing from text labels alone. Shows primary/secondary/tertiary +
+    // background so the palette character (e.g. Tokyo Night's blue/green) is visible.
+    val swatches: List<Color> = when (mode) {
+        ThemeMode.SYSTEM -> {
+            val dark = isSystemInDarkThemeStatic()
+            if (dark) DarkSwatches else LightSwatches
+        }
+        ThemeMode.LIGHT -> LightSwatches
+        ThemeMode.DARK -> DarkSwatches
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -236,13 +250,38 @@ private fun ThemeRow(mode: ThemeMode, selected: Boolean, onSelect: () -> Unit) {
                 ThemeMode.DARK -> stringResource(R.string.theme_dark)
             },
             style = MaterialTheme.typography.bodyLarge,
+            modifier = Modifier.weight(1f),
         )
+        // Three small color dots previewing the palette for this mode.
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            swatches.forEach { color ->
+                Box(
+                    modifier = Modifier
+                        .size(14.dp)
+                        .clip(CircleShape)
+                        .background(color),
+                )
+            }
+        }
     }
 }
+
+// Palette preview dots for the theme rows. Primary/secondary/tertiary/background convey
+// the character of each scheme at a glance without rendering a full sample surface.
+private val DarkSwatches: List<Color> = DarkPaletteSwatches
+private val LightSwatches: List<Color> = LightPaletteSwatches
+
+// Composable-side read of the system dark setting for the "System" theme row preview.
+// isSystemInDarkTheme() is a @Composable function, so it can't be called inside a plain
+// helper; hoist it here so the ThemeRow stays a plain @Composable with no preview-time
+// recomposition surprises.
+@Composable
+private fun isSystemInDarkThemeStatic(): Boolean = androidx.compose.foundation.isSystemInDarkTheme()
 
 /** Small circular count badge used to indicate pending crash reports. */
 @Composable
 private fun Badge(count: Int) {
+    val overflow = stringResource(R.string.crash_count_overflow)
     Box(
         modifier = Modifier
             .size(20.dp)
@@ -251,7 +290,7 @@ private fun Badge(count: Int) {
         contentAlignment = Alignment.Center,
     ) {
         Text(
-            if (count > 99) "99+" else count.toString(),
+            if (count > 99) overflow else count.toString(),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onError,
             textAlign = TextAlign.Center,

@@ -122,9 +122,12 @@ open class AppContainer private constructor(
     private val _currentSession = MutableStateFlow<String?>(null)
     open val currentSession: StateFlow<String?> = _currentSession.asStateFlow()
 
-    /** Session ids that received activity while not being viewed. */
-    private val _unread = MutableStateFlow<Set<String>>(emptySet())
-    open val unread: StateFlow<Set<String>> = _unread.asStateFlow()
+    /** Session ids that received activity while not being viewed, mapped to the count
+     *  of unread message events. A count (not just a presence set) lets the session
+     *  list badge show "3 unread" instead of a bare dot, so the user can tell whether
+     *  one reply or a whole burst arrived. */
+    private val _unread = MutableStateFlow<Map<String, Int>>(emptyMap())
+    open val unread: StateFlow<Map<String, Int>> = _unread.asStateFlow()
 
     /** True when any assistant run is actively streaming across all sessions. Drives the
      *  disconnect confirmation on the session list (disconnecting mid-run kills it). */
@@ -139,10 +142,12 @@ open class AppContainer private constructor(
         }
     }
 
-    /** Restore a session's unread badge after a failed server switch reconnects. */
+    /** Restore a session's unread badge (preserving its prior count) after a failed
+     *  server switch reconnects. Falls back to a count of 1 when the prior count isn't
+     *  known, since the restore path only runs for sessions that were badged before. */
     open fun restoreUnread(id: String) {
         if (id != _currentSession.value) {
-            _unread.update { it + id }
+            _unread.update { it + (id to (it[id] ?: 1)) }
         }
     }
 
@@ -245,7 +250,9 @@ open class AppContainer private constructor(
                     }
                     val sid = sessionOf(event) ?: return@collect
                     if (sid != _currentSession.value) {
-                        _unread.update { it + sid }
+                        // Increment the unread count for this session so the badge can
+                        // show "N unread" instead of just a dot.
+                        _unread.update { it + (sid to (it[sid] ?: 0) + 1) }
                     }
                     // Track sessions actively streaming so we know which idle events
                     // represent a finished run worth notifying about.
@@ -338,7 +345,7 @@ open class AppContainer private constructor(
             _activeConnection.value = null
             activeRuns.clear()
             _anyRunActive.value = false
-            _unread.value = emptySet()
+            _unread.value = emptyMap()
             val now = System.currentTimeMillis()
             val resolved = profileStore.resolve(profile)
             val needsSave = (now - resolved.lastUsed) > LAST_USED_SAVE_THRESHOLD_MS

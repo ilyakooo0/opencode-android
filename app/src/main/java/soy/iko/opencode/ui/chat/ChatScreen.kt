@@ -49,6 +49,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -392,6 +393,12 @@ fun ChatScreen(
                 ConnectionBanner(
                     state = connectionState,
                     modifier = Modifier.align(Alignment.TopCenter),
+                    // On a hard failure, retry by forcing an SSE reconnect (which
+                    // re-seeds from REST). refreshMessages is the right recovery path
+                    // when the connection is present but the stream died; reconnect()
+                    // is the path when the whole connection is gone (handled by the
+                    // separate "Not connected" state below).
+                    onRetry = { vm.refreshMessages() },
                 )
                 if (loading && messages.isEmpty()) {
                     val loadingLabel = stringResource(R.string.loading)
@@ -433,9 +440,20 @@ fun ChatScreen(
                     }
                 } else if (messages.isEmpty()) {
                     EmptyConversation(
+                        onSuggestion = { vm.updateDraft(it) },
                         modifier = Modifier.align(Alignment.Center),
                     )
                 } else {
+                // Pull-to-refresh wraps the message list so the user can force an SSE
+                // reconnect + re-seed with the same gesture they use on the session and
+                // file lists, instead of hunting for the top-bar refresh icon. The empty
+                // / loading / error states above stay outside the PTR box since there's
+                // no list content to pull against.
+                PullToRefreshBox(
+                    isRefreshing = refreshing,
+                    onRefresh = { vm.refreshMessages() },
+                    modifier = Modifier.fillMaxSize(),
+                ) {
                 val lastMessageId = messages.lastOrNull()?.info?.id
                 LazyColumn(
                     state = listState,
@@ -463,6 +481,7 @@ fun ChatScreen(
                             }
                         }
                     }
+                }
                 }
                 // Jump-to-latest affordance when the user has scrolled away during a stream.
                 AnimatedVisibility(
@@ -627,6 +646,25 @@ private fun ChatInputBar(
                     placeholder = { Text(stringResource(R.string.message_placeholder)) },
                     enabled = enabled,
                     maxLines = 6,
+                    // Show a "N / max" countdown once the draft crosses a high fraction of
+                    // the cap, so the user knows a paste is about to be truncated instead
+                    // of being silently cut off. Hidden for normal short prompts to avoid
+                    // clutter under a typical one-line message.
+                    supportingText = {
+                        val threshold = (NetworkConfig.maxDraftLengthChars * NetworkConfig.draftCountdownThresholdFraction).toInt()
+                        if (value.length >= threshold) {
+                            Text(
+                                stringResource(
+                                    R.string.draft_chars_remaining,
+                                    NetworkConfig.maxDraftLengthChars - value.length,
+                                    NetworkConfig.maxDraftLengthChars,
+                                ),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (value.length >= NetworkConfig.maxDraftLengthChars) MaterialTheme.colorScheme.error
+                                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    },
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                     keyboardActions = KeyboardActions(onSend = {
                         if (enabled && value.isNotBlank()) {
@@ -653,7 +691,20 @@ private fun ChatInputBar(
 }
 
 @Composable
-private fun EmptyConversation(modifier: Modifier = Modifier) {
+private fun EmptyConversation(
+    onSuggestion: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    // A few example prompts so a first-time user has a one-tap path to their first
+    // message instead of staring at a blank input. Tapping a chip fills the draft
+    // (without sending) so the user can edit it before sending.
+    val suggestions = remember {
+        listOf(
+            R.string.empty_chat_suggest_1,
+            R.string.empty_chat_suggest_2,
+            R.string.empty_chat_suggest_3,
+        )
+    }
     Column(
         modifier = modifier.padding(32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -675,6 +726,17 @@ private fun EmptyConversation(modifier: Modifier = Modifier) {
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        Spacer(Modifier.size(20.dp))
+        // Suggestion chips wrap across multiple rows on narrow screens. FlowRow-like
+        // behavior via a plain Column of Rows keeps the dependency surface zero.
+        suggestions.forEach { resId ->
+            val text = stringResource(resId)
+            androidx.compose.material3.AssistChip(
+                onClick = { onSuggestion(text) },
+                label = { Text(text, style = MaterialTheme.typography.bodyMedium) },
+                modifier = Modifier.padding(vertical = 4.dp),
+            )
+        }
     }
 }
 

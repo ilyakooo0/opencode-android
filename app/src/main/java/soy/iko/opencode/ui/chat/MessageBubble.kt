@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material3.Icon
@@ -63,7 +62,7 @@ private fun UserBubble(message: MessageWithParts, imageContext: ImageLoadContext
         Column(
             modifier = Modifier
                 .fillMaxWidth(NetworkConfig.userBubbleWidthFraction)
-                .clip(RoundedCornerShape(16.dp))
+                .clip(MaterialTheme.shapes.medium)
                 .background(MaterialTheme.colorScheme.primaryContainer)
                 .padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),

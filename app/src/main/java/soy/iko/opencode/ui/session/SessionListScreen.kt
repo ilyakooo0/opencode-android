@@ -91,6 +91,7 @@ fun SessionListScreen(
     onDisconnect: () -> Unit,
     onOpenFiles: () -> Unit,
     onOpenSettings: () -> Unit,
+    onAddServer: () -> Unit,
 ) {
     val vm: SessionListViewModel = viewModel(factory = vmFactory { SessionListViewModel(container) })
     val state by vm.state.collectAsStateWithLifecycle()
@@ -159,6 +160,10 @@ fun SessionListScreen(
                             showServerMenu = false
                             vm.switchServer(profile)
                         },
+                        onAddServer = {
+                            showServerMenu = false
+                            onAddServer()
+                        },
                     )
                 },
                 actions = {
@@ -199,119 +204,20 @@ fun SessionListScreen(
             ConnectionBanner(
                 state = connectionState,
                 modifier = Modifier.align(Alignment.TopCenter),
+                onRetry = { vm.retryConnection() },
             )
-            when {
-                state.loading -> {
-                    val loadingLabel = stringResource(R.string.loading)
-                    CircularProgressIndicator(
-                        Modifier
-                            .align(Alignment.Center)
-                            .semantics { contentDescription = loadingLabel },
-                    )
-                }
-                state.sessions.isEmpty() && state.error != null -> Column(
-                    modifier = Modifier.align(Alignment.Center).padding(24.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    Text(
-                        state.error ?: "",
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                    Spacer(Modifier.size(12.dp))
-                    TextButton(onClick = { vm.refresh() }) {
-                        Text(stringResource(R.string.retry))
-                    }
-                }
-                state.sessions.isEmpty() -> EmptySessions(
-                    onCreate = { vm.createSession(onCreated = onOpenSession) },
-                    modifier = Modifier.align(Alignment.Center),
-                )
-                else -> Column(modifier = Modifier.fillMaxSize()) {
-                    OutlinedTextField(
-                        value = state.query,
-                        onValueChange = vm::setQuery,
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).testTag("session_search"),
-                        placeholder = { Text(stringResource(R.string.search_sessions)) },
-                        label = { Text(stringResource(R.string.search_sessions)) },
-                        leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                    )
-                    val sessions = remember(state.sessions, state.query, state.previews) {
-                        // Fast-path an empty query: filtered just returns sessions, so skip
-                        // the recompute (and the fresh list reference) when only previews
-                        // churned in the background. With a non-empty query the previews
-                        // map affects the match set, so recompute on any of the three.
-                        if (state.query.isBlank()) state.sessions else state.filtered
-                    }
-                    if (sessions.isEmpty()) {
-                        Text(
-                            stringResource(R.string.no_sessions_match, state.query),
-                            modifier = Modifier.padding(24.dp),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    } else {
-                        PullToRefreshBox(
-                            isRefreshing = refreshing,
-                            onRefresh = { vm.refresh() },
-                            modifier = Modifier.fillMaxSize(),
-                        ) {
-                            LazyColumn(
-                                modifier = Modifier.fillMaxSize(),
-                                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 96.dp),
-                                verticalArrangement = Arrangement.spacedBy(12.dp),
-                            ) {
-                                items(sessions, key = { it.id }) { session ->
-                                    // Swipe end-to-start reveals a delete affordance and opens the
-                                    // same confirmation dialog as the trash icon. We never commit
-                                    // the dismissal (always reset to Settled) so the card snaps back
-                                    // and the dialog guards against accidental data loss.
-                                    val swipeState = rememberSwipeToDismissBoxState(
-                                        confirmValueChange = {
-                                            // Haptic at the trigger so the swipe path matches the icon-path
-                                            // delete, which vibrates on confirm. Returns false (snap back) so
-                                            // the dialog guards the actual deletion.
-                                            haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                                            pendingDeleteId = session.id
-                                            false
-                                        },
-                                    )
-                                    SwipeToDismissBox(
-                                        state = swipeState,
-                                        enableDismissFromStartToEnd = false,
-                                        backgroundContent = {
-                                            Box(
-                                                modifier = Modifier
-                                                    .fillMaxSize()
-                                                    .clip(MaterialTheme.shapes.medium)
-                                                    .background(MaterialTheme.colorScheme.errorContainer)
-                                                    .padding(horizontal = 20.dp),
-                                                contentAlignment = Alignment.CenterEnd,
-                                            ) {
-                                                Icon(
-                                                    Icons.Filled.Delete,
-                                                    contentDescription = stringResource(R.string.delete),
-                                                    tint = MaterialTheme.colorScheme.onErrorContainer,
-                                                )
-                                            }
-                                        },
-                                    ) {
-                                        SessionCard(
-                                            session = session,
-                                            preview = state.previews[session.id],
-                                            unread = unread.contains(session.id),
-                                            onClick = { onOpenSession(session.id) },
-                                            onRename = { pendingRenameId = session.id },
-                                            onDelete = { pendingDeleteId = session.id },
-                                            modifier = Modifier.testTag("session_card"),
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            SessionListBody(
+                state = state,
+                unread = unread,
+                refreshing = refreshing,
+                haptics = haptics,
+                onRefresh = vm::refresh,
+                onQueryChange = vm::setQuery,
+                onOpenSession = onOpenSession,
+                onCreateSession = { vm.createSession(onCreated = onOpenSession) },
+                onRename = { pendingRenameId = it },
+                onDelete = { pendingDeleteId = it },
+            )
         }
         }
     }
@@ -366,6 +272,134 @@ fun SessionListScreen(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
+    state: SessionListState,
+    unread: Map<String, Int>,
+    refreshing: Boolean,
+    haptics: androidx.compose.ui.hapticfeedback.HapticFeedback,
+    onRefresh: () -> Unit,
+    onQueryChange: (String) -> Unit,
+    onOpenSession: (String) -> Unit,
+    onCreateSession: () -> Unit,
+    onRename: (String) -> Unit,
+    onDelete: (String) -> Unit,
+) {
+    when {
+        state.loading -> {
+            val loadingLabel = stringResource(R.string.loading)
+            CircularProgressIndicator(
+                Modifier
+                    .align(Alignment.Center)
+                    .semantics { contentDescription = loadingLabel },
+            )
+        }
+        state.sessions.isEmpty() && state.error != null -> Column(
+            modifier = Modifier.align(Alignment.Center).padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                state.error ?: "",
+                color = MaterialTheme.colorScheme.error,
+            )
+            Spacer(Modifier.size(12.dp))
+            TextButton(onClick = onRefresh) {
+                Text(stringResource(R.string.retry))
+            }
+        }
+        state.sessions.isEmpty() -> EmptySessions(
+            onCreate = onCreateSession,
+            modifier = Modifier.align(Alignment.Center),
+        )
+        else -> Column(modifier = Modifier.fillMaxSize()) {
+            OutlinedTextField(
+                value = state.query,
+                onValueChange = onQueryChange,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).testTag("session_search"),
+                placeholder = { Text(stringResource(R.string.search_sessions)) },
+                label = { Text(stringResource(R.string.search_sessions)) },
+                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+            )
+            val sessions = remember(state.sessions, state.query, state.previews) {
+                // Fast-path an empty query: filtered just returns sessions, so skip
+                // the recompute (and the fresh list reference) when only previews
+                // churned in the background. With a non-empty query the previews
+                // map affects the match set, so recompute on any of the three.
+                if (state.query.isBlank()) state.sessions else state.filtered
+            }
+            if (sessions.isEmpty()) {
+                Text(
+                    stringResource(R.string.no_sessions_match, state.query),
+                    modifier = Modifier.padding(24.dp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                PullToRefreshBox(
+                    isRefreshing = refreshing,
+                    onRefresh = onRefresh,
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 96.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        items(sessions, key = { it.id }) { session ->
+                            // Swipe end-to-start reveals a delete affordance and opens the
+                            // same confirmation dialog as the trash icon. We never commit
+                            // the dismissal (always reset to Settled) so the card snaps back
+                            // and the dialog guards against accidental data loss.
+                            val swipeState = rememberSwipeToDismissBoxState(
+                                confirmValueChange = {
+                                    // Haptic at the trigger so the swipe path matches the icon-path
+                                    // delete, which vibrates on confirm. Returns false (snap back) so
+                                    // the dialog guards the actual deletion.
+                                    haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                    onDelete(session.id)
+                                    false
+                                },
+                            )
+                            SwipeToDismissBox(
+                                state = swipeState,
+                                enableDismissFromStartToEnd = false,
+                                backgroundContent = {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .clip(MaterialTheme.shapes.medium)
+                                            .background(MaterialTheme.colorScheme.errorContainer)
+                                            .padding(horizontal = 20.dp),
+                                        contentAlignment = Alignment.CenterEnd,
+                                    ) {
+                                        Icon(
+                                            Icons.Filled.Delete,
+                                            contentDescription = stringResource(R.string.delete),
+                                            tint = MaterialTheme.colorScheme.onErrorContainer,
+                                        )
+                                    }
+                                },
+                            ) {
+                                SessionCard(
+                                    session = session,
+                                    preview = state.previews[session.id],
+                                    unreadCount = unread[session.id] ?: 0,
+                                    onClick = { onOpenSession(session.id) },
+                                    onRename = { onRename(session.id) },
+                                    onDelete = { onDelete(session.id) },
+                                    modifier = Modifier.testTag("session_card"),
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun RenameSessionDialog(
     title: String,
@@ -402,7 +436,7 @@ private fun RenameSessionDialog(
 private fun SessionCard(
     session: Session,
     preview: String?,
-    unread: Boolean,
+    unreadCount: Int,
     onClick: () -> Unit,
     onRename: () -> Unit,
     onDelete: () -> Unit,
@@ -420,21 +454,42 @@ private fun SessionCard(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (unread) {
-                            val unreadLabel = stringResource(R.string.unread)
-                            Box(
-                                modifier = Modifier
-                                    .padding(end = 8.dp)
-                                    .size(8.dp)
-                                    .clip(androidx.compose.foundation.shape.CircleShape)
-                                    .background(MaterialTheme.colorScheme.primary)
-                                    .semantics { contentDescription = unreadLabel },
-                            )
+                        if (unreadCount > 0) {
+                            val unreadLabel = stringResource(R.string.unread_count, unreadCount)
+                            // Count badge: shows the number of unread messages so the user
+                            // can tell a single reply from a burst. Falls back to a dot for
+                            // a count of 1 (the common "one reply" case) to avoid clutter.
+                            if (unreadCount == 1) {
+                                Box(
+                                    modifier = Modifier
+                                        .padding(end = 8.dp)
+                                        .size(8.dp)
+                                        .clip(androidx.compose.foundation.shape.CircleShape)
+                                        .background(MaterialTheme.colorScheme.primary)
+                                        .semantics { contentDescription = unreadLabel },
+                                )
+                            } else {
+                                Box(
+                                    modifier = Modifier
+                                        .padding(end = 8.dp)
+                                        .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+                                        .background(MaterialTheme.colorScheme.primary)
+                                        .padding(horizontal = 6.dp, vertical = 1.dp)
+                                        .semantics { contentDescription = unreadLabel },
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Text(
+                                        unreadCount.toString(),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onPrimary,
+                                    )
+                                }
+                            }
                         }
                         Text(
                             session.displayTitle,
                             style = MaterialTheme.typography.titleMedium,
-                            color = if (unread) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = if (unreadCount > 0) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
@@ -461,7 +516,7 @@ private fun SessionCard(
                 Text(
                     preview,
                     style = MaterialTheme.typography.bodyMedium,
-                    color = if (unread) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (unreadCount > 0) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -500,7 +555,8 @@ private fun EmptySessions(onCreate: () -> Unit, modifier: Modifier = Modifier) {
 
 /** Title + dropdown for quick-switching between saved servers. Highlights the active
  *  server with a check mark and primary color so the user can tell which one they're
- *  on at a glance. */
+ *  on at a glance. Includes an "Add server" item so adding a new server doesn't require
+ *  navigating out to Settings → Manage servers — a long path for a common action. */
 @Composable
 private fun ServerSwitcherMenu(
     serverLabel: String,
@@ -511,6 +567,7 @@ private fun ServerSwitcherMenu(
     onExpand: () -> Unit,
     onDismiss: () -> Unit,
     onSelect: (ServerProfile) -> Unit,
+    onAddServer: () -> Unit,
 ) {
     Column {
         Box {
@@ -569,6 +626,17 @@ private fun ServerSwitcherMenu(
                         onClick = { onSelect(profile) },
                     )
                 }
+                // Divider + Add server item so the user can add a server without leaving
+                // the session list. The trailing icon reinforces the primary action.
+                androidx.compose.material3.HorizontalDivider()
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.add_server)) },
+                    leadingIcon = { Icon(Icons.Filled.Add, contentDescription = null) },
+                    onClick = {
+                        onDismiss()
+                        onAddServer()
+                    },
+                )
             }
         }
     }

@@ -69,8 +69,9 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
                 initialValue = EventStreamClient.ConnectionState.Disconnected,
             )
 
-    /** Sessions with activity that arrived while not being viewed. */
-    val unread: StateFlow<Set<String>> = container.unread
+    /** Sessions with activity that arrived while not being viewed, mapped to their
+     *  unread event count so the list can show "N unread" instead of a bare dot. */
+    val unread: StateFlow<Map<String, Int>> = container.unread
 
     val profiles: StateFlow<List<ServerProfile>> =
         container.profileStore.profiles.stateIn(
@@ -232,6 +233,13 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
 
     fun setQuery(query: String) {
         _state.update { it.copy(query = query) }
+    }
+
+    /** Force the SSE stream to reconnect (recovery path for a Failed banner) and
+     *  re-fetch the session list so the UI reflects the current server state. */
+    fun retryConnection() {
+        container.activeConnection.value?.events?.triggerReconnect()
+        refresh()
     }
 
     fun refresh() {
@@ -436,7 +444,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
                         val restored = runCatchingCancellable { container.connect(previousProfile) }
                         // connect() clears unread state; restore what we saved so the
                         // user doesn't lose unread badges on a failed server switch.
-                        savedUnread.forEach { container.restoreUnread(it) }
+                        savedUnread.forEach { (id) -> container.restoreUnread(id) }
                         if (restored.isSuccess) {
                             // Clear stale sessions from the old server; the SSE observer
                             // will reload from the restored connection via refresh().

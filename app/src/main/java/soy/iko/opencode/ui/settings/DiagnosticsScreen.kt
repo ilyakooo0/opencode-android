@@ -2,6 +2,7 @@ package soy.iko.opencode.ui.settings
 
 import android.content.Intent
 import android.util.Log
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -30,9 +31,16 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -43,22 +51,25 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import soy.iko.opencode.util.runCatchingCancellable
 import soy.iko.opencode.ui.components.showToast
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
-import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import soy.iko.opencode.R
+import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.data.repo.CrashLogger
 import soy.iko.opencode.ui.components.LocalRelativeTimeTick
 import soy.iko.opencode.ui.components.rememberRelativeTime
@@ -74,6 +85,13 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
     var showClearAll by rememberSaveable { mutableStateOf(false) }
     var pendingReportDelete by rememberSaveable { mutableStateOf<String?>(null) }
     val shareScope = rememberCoroutineScope()
+    val haptics = LocalHapticFeedback.current
+    val snackbar = remember { SnackbarHostState() }
+    val undoLabel = stringResource(R.string.undo)
+    val reportDeletedLabel = stringResource(R.string.report_deleted)
+    // Track report names whose deletion has been deferred for an undo window, so a
+    // swipe-triggered delete can be cancelled before the file is actually removed.
+    val deferredDeletes = remember { mutableStateOf<Set<String>>(emptySet()) }
     val shareLabel = stringResource(R.string.share)
     val timeTick = rememberRelativeTimeTick()
 
@@ -97,6 +115,7 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                 },
             )
         },
+        snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
         CompositionLocalProvider(LocalRelativeTimeTick provides timeTick) {
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
@@ -115,54 +134,83 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                     .semantics { heading() },
             )
             if (reports.isEmpty()) {
-                Text(
-                    stringResource(R.string.no_crash_reports),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(24.dp),
+                EmptyCrashReports(
+                    modifier = Modifier.fillMaxWidth().padding(24.dp),
                 )
             } else {
                 LazyColumn(modifier = Modifier.fillMaxSize()) {
                     items(reports, key = { it.fileName }) { report ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable(role = Role.Button) { viewing = report.fileName }
-                                .padding(horizontal = 16.dp, vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        ) {
-                            Icon(
-                                Icons.Filled.BugReport,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.error,
-                            )
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(report.preview, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
-                                Text(
-                                    rememberRelativeTime(report.timestamp),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            IconButton(onClick = {
-                                shareScope.launch {
-                                    val content = withContext(Dispatchers.IO) {
-                                        logger.readReport(report.fileName).orEmpty()
-                                    }
-                                    val send = Intent(Intent.ACTION_SEND).apply {
-                                        type = "text/plain"
-                                        putExtra(Intent.EXTRA_SUBJECT, shareLabel)
-                                        putExtra(Intent.EXTRA_TEXT, content)
-                                    }
-                                    runCatchingCancellable { context.startActivity(Intent.createChooser(send, shareLabel)) }
-                                        .onFailure {
-                                            Log.w("Diagnostics", "Failed to share crash report", it)
-                                            showToast(context, context.getString(R.string.no_share_app))
-                                        }
+                        // Swipe end-to-start reveals a delete affordance. The delete is
+                        // deferred for an undo window (matching the session/server lists);
+                        // confirmValueChange snaps back so the row remains while the undo
+                        // snackbar is shown, and is removed only when the window expires.
+                        val swipeState = rememberSwipeToDismissBoxState(
+                            confirmValueChange = {
+                                haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                pendingReportDelete = report.fileName
+                                false
+                            },
+                        )
+                        SwipeToDismissBox(
+                            state = swipeState,
+                            enableDismissFromStartToEnd = false,
+                            backgroundContent = {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .clip(MaterialTheme.shapes.medium)
+                                        .background(MaterialTheme.colorScheme.errorContainer)
+                                        .padding(horizontal = 20.dp),
+                                    contentAlignment = Alignment.CenterEnd,
+                                ) {
+                                    Icon(
+                                        Icons.Filled.DeleteSweep,
+                                        contentDescription = stringResource(R.string.delete),
+                                        tint = MaterialTheme.colorScheme.onErrorContainer,
+                                    )
                                 }
-                            }) {
-                                Icon(Icons.Filled.Share, contentDescription = stringResource(R.string.share))
+                            },
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable(role = Role.Button) { viewing = report.fileName }
+                                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                Icon(
+                                    Icons.Filled.BugReport,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.error,
+                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(report.preview, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+                                    Text(
+                                        rememberRelativeTime(report.timestamp),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                IconButton(onClick = {
+                                    shareScope.launch {
+                                        val content = withContext(Dispatchers.IO) {
+                                            logger.readReport(report.fileName).orEmpty()
+                                        }
+                                        val send = Intent(Intent.ACTION_SEND).apply {
+                                            type = "text/plain"
+                                            putExtra(Intent.EXTRA_SUBJECT, shareLabel)
+                                            putExtra(Intent.EXTRA_TEXT, content)
+                                        }
+                                        runCatchingCancellable { context.startActivity(Intent.createChooser(send, shareLabel)) }
+                                            .onFailure {
+                                                Log.w("Diagnostics", "Failed to share crash report", it)
+                                                showToast(context, context.getString(R.string.no_share_app))
+                                            }
+                                    }
+                                }) {
+                                    Icon(Icons.Filled.Share, contentDescription = stringResource(R.string.share))
+                                }
                             }
                         }
                         HorizontalDivider()
@@ -191,14 +239,13 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
             },
             dismissButton = {
                 Row {
-                    val shareLabel2 = stringResource(R.string.share)
                     TextButton(onClick = {
                         val send = Intent(Intent.ACTION_SEND).apply {
                             type = "text/plain"
-                            putExtra(Intent.EXTRA_SUBJECT, shareLabel2)
+                            putExtra(Intent.EXTRA_SUBJECT, shareLabel)
                             putExtra(Intent.EXTRA_TEXT, content.orEmpty())
                         }
-                        runCatchingCancellable { context.startActivity(Intent.createChooser(send, shareLabel2)) }
+                        runCatchingCancellable { context.startActivity(Intent.createChooser(send, shareLabel)) }
                             .onFailure {
                                 Log.w("Diagnostics", "Failed to share crash report", it)
                                 showToast(context, context.getString(R.string.no_share_app))
@@ -245,16 +292,38 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
         )
     }
 
-    if (pendingReportDelete != null) {
+    pendingReportDelete?.let { name ->
         AlertDialog(
             onDismissRequest = { pendingReportDelete = null },
             title = { Text(stringResource(R.string.delete_report_title)) },
             text = { Text(stringResource(R.string.delete_report_text)) },
             confirmButton = {
                 TextButton(onClick = {
-                    pendingReportDelete?.let { logger.deleteReport(it) }
                     pendingReportDelete = null
                     viewing = null
+                    // Defer the actual delete so the Undo snackbar can cancel it. The
+                    // report stays in the list until the window expires; the undo
+                    // action removes the name from the deferred set.
+                    deferredDeletes.value = deferredDeletes.value + name
+                    shareScope.launch {
+                        delay(NetworkConfig.undoReportDeleteDelayMs)
+                        if (name in deferredDeletes.value) {
+                            deferredDeletes.value = deferredDeletes.value - name
+                            logger.deleteReport(name)
+                        }
+                    }
+                    // showSnackbar is suspend; run it on the screen's scope so the
+                    // undo action can race the deferred delete window.
+                    shareScope.launch {
+                        val result = snackbar.showSnackbar(
+                            message = reportDeletedLabel,
+                            actionLabel = undoLabel,
+                            duration = SnackbarDuration.Short,
+                        )
+                        if (result == SnackbarResult.ActionPerformed) {
+                            deferredDeletes.value = deferredDeletes.value - name
+                        }
+                    }
                 }) { Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = {
@@ -277,6 +346,30 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
             dismissButton = {
                 TextButton(onClick = { showClearAll = false }) { Text(stringResource(R.string.cancel)) }
             },
+        )
+    }
+}
+
+/** Empty state for the crash reports list. Rendered with an icon + text to match the
+ *  empty-state pattern used by the session and server lists (the prior version was a
+ *  bare `Text` line that read as a status message rather than an intentional state). */
+@Composable
+private fun EmptyCrashReports(modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Icon(
+            Icons.Filled.BugReport,
+            contentDescription = null,
+            modifier = Modifier.size(48.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.size(12.dp))
+        Text(
+            stringResource(R.string.no_crash_reports),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }

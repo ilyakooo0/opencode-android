@@ -1,5 +1,6 @@
 package soy.iko.opencode.ui.server
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -28,11 +29,16 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -42,6 +48,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
@@ -73,6 +80,8 @@ fun ServerListScreen(
     val haptics = LocalHapticFeedback.current
     val snackbar = remember { SnackbarHostState() }
     val retryLabel = stringResource(R.string.retry)
+    val undoLabel = stringResource(R.string.undo)
+    val serverRemovedLabel = stringResource(R.string.server_removed)
     var pendingDeleteId by rememberSaveable { mutableStateOf<String?>(null) }
     val connectedId = activeConnection?.profile?.id
 
@@ -83,8 +92,24 @@ fun ServerListScreen(
             } else {
                 snackbar.showSnackbar(event.message)
             }
-            if (result == androidx.compose.material3.SnackbarResult.ActionPerformed && event.profile != null) {
+            if (result == SnackbarResult.ActionPerformed && event.profile != null) {
                 vm.connect(event.profile, onConnected)
+            }
+        }
+    }
+
+    // Undo snackbar: when a server is marked for deferred deletion, offer Undo. If the
+    // action is taken before the delay expires, the profile is kept and the delete
+    // never fires — mirrors the session list's undo UX for consistency.
+    LaunchedEffect(Unit) {
+        vm.undoEvents.collect { profileId ->
+            val result = snackbar.showSnackbar(
+                message = serverRemovedLabel,
+                actionLabel = undoLabel,
+                duration = SnackbarDuration.Short,
+            )
+            if (result == SnackbarResult.ActionPerformed) {
+                vm.undoDelete(profileId)
             }
         }
     }
@@ -126,42 +151,44 @@ fun ServerListScreen(
                 ) {
                     items(profiles, key = { it.id }) { profile ->
                         val isActive = profile.id == connectedId
-                        Card(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("server_card")
-                                .clickable(enabled = connectingId == null, role = Role.Button) {
-                                    haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                                    vm.connect(profile, onConnected)
-                                },
-                        ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth().padding(16.dp),
-                                verticalAlignment = Alignment.CenterVertically,
+                        if (isActive) {
+                            // The active server can't be swipe-deleted (deleting it also
+                            // disconnects, which deserves an explicit tap, not an
+                            // accidental swipe). Render a plain card without the swipe
+                            // affordance for the active row.
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("server_card")
+                                    .clickable(enabled = connectingId == null, role = Role.Button) {
+                                        haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                        vm.connect(profile, onConnected)
+                                    },
                             ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        profile.displayLabel,
-                                        style = MaterialTheme.typography.titleMedium,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                    Text(
-                                        profile.baseUrl + if (profile.hasAuth) stringResource(R.string.server_auth_short) else "",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                    if (isActive) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            profile.displayLabel,
+                                            style = MaterialTheme.typography.titleMedium,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                        Text(
+                                            profile.baseUrl + if (profile.hasAuth) stringResource(R.string.server_auth_short) else "",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
                                         Text(
                                             stringResource(R.string.connected),
                                             style = MaterialTheme.typography.labelSmall,
                                             color = MaterialTheme.colorScheme.primary,
                                         )
                                     }
-                                }
-                                if (isActive) {
                                     Icon(
                                         Icons.Filled.CheckCircle,
                                         contentDescription = stringResource(R.string.connected),
@@ -169,22 +196,85 @@ fun ServerListScreen(
                                         modifier = Modifier.size(22.dp),
                                     )
                                     // Keep edit available on the active server so credentials can be
-                                    // fixed without disconnecting first. Only delete is hidden, since
-                                    // deleting the active server also disconnects (SV1 warns about that).
+                                    // fixed without disconnecting first. Only delete is hidden.
                                     IconButton(onClick = { onEditProfile(profile.id) }) {
                                         Icon(Icons.Filled.Edit, contentDescription = stringResource(R.string.edit))
                                     }
-                                } else if (connectingId == profile.id) {
-                                    val connectingLabel = stringResource(R.string.connecting)
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(24.dp).semantics { contentDescription = connectingLabel },
-                                    )
-                                } else {
-                                    IconButton(onClick = { onEditProfile(profile.id) }) {
-                                        Icon(Icons.Filled.Edit, contentDescription = stringResource(R.string.edit))
+                                }
+                            }
+                        } else {
+                            // Swipe end-to-start reveals a delete affordance and opens the
+                            // same confirmation dialog as the trash icon (matching the
+                            // session list). confirmValueChange always returns false (snap
+                            // back) so the dialog guards the actual deletion.
+                            val swipeState = rememberSwipeToDismissBoxState(
+                                confirmValueChange = {
+                                    haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                    pendingDeleteId = profile.id
+                                    false
+                                },
+                            )
+                            SwipeToDismissBox(
+                                state = swipeState,
+                                enableDismissFromStartToEnd = false,
+                                backgroundContent = {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .clip(MaterialTheme.shapes.medium)
+                                            .background(MaterialTheme.colorScheme.errorContainer)
+                                            .padding(horizontal = 20.dp),
+                                        contentAlignment = Alignment.CenterEnd,
+                                    ) {
+                                        Icon(
+                                            Icons.Filled.Delete,
+                                            contentDescription = stringResource(R.string.delete),
+                                            tint = MaterialTheme.colorScheme.onErrorContainer,
+                                        )
                                     }
-                                    IconButton(onClick = { pendingDeleteId = profile.id }) {
-                                        Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.delete))
+                                },
+                            ) {
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("server_card")
+                                        .clickable(enabled = connectingId == null, role = Role.Button) {
+                                            haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                            vm.connect(profile, onConnected)
+                                        },
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                profile.displayLabel,
+                                                style = MaterialTheme.typography.titleMedium,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
+                                            Text(
+                                                profile.baseUrl + if (profile.hasAuth) stringResource(R.string.server_auth_short) else "",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
+                                        }
+                                        if (connectingId == profile.id) {
+                                            val connectingLabel = stringResource(R.string.connecting)
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.size(24.dp).semantics { contentDescription = connectingLabel },
+                                            )
+                                        } else {
+                                            IconButton(onClick = { onEditProfile(profile.id) }) {
+                                                Icon(Icons.Filled.Edit, contentDescription = stringResource(R.string.edit))
+                                            }
+                                            IconButton(onClick = { pendingDeleteId = profile.id }) {
+                                                Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.delete))
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -210,6 +300,8 @@ fun ServerListScreen(
                 TextButton(onClick = {
                     haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                     pendingDeleteId = null
+                    // delete() defers the actual removal so the undo snackbar can cancel
+                    // it; the row disappears on the next profiles emission.
                     vm.delete(profile)
                 }) { Text(stringResource(R.string.remove), color = MaterialTheme.colorScheme.error) }
             },

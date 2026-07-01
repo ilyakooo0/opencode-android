@@ -66,6 +66,14 @@ object NetworkConfig {
      *  Undo snackbar lets the user cancel it. */
     const val undoDeleteDelayMs = 5_000L
 
+    /** Grace period before a deferred server-profile delete actually fires, during which
+     *  an Undo snackbar lets the user cancel it. Same UX rationale as [undoDeleteDelayMs]. */
+    const val undoServerDeleteDelayMs = 5_000L
+
+    /** Grace period before a deferred crash-report delete actually fires, during which
+     *  an Undo snackbar lets the user cancel it. */
+    const val undoReportDeleteDelayMs = 5_000L
+
     // --- In-memory message store (SessionRepository.MessageStore) ---
 
     /** Max messages to keep in memory per observed session; oldest are evicted beyond this. */
@@ -90,6 +98,11 @@ object NetworkConfig {
      *  a huge paste from stalling the UI (the field would otherwise buffer and lay out
      *  an unbounded string) while leaving plenty of room for long prompts. */
     const val maxDraftLengthChars = 32_000
+
+    /** Show the "remaining characters" supportingText under the chat input once the
+     *  draft length crosses this fraction of [maxDraftLengthChars], so the cap is
+     *  visible before it silently kicks in but doesn't clutter a normal short prompt. */
+    const val draftCountdownThresholdFraction = 0.8f
 
     // --- Profile store (ServerEditViewModel) ---
 
