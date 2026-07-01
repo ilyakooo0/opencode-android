@@ -120,6 +120,12 @@ class FakeOpencodeApiClient : OpencodeApiClient() {
     var sendPromptThrows: Throwable? = null
     var respondPermissionThrows: Throwable? = null
     var cacheInvalidated = false
+    var providersCacheInvalidated = false
+        private set
+    var agentsCacheInvalidated = false
+        private set
+    var commandsCacheInvalidated = false
+        private set
 
     var sendPromptCalls: List<Triple<String, String, ModelRef?>> = emptyList()
         private set
@@ -144,7 +150,13 @@ class FakeOpencodeApiClient : OpencodeApiClient() {
         deletedSessions = deletedSessions + id
     }
 
-    override suspend fun listMessages(sessionId: String): List<MessageWithParts> = messages
+    var listMessagesCalls: List<String> = emptyList()
+        private set
+
+    override suspend fun listMessages(sessionId: String): List<MessageWithParts> {
+        listMessagesCalls = listMessagesCalls + sessionId
+        return messages
+    }
 
     override suspend fun sendPrompt(
         sessionId: String,
@@ -180,6 +192,9 @@ class FakeOpencodeApiClient : OpencodeApiClient() {
     override suspend fun commands(): List<Command> = commandsList
 
     override suspend fun invalidateCache() { cacheInvalidated = true }
+    override suspend fun invalidateProvidersCache() { providersCacheInvalidated = true }
+    override suspend fun invalidateAgentsCache() { agentsCacheInvalidated = true }
+    override suspend fun invalidateCommandsCache() { commandsCacheInvalidated = true }
 
     override suspend fun respondPermission(
         sessionId: String,

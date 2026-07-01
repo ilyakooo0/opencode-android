@@ -425,4 +425,37 @@ class SessionListViewModelTest {
         // The old session's preview should be gone (refresh re-populates from the new server)
         assertFalse(vm.state.value.previews.containsKey("s1"))
     }
+
+    // --- Preview caching ---
+
+    @Test
+    fun refresh_skipsPreviewsAlreadyCached() = testScope.runTest {
+        val api = FakeOpencodeApiClient()
+        val events = FakeEventStreamClient()
+        val repo = FakeSessionRepository(api, events)
+        repo.sessions = listOf(
+            Session(id = "s1", title = "Chat 1"),
+            Session(id = "s2", title = "Chat 2"),
+        )
+        api.messages = listOf(
+            MessageWithParts(
+                info = UserMessage(id = "m1", sessionID = "s1"),
+                parts = listOf(TextPart(id = "p1", text = "hello")),
+            ),
+        )
+        val container = makeContainer(api = api, events = events, repo = repo)
+        val vm = makeVm(container)
+        // Initial load fetches previews for both sessions.
+        val initialCalls = api.listMessagesCalls.size
+        assertTrue("initial load should fetch previews", initialCalls > 0)
+
+        // A second refresh should NOT re-fetch previews already cached.
+        vm.refresh()
+        testScheduler.advanceUntilIdle()
+        assertEquals(
+            "refresh should skip cached previews",
+            initialCalls,
+            api.listMessagesCalls.size,
+        )
+    }
 }

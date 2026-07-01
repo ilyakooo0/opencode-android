@@ -69,8 +69,14 @@ open class SessionRepository(
         // Subscribe to events first so we don't miss early deltas during the initial load.
         val job = launch {
             eventStream.events.collect { event ->
-                val changed = lock.withLock { store.reduce(sessionId, event) }
-                if (changed) publish()
+                // Reduce and snapshot in a single lock acquisition: during fast streaming
+                // (hundreds of tokens/sec) this halves mutex contention vs. acquiring the
+                // lock once for reduce and again for snapshot. send() is called outside the
+                // lock so a slow downstream collector can't stall event processing.
+                val snapshot = lock.withLock {
+                    if (store.reduce(sessionId, event)) store.snapshot() else null
+                }
+                if (snapshot != null) send(snapshot)
             }
         }
 

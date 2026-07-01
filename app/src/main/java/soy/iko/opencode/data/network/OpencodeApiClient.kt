@@ -183,6 +183,18 @@ open class OpencodeApiClient private constructor(
         commandsMutex.withLock { cachedCommands = null }
     }
 
+    open suspend fun invalidateProvidersCache() {
+        providersMutex.withLock { cachedProviders = null }
+    }
+
+    open suspend fun invalidateAgentsCache() {
+        agentsMutex.withLock { cachedAgents = null }
+    }
+
+    open suspend fun invalidateCommandsCache() {
+        commandsMutex.withLock { cachedCommands = null }
+    }
+
     /** Respond to a permission request so a paused tool run can proceed. */
     open suspend fun respondPermission(
         sessionId: String,

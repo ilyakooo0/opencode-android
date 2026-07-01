@@ -189,7 +189,7 @@ class ChatViewModel(
     fun reloadModels() {
         val conn = connection ?: return
         viewModelScope.launch {
-            conn.api.invalidateCache()
+            conn.api.invalidateProvidersCache()
             _modelsReload.value++
         }
     }
@@ -197,7 +197,7 @@ class ChatViewModel(
     fun reloadAgents() {
         val conn = connection ?: return
         viewModelScope.launch {
-            conn.api.invalidateCache()
+            conn.api.invalidateAgentsCache()
             _agentsReload.value++
         }
     }
@@ -205,7 +205,7 @@ class ChatViewModel(
     fun reloadCommands() {
         val conn = connection ?: return
         viewModelScope.launch {
-            conn.api.invalidateCache()
+            conn.api.invalidateCommandsCache()
             _commandsReload.value++
         }
     }
@@ -337,9 +337,13 @@ class ChatViewModel(
             reloadTrigger = _commandsReload,
         )
         // Resolve the human-readable session title for the app bar (non-fatal).
+        // Skips the REST call when the SSE event collector already delivered the title
+        // (SessionUpdated fires shortly after connect), avoiding a redundant full
+        // session-list download.
         viewModelScope.launch {
             container.activeConnection.collectLatest { conn ->
                 if (conn == null) return@collectLatest
+                if (_sessionTitle.value != null) return@collectLatest
                 runCatchingCancellable { conn.repository.listSessions() }
                     .getOrNull()
                     ?.firstOrNull { it.id == sessionId }

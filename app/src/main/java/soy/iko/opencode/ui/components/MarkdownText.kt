@@ -89,10 +89,14 @@ fun MarkdownText(
             .conflate()
             .collect { md ->
                 // Only throttle when the content is growing incrementally (streaming):
-                // a content switch or initial render proceeds immediately.
+                // a content switch or initial render proceeds immediately. Checking
+                // length is O(1) vs. startsWith which is O(n) in the rendered content
+                // length — during a long streaming response this runs every throttle
+                // cycle. The keyed LaunchedEffect(markdown.take(32)) already handles
+                // content switches; within one keyed cycle, growing length means
+                // appending (streaming), not a rewrite.
                 if (renderedContent.isNotEmpty() &&
-                    md.startsWith(renderedContent) &&
-                    md != renderedContent
+                    md.length > renderedContent.length
                 ) {
                     delay(NetworkConfig.streamingThrottleMs)
                 }

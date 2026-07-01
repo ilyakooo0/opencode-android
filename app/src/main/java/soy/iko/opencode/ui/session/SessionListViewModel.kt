@@ -255,7 +255,11 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    /** Fetch the last text part of each session for list previews (best-effort, bounded). */
+    /** Fetch the last text part of each session for list previews (best-effort, bounded).
+     *  Sessions that already have a cached preview are skipped — their previews are kept
+     *  fresh by the live SSE handler ([loadPreview] on [SessionUpdated]). Each preview
+     *  fetch downloads the full conversation history, so re-fetching all of them on every
+     *  refresh is wasteful when most are already cached. */
     private fun loadPreviews(sessions: List<Session>) {
         previewJob?.cancel()
         val conn = container.activeConnection.value ?: return
@@ -264,9 +268,12 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         // clearing the whole map (which would cause a visual flash).
         val keepIds = sessions.mapTo(mutableSetOf()) { it.id }
         _state.update { s -> s.copy(previews = s.previews.filterKeys { it in keepIds }) }
+        val cached = _state.value.previews.keys
+        val toFetch = sessions.take(NetworkConfig.maxPreviewSessions).filter { it.id !in cached }
+        if (toFetch.isEmpty()) return
         previewJob = viewModelScope.launch {
             val semaphore = Semaphore(NetworkConfig.maxConcurrentPreviews)
-            sessions.take(NetworkConfig.maxPreviewSessions).map { session ->
+            toFetch.map { session ->
                 launch {
                     semaphore.withPermit {
                         val preview = fetchSessionPreview(api, session.id) ?: return@withPermit

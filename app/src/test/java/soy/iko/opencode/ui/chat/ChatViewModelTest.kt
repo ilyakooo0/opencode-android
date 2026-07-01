@@ -408,7 +408,7 @@ class ChatViewModelTest {
         val container = makeContainer(api = api)
         val vm = makeVm(container)
         testScope.testScheduler.advanceUntilIdle()
-        assertFalse(api.cacheInvalidated)
+        assertFalse(api.providersCacheInvalidated)
 
         api.providersResponse = ProvidersResponse(
             providers = listOf(
@@ -417,7 +417,7 @@ class ChatViewModelTest {
         )
         vm.reloadModels()
         testScope.testScheduler.advanceUntilIdle()
-        assertTrue(api.cacheInvalidated)
+        assertTrue(api.providersCacheInvalidated)
         assertTrue(vm.models.value.isNotEmpty())
     }
 
