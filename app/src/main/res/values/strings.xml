@@ -361,4 +361,12 @@
     <string name="app_lock_prompt_subtitle">Authenticate to access your servers.</string>
     <string name="app_locked">opencode is locked</string>
     <string name="app_unlock">Unlock</string>
+
+    <!-- Agent task plan (todowrite tool) -->
+    <string name="plan">Plan</string>
+    <string name="plan_progress">%1$d/%2$d</string>
+    <string name="todo_pending">To do</string>
+    <string name="todo_in_progress">In progress</string>
+    <string name="todo_completed">Completed</string>
+    <string name="todo_cancelled">Cancelled</string>
 </resources>

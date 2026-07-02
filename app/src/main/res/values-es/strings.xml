@@ -359,4 +359,12 @@
     <string name="search_all_hint">Buscar en todas las conversaciones…</string>
     <string name="search_no_matches">No hay mensajes coincidentes</string>
     <string name="search_truncated">Mostrando resultados solo de las sesiones más recientes.</string>
+
+    <!-- Plan de tareas del agente (herramienta todowrite) -->
+    <string name="plan">Plan</string>
+    <string name="plan_progress">%1$d/%2$d</string>
+    <string name="todo_pending">Pendiente</string>
+    <string name="todo_in_progress">En curso</string>
+    <string name="todo_completed">Completado</string>
+    <string name="todo_cancelled">Cancelado</string>
 </resources>

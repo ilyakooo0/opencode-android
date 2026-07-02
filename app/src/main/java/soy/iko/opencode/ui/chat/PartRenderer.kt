@@ -59,7 +59,10 @@ import soy.iko.opencode.data.model.ToolPending
 import soy.iko.opencode.data.model.ToolRunning
 import soy.iko.opencode.data.model.ToolState
 import soy.iko.opencode.data.model.ToolUnknown
+import soy.iko.opencode.data.model.TODO_WRITE_TOOL
 import soy.iko.opencode.data.model.UnknownPart
+import soy.iko.opencode.data.model.inputElement
+import soy.iko.opencode.data.model.parseTodos
 import soy.iko.opencode.ui.components.DiffView
 import soy.iko.opencode.ui.components.ImageLoadContext
 import soy.iko.opencode.ui.components.MarkdownText
@@ -80,14 +83,6 @@ private val prettyJson: Json = Json { prettyPrint = true }
 private fun ToolState.titleText(): String? = when (this) {
     is ToolRunning -> title
     is ToolCompleted -> title
-    else -> null
-}
-
-/** Extract the raw input arguments of a tool call, if any. */
-private fun ToolState.inputJson(): JsonElement? = when (this) {
-    is ToolRunning -> input
-    is ToolCompleted -> input
-    is ToolError -> input
     else -> null
 }
 
@@ -251,24 +246,33 @@ private fun ToolCallView(part: ToolPart, modifier: Modifier) {
                 modifier = Modifier.padding(start = 22.dp, top = 2.dp),
             )
         }
-        // The tool's arguments (pretty-printed JSON), collapsible. Rendered before the
-        // output so the call reads top-to-bottom: name → what → input → result.
-        part.state.inputJson()?.let { input ->
-            val inputLabel = stringResource(R.string.tool_input)
-            val pretty = remember(input) {
-                runCatching { prettyJson.encodeToString(JsonElement.serializer(), input) }.getOrDefault(input.toString())
+        // A todowrite call carries the agent's task plan as its input; render it as a
+        // checklist rather than raw JSON so each step's progress reads at a glance.
+        val planTodos = remember(part) {
+            if (part.tool.equals(TODO_WRITE_TOOL, ignoreCase = true)) parseTodos(part.state.inputElement()) else emptyList()
+        }
+        if (planTodos.isNotEmpty()) {
+            TodoPlanChecklist(planTodos, modifier = Modifier.padding(top = 8.dp))
+        } else {
+            // The tool's arguments (pretty-printed JSON), collapsible. Rendered before the
+            // output so the call reads top-to-bottom: name → what → input → result.
+            part.state.inputElement()?.let { input ->
+                val inputLabel = stringResource(R.string.tool_input)
+                val pretty = remember(input) {
+                    runCatching { prettyJson.encodeToString(JsonElement.serializer(), input) }.getOrDefault(input.toString())
+                }
+                CollapsibleDetail(
+                    label = inputLabel,
+                    detail = pretty,
+                    isDiff = false,
+                    keySuffix = "input",
+                    // The input block has a label row whose collapse toggle announces its state
+                    // via stateDescription; pass the strings so TalkBack reads "expanded"/"collapsed"
+                    // rather than an empty state (the defaults are "").
+                    expandedState = stringResource(R.string.state_expanded),
+                    collapsedState = stringResource(R.string.state_collapsed),
+                )
             }
-            CollapsibleDetail(
-                label = inputLabel,
-                detail = pretty,
-                isDiff = false,
-                keySuffix = "input",
-                // The input block has a label row whose collapse toggle announces its state
-                // via stateDescription; pass the strings so TalkBack reads "expanded"/"collapsed"
-                // rather than an empty state (the defaults are "").
-                expandedState = stringResource(R.string.state_expanded),
-                collapsedState = stringResource(R.string.state_collapsed),
-            )
         }
         val detail = when (val s = part.state) {
             is ToolCompleted -> s.output?.takeIf { it.isNotBlank() }

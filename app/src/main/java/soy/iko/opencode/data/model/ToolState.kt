@@ -51,3 +51,12 @@ data class ToolError(
 @Serializable
 @SerialName("__unknown")
 data object ToolUnknown : ToolState
+
+/** The raw input arguments carried by a tool call, present on the running/completed/error
+ *  states (pending/unknown carry none). */
+fun ToolState.inputElement(): JsonElement? = when (this) {
+    is ToolRunning -> input
+    is ToolCompleted -> input
+    is ToolError -> input
+    else -> null
+}

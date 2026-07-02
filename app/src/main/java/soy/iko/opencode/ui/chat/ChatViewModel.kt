@@ -14,6 +14,8 @@ import soy.iko.opencode.data.model.PermissionUpdated
 import soy.iko.opencode.data.model.SessionDeleted
 import soy.iko.opencode.data.model.SessionUpdated
 import soy.iko.opencode.data.model.TextPart
+import soy.iko.opencode.data.model.TodoItem
+import soy.iko.opencode.data.model.currentTodoPlan
 import soy.iko.opencode.data.model.defaultOption
 import soy.iko.opencode.data.model.toOptions
 import soy.iko.opencode.data.network.EventStreamClient
@@ -36,6 +38,7 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.filterIsInstance
@@ -196,6 +199,18 @@ class ChatViewModel(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(NetworkConfig.stateFlowSubscriptionTimeoutMs),
             initialValue = false,
+        )
+
+    /** The agent's current task plan (the latest `todowrite`), surfaced so the chat can pin a
+     *  live progress checklist above the composer. distinctUntilChanged so a per-token messages
+     *  emission that doesn't change the plan doesn't recompose the bar. */
+    val todoPlan: StateFlow<List<TodoItem>> = messages
+        .map { currentTodoPlan(it) }
+        .distinctUntilChanged()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(NetworkConfig.stateFlowSubscriptionTimeoutMs),
+            initialValue = emptyList(),
         )
 
     private val _running = MutableStateFlow(false)

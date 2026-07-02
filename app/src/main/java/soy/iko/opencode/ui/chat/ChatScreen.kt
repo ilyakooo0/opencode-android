@@ -567,7 +567,11 @@ fun ChatScreen(
         snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
             val queuedFollowUp by vm.queuedFollowUp.collectAsStateWithLifecycle()
+            val todoPlan by vm.todoPlan.collectAsStateWithLifecycle()
             Column {
+                // Pinned above the composer so the agent's plan and progress stay visible
+                // while scrolled up mid-run; renders nothing when there's no plan.
+                TodoPlanBar(todoPlan)
                 AnimatedVisibility(visible = reverted) {
                     RevertBanner(onUndo = { vm.unrevert() })
                 }
