@@ -3,6 +3,8 @@ package soy.iko.opencode.data.repo
 import android.content.Context
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.builtins.ListSerializer
 import soy.iko.opencode.data.model.MessageWithParts
@@ -41,26 +43,50 @@ open class MessageCacheStore private constructor(
     private fun fileFor(sessionId: String): File? =
         dir?.let { File(it, idRegex.replace(sessionId, "_") + ".json") }
 
+    /** Per-session write lock so concurrent save/remove/load on the same file (e.g. both
+     *  panes of two-pane mode saving the same session, or a save racing a delete's remove)
+     *  can't tear or half-write the cache file. Keyed by session id; the map grows only with
+     *  the number of distinct sessions touched, and each [Mutex] is a few bytes. */
+    private val locks = java.util.concurrent.ConcurrentHashMap<String, Mutex>()
+    private fun lockFor(sessionId: String): Mutex = locks.getOrPut(sessionId) { Mutex() }
+
     /** Load the cached messages for [sessionId], or empty if none / unreadable. */
-    open suspend fun load(sessionId: String): List<MessageWithParts> = withContext(Dispatchers.IO) {
-        val file = fileFor(sessionId)?.takeIf { it.exists() } ?: return@withContext emptyList()
-        runCatchingCancellable { OpencodeJson.decodeFromString(serializer, file.readText()) }
-            .getOrDefault(emptyList())
+    open suspend fun load(sessionId: String): List<MessageWithParts> = lockFor(sessionId).withLock {
+        withContext(Dispatchers.IO) {
+            val file = fileFor(sessionId)?.takeIf { it.exists() } ?: return@withContext emptyList()
+            runCatchingCancellable { OpencodeJson.decodeFromString(serializer, file.readText()) }
+                .getOrDefault(emptyList())
+        }
     }
 
     /** Persist [messages] for [sessionId] (an empty list deletes the file). */
-    open suspend fun save(sessionId: String, messages: List<MessageWithParts>): Unit = withContext(Dispatchers.IO) {
-        val file = fileFor(sessionId) ?: return@withContext
-        runCatchingCancellable {
-            if (messages.isEmpty()) file.delete()
-            else file.writeText(OpencodeJson.encodeToString(serializer, messages))
-        }.onFailure { Log.w("MessageCacheStore", "Failed to cache messages for $sessionId", it) }
-        Unit
+    open suspend fun save(sessionId: String, messages: List<MessageWithParts>): Unit = lockFor(sessionId).withLock {
+        withContext(Dispatchers.IO) {
+            val file = fileFor(sessionId) ?: return@withContext
+            runCatchingCancellable {
+                if (messages.isEmpty()) file.delete()
+                else {
+                    // FIX: write atomically (temp file + rename) like RecentSessionsStore so a
+                    // process kill mid-write can't leave a truncated file that fails to decode,
+                    // wiping the cached conversation on the next open.
+                    val encoded = OpencodeJson.encodeToString(serializer, messages)
+                    val tmp = File(file.parentFile, file.name + ".tmp")
+                    tmp.writeText(encoded)
+                    if (!tmp.renameTo(file)) {
+                        file.writeText(encoded)
+                        tmp.delete()
+                    }
+                }
+            }.onFailure { Log.w("MessageCacheStore", "Failed to cache messages for $sessionId", it) }
+            Unit
+        }
     }
 
     /** Remove a session's cached messages (call on deletion). */
-    open suspend fun remove(sessionId: String): Unit = withContext(Dispatchers.IO) {
-        runCatchingCancellable { fileFor(sessionId)?.delete() }
-        Unit
+    open suspend fun remove(sessionId: String): Unit = lockFor(sessionId).withLock {
+        withContext(Dispatchers.IO) {
+            runCatchingCancellable { fileFor(sessionId)?.delete() }
+            Unit
+        }
     }
 }

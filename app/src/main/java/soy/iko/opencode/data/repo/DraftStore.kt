@@ -9,7 +9,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import android.util.Log
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.util.concurrent.Executors
 
 /**
@@ -154,7 +153,11 @@ open class DraftStore private constructor(
                 }.apply()
             }.onFailure { Log.w("DraftStore", "Failed to persist $key", it) }
         }
-        if (prefsInitialized.get()) write() else flushExecutor.execute { write() }
+        // FIX: always submit to the single-thread flushExecutor (never apply directly) so
+        // writes persist in submission order. Previously the post-init fast path applied
+        // synchronously on the caller's thread, which could land BEFORE an earlier still-queued
+        // write, persisting stale text. The task resolves the prefs lazy and calls apply().
+        runCatching { flushExecutor.execute { write() } }
     }
 
     /** Update the in-memory draft immediately without persisting to disk.
@@ -176,13 +179,11 @@ open class DraftStore private constructor(
             if (text.isBlank()) updated.remove(sessionId) else updated[sessionId] = text
             updated
         }
-        withContext(Dispatchers.IO) {
-            runCatching {
-                prefs.edit().apply {
-                    if (text.isBlank()) remove(sessionId) else putString(sessionId, text)
-                }.apply()
-            }.onFailure { Log.w("DraftStore", "Failed to persist draft for $sessionId", it) }
-        }
+        // Route persistence through the single-thread flushExecutor (like the other writers)
+        // rather than the shared IO pool, so this write can't race ahead of an earlier queued
+        // flush and land stale. writeAsync persists sessionId=text (or removes it when blank),
+        // which is exactly this draft's persistence.
+        writeAsync(sessionId, text)
     }
 
     /** Remove the draft for a session (call on session deletion to avoid orphaned entries).
@@ -200,10 +201,15 @@ open class DraftStore private constructor(
             updated.remove(sessionId)
             updated
         }
-        withContext(Dispatchers.IO) {
-            runCatching {
-                prefs.edit().remove(sessionId).remove(FOLLOWUP_PREFIX + sessionId).apply()
-            }.onFailure { Log.w("DraftStore", "Failed to remove draft for $sessionId", it) }
+        // Submit the (combined draft + follow-up) removal to the same single-thread
+        // flushExecutor the other writers use, so it can't race ahead of an earlier queued
+        // write and resurrect stale text. Mirrors flushDraft's submission pattern.
+        runCatching {
+            flushExecutor.execute {
+                runCatching {
+                    prefs.edit().remove(sessionId).remove(FOLLOWUP_PREFIX + sessionId).apply()
+                }.onFailure { Log.w("DraftStore", "Failed to remove draft for $sessionId", it) }
+            }
         }
     }
 
@@ -228,17 +234,13 @@ open class DraftStore private constructor(
             if (text.isBlank()) updated.remove(sessionId) else updated[sessionId] = text
             updated
         }
-        if (prefsInitialized.get()) {
-            // Prefs already opened — the lazy resolves instantly and apply() is async.
-            runCatching {
-                prefs.edit().apply {
-                    if (text.isBlank()) remove(sessionId) else putString(sessionId, text)
-                }.apply()
-            }.onFailure { Log.w("DraftStore", "Failed to flush draft for $sessionId", it) }
-        } else {
-            // Prefs not yet opened — dispatch to a background thread to avoid a
-            // synchronous disk read on the main thread (which would ANR). The draft
-            // may be lost if the process exits before the write completes.
+        // FIX: always route the persistence through the single-thread flushExecutor so writes
+        // land in submission order. Previously, once prefs were open this applied synchronously
+        // on the calling (main) thread, so a newer direct write could persist BEFORE an older
+        // still-queued write completed, clobbering the draft with stale text. The executor task
+        // resolves the prefs lazy and uses apply() (async) exactly as before; the write may be
+        // lost only if the process exits before the queued task runs (as previously).
+        runCatching {
             flushExecutor.execute {
                 runCatching {
                     prefs.edit().apply {

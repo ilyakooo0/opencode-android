@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -19,6 +20,8 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import coil.compose.SubcomposeAsyncImage
 import coil.request.ImageRequest
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material.icons.Icons
@@ -46,12 +49,44 @@ fun ServerProfile.toImageContext(): ImageLoadContext {
     } else {
         null
     }
-    return ImageLoadContext(baseUrl = baseUrl, basicAuthHeader = auth)
+    // Resolve image URLs against the HTTPS-upgraded base URL, not the raw stored one, so a
+    // requireHttps (or certificate-pinned) profile never fetches an image — with the Basic auth
+    // header attached — over cleartext http even when the stored URL is http://. This mirrors
+    // how HttpClientFactory computes the effective base URL for the REST/SSE channel.
+    return ImageLoadContext(baseUrl = effectiveImageBaseUrl(), basicAuthHeader = auth)
 }
+
+/**
+ * The base URL used to resolve image URLs, after applying the same http->https upgrade the
+ * REST/SSE client uses (see HttpClientFactory.effectiveBaseUrl, the source of truth — that
+ * helper and its pin parser are private there and this file may not edit HttpClientFactory, so
+ * the logic is replicated here and must be kept in sync). A pin is meaningless over cleartext, so
+ * a configured certificate pin forces HTTPS too, matching the REST channel.
+ */
+private fun ServerProfile.effectiveImageBaseUrl(): String {
+    val normalized = HttpClientFactory.normalizeBaseUrl(baseUrl)
+    val forceHttps = requireHttps || parseCertPins(certPin).isNotEmpty()
+    return if (forceHttps && normalized.lowercase().startsWith("http://")) {
+        "https://" + normalized.substring("http://".length)
+    } else {
+        normalized
+    }
+}
+
+/** Split a certificate-pin field into individual pins; mirrors HttpClientFactory.parsePins. */
+private fun parseCertPins(raw: String?): List<String> =
+    raw?.split(Regex("[\\s,]+"))?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList()
 
 /** True if the part references a raster/vector image we can render. */
 val FilePart.isImage: Boolean
     get() = mime?.startsWith("image/") == true
+
+private fun decodeDataUri(data: String): ByteArray? {
+    val comma = data.indexOf(',')
+    if (comma < 0) return null
+    val payload = data.substring(comma + 1)
+    return runCatching { Base64.decode(payload, Base64.DEFAULT) }.getOrNull()
+}
 
 /**
  * Resolve a [FilePart] to a Coil-loadable model: a decoded [ByteArray] for inline
@@ -59,13 +94,10 @@ val FilePart.isImage: Boolean
  */
 private fun FilePart.resolveModel(ctx: ImageLoadContext): Any? {
     val src = source
-    if (!src.isNullOrBlank() && src.startsWith("data:")) {
-        val comma = src.indexOf(',')
-        if (comma < 0) return null
-        val payload = src.substring(comma + 1)
-        return runCatching { Base64.decode(payload, Base64.DEFAULT) }.getOrNull()
-    }
+    if (!src.isNullOrBlank() && src.startsWith("data:")) return decodeDataUri(src)
     val url = url ?: return null
+    // Attachments are persisted as a data URL in `part.url`, so a data URI can arrive here too.
+    if (url.startsWith("data:")) return decodeDataUri(url)
     // Resolve the URL (absolute, relative, or server-absolute like "/media/x.png") against
     // the base, collapsing any ../ segments. Both absolute and relative forms must clear the
     // same-origin check below — an absolute foreign URL (e.g. "https://evil.com/x.png") would
@@ -78,11 +110,25 @@ private fun FilePart.resolveModel(ctx: ImageLoadContext): Any? {
     // Guard on same origin (scheme + host + port), not base-path prefix: the real risk is
     // sending the request (with its Basic auth) to another host. A server-absolute path
     // resolves to a different base *path* but the same origin, so it must still be allowed.
+    // Compare *effective* ports (substituting the scheme default when unspecified) so an
+    // absolute image URL that spells out the default port — "https://host:443/x.png" while
+    // the base is "https://host/" — isn't wrongly rejected as cross-origin (URI.port is -1
+    // when omitted, so a raw `==` would treat 443 and -1 as different).
     val sameOrigin = resolved.host != null &&
         resolved.scheme.equals(baseUri.scheme, ignoreCase = true) &&
         resolved.host.equals(baseUri.host, ignoreCase = true) &&
-        resolved.port == baseUri.port
+        effectivePort(resolved) == effectivePort(baseUri)
     return if (sameOrigin) resolved.toString() else null
+}
+
+/** The URI's port, or the scheme's default (80/443) when unspecified (`port == -1`). */
+private fun effectivePort(uri: java.net.URI): Int {
+    if (uri.port != -1) return uri.port
+    return when (uri.scheme?.lowercase()) {
+        "https" -> 443
+        "http" -> 80
+        else -> -1
+    }
 }
 
 /**
@@ -93,15 +139,17 @@ private fun FilePart.resolveModel(ctx: ImageLoadContext): Any? {
 @Composable
 fun RemoteImage(part: FilePart, ctx: ImageLoadContext, modifier: Modifier = Modifier) {
     val context = LocalContext.current
-    val model = remember(part.source, part.url, ctx.baseUrl) { part.resolveModel(ctx) } ?: return
-    val request = remember(part.source, part.url, ctx.baseUrl, ctx.basicAuthHeader) {
+    val model = produceState<Any?>(initialValue = null, part.source, part.url, ctx.baseUrl) {
+        value = withContext(Dispatchers.Default) { part.resolveModel(ctx) }
+    }.value ?: return
+    val request = remember(part.source, part.url, ctx.baseUrl, ctx.basicAuthHeader, model) {
         ImageRequest.Builder(context)
             .data(model)
             .apply {
-                // Only send Basic auth over HTTPS; sending credentials over
-                // cleartext HTTP would expose them on the network.
-                val isHttps = (model as? String)?.startsWith("https://") == true
-                if (isHttps) ctx.basicAuthHeader?.let { addHeader("Authorization", it) }
+                // resolveModel already verified same-origin, so a String model can only point at
+                // the user's own server — attaching Basic auth over http (not just https) is safe.
+                // A data-URI model is a ByteArray, so gate on the model being a URL String.
+                if (model is String) ctx.basicAuthHeader?.let { addHeader("Authorization", it) }
             }
             .crossfade(true)
             .build()

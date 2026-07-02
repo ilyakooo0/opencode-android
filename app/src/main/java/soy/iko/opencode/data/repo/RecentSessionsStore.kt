@@ -2,6 +2,8 @@ package soy.iko.opencode.data.repo
 
 import android.content.Context
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
@@ -26,6 +28,12 @@ object RecentSessionsStore {
 
     private val json = Json { ignoreUnknownKeys = true }
 
+    /** Serializes concurrent [write]s. The synchronous [read] (called from the widget's
+     *  RemoteViewsService) can't take a suspend lock, so [write] instead swaps the file in
+     *  atomically via a temp-file rename — the reader always sees either the old or the new
+     *  complete file, never a half-written one. */
+    private val writeMutex = Mutex()
+
     private fun file(context: Context) = File(context.applicationContext.filesDir, FILE)
 
     /** Synchronous read — safe to call from the widget factory (bounded, tiny file). */
@@ -37,7 +45,20 @@ object RecentSessionsStore {
 
     /** Persist [sessions] (capped to [MAX]); a no-op empty list writes an empty file. */
     suspend fun write(context: Context, sessions: List<RecentSession>) = withContext(Dispatchers.IO) {
-        runCatching { file(context).writeText(json.encodeToString(sessions.take(MAX))) }
-        Unit
+        writeMutex.withLock {
+            runCatching {
+                val target = file(context)
+                val encoded = json.encodeToString(sessions.take(MAX))
+                val tmp = File(target.parentFile, "$FILE.tmp")
+                tmp.writeText(encoded)
+                // Atomic replace on POSIX filesystems (app's internal storage); the reader
+                // never observes a torn file. Fall back to a direct write if rename fails.
+                if (!tmp.renameTo(target)) {
+                    target.writeText(encoded)
+                    tmp.delete()
+                }
+            }
+            Unit
+        }
     }
 }

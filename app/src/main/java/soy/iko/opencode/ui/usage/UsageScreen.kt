@@ -112,8 +112,10 @@ private fun UsageContent(report: UsageReport) {
         item { TokenBreakdownCard(report.totalTokens) }
         if (report.byModel.isNotEmpty()) {
             item { SectionHeader(stringResource(R.string.usage_by_model)) }
-            items(report.byModel, key = { it.model }) { m ->
-                UsageRow(title = m.model, cost = m.cost, tokens = m.tokens, messages = m.messages)
+            // Key on provider+model: the same model id served by two providers yields two
+            // rows, so keying on the bare model would duplicate keys and crash the list.
+            items(report.byModel, key = { it.provider + "/" + it.model }) { m ->
+                UsageRow(title = m.provider + " / " + m.model, cost = m.cost, tokens = m.tokens, messages = m.messages)
             }
         }
         if (report.bySession.isNotEmpty()) {

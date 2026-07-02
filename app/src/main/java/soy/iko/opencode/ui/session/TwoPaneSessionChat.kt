@@ -26,10 +26,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import soy.iko.opencode.R
 import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.ui.chat.ChatScreen
+import soy.iko.opencode.ui.vmFactory
 
 /**
  * Master–detail layout for wide screens (≥ 840dp, e.g. tablets / unfolded foldables):
@@ -56,6 +58,10 @@ fun TwoPaneSessionChat(
     val pendingOpenSession by container.pendingOpenSession.collectAsStateWithLifecycle()
     val pendingShare by container.pendingShare.collectAsStateWithLifecycle()
     val activeConnection by container.activeConnection.collectAsStateWithLifecycle()
+    // Same VM instance the left pane's SessionListScreen creates (shared ViewModelStoreOwner,
+    // keyed by class), so its session list drives the detail pane's stale-selection cleanup.
+    val sessionListVm: SessionListViewModel = viewModel(factory = vmFactory { SessionListViewModel(container) })
+    val sessionListState by sessionListVm.state.collectAsStateWithLifecycle()
 
     // A notification tap / deep link requests a session: open it in the detail pane.
     LaunchedEffect(pendingOpenSession) {
@@ -76,6 +82,23 @@ fun TwoPaneSessionChat(
         val currentId = activeConnection?.profile?.id
         if (lastProfileId != null && lastProfileId != currentId) selected = null
         lastProfileId = currentId
+    }
+
+    // Clear the selection only when the open session is *deleted* — i.e. it was present
+    // in the list and then dropped out. A freshly created session sets `selected` to the
+    // new id before the async refresh lands, so the id is legitimately absent from the
+    // (still-stale) list for a moment; a naive "not in list" check would wrongly clear it
+    // and blank the detail pane. The `hasAppeared` latch (reset whenever `selected`
+    // changes, via remember keyed to it) distinguishes "never appeared yet" (keep) from
+    // "appeared, then removed" (a real deletion → clear).
+    var hasAppeared by remember(selected) { mutableStateOf(false) }
+    LaunchedEffect(selected, sessionListState.sessions) {
+        val target = selected ?: return@LaunchedEffect
+        if (sessionListState.sessions.any { it.id == target }) {
+            hasAppeared = true
+        } else if (hasAppeared) {
+            selected = null
+        }
     }
 
     // Inject a pending share into the currently selected session's draft (if any).

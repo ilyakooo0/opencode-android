@@ -15,6 +15,7 @@ import io.ktor.http.URLBuilder
 import io.ktor.http.takeFrom
 import io.ktor.serialization.kotlinx.json.json
 import okhttp3.CertificatePinner
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.util.concurrent.TimeUnit
 
 /**
@@ -30,8 +31,17 @@ object HttpClientFactory {
         // and pin the server certificate(s) for HTTPS connections.
         val normalizedUrl = effectiveBaseUrl(profile)
         val isHttps = normalizedUrl.lowercase().startsWith("https://")
-        val pinHost = runCatching { java.net.URI(normalizedUrl).host }.getOrNull()
+        // Parse the host with OkHttp's own parser (not java.net.URI, which rejects hosts OkHttp
+        // accepts, e.g. underscores in "my_server.local"). If pinning is configured over HTTPS
+        // but the host can't be parsed, fail closed: never build an unpinned client — that would
+        // be a silent security downgrade for a user who opted into pinning.
+        val pinHost = normalizedUrl.toHttpUrlOrNull()?.host
         val pins = parsePins(profile.certPin)
+        if (pins.isNotEmpty() && isHttps && pinHost == null) {
+            throw IllegalStateException(
+                "Certificate pinning is configured but the server host could not be parsed from $normalizedUrl",
+            )
+        }
 
         return HttpClient(OkHttp) {
             expectSuccess = true
@@ -80,11 +90,15 @@ object HttpClientFactory {
                                 password = profile.password.orEmpty(),
                             )
                         }
-                        // Send eagerly so opencode doesn't need a 401 challenge round-trip.
-                        // The Auth plugin is only installed for HTTPS profiles — over HTTP,
-                        // even reactive (401-challenge) credential sending would leak
+                        // Send eagerly so opencode doesn't need a 401 challenge round-trip, but
+                        // only to the configured host: a cross-host redirect must not carry the
+                        // credentials off-origin (the plugin would still answer a genuine 401 from
+                        // the real host reactively). The Auth plugin is only installed for HTTPS
+                        // profiles — over HTTP, even reactive credential sending would leak
                         // passwords in cleartext, so we don't install it at all.
-                        sendWithoutRequest { true }
+                        sendWithoutRequest { request ->
+                            pinHost != null && request.url.host.equals(pinHost, ignoreCase = true)
+                        }
                     }
                 }
             } else {
@@ -113,10 +127,14 @@ object HttpClientFactory {
     }
 
     /** The base URL after applying [ServerProfile.requireHttps]: a cleartext http:// URL is
-     *  upgraded to https:// so the "Require HTTPS" choice is enforced at the transport layer. */
+     *  upgraded to https:// so the "Require HTTPS" choice is enforced at the transport layer.
+     *  A configured certificate pin also forces TLS: a pin is meaningless over cleartext and
+     *  would otherwise be silently dropped, so we honor the opt-in security control by upgrading
+     *  rather than connecting unpinned in the clear. */
     private fun effectiveBaseUrl(profile: ServerProfile): String {
         val normalized = normalizeBaseUrl(profile.baseUrl)
-        return if (profile.requireHttps && normalized.lowercase().startsWith("http://")) {
+        val forceHttps = profile.requireHttps || parsePins(profile.certPin).isNotEmpty()
+        return if (forceHttps && normalized.lowercase().startsWith("http://")) {
             "https://" + normalized.substring("http://".length)
         } else {
             normalized

@@ -3,6 +3,7 @@ package soy.iko.opencode.ui.usage
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -33,15 +34,22 @@ class UsageViewModel(private val container: AppContainer) : ViewModel() {
     private val _state = MutableStateFlow<State>(State.Loading)
     val state: StateFlow<State> = _state.asStateFlow()
 
+    // Tracks the in-flight load so a second trigger (refresh + retry are both wired to
+    // load()) cancels the first instead of racing it — otherwise the later-*completing* load
+    // wins regardless of which started first, e.g. a stale failure clobbering fresh data.
+    private var loadJob: Job? = null
+
     init { load() }
 
     fun load() {
         val conn = container.activeConnection.value ?: run {
+            loadJob?.cancel()
             _state.value = State.Disconnected
             return
         }
         _state.value = State.Loading
-        viewModelScope.launch {
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
             runCatchingCancellable {
                 val sessions = conn.repository.listSessions()
                 // Cap concurrent message fetches so a large history doesn't open dozens of

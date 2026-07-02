@@ -59,6 +59,9 @@ class GlobalSearchViewModel(private val container: AppContainer) : ViewModel() {
             _state.update { it.copy(searching = false, results = emptyList(), hasSearched = false, error = null) }
             return
         }
+        // Show the spinner during the debounce (not just once runSearch starts) so the UI
+        // doesn't briefly render an empty result set before the search begins.
+        _state.update { it.copy(searching = true) }
         searchJob = viewModelScope.launch {
             delay(NetworkConfig.searchDebounceMs)
             runSearch(trimmed)

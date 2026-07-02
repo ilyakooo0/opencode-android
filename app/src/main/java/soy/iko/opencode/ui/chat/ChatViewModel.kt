@@ -161,27 +161,37 @@ class ChatViewModel(
                 // A value flowed through: the stream recovered, so allow the next distinct
                 // failure to surface a fresh snackbar again.
                 loadErrorSnackbarShown = false
+                // Clear the error on ANY successful emission, including an empty list. An empty
+                // session that hit one transient error would otherwise stay latched on the
+                // "Failed to load / Retry" screen forever, because the later successful EMPTY
+                // emission couldn't clear the flag. hasShownMessages stays gated on non-empty
+                // (an empty session has genuinely shown nothing yet).
+                _loadError.value = false
                 if (it.isNotEmpty()) {
                     hasShownMessages = true
-                    _loadError.value = false
                 }
             }
-            .retryWhen { cause, _ ->
+            .retryWhen { cause, attempt ->
                 _loading.value = false
                 // Only surface the persistent error state when there's nothing to
                 // show — if we already have messages, a transient re-fetch failure
                 // is better surfaced as a snackbar (via errorEvents) than by
                 // replacing the visible conversation with an error screen.
                 if (!hasShownMessages) _loadError.value = true
-                // Surface the snackbar only once per failure streak — retryWhen loops
-                // every retryInitialDelayMs, so emitting here unconditionally would spam a
-                // new snackbar every few seconds on a persistent load failure.
+                // Surface the snackbar only once per failure streak — retryWhen loops on a
+                // backoff, so emitting here unconditionally would spam a new snackbar every
+                // retry on a persistent load failure.
                 if (!loadErrorSnackbarShown) {
                     _errorEvents.trySend(ChatError(container.friendlyError(cause)))
                     loadErrorSnackbarShown = true
                 }
-                // Delay before retrying to avoid a tight loop on persistent errors.
-                delay(NetworkConfig.retryInitialDelayMs)
+                // Exponential backoff capped at retryMaxDelayMs so a persistently failing
+                // server is retried with growing delays (retryInitialDelayMs, then doubling)
+                // instead of hammered at a fixed interval forever. Clamp the shift so a long
+                // failure streak can't overflow the Long delay.
+                val backoffMs = (NetworkConfig.retryInitialDelayMs shl attempt.coerceAtMost(16L).toInt())
+                    .coerceAtMost(NetworkConfig.retryMaxDelayMs)
+                delay(backoffMs)
                 true
             }
             .stateIn(
@@ -263,6 +273,28 @@ class ChatViewModel(
     private val _pendingPermission = MutableStateFlow<Permission?>(null)
     val pendingPermission: StateFlow<Permission?> = _pendingPermission.asStateFlow()
 
+    // Unanswered permission requests keyed by id, insertion-ordered. The dialog shows the most
+    // recent; when one is answered/replied — or a response fails — we fall back to the next so a
+    // request that arrived while another was in flight isn't silently dropped (its tool run would
+    // otherwise stay paused server-side with no UI affordance). Only touched on the VM's main
+    // dispatcher (event collector + viewModelScope launches), so no extra synchronization is needed.
+    private val pendingPermissions = LinkedHashMap<String, Permission>()
+
+    private fun enqueuePermission(permission: Permission) {
+        pendingPermissions[permission.id] = permission
+        _pendingPermission.value = pendingPermissions.values.lastOrNull()
+    }
+
+    private fun resolvePermission(id: String) {
+        pendingPermissions.remove(id)
+        _pendingPermission.value = pendingPermissions.values.lastOrNull()
+    }
+
+    private fun clearPermissions() {
+        pendingPermissions.clear()
+        _pendingPermission.value = null
+    }
+
     private val _agents = MutableStateFlow<List<Agent>>(emptyList())
     val agents: StateFlow<List<Agent>> = _agents.asStateFlow()
 
@@ -294,6 +326,11 @@ class ChatViewModel(
     /** The text of the last send that failed, surfaced so the UI can offer a retry. */
     private val _failedDraft = MutableStateFlow<String?>(null)
     val failedDraft: StateFlow<String?> = _failedDraft.asStateFlow()
+
+    /** The idempotency key of the last failed online send, stashed alongside [_failedDraft] so
+     *  [retryFailed] re-submits with the SAME key. A retry after a lost response is then
+     *  deduplicated server-side instead of starting a duplicate agent run. */
+    @Volatile private var failedIdempotencyKey: String? = null
 
     /** Per-session draft, persisted so it survives navigation/process death. */
     private val _draft = MutableStateFlow(container.draftStore.get(sessionId))
@@ -504,11 +541,11 @@ class ChatViewModel(
                     // returns with no connection) until a later reconnect happens to clear it.
                     _running.value = false
                     _aborting.value = false
-                    _pendingPermission.value = null
+                    clearPermissions()
                     return@collectLatest
                 }
                 _running.value = false
-                _pendingPermission.value = null
+                clearPermissions()
                 _failedDraft.value = null
                 // NOTE: deliberately not clearing _queuedFollowUp here. It's session-scoped
                 // user intent that is now persisted; wiping it on every (re)connect — which
@@ -540,11 +577,17 @@ class ChatViewModel(
                             setQueuedFollowUp(null)
                             _errorEvents.trySend(ChatError(container.string(R.string.error_agent_reported)))
                         }
+                        // Restore the run indicator if a live streaming event arrives while it's
+                        // cleared — e.g. an SSE reconnect mid-run reset _running to false, but the
+                        // agent is still working. Don't revive it once the user has hit Stop.
+                        if (SessionRepository.isRunActivity(event, sessionId) && !_aborting.value && !_running.value) {
+                            _running.value = true
+                        }
                         when (event) {
                             is PermissionUpdated ->
-                                if (event.properties.sessionID == sessionId) _pendingPermission.value = event.properties
+                                if (event.properties.sessionID == sessionId) enqueuePermission(event.properties)
                             is PermissionReplied ->
-                                if (event.properties.sessionID == sessionId && event.properties.permissionID == _pendingPermission.value?.id) _pendingPermission.value = null
+                                if (event.properties.sessionID == sessionId) event.properties.permissionID?.let { resolvePermission(it) }
                             is SessionUpdated ->
                                 if (event.properties.info.id == sessionId) {
                                     val info = event.properties.info
@@ -654,7 +697,7 @@ class ChatViewModel(
      * Core send. [includeAttachments] is false for the internal auto-send paths (a queued
      * follow-up, a retry) so staged attachments aren't silently re-sent with unrelated text.
      */
-    private fun send(text: String, includeAttachments: Boolean): Boolean {
+    private fun send(text: String, includeAttachments: Boolean, idempotencyKey: String? = null): Boolean {
         val trimmed = text.trim()
         val attachments = if (includeAttachments) _attachments.value else emptyList()
         // An image-only prompt (attachments, no text) is valid; a blank prompt with nothing
@@ -670,6 +713,10 @@ class ChatViewModel(
         }
         if (!_running.compareAndSet(false, true)) return false
         _failedDraft.value = null
+        // Stable idempotency key for THIS online attempt: a brand-new message gets a fresh key,
+        // while retryFailed() re-submits with the key it stashed on the original failure — so a
+        // retry after a lost response is deduplicated server-side (no duplicate agent run).
+        val key = idempotencyKey ?: java.util.UUID.randomUUID().toString()
         // Clear the staged attachments optimistically so the composer empties immediately;
         // restore them if the send fails (mirrors the draft handling below).
         if (attachments.isNotEmpty()) _attachments.value = emptyList()
@@ -694,10 +741,12 @@ class ChatViewModel(
                     attachments = attachments.map { it.part },
                     model = _selectedModel.value?.ref,
                     agent = _selectedAgent.value,
+                    idempotencyKey = key,
                 )
             }.onFailure {
                 suppressDraftPersist.set(false)
                 _failedDraft.value = trimmed
+                failedIdempotencyKey = key
                 // Only restore the draft if the user hasn't typed anything new since.
                 if (_draft.value.isBlank()) updateDraft(trimmed)
                 // Restore the staged attachments too, so a failed send doesn't lose them —
@@ -808,12 +857,16 @@ class ChatViewModel(
     /** Re-send the last draft whose send failed, if any. */
     fun retryFailed() {
         val draft = _failedDraft.value ?: return
+        // Reuse the failed send's idempotency key so a retry after a lost response is
+        // deduplicated server-side rather than starting a duplicate run.
+        val key = failedIdempotencyKey
         // Don't clear _failedDraft until send() accepts the text — if _running is
         // already true, send() returns false and the draft would be lost forever.
         // Attachments aren't re-sent on retry (they were optimistically restored to the
         // composer on the original failure, so they'll ride the next manual send).
-        if (send(draft, includeAttachments = false)) {
+        if (send(draft, includeAttachments = false, idempotencyKey = key)) {
             _failedDraft.value = null
+            failedIdempotencyKey = null
         }
     }
 
@@ -903,6 +956,17 @@ class ChatViewModel(
     }
 
     fun addAttachment(attachment: PendingAttachment) {
+        // Enforce the cumulative size cap across the whole staged set (the per-file size and the
+        // count caps are checked upstream). The base64 data URLs are held in memory and
+        // re-serialized on every add/remove and again when the request body is built, so an
+        // unbounded set OOMs. Reject rather than add, mirroring the other attachment limits'
+        // snackbar via errorEvents. Size is the raw (pre-base64) byte count, matching the
+        // per-file check, and includes attachments already staged (incl. restored ones).
+        val staged = _attachments.value.sumOf { base64DataUrlByteSize(it.part.url) }
+        if (staged + base64DataUrlByteSize(attachment.part.url) > NetworkConfig.maxTotalAttachmentBytes) {
+            _errorEvents.trySend(ChatError(container.string(R.string.attachment_limit)))
+            return
+        }
         _attachments.update { it + attachment }
         persistAttachments()
     }
@@ -1143,16 +1207,15 @@ class ChatViewModel(
 
     fun respondPermission(permission: Permission, response: PermissionResponse) {
         val conn = connection ?: return
-        // Clear optimistically; permission.replied will confirm. If the call fails we
-        // restore the pending permission so the user can retry instead of being stuck
-        // with a dismissed dialog and a paused tool run.
-        _pendingPermission.value = null
+        // Dismiss optimistically (revealing any queued request); permission.replied will confirm.
+        // If the call fails we re-surface this request so the user can retry instead of being stuck
+        // with a dismissed dialog and a tool run that's still paused server-side.
+        resolvePermission(permission.id)
         viewModelScope.launch {
             runCatchingCancellable { conn.api.respondPermission(sessionId, permission.id, response) }
                 .onFailure {
                     _errorEvents.trySend(ChatError(container.friendlyError(it)))
-                    // Only restore if no new permission has arrived in the meantime.
-                    if (_pendingPermission.value == null) _pendingPermission.value = permission
+                    enqueuePermission(permission)
                 }
         }
     }
@@ -1169,11 +1232,17 @@ class ChatViewModel(
         // asynchronous apply() (not a synchronous commit) so the main thread isn't
         // blocked on disk I/O — Android's SharedPreferences framework guarantees
         // pending apply() writes are flushed before the process exits.
-        // Always flush — including an empty draft. Persistence is otherwise debounced, so if
-        // the user cleared the input and navigated back within the debounce window, the
+        // Flush the pending draft — including an empty one. Persistence is otherwise debounced,
+        // so if the user cleared the input and navigated back within the debounce window, the
         // debounce coroutine was cancelled with viewModelScope and the prefs still hold the
-        // previous non-empty draft. flushDraft() removes the key when the text is blank, so an
-        // unconditional flush commits the clear instead of resurrecting the deleted text.
-        container.draftStore.flushDraft(sessionId, _draft.value)
+        // previous non-empty draft. flushDraft() removes the key when the text is blank, so
+        // flushing commits the clear instead of resurrecting the deleted text.
+        //
+        // BUT respect the send-in-flight guard: send() optimistically clears _draft to "" WITHOUT
+        // persisting the clear so a failed send can restore the text. If the user taps Send then
+        // immediately navigates back (cancelling the in-flight send), flushing the blank _draft here
+        // would remove the persisted key and erase the pre-send draft with no recovery. Skip the
+        // flush while a send is in flight so the pre-send draft stays persisted (recoverable).
+        if (!suppressDraftPersist.get()) container.draftStore.flushDraft(sessionId, _draft.value)
     }
 }

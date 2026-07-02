@@ -198,6 +198,21 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
     private val pendingSessionUpdates = java.util.concurrent.ConcurrentHashMap<String, Session>()
     private var sessionUpdateJob: Job? = null
 
+    // Declared ABOVE init: observeSessionEvents()'s activeConnection collector runs
+    // synchronously during construction (viewModelScope uses Dispatchers.Main.immediate)
+    // when a connection is already active, and its body touches directoryOptionsJob and
+    // _directoryOptions. Declared after init, their backing fields would still be null at
+    // that point, so constructing the VM against a live connection would NPE.
+    /** The directory the user last created a session in (this VM lifetime), so the picker
+     *  can preselect it. Best-effort: not persisted across process death. */
+    var lastChosenDirectory: String? = null
+        private set
+
+    private val _directoryOptions = MutableStateFlow(DirectoryOptionsState())
+    val directoryOptions: StateFlow<DirectoryOptionsState> = _directoryOptions.asStateFlow()
+
+    private var directoryOptionsJob: Job? = null
+
     private val activeProfileId: String?
         get() = container.activeConnection.value?.profile?.id
 
@@ -257,6 +272,10 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
                 }
                 sessionUpdateJob?.cancel()
                 pendingSessionUpdates.clear()
+                // Drop the previous server's directory-options load and result so a stale
+                // fetch can't populate the new server's new-session picker.
+                directoryOptionsJob?.cancel()
+                _directoryOptions.value = DirectoryOptionsState()
                 // Cancel any deferred deletes still pending from the previous connection.
                 // Their captured connection is now closed, so they can only fail; letting
                 // them run would fire onError and re-inject a session belonging to the old
@@ -507,16 +526,6 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
             }
         }
     }
-
-    /** The directory the user last created a session in (this VM lifetime), so the picker
-     *  can preselect it. Best-effort: not persisted across process death. */
-    var lastChosenDirectory: String? = null
-        private set
-
-    private val _directoryOptions = MutableStateFlow(DirectoryOptionsState())
-    val directoryOptions: StateFlow<DirectoryOptionsState> = _directoryOptions.asStateFlow()
-
-    private var directoryOptionsJob: Job? = null
 
     /**
      * Load the directory options for the new-session picker: the server's known projects

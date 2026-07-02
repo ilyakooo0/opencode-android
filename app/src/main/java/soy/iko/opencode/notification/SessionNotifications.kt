@@ -212,4 +212,11 @@ object SessionNotifications {
     fun cancelPermission(context: Context, sessionId: String) {
         NotificationManagerCompat.from(context).cancel(notifId(NS_PERMISSION, sessionId))
     }
+
+    /** Cancel a session's error notification (e.g. when the user opens it). Without this a
+     *  stale "run failed" notification lingers when the session is opened by any route other
+     *  than tapping the notification itself (setAutoCancel only clears it on a direct tap). */
+    fun cancelError(context: Context, sessionId: String) {
+        NotificationManagerCompat.from(context).cancel(notifId(NS_ERROR, sessionId))
+    }
 }

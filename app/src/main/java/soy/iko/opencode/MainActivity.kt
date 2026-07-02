@@ -51,32 +51,37 @@ class MainActivity : FragmentActivity() {
         val container = (application as OpencodeApp).container
         handleIntent(intent)
         if (savedInstanceState == null) maybeRequestNotificationPermission()
-        // Hold the splash until the persisted theme settings load, so we never paint a
-        // frame with the default (dynamicColor=true / SYSTEM) that then snaps to the
-        // user's real choice — the flash the SettingsScreen's null-gate already avoids.
-        var themeLoaded = false
-        splash.setKeepOnScreenCondition { !themeLoaded }
+        // Hold the splash until the persisted theme and app-lock settings load, so we never
+        // paint a frame with the defaults (dynamicColor=true / SYSTEM, app lock off) that then
+        // snap to the user's real choice — including a brief unlocked, un-FLAG_SECURE'd frame
+        // before app lock resolves. Mirrors the SettingsScreen's null-gate.
+        var settingsLoaded = false
+        splash.setKeepOnScreenCondition { !settingsLoaded }
         setContent {
             val theme by remember(container) {
                 container.settingsStore.themeMode
                     .combine(container.settingsStore.dynamicColor, ::Pair)
             }.collectAsStateWithLifecycle(initialValue = null)
-            val appLock by container.settingsStore.appLock.collectAsStateWithLifecycle(initialValue = false)
-            LaunchedEffect(theme) { if (theme != null) themeLoaded = true }
-            // Hide the app's content from screenshots / the recents thumbnail while app lock
-            // is enabled, so protected server details don't leak there.
+            val appLock by container.settingsStore.appLock.collectAsStateWithLifecycle(initialValue = null)
+            LaunchedEffect(theme, appLock) { if (theme != null && appLock != null) settingsLoaded = true }
+            // Hide the app's content from screenshots / the recents thumbnail while app lock is
+            // enabled — and while its value is still unknown (null) at cold start, so a protected
+            // launch can't flash into the recents thumbnail before the setting resolves.
             LaunchedEffect(appLock) {
-                if (appLock) window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                if (appLock != false) window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
                 else window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
             }
-            theme?.let { (themeMode, dynamicColor) ->
+            val themePair = theme
+            val locked = appLock
+            if (themePair != null && locked != null) {
+                val (themeMode, dynamicColor) = themePair
                 val dark = when (themeMode) {
                     ThemeMode.SYSTEM -> isSystemInDarkTheme()
                     ThemeMode.LIGHT -> false
                     ThemeMode.DARK -> true
                 }
                 OpencodeTheme(darkTheme = dark, dynamicColor = dynamicColor) {
-                    AppLockGate(enabled = appLock) {
+                    AppLockGate(enabled = locked) {
                         OpencodeAppUi(container = container)
                     }
                 }

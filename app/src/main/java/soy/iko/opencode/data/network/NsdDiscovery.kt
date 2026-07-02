@@ -14,7 +14,12 @@ import kotlin.coroutines.resume
 
 /** A server discovered on the local network via mDNS/DNS-SD. */
 data class DiscoveredServer(val name: String, val host: String, val port: Int) {
-    val baseUrl: String get() = "http://$host:$port"
+    val baseUrl: String get() {
+        // FIX 14: IPv6 literals (e.g. "fe80::1%wlan0", "2001:db8::1") must be bracketed and
+        // have their scope id dropped to form a valid URL authority; IPv4 hosts are unchanged.
+        val formattedHost = if (host.contains(':')) "[${host.substringBefore('%')}]" else host
+        return "http://$formattedHost:$port"
+    }
 }
 
 /**

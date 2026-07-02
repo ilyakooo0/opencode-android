@@ -75,7 +75,13 @@ open class OutboxStore private constructor(
                 _messages.value = loaded.sortedBy { it.createdAt }
             } else {
                 val known = _messages.value.mapTo(mutableSetOf()) { it.id }
-                _messages.value = (loaded.filter { it.id !in known } + _messages.value).sortedBy { it.createdAt }
+                val merged = (loaded.filter { it.id !in known } + _messages.value).sortedBy { it.createdAt }
+                _messages.value = merged
+                // FIX: the merge reconciled items enqueued while this load was in flight with
+                // the on-disk set, but previously updated only memory — so a raced enqueue's
+                // item could be dropped on the next process kill. Write the merged set back so
+                // disk reflects it. persist() doesn't take ioMutex, so this won't deadlock.
+                persist(merged)
             }
         }
     }
@@ -92,19 +98,36 @@ open class OutboxStore private constructor(
         mutate { current -> current.filterNot { it.sessionId == sessionId } }
 
     private suspend fun mutate(transform: (List<OutboxMessage>) -> List<OutboxMessage>) {
-        val snapshot = ioMutex.withLock {
+        // Persist *under* the lock so concurrent mutations (e.g. the flusher removing sent
+        // messages while the UI enqueues a new one) can't race their disk writes: without
+        // this, the older snapshot could land last and drop/resurrect a queued prompt, or two
+        // overlapping writeText/delete calls could tear the file. The lock serializes both the
+        // in-memory update and the write, guaranteeing on-disk order matches memory order.
+        ioMutex.withLock {
             val updated = transform(_messages.value).sortedBy { it.createdAt }
             _messages.value = updated
-            updated
+            persist(updated)
         }
-        persist(snapshot)
     }
 
     private suspend fun persist(list: List<OutboxMessage>) {
         val f = file ?: return
         withContext(Dispatchers.IO) {
             runCatchingCancellable {
-                if (list.isEmpty()) f.delete() else f.writeText(json.encodeToString(list))
+                if (list.isEmpty()) {
+                    f.delete()
+                } else {
+                    // FIX: write atomically (temp file + rename) like RecentSessionsStore so a
+                    // process kill mid-write can't leave a truncated file — a torn file fails to
+                    // decode and load() would then drop ALL queued offline messages.
+                    val encoded = json.encodeToString(list)
+                    val tmp = File(f.parentFile, f.name + ".tmp")
+                    tmp.writeText(encoded)
+                    if (!tmp.renameTo(f)) {
+                        f.writeText(encoded)
+                        tmp.delete()
+                    }
+                }
             }.onFailure { Log.w("OutboxStore", "Failed to persist outbox", it) }
         }
     }

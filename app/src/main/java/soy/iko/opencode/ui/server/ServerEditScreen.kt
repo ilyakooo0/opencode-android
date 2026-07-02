@@ -152,7 +152,7 @@ private fun ServerEditForm(
     // canSave parses the base URL with java.net.URI (which throws — and fills a stack trace —
     // on the common half-typed URL). Memoize on baseUrl so it runs once per edit instead of
     // being re-parsed at each of the enabled= call sites on every keystroke's recomposition.
-    val canSave = remember(state.baseUrl) { state.canSave }
+    val canSave = remember(state.baseUrl, state.certPin) { state.canSave }
     Column(
         modifier = Modifier
             .padding(padding)
@@ -303,7 +303,7 @@ private fun AuthFields(
     val hidePasswordLabel = stringResource(R.string.hide_password)
     // Memoize the URI parse on baseUrl so the test-credentials button doesn't re-parse it on
     // every keystroke's recomposition (see ServerEditForm).
-    val canSave = remember(state.baseUrl) { state.canSave }
+    val canSave = remember(state.baseUrl, state.certPin) { state.canSave }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(
             stringResource(R.string.auth_required),

@@ -23,8 +23,8 @@ sealed interface MessageInfo {
 @Serializable
 @SerialName("user")
 data class UserMessage(
-    override val id: String,
-    override val sessionID: String,
+    override val id: String = "",
+    override val sessionID: String = "",
     override val time: TimeInfo? = null,
 ) : MessageInfo
 
@@ -32,8 +32,8 @@ data class UserMessage(
 @Serializable
 @SerialName("assistant")
 data class AssistantMessage(
-    override val id: String,
-    override val sessionID: String,
+    override val id: String = "",
+    override val sessionID: String = "",
     val parentID: String? = null,
     val providerID: String? = null,
     val modelID: String? = null,

@@ -24,16 +24,19 @@ import soy.iko.opencode.data.repo.BackupManager
 import soy.iko.opencode.data.repo.DraftStore
 import soy.iko.opencode.data.repo.ErrorKind
 import soy.iko.opencode.data.repo.MessageCacheStore
+import soy.iko.opencode.data.repo.OutboxMessage
 import soy.iko.opencode.data.repo.OutboxStore
 import soy.iko.opencode.data.repo.SessionPrefsStore
 import soy.iko.opencode.data.repo.ProfileStore
 import soy.iko.opencode.data.repo.SettingsStore
 import soy.iko.opencode.data.repo.classifyError
 import soy.iko.opencode.data.repo.responseStatusCode
+import soy.iko.opencode.data.network.EventStreamClient
 import soy.iko.opencode.data.network.HttpClientFactory
 import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.data.network.OpencodeApiClient
 import soy.iko.opencode.notification.NotificationChannels
+import soy.iko.opencode.notification.RunForegroundService
 import soy.iko.opencode.util.safeExceptionSummary
 import soy.iko.opencode.notification.SessionNotifications
 import soy.iko.opencode.R
@@ -47,7 +50,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.Job
@@ -215,6 +221,7 @@ open class AppContainer private constructor(
             appContext?.let {
                 SessionNotifications.cancel(it, id)
                 SessionNotifications.cancelPermission(it, id)
+                SessionNotifications.cancelError(it, id)
             }
         }
     }
@@ -262,13 +269,62 @@ open class AppContainer private constructor(
             ErrorKind.UNKNOWN -> string(R.string.error_generic)
         }
 
-    init {
-        if (!skipInit) {
-            NotificationChannels.create(appContext!!)
-            observeMessageActivity()
-            appScope.launch { runCatchingCancellable { outboxStore.load() } }
-            observeOutbox()
-            appScope.launch { autoConnect() }
+    /**
+     * Drive the [RunForegroundService] from the process-lived [appScope] rather than from the
+     * Activity's composition. Previously the start/stop was wired to a
+     * `collectAsStateWithLifecycle` collector in the root composable, which pauses while the
+     * Activity is STOPPED — so a run *started while backgrounded* (e.g. via the notification
+     * inline-reply) never acquired foreground priority and its long-lived SSE stream could be
+     * killed by Doze, and a run that *ended* while backgrounded left the "working…"
+     * notification lingering until the app was reopened. Collecting here reacts to
+     * [anyRunActive] regardless of Activity state.
+     */
+    private fun observeRunForegroundService() {
+        val ctx = appContext ?: return
+        appScope.launch {
+            // Debounce so a run that starts then fails/idles almost immediately doesn't
+            // dispatch startForegroundService() then stopService() back-to-back — if the stop
+            // wins that race before the service calls startForeground(), Android raises the
+            // "did not then call startForeground()" crash ~5s later. Collapsing the window
+            // emits only the settled state; distinctUntilChanged drops a no-op re-emit when a
+            // brief true→false→true flurry settles back to the value already applied.
+            anyRunActive
+                .debounce(NetworkConfig.runForegroundDebounceMs)
+                .distinctUntilChanged()
+                .collect { active ->
+                    if (active) RunForegroundService.start(ctx) else RunForegroundService.stop(ctx)
+                }
+        }
+    }
+
+    /**
+     * Reconcile active-run tracking on an SSE *reconnect*. A run that completes during a stream
+     * outage never delivers its `SessionIdle`, so its id would stay in [activeRuns] and pin
+     * [anyRunActive] (and the foreground service + "working…" notification) on indefinitely. On a
+     * reconnect we clear the tracking and let live streaming events re-populate it: a genuinely
+     * in-progress run re-adds itself within moments via [isLiveRunActivity], while a run that
+     * finished during the outage produces no further live events (its completion arrives only via
+     * the REST re-seed), so it correctly stays cleared. The first connect of a connection is not a
+     * reconnect; `connect()` already resets [activeRuns], so only subsequent Connected transitions
+     * trigger the sweep.
+     */
+    private fun observeRunReconcileOnReconnect() {
+        appScope.launch {
+            activeConnection.collectLatest { conn ->
+                if (conn == null) return@collectLatest
+                var hasConnectedBefore = false
+                conn.events.state.collect { state ->
+                    if (state == EventStreamClient.ConnectionState.Connected) {
+                        if (hasConnectedBefore) {
+                            synchronized(activeRuns) {
+                                activeRuns.clear()
+                                _anyRunActive.value = false
+                            }
+                        }
+                        hasConnectedBefore = true
+                    }
+                }
+            }
         }
     }
 
@@ -277,9 +333,9 @@ open class AppContainer private constructor(
      * online (and on any manual [flushOutbox] nudge). Queued messages are only sent to the
      * server they were composed for (matched by profile id), so a reconnect to a different
      * server never misfires them against a session id that doesn't exist there. Uses a plain
-     * `collect` (not collectLatest) so an in-flight send is never cancelled mid-flight — a
-     * cancelled+retried POST could double-send since each attempt carries a fresh idempotency
-     * key.
+     * `collect` (not collectLatest) so an in-flight send is never cancelled mid-flight and
+     * send order is preserved; each message carries a stable idempotency key (its persistent
+     * outbox id) so even a re-send across flushes is deduplicated server-side.
      */
     private fun observeOutbox() {
         appScope.launch {
@@ -299,7 +355,7 @@ open class AppContainer private constructor(
         _outboxSending.value = true
         try {
             for (msg in pending) {
-                val sent = runCatchingCancellable {
+                val result = runCatchingCancellable {
                     conn.repository.sendPrompt(
                         msg.sessionId,
                         msg.text,
@@ -308,14 +364,38 @@ open class AppContainer private constructor(
                         },
                         model = msg.model,
                         agent = msg.agent,
+                        // Reuse the persistent outbox id as a stable idempotency key so a
+                        // later flush of a message whose earlier POST reached the server (but
+                        // whose response was lost) is deduplicated server-side instead of
+                        // starting a duplicate agent run.
+                        idempotencyKey = msg.id,
                     )
                 }.onFailure {
                     Log.w("AppContainer", "Outbox flush failed for ${msg.sessionId}: ${safeExceptionSummary(it)}")
-                }.isSuccess
-                // Stop on the first failure — the connection likely dropped again; the
-                // remaining messages stay queued and retry on the next trigger, preserving
-                // send order.
-                if (sent) outboxStore.remove(msg.id) else break
+                }
+                if (result.isSuccess) {
+                    outboxStore.remove(msg.id)
+                    continue
+                }
+                // A permanently-undeliverable message (a non-408/429 4xx — e.g. the target
+                // session was deleted server-side, yielding a 404) must be dropped, not left at
+                // the head of the queue. The loop stops at the first failure to preserve send
+                // order, so a poison message would otherwise block every later queued message
+                // for this profile forever. Transient failures (offline again, 5xx, 408/429)
+                // keep the queue intact and retry on the next trigger.
+                val status = result.exceptionOrNull()?.let { responseStatusCode(it) }
+                // Permanent = a non-408/429 4xx, matching withRetry's non-retryable rule.
+                val permanent = when (status) {
+                    null, 408, 429 -> false
+                    in 400..499 -> true
+                    else -> false
+                }
+                if (permanent) {
+                    Log.w("AppContainer", "Dropping undeliverable outbox message ${msg.id} for ${msg.sessionId} (HTTP $status)")
+                    outboxStore.remove(msg.id)
+                } else {
+                    break
+                }
             }
         } finally {
             _outboxSending.value = false
@@ -451,15 +531,18 @@ open class AppContainer private constructor(
                     if (isLiveRunActivity(event)) {
                         // The add-under-lock is required both for thread-safety and for the
                         // LRU access-order refresh (keeps a continuously-streaming session
-                        // from being evicted), so it runs per event. Only the flag write is
-                        // skippable once it's already set.
+                        // from being evicted), so it runs per event.
                         synchronized(activeRuns) {
                             if (activeRuns.size >= activeRunsLimit) {
                                 activeRuns.remove(activeRuns.iterator().next())
                             }
                             activeRuns.add(sid)
+                            // Derive the flag from the set state *inside* the same lock that
+                            // guards the set, so a concurrent reconnect sweep (which clears
+                            // both under this lock) can't interleave and leave the flag pinned
+                            // true with an empty set — a stuck foreground service + "working…".
+                            _anyRunActive.value = activeRuns.isNotEmpty()
                         }
-                        if (!_anyRunActive.value) _anyRunActive.value = true
                     }
                 } }.onFailure { Log.w("AppContainer", "Message activity observer failed, will retry: ${safeExceptionSummary(it)}") }
                 if (!isActive) break
@@ -486,8 +569,15 @@ open class AppContainer private constructor(
         return true
     }
 
-    /** Session ids currently streaming an assistant run (best-effort, in-process). */
-    private val activeRuns: MutableSet<String> = java.util.Collections.synchronizedSet(mutableSetOf())
+    /** Session ids currently streaming an assistant run (best-effort, in-process). Backed by
+     *  an access-order [java.util.LinkedHashMap] so re-adding an already-present id on each
+     *  streaming event refreshes its recency (a plain LinkedHashSet.add is a no-op that does
+     *  NOT reorder). This keeps a long, continuously-streaming session from being evicted as
+     *  the eldest once [activeRunsLimit] other sessions appear — which would drop its
+     *  completion notification when its SessionIdle finally arrives. */
+    private val activeRuns: MutableSet<String> = java.util.Collections.synchronizedSet(
+        java.util.Collections.newSetFromMap(java.util.LinkedHashMap<String, Boolean>(16, 0.75f, true)),
+    )
 
     /** Per non-viewed session, the set of message ids already reflected in its unread
      *  count. De-duplicates the many streaming events that share one message id so the
@@ -533,29 +623,63 @@ open class AppContainer private constructor(
 
     /** Respond to a permission from a notification action (Allow once / Always / Reject),
      *  off any UI. Runs on the process-lived app scope; [onDone] fires when the call resolves
-     *  so the receiver's goAsync() result can finish. No-ops if the connection is gone. */
+     *  so the receiver's goAsync() result can finish. Its Boolean is true only when a live
+     *  connection existed AND respondPermission succeeded — the receiver uses it to decide
+     *  whether to dismiss the notification. A missing connection makes the respond a no-op,
+     *  so it must report failure (not success) rather than let the notification vanish with
+     *  the tool left unanswered. */
     open fun respondToPermissionFromNotification(
         sessionId: String,
         permissionId: String,
         response: PermissionResponse,
-        onDone: () -> Unit,
+        onDone: (Boolean) -> Unit,
     ) {
         appScope.launch {
-            runCatchingCancellable {
-                activeConnection.value?.api?.respondPermission(sessionId, permissionId, response)
-            }.onFailure { Log.w("AppContainer", "notif permission respond failed: ${safeExceptionSummary(it)}") }
-            onDone()
+            val success = runCatchingCancellable {
+                val api = activeConnection.value?.api ?: return@runCatchingCancellable false
+                api.respondPermission(sessionId, permissionId, response)
+                true
+            }.onFailure {
+                Log.w("AppContainer", "notif permission respond failed: ${safeExceptionSummary(it)}")
+            }.getOrDefault(false)
+            onDone(success)
         }
     }
 
     /** Send a follow-up prompt from a notification's inline reply, off any UI. Uses the
-     *  server's default model/agent. [onDone] fires when the send resolves. */
-    open fun sendPromptFromNotification(sessionId: String, text: String, onDone: () -> Unit) {
+     *  server's default model/agent. Routes through the durable [outboxStore] — the same path
+     *  the in-app composer uses ([soy.iko.opencode.ui.chat.ChatViewModel.enqueueOffline]) —
+     *  rather than a direct repository send, so a reply composed while disconnected survives to
+     *  be flushed on reconnect instead of being silently dropped. [flushOutbox] nudges an
+     *  immediate send when a connection is live, so an online reply still goes out now. [onDone]
+     *  reports whether the reply was durably enqueued so the receiver only dismisses the
+     *  notification on success. */
+    open fun sendPromptFromNotification(sessionId: String, text: String, onDone: (Boolean) -> Unit) {
         appScope.launch {
-            runCatchingCancellable {
-                activeConnection.value?.repository?.sendPrompt(sessionId, text, model = null)
-            }.onFailure { Log.w("AppContainer", "notif reply send failed: ${safeExceptionSummary(it)}") }
-            onDone()
+            // Attribute to the active (or most-recent) profile so a reconnect to a different
+            // server doesn't misfire this against a session id that only exists elsewhere.
+            val profileId = activeConnection.value?.profile?.id
+                ?: runCatchingCancellable { profileStore.profiles.first().firstOrNull()?.id }.getOrNull()
+            val enqueued = if (profileId == null) {
+                false
+            } else {
+                runCatchingCancellable {
+                    outboxStore.enqueue(
+                        OutboxMessage(
+                            id = java.util.UUID.randomUUID().toString(),
+                            profileId = profileId,
+                            sessionId = sessionId,
+                            text = text,
+                            model = null,
+                            createdAt = System.currentTimeMillis(),
+                        ),
+                    )
+                }.onFailure {
+                    Log.w("AppContainer", "notif reply enqueue failed: ${safeExceptionSummary(it)}")
+                }.isSuccess
+            }
+            if (enqueued) flushOutbox()
+            onDone(enqueued)
         }
     }
 
@@ -571,12 +695,22 @@ open class AppContainer private constructor(
             .getOrDefault(emptyList())
             .firstOrNull() ?: return
         _reconnecting.value = true
+        var conn: OpencodeConnection? = null
         val ok = runCatchingCancellable {
-            val conn = connect(recent)
-            conn.api.ping()
+            conn = connect(recent)
+            conn!!.api.ping()
         }.isSuccess
         _reconnecting.value = false
-        if (ok) _autoConnectDone.value = true else disconnect()
+        if (ok) {
+            _autoConnectDone.value = true
+        } else {
+            val created = conn
+            // Only tear down the connection we created: a manual connect to a different server
+            // during the ping window may have already replaced it, and disconnect() closes
+            // whatever is currently active — which would silently drop that new connection.
+            // disconnectIf re-checks identity under the mutex to close the check-then-close race.
+            if (created != null) disconnectIf(created)
+        }
     }
 
     /**
@@ -631,17 +765,31 @@ open class AppContainer private constructor(
         // Previously this was fire-and-forget (launch on appScope), which raced with
         // a subsequent connect(): connect() could acquire the mutex, create a new
         // connection, and then the pending disconnect() would close it.
+        connectionMutex.withLock { teardownActiveLocked() }
+    }
+
+    /** Tear down [expected] only if it is still the active connection, with the identity
+     *  check performed *under* the mutex. A caller that checks `activeConnection.value === x`
+     *  itself and then calls [disconnect] has a TOCTOU race: a concurrent connect() to a
+     *  different server can replace the active connection in the gap, and [disconnect] would
+     *  then close that new connection. autoConnect()'s failed-ping teardown uses this. */
+    private suspend fun disconnectIf(expected: OpencodeConnection) {
         connectionMutex.withLock {
-            _activeConnection.value?.close()
-            _activeConnection.value = null
-            // Reset run/unread state on disconnect too. With no SSE stream there's no
-            // SessionIdle to drain activeRuns, so without this the working indicator
-            // (anyRunActive) and unread badges would stay pinned until the next connect().
-            activeRuns.clear()
-            _anyRunActive.value = false
-            _unread.value = emptyMap()
-            unreadMessageIds.clear()
+            if (_activeConnection.value === expected) teardownActiveLocked()
         }
+    }
+
+    /** Close and reset the active connection. Caller MUST hold [connectionMutex]. */
+    private suspend fun teardownActiveLocked() {
+        _activeConnection.value?.close()
+        _activeConnection.value = null
+        // Reset run/unread state on disconnect too. With no SSE stream there's no
+        // SessionIdle to drain activeRuns, so without this the working indicator
+        // (anyRunActive) and unread badges would stay pinned until the next connect().
+        activeRuns.clear()
+        _anyRunActive.value = false
+        _unread.value = emptyMap()
+        unreadMessageIds.clear()
     }
 
     /** Deferred profile deletions keyed by id, run on the process-lived [appScope] (not a
@@ -813,6 +961,22 @@ open class AppContainer private constructor(
             }
         } finally {
             runCatching { client.close() }
+        }
+    }
+
+    // Declared last so every property above is fully initialized before these observers start.
+    // They only launch coroutines into appScope (Dispatchers.IO) — nothing here runs
+    // synchronously during construction — so placing init at the end removes any dependence on
+    // the textual declaration order of the fields those observers reference.
+    init {
+        if (!skipInit) {
+            NotificationChannels.create(appContext!!)
+            observeMessageActivity()
+            observeRunReconcileOnReconnect()
+            observeRunForegroundService()
+            appScope.launch { runCatchingCancellable { outboxStore.load() } }
+            observeOutbox()
+            appScope.launch { autoConnect() }
         }
     }
 }

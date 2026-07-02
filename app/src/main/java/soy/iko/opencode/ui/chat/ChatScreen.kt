@@ -1207,7 +1207,11 @@ private fun ChatInputBar(
                         }
                     },
                     keyboardOptions = KeyboardOptions(
-                        imeAction = ImeAction.Send,
+                        // With send-on-Enter off, expose the platform default action so the soft
+                        // keyboard shows a newline key (this is a multi-line field) instead of a
+                        // Send action — otherwise the setting has no effect on soft keyboards and
+                        // there's no way to type a newline. Hardware Enter is handled separately.
+                        imeAction = if (sendOnEnter) ImeAction.Send else ImeAction.Default,
                         capitalization = KeyboardCapitalization.Sentences,
                     ),
                     keyboardActions = KeyboardActions(onSend = {
@@ -1515,8 +1519,7 @@ private sealed interface MessageListItem {
     val key: Any
     val contentType: Any
 
-    data class Message(val message: MessageWithParts) : MessageListItem {
-        override val key: Any get() = message.info.id
+    data class Message(val message: MessageWithParts, override val key: Any) : MessageListItem {
         override val contentType: Any get() = message.info::class
     }
 
@@ -1552,8 +1555,10 @@ private fun buildMessageListItems(
     val today = java.time.LocalDate.now(java.time.ZoneId.systemDefault())
     val dateFmt = mediumDateFormat()
     val result = ArrayList<MessageListItem>(messages.size + 4)
+    val seenKeys = HashSet<String>(messages.size * 2)
     var lastDayKey: String? = null
     var sepOrdinal = 0
+    var emptyIdOrdinal = 0
     for (message in messages) {
         val ts = message.info.time?.created ?: message.info.time?.updated ?: message.info.time?.completed
         val dayKey = ts?.let { dayKey(it) } ?: ""
@@ -1561,7 +1566,17 @@ private fun buildMessageListItems(
             result.add(MessageListItem.Separator(dayLabel(dayKey, ts ?: 0L, today, todayLabel, yesterdayLabel, dateFmt), sepOrdinal++))
             lastDayKey = dayKey
         }
-        result.add(MessageListItem.Message(message))
+        // Most messages have a unique non-empty id. An unrecognized-role message can carry an
+        // empty id — and the reducer intentionally keeps several such messages as distinct
+        // holders — so give each a stable synthetic key and defensively de-collide any remaining
+        // duplicate; otherwise LazyColumn throws on a duplicate key and the whole screen crashes.
+        var key = message.info.id.ifEmpty { "msg-empty-${emptyIdOrdinal++}" }
+        if (!seenKeys.add(key)) {
+            var suffix = 1
+            while (!seenKeys.add("$key#$suffix")) suffix++
+            key = "$key#$suffix"
+        }
+        result.add(MessageListItem.Message(message, key))
     }
     return result
 }

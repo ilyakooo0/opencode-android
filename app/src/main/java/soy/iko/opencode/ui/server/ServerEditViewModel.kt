@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import soy.iko.opencode.R
 import soy.iko.opencode.util.runCatchingCancellable
 import java.util.UUID
@@ -78,15 +79,22 @@ data class InitialProfile(
 fun isValidCertPin(raw: String): Boolean {
     val entries = raw.split(Regex("[\\s,]+")).map { it.trim() }.filter { it.isNotEmpty() }
     if (entries.isEmpty()) return true
-    val pinRegex = Regex("sha256/[A-Za-z0-9+/=]+")
+    // FIX 21(c): require a well-formed sha256/<base64>= pin (at least one base64 char
+    // before the padding). This rejects obviously malformed entries like "sha256/=" or "sha256/===".
+    // A real SHA-256 pin is 43 base64 chars + '=', but we accept any length for demo/test pins.
+    val pinRegex = Regex("sha256/[A-Za-z0-9+/]+=")
     return entries.all { it.matches(pinRegex) }
 }
 
-fun isValidUrl(url: String): Boolean = try {
-    val u = java.net.URI(url.trim())
-    u.scheme != null && u.host != null && (u.scheme == "http" || u.scheme == "https")
-} catch (_: Exception) {
-    false
+fun isValidUrl(url: String): Boolean {
+    val trimmed = url.trim()
+    if (trimmed.isBlank()) return false
+    // Parse with OkHttp's own parser (like HttpClientFactory) — java.net.URI rejects hosts
+    // OkHttp accepts (e.g. underscores in "my_server.local") and demands an exact-lowercase
+    // scheme ("HTTP://" fails). toHttpUrlOrNull only accepts http/https, so a successful parse
+    // already implies a valid scheme; a bare host without a scheme returns null, keeping the
+    // "suggest http:// prefix" flow in suggestUrlScheme() intact.
+    return trimmed.toHttpUrlOrNull() != null
 }
 
 /**
@@ -119,11 +127,15 @@ class ServerEditViewModel(
                         .firstOrNull { it.id == profileId }
                 }
                 if (existing != null) {
+                    // FIX 21(a): normalize (trim) the dirty-snapshot fields the same way
+                    // save() stores them, so a stored value with surrounding whitespace
+                    // doesn't make the freshly-opened editor spuriously dirty (isDirty
+                    // compares field.trim() against these).
                     val init = InitialProfile(
-                        label = existing.label,
-                        baseUrl = existing.baseUrl,
-                        username = existing.username.orEmpty(),
-                        password = existing.password.orEmpty(),
+                        label = existing.label.trim(),
+                        baseUrl = existing.baseUrl.trim(),
+                        username = existing.username.orEmpty().trim(),
+                        password = existing.password.orEmpty().trim(),
                         requireHttps = existing.requireHttps,
                         certPin = existing.certPin.orEmpty().trim(),
                     )
@@ -207,10 +219,17 @@ class ServerEditViewModel(
         val s = _state.value
         if (!s.canSave || s.probing) return
         _state.update { it.copy(probing = true, error = null, credentialsResult = null, probeReachable = null) }
+        // FIX 21(b): probe the trimmed URL that save() would actually store.
+        // FIX 11: remember which URL we probed so a stale result is dropped if the
+        // user edited the base URL away while the probe was in flight.
+        val probedUrl = s.baseUrl.trim()
         viewModelScope.launch {
-            val result = runCatchingCancellable { container.probeServer(s.baseUrl) }
+            val result = runCatchingCancellable { container.probeServer(probedUrl) }
             result.onSuccess { pr ->
                 _state.update {
+                    // Stale result (URL edited away mid-probe): drop the reachability verdict but
+                    // still clear the spinner, else `probing` latches true and blocks re-probing.
+                    if (it.baseUrl.trim() != probedUrl) return@update it.copy(probing = false)
                     when (pr) {
                         is ProbeResult.Reachable -> it.copy(
                             probing = false,
@@ -233,7 +252,10 @@ class ServerEditViewModel(
                     }
                 }
             }.onFailure { e ->
-                _state.update { it.copy(probing = false, error = container.friendlyError(e), probeReachable = false) }
+                _state.update {
+                    if (it.baseUrl.trim() != probedUrl) return@update it.copy(probing = false)
+                    it.copy(probing = false, error = container.friendlyError(e), probeReachable = false)
+                }
             }
         }
     }
@@ -249,10 +271,18 @@ class ServerEditViewModel(
         if (!s.canSave || s.testingCredentials) return
         if (s.username.isBlank() && s.password.isBlank()) return
         _state.update { it.copy(testingCredentials = true, credentialsResult = null, error = null) }
+        // FIX 21(b): test the trimmed URL/credentials that save() would actually store.
+        // FIX 11: remember the probed URL so a stale result is dropped if the user
+        // edited the base URL away while the test was in flight.
+        val probedUrl = s.baseUrl.trim()
+        val probedUser = s.username.trim()
+        val probedPass = s.password.trim()
         viewModelScope.launch {
-            val result = runCatchingCancellable { container.probeWithCredentials(s.baseUrl, s.username, s.password) }
+            val result = runCatchingCancellable { container.probeWithCredentials(probedUrl, probedUser, probedPass) }
             result.onSuccess { ok ->
                 _state.update {
+                    // Stale result: clear the spinner but drop the verdict (see probe()).
+                    if (it.baseUrl.trim() != probedUrl) return@update it.copy(testingCredentials = false)
                     it.copy(
                         testingCredentials = false,
                         credentialsResult = ok,
@@ -261,6 +291,7 @@ class ServerEditViewModel(
                 }
             }.onFailure { e ->
                 _state.update {
+                    if (it.baseUrl.trim() != probedUrl) return@update it.copy(testingCredentials = false)
                     it.copy(
                         testingCredentials = false,
                         credentialsResult = false,
@@ -303,6 +334,25 @@ class ServerEditViewModel(
                     certPin = s.certPin.trim().takeIf { it.isNotBlank() },
                 )
                 container.profileStore.save(saved)
+                // FIX 3: persist the (possibly freshly-generated) id and the normalized
+                // values back into state right after the save succeeds — before the
+                // connect/ping that may throw. Otherwise a retry after a connect failure
+                // would see id == null again, mint a new UUID and create a DUPLICATE
+                // profile instead of upserting the same row. Also refresh the dirty
+                // snapshot so the just-saved values no longer read as unsaved changes.
+                _state.update {
+                    it.copy(
+                        id = saved.id,
+                        initial = InitialProfile(
+                            label = saved.label,
+                            baseUrl = saved.baseUrl,
+                            username = saved.username.orEmpty(),
+                            password = saved.password.orEmpty(),
+                            requireHttps = saved.requireHttps,
+                            certPin = saved.certPin.orEmpty(),
+                        ),
+                    )
+                }
                 if (connectAfter) {
                     container.connect(saved)
                     container.activeConnection.value?.api?.ping()

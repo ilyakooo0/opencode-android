@@ -54,50 +54,45 @@ fun OpencodeApp(container: AppContainer) {
     val chatTextScale by container.settingsStore.chatTextScale.collectAsStateWithLifecycle(initialValue = 1f)
     val codeWrap by container.settingsStore.codeWrap.collectAsStateWithLifecycle(initialValue = false)
 
-    // Hold a foreground priority for as long as ANY session is actively running — not just
-    // while a running chat is on screen — so a run started and then backgrounded (or left
-    // for the session list) still keeps the SSE stream alive to deliver its completion
-    // notification. Doze/app-standby would otherwise choke the socket once priority drops.
-    val anyRunActive by container.anyRunActive.collectAsStateWithLifecycle()
-    val appContext = androidx.compose.ui.platform.LocalContext.current.applicationContext
-    LaunchedEffect(anyRunActive) {
-        if (anyRunActive) {
-            soy.iko.opencode.notification.RunForegroundService.start(appContext)
-        } else {
-            soy.iko.opencode.notification.RunForegroundService.stop(appContext)
-        }
-    }
+    // The foreground service that holds priority while any run is active is driven from the
+    // process-lived AppContainer scope (see AppContainer.observeRunForegroundService), not
+    // from here — a composition-scoped collector pauses while backgrounded, which is exactly
+    // when a run started via the notification reply needs the service to start.
 
     // When text is shared into the app, surface the session list so the user can pick
     // (or create) a conversation to drop it into. The chosen session's draft is set
     // in [onOpenSession] below. Keyed on `connection` too so a share that arrives
     // before auto-reconnect completes is retried once the connection is established.
-    // Tracks the last connection id seen so a server switch (a non-null -> non-null
-    // change) doesn't re-bounce the user to the session list for a share they've
-    // already decided to abandon; only the null -> non-null initial connect retries.
-    var lastConnectionId by remember { mutableStateOf<String?>(null) }
+    // Track the last-handled share payloads (there's no share nonce on the container) so a
+    // *new* share arriving while already connected — a warm start where onNewIntent re-fires
+    // setPendingShare under an unchanged connection id — still navigates, while a re-trigger
+    // carrying no new share (a bare server switch, which routes through a null connection, or
+    // a share the user already navigated for) leaves them where they are.
+    var handledShareText by remember { mutableStateOf<String?>(null) }
+    var handledSharedMedia by remember { mutableStateOf<List<String>>(emptyList()) }
     LaunchedEffect(pendingShare, pendingSharedMedia, connection) {
         if (pendingShare == null && pendingSharedMedia.isEmpty()) return@LaunchedEffect
-        if (connection == null) { lastConnectionId = null; return@LaunchedEffect }
-        val currentId = connection?.profile?.id
-        // Only (re)navigate on the initial null -> non-null connect. A subsequent
-        // server switch while a share is pending (rare) leaves the user where they
-        // are instead of yanking them back to the session list.
-        if (lastConnectionId != null && lastConnectionId == currentId) return@LaunchedEffect
-        lastConnectionId = currentId
+        if (connection == null) return@LaunchedEffect
+        val newShare = (pendingShare != null && pendingShare != handledShareText) ||
+            (pendingSharedMedia.isNotEmpty() && pendingSharedMedia != handledSharedMedia)
+        if (!newShare) return@LaunchedEffect
+        handledShareText = pendingShare
+        handledSharedMedia = pendingSharedMedia
         if (!navController.popBackStack(Routes.SESSIONS, inclusive = false)) {
             navController.navigate(Routes.SESSIONS) { launchSingleTop = true }
         }
     }
 
     // "New session" from a launcher shortcut / QS tile: once connected, create a fresh
-    // session and open it. Consumed once (compareAndSet) so a recomposition can't re-create.
+    // session and open it. The pending flag is consumed (compareAndSet) only *after*
+    // createSession succeeds, so a transient failure leaves the request pending to retry
+    // (on the next connection change / trigger) instead of silently dropping the tap.
     LaunchedEffect(pendingNewSession, connection) {
         if (!pendingNewSession) return@LaunchedEffect
         val conn = connection ?: return@LaunchedEffect
-        if (!container.consumePendingNewSession()) return@LaunchedEffect
         val session = runCatchingCancellable { conn.repository.createSession() }.getOrNull()
             ?: return@LaunchedEffect
+        if (!container.consumePendingNewSession()) return@LaunchedEffect
         if (!navController.popBackStack(Routes.SESSIONS, inclusive = false)) {
             navController.navigate(Routes.SESSIONS) { launchSingleTop = true }
         }

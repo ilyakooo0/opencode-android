@@ -130,7 +130,9 @@ fun CommandPickerSheet(
                 )
             } else {
                 LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
-                    items(filtered, key = { it.name }) { cmd ->
+                    // distinctBy the name so duplicate command names from the server can't
+                    // crash the list with LazyColumn's "Key was already used".
+                    items(filtered.distinctBy { it.name }, key = { it.name }) { cmd ->
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()

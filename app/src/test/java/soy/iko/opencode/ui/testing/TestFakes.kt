@@ -175,14 +175,21 @@ class FakeOpencodeApiClient : OpencodeApiClient() {
         return messages
     }
 
+    /** Idempotency keys seen across sendPrompt calls, in order, so tests can assert a
+     *  re-send reuses the same key. */
+    var sendPromptKeys: List<String?> = emptyList()
+        private set
+
     override suspend fun sendPrompt(
         sessionId: String,
         text: String,
         attachments: List<soy.iko.opencode.data.model.FilePromptPart>,
         model: ModelRef?,
         agent: String?,
+        idempotencyKey: String?,
     ): MessageWithParts {
         sendPromptCalls = sendPromptCalls + Triple(sessionId, text, model)
+        sendPromptKeys = sendPromptKeys + idempotencyKey
         sendPromptThrows?.let { throw it }
         return MessageWithParts(
             info = soy.iko.opencode.data.model.UserMessage(id = "msg-${sendPromptCalls.size}", sessionID = sessionId),
@@ -285,6 +292,7 @@ class FakeSessionRepository(
         attachments: List<soy.iko.opencode.data.model.FilePromptPart>,
         model: ModelRef?,
         agent: String?,
+        idempotencyKey: String?,
     ): MessageWithParts {
         sendPromptThrows?.let { throw it }
         return MessageWithParts(
