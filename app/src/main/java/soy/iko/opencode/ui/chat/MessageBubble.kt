@@ -33,7 +33,7 @@ import soy.iko.opencode.data.model.UserMessage
 import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.ui.components.ImageLoadContext
 import soy.iko.opencode.ui.components.copyToClipboard
-import soy.iko.opencode.ui.components.rememberRelativeTime
+import soy.iko.opencode.ui.components.RelativeTimeText
 
 /**
  * Resolve an assistant message's model id to a friendly label from the loaded catalog,
@@ -250,14 +250,9 @@ private fun AssistantBlock(
 
 @Composable
 private fun MessageTimestampText(info: soy.iko.opencode.data.model.MessageInfo) {
-    val t = rememberRelativeTime(info.time?.created)
-    if (t.isNotEmpty()) {
-        Text(
-            t,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
+    // Compact relative label by default; long-press reveals the full absolute timestamp
+    // (RelativeTimeText renders nothing when the time is absent, so no isNotEmpty guard).
+    RelativeTimeText(info.time?.created)
 }
 
 // NumberFormat.getNumberInstance performs an expensive ICU locale lookup + object

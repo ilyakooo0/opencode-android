@@ -1,6 +1,14 @@
 package soy.iko.opencode.ui.components
 
+import android.content.Context
 import android.text.format.DateUtils
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.PlainTooltip
+import androidx.compose.material3.Text
+import androidx.compose.material3.TooltipBox
+import androidx.compose.material3.TooltipDefaults
+import androidx.compose.material3.rememberTooltipState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.derivedStateOf
@@ -8,6 +16,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
@@ -158,4 +170,47 @@ private fun rememberRelativeTimeStandalone(epochMillis: Long?): String {
         }
     }
     return formatted
+}
+
+/**
+ * Formats [epochMillis] as a full, locale-aware absolute timestamp (date + time + year),
+ * e.g. "Jul 2, 2026, 14:33". Complements the compact [relativeTime] label shown in lists
+ * and bubbles — the relative form is scannable, the absolute form is precise. Returns an
+ * empty string for a null/invalid timestamp. Uses the device locale and 12/24-hour setting.
+ */
+fun absoluteTime(context: Context, epochMillis: Long?): String {
+    if (epochMillis == null || epochMillis <= 0) return ""
+    return DateUtils.formatDateTime(
+        context,
+        epochMillis,
+        DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_SHOW_TIME or DateUtils.FORMAT_SHOW_YEAR,
+    )
+}
+
+/**
+ * A relative-time label (auto-refreshing, per [rememberRelativeTime]) that reveals the full
+ * absolute timestamp in a tooltip on long-press (or hover). Lets a compact "3m"/"2h" stay
+ * the default while the exact date/time is one long-press away — without spending screen
+ * space on it. Renders nothing when the timestamp is absent so callers can drop it in
+ * unconditionally.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun RelativeTimeText(
+    epochMillis: Long?,
+    modifier: Modifier = Modifier,
+    style: TextStyle = MaterialTheme.typography.labelSmall,
+    color: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+) {
+    val relative = rememberRelativeTime(epochMillis)
+    if (relative.isEmpty()) return
+    val context = LocalContext.current
+    val absolute = remember(epochMillis) { absoluteTime(context, epochMillis) }
+    TooltipBox(
+        positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
+        tooltip = { PlainTooltip { Text(absolute) } },
+        state = rememberTooltipState(),
+    ) {
+        Text(relative, style = style, color = color, modifier = modifier)
+    }
 }

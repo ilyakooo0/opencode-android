@@ -87,7 +87,7 @@ import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
 import soy.iko.opencode.ui.components.ConnectionBanner
 import soy.iko.opencode.ui.components.LocalRelativeTimeTick
-import soy.iko.opencode.ui.components.rememberRelativeTime
+import soy.iko.opencode.ui.components.RelativeTimeText
 import soy.iko.opencode.ui.components.rememberRelativeTimeTick
 import soy.iko.opencode.ui.vmFactory
 
@@ -586,15 +586,11 @@ private fun SessionCard(
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
-                    val time = rememberRelativeTime(session.time?.updated ?: session.time?.created)
-                    if (time.isNotEmpty()) {
-                        Text(
-                            time,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 2.dp),
-                        )
-                    }
+                    // Long-press the relative label to reveal the full absolute timestamp.
+                    RelativeTimeText(
+                        session.time?.updated ?: session.time?.created,
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
                 }
                 // Overflow menu replaces the inline edit + delete IconButtons so the
                 // card row is decluttered — two always-visible icons per row made a
