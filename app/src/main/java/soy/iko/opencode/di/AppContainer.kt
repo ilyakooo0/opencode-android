@@ -34,6 +34,7 @@ import soy.iko.opencode.data.network.HttpClientFactory
 import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.data.network.OpencodeApiClient
 import soy.iko.opencode.notification.NotificationChannels
+import soy.iko.opencode.notification.RunForegroundService
 import soy.iko.opencode.util.safeExceptionSummary
 import soy.iko.opencode.notification.SessionNotifications
 import soy.iko.opencode.R
@@ -266,9 +267,29 @@ open class AppContainer private constructor(
         if (!skipInit) {
             NotificationChannels.create(appContext!!)
             observeMessageActivity()
+            observeRunForegroundService()
             appScope.launch { runCatchingCancellable { outboxStore.load() } }
             observeOutbox()
             appScope.launch { autoConnect() }
+        }
+    }
+
+    /**
+     * Drive the [RunForegroundService] from the process-lived [appScope] rather than from the
+     * Activity's composition. Previously the start/stop was wired to a
+     * `collectAsStateWithLifecycle` collector in the root composable, which pauses while the
+     * Activity is STOPPED — so a run *started while backgrounded* (e.g. via the notification
+     * inline-reply) never acquired foreground priority and its long-lived SSE stream could be
+     * killed by Doze, and a run that *ended* while backgrounded left the "working…"
+     * notification lingering until the app was reopened. Collecting here reacts to
+     * [anyRunActive] regardless of Activity state.
+     */
+    private fun observeRunForegroundService() {
+        val ctx = appContext ?: return
+        appScope.launch {
+            anyRunActive.collect { active ->
+                if (active) RunForegroundService.start(ctx) else RunForegroundService.stop(ctx)
+            }
         }
     }
 
@@ -277,9 +298,9 @@ open class AppContainer private constructor(
      * online (and on any manual [flushOutbox] nudge). Queued messages are only sent to the
      * server they were composed for (matched by profile id), so a reconnect to a different
      * server never misfires them against a session id that doesn't exist there. Uses a plain
-     * `collect` (not collectLatest) so an in-flight send is never cancelled mid-flight — a
-     * cancelled+retried POST could double-send since each attempt carries a fresh idempotency
-     * key.
+     * `collect` (not collectLatest) so an in-flight send is never cancelled mid-flight and
+     * send order is preserved; each message carries a stable idempotency key (its persistent
+     * outbox id) so even a re-send across flushes is deduplicated server-side.
      */
     private fun observeOutbox() {
         appScope.launch {
@@ -308,6 +329,11 @@ open class AppContainer private constructor(
                         },
                         model = msg.model,
                         agent = msg.agent,
+                        // Reuse the persistent outbox id as a stable idempotency key so a
+                        // later flush of a message whose earlier POST reached the server (but
+                        // whose response was lost) is deduplicated server-side instead of
+                        // starting a duplicate agent run.
+                        idempotencyKey = msg.id,
                     )
                 }.onFailure {
                     Log.w("AppContainer", "Outbox flush failed for ${msg.sessionId}: ${safeExceptionSummary(it)}")
@@ -486,8 +512,15 @@ open class AppContainer private constructor(
         return true
     }
 
-    /** Session ids currently streaming an assistant run (best-effort, in-process). */
-    private val activeRuns: MutableSet<String> = java.util.Collections.synchronizedSet(mutableSetOf())
+    /** Session ids currently streaming an assistant run (best-effort, in-process). Backed by
+     *  an access-order [java.util.LinkedHashMap] so re-adding an already-present id on each
+     *  streaming event refreshes its recency (a plain LinkedHashSet.add is a no-op that does
+     *  NOT reorder). This keeps a long, continuously-streaming session from being evicted as
+     *  the eldest once [activeRunsLimit] other sessions appear — which would drop its
+     *  completion notification when its SessionIdle finally arrives. */
+    private val activeRuns: MutableSet<String> = java.util.Collections.synchronizedSet(
+        java.util.Collections.newSetFromMap(java.util.LinkedHashMap<String, Boolean>(16, 0.75f, true)),
+    )
 
     /** Per non-viewed session, the set of message ids already reflected in its unread
      *  count. De-duplicates the many streaming events that share one message id so the

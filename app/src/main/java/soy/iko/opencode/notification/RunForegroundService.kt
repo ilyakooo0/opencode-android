@@ -75,6 +75,21 @@ class RunForegroundService : Service() {
             .build()
     }
 
+    // Android 14+ can time out a foreground service (notably the ~6h/day cumulative cap on
+    // dataSync in Android 15) and calls onTimeout expecting a prompt stop; not stopping risks
+    // the system force-stopping/ANR-ing the app. Stop cleanly — a still-active run just
+    // continues without foreground priority. Both overloads are covered (the 2-arg form is
+    // API 35+).
+    override fun onTimeout(startId: Int) {
+        Log.w(TAG, "Foreground service timed out; stopping")
+        stopSelf()
+    }
+
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        Log.w(TAG, "Foreground service timed out (type=$fgsType); stopping")
+        stopSelf()
+    }
+
     override fun onDestroy() {
         // Safety net: if the process is being killed while a run is in progress,
         // ensure the notification is removed rather than lingering.

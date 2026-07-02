@@ -54,19 +54,10 @@ fun OpencodeApp(container: AppContainer) {
     val chatTextScale by container.settingsStore.chatTextScale.collectAsStateWithLifecycle(initialValue = 1f)
     val codeWrap by container.settingsStore.codeWrap.collectAsStateWithLifecycle(initialValue = false)
 
-    // Hold a foreground priority for as long as ANY session is actively running — not just
-    // while a running chat is on screen — so a run started and then backgrounded (or left
-    // for the session list) still keeps the SSE stream alive to deliver its completion
-    // notification. Doze/app-standby would otherwise choke the socket once priority drops.
-    val anyRunActive by container.anyRunActive.collectAsStateWithLifecycle()
-    val appContext = androidx.compose.ui.platform.LocalContext.current.applicationContext
-    LaunchedEffect(anyRunActive) {
-        if (anyRunActive) {
-            soy.iko.opencode.notification.RunForegroundService.start(appContext)
-        } else {
-            soy.iko.opencode.notification.RunForegroundService.stop(appContext)
-        }
-    }
+    // The foreground service that holds priority while any run is active is driven from the
+    // process-lived AppContainer scope (see AppContainer.observeRunForegroundService), not
+    // from here — a composition-scoped collector pauses while backgrounded, which is exactly
+    // when a run started via the notification reply needs the service to start.
 
     // When text is shared into the app, surface the session list so the user can pick
     // (or create) a conversation to drop it into. The chosen session's draft is set

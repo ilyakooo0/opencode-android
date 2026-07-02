@@ -54,7 +54,10 @@ open class SessionRepository(
         attachments: List<FilePromptPart> = emptyList(),
         model: ModelRef?,
         agent: String? = null,
-    ) = api.sendPrompt(sessionId, text, attachments, model, agent)
+        // Stable key for retriable/re-sendable messages (the offline outbox). See
+        // [OpencodeApiClient.sendPrompt]. Null generates a fresh key per call.
+        idempotencyKey: String? = null,
+    ) = api.sendPrompt(sessionId, text, attachments, model, agent, idempotencyKey)
 
     open suspend fun runCommand(
         sessionId: String,

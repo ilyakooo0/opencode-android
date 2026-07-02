@@ -142,12 +142,18 @@ open class OpencodeApiClient private constructor(
         attachments: List<FilePromptPart> = emptyList(),
         model: ModelRef? = null,
         agent: String? = null,
+        // A caller-stable idempotency key. Callers that may re-invoke sendPrompt across
+        // *separate* calls for the same logical message (the offline outbox, which re-sends
+        // a message that stayed queued after an earlier flush failed) must pass a stable key
+        // derived from the persistent message id — otherwise each attempt mints a fresh key
+        // and a POST that reached the server but whose response was lost is re-created as a
+        // duplicate run. When null, a fresh key is generated (correct for one-shot sends).
+        idempotencyKey: String? = null,
     ): MessageWithParts {
-        // Generate the idempotency key *before* entering withRetry so all retry
-        // attempts share the same key. If the key were generated inside withRetry,
-        // each attempt would get a fresh UUID and the server couldn't deduplicate a
-        // request that reached it but whose response was lost (e.g. timeout).
-        val idempotencyKey = java.util.UUID.randomUUID().toString()
+        // Resolve the key *before* entering withRetry so all retry attempts share it. If the
+        // key were generated inside withRetry, each attempt would get a fresh UUID and the
+        // server couldn't deduplicate a request that reached it but whose response was lost.
+        val resolvedKey = idempotencyKey ?: java.util.UUID.randomUUID().toString()
         // A text part is only included when there's actual text, so an image-only prompt
         // (attachments, empty text) doesn't send an empty text part. Attachments follow
         // the text so the model reads the instruction first.
@@ -158,7 +164,7 @@ open class OpencodeApiClient private constructor(
         return withRetry {
             client!!.post("session/${encode(sessionId)}/message") {
                 contentType(ContentType.Application.Json)
-                header("Idempotency-Key", idempotencyKey)
+                header("Idempotency-Key", resolvedKey)
                 setBody(
                     PromptRequest(
                         parts = parts,
@@ -406,6 +412,16 @@ internal suspend fun <T> withRetryInternal(
             }
         } catch (t: ResponseException) {
             // 3xx (redirect limit exceeded) is non-retryable.
+            throw t
+        } catch (t: io.ktor.serialization.ContentConvertException) {
+            // A malformed/unexpected response body (deserialization failure via content
+            // negotiation) is deterministic — it fails identically on every attempt — so
+            // retrying only burns the whole backoff budget re-parsing the same bytes. Fail
+            // fast instead.
+            throw t
+        } catch (t: IllegalArgumentException) {
+            // Also deterministic: a bad argument, or a raw kotlinx SerializationException
+            // (which extends IllegalArgumentException) thrown outside content negotiation.
             throw t
         } catch (t: Exception) {
             lastError = t

@@ -6,7 +6,7 @@ import android.os.Looper
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.RememberObserver
 import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -15,13 +15,13 @@ import androidx.compose.ui.platform.LocalContext
 /**
  * Remember a [TtsController] scoped to the current composition; it shuts the engine down
  * when the composition leaves (so the process isn't left holding a TextToSpeech instance).
+ * The controller is a [RememberObserver], so an *abandoned* composition (one never committed)
+ * also releases the engine — a plain DisposableEffect would leak it in that case.
  */
 @Composable
 fun rememberTtsController(): TtsController {
     val context = LocalContext.current
-    val controller = remember { TtsController(context.applicationContext) }
-    DisposableEffect(Unit) { onDispose { controller.shutdown() } }
-    return controller
+    return remember { TtsController(context.applicationContext) }
 }
 
 /**
@@ -33,10 +33,11 @@ fun rememberTtsController(): TtsController {
  * TTS is an optional convenience). Utterance-progress callbacks arrive on a binder thread,
  * so state is cleared on the main thread via [mainHandler].
  */
-class TtsController(context: Context) {
+class TtsController(context: Context) : RememberObserver {
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private var ready = false
+    private var shutDown = false
 
     private val _speakingId = mutableStateOf<String?>(null)
     val speakingId: State<String?> = _speakingId
@@ -72,8 +73,16 @@ class TtsController(context: Context) {
     }
 
     fun shutdown() {
+        if (shutDown) return
+        shutDown = true
         tts.stop()
         tts.shutdown()
         _speakingId.value = null
     }
+
+    // RememberObserver: release the engine whenever this instance leaves the composition,
+    // including an abandoned (never-committed) composition, which onForgotten doesn't cover.
+    override fun onRemembered() { /* engine is created eagerly in the constructor */ }
+    override fun onForgotten() = shutdown()
+    override fun onAbandoned() = shutdown()
 }

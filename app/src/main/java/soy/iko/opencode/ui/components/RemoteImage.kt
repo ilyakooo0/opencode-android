@@ -78,11 +78,25 @@ private fun FilePart.resolveModel(ctx: ImageLoadContext): Any? {
     // Guard on same origin (scheme + host + port), not base-path prefix: the real risk is
     // sending the request (with its Basic auth) to another host. A server-absolute path
     // resolves to a different base *path* but the same origin, so it must still be allowed.
+    // Compare *effective* ports (substituting the scheme default when unspecified) so an
+    // absolute image URL that spells out the default port — "https://host:443/x.png" while
+    // the base is "https://host/" — isn't wrongly rejected as cross-origin (URI.port is -1
+    // when omitted, so a raw `==` would treat 443 and -1 as different).
     val sameOrigin = resolved.host != null &&
         resolved.scheme.equals(baseUri.scheme, ignoreCase = true) &&
         resolved.host.equals(baseUri.host, ignoreCase = true) &&
-        resolved.port == baseUri.port
+        effectivePort(resolved) == effectivePort(baseUri)
     return if (sameOrigin) resolved.toString() else null
+}
+
+/** The URI's port, or the scheme's default (80/443) when unspecified (`port == -1`). */
+private fun effectivePort(uri: java.net.URI): Int {
+    if (uri.port != -1) return uri.port
+    return when (uri.scheme?.lowercase()) {
+        "https" -> 443
+        "http" -> 80
+        else -> -1
+    }
 }
 
 /**

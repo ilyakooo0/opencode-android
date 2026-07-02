@@ -172,7 +172,10 @@ fun AgentPickerSheet(
                     }
                 }
                 }
-                items(filtered, key = { it.name }) { agent ->
+                // distinctBy the name so a server that returns two agents with the same name
+                // (e.g. a built-in colliding with a project-level one) can't crash the list
+                // with LazyColumn's "Key was already used".
+                items(filtered.distinctBy { it.name }, key = { it.name }) { agent ->
                     val isSelected = agent.name == selected
                     Column(
                         modifier = Modifier

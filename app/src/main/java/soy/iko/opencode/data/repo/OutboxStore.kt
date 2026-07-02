@@ -92,12 +92,16 @@ open class OutboxStore private constructor(
         mutate { current -> current.filterNot { it.sessionId == sessionId } }
 
     private suspend fun mutate(transform: (List<OutboxMessage>) -> List<OutboxMessage>) {
-        val snapshot = ioMutex.withLock {
+        // Persist *under* the lock so concurrent mutations (e.g. the flusher removing sent
+        // messages while the UI enqueues a new one) can't race their disk writes: without
+        // this, the older snapshot could land last and drop/resurrect a queued prompt, or two
+        // overlapping writeText/delete calls could tear the file. The lock serializes both the
+        // in-memory update and the write, guaranteeing on-disk order matches memory order.
+        ioMutex.withLock {
             val updated = transform(_messages.value).sortedBy { it.createdAt }
             _messages.value = updated
-            updated
+            persist(updated)
         }
-        persist(snapshot)
     }
 
     private suspend fun persist(list: List<OutboxMessage>) {

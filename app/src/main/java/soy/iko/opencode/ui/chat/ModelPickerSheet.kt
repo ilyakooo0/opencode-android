@@ -139,7 +139,9 @@ fun ModelPickerSheet(
                                 modifier = Modifier.padding(start = 24.dp, top = 12.dp, bottom = 4.dp),
                             )
                         }
-                        items(opts, key = { it.providerID to it.modelID }) { option ->
+                        // distinctBy the (provider, model) pair so a duplicate entry from the
+                        // server can't crash the list with LazyColumn's "Key was already used".
+                        items(opts.distinctBy { it.providerID to it.modelID }, key = { it.providerID to it.modelID }) { option ->
                     val isSelected = option.providerID == selected?.providerID &&
                         option.modelID == selected?.modelID
                     Column(

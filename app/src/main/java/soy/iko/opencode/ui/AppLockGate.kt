@@ -22,7 +22,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -90,16 +89,6 @@ fun AppLockGate(enabled: Boolean, content: @Composable () -> Unit) {
     // defaults to locked on a fresh start.
     var unlocked by rememberSaveable { mutableStateOf(false) }
 
-    // Re-lock when the app is backgrounded so returning to it requires authentication again.
-    val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_STOP) unlocked = false
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-    }
-
     val title = stringResource(R.string.app_lock_prompt_title)
     val subtitle = stringResource(R.string.app_lock_prompt_subtitle)
 
@@ -136,8 +125,25 @@ fun AppLockGate(enabled: Boolean, content: @Composable () -> Unit) {
             .onFailure { authInFlight = false }
     }
 
-    // Auto-prompt on first show and whenever we return to the locked state.
-    LaunchedEffect(unlocked) { if (!unlocked) authenticate() }
+    // Re-lock when the app is backgrounded, and re-prompt when it returns to the foreground.
+    // The re-prompt fires on ON_START rather than by keying an effect on `unlocked`: ON_STOP
+    // already cleared `unlocked` while backgrounded, so an effect keyed on it would see no
+    // change on return and never re-fire, stranding the user on the manual "Unlock" button.
+    // addObserver also delivers the current state's ON_START to a freshly-added observer, so
+    // this covers the initial prompt on first show too; the authInFlight/unlocked guards in
+    // authenticate() make the overlapping triggers safe.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_STOP -> unlocked = false
+                Lifecycle.Event.ON_START -> if (!unlocked) authenticate()
+                else -> {}
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         content()

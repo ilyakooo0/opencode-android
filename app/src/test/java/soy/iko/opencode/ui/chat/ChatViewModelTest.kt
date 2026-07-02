@@ -78,10 +78,13 @@ class ChatViewModelTest {
     // --- send() ---
 
     @Test
-    fun send_returnsFalseWhenNotConnected() = testScope.runTest {
+    fun send_queuesToOutboxWhenNotConnected() = testScope.runTest {
+        // The offline-outbox feature changed send()'s contract: when there's no active
+        // connection the prompt is accepted for offline queueing (returns true) rather than
+        // being rejected. (This test previously asserted the old "returns false" behavior.)
         val container = FakeAppContainer()
         val vm = makeVm(container)
-        assertFalse(vm.send("hello"))
+        assertTrue(vm.send("hello"))
     }
 
     @Test
