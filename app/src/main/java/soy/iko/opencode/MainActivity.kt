@@ -38,6 +38,13 @@ class MainActivity : FragmentActivity() {
     private var shareIntentHandled = false
     private var openSessionHandled = false
     private var newSessionHandled = false
+    // Track whether the notification-permission prompt has been shown for this Activity
+    // instance. onCreate only requests when savedInstanceState == null (a fresh process),
+    // but an Activity recreated by a config change NOT listed in the manifest's configChanges
+    // (e.g. a locale change) has a non-null savedInstanceState and would otherwise skip the
+    // prompt forever. onResume re-requests once per instance when still ungranted so the user
+    // is never silently left without notifications after such a recreation.
+    private var notificationPermissionRequested = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         val splash = installSplashScreen()
@@ -50,7 +57,14 @@ class MainActivity : FragmentActivity() {
         }
         val container = (application as OpencodeApp).container
         handleIntent(intent)
-        if (savedInstanceState == null) maybeRequestNotificationPermission()
+        if (savedInstanceState == null) {
+            maybeRequestNotificationPermission()
+        } else {
+            // Restored instance: the permission may have been requested pre-recreation, but
+            // we can't know the result from here. onResume will re-check and request if still
+            // ungranted (once per Activity instance).
+            notificationPermissionRequested = savedInstanceState.getBoolean(KEY_NOTIF_PERM_REQUESTED, false)
+        }
         // Hold the splash until the persisted theme and app-lock settings load, so we never
         // paint a frame with the defaults (dynamicColor=true / SYSTEM, app lock off) that then
         // snap to the user's real choice — including a brief unlocked, un-FLAG_SECURE'd frame
@@ -110,6 +124,15 @@ class MainActivity : FragmentActivity() {
     override fun onStop() {
         super.onStop()
         (application as OpencodeApp).container.setForeground(false)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Re-check on resume: an Activity recreated by a config change not in configChanges
+        // (e.g. locale) has savedInstanceState != null, so onCreate skipped the request. This
+        // ensures the user is prompted once per Activity instance when still ungranted rather
+        // than silently losing all notifications.
+        maybeRequestNotificationPermission()
     }
 
     /** Capture text shared from another app so it can be prefilled into a session draft,
@@ -183,6 +206,7 @@ class MainActivity : FragmentActivity() {
         private const val KEY_SHARE_HANDLED = "shareIntentHandled"
         private const val KEY_OPEN_SESSION_HANDLED = "openSessionHandled"
         private const val KEY_NEW_SESSION_HANDLED = "newSessionHandled"
+        private const val KEY_NOTIF_PERM_REQUESTED = "notificationPermissionRequested"
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -190,13 +214,19 @@ class MainActivity : FragmentActivity() {
         outState.putBoolean(KEY_SHARE_HANDLED, shareIntentHandled)
         outState.putBoolean(KEY_OPEN_SESSION_HANDLED, openSessionHandled)
         outState.putBoolean(KEY_NEW_SESSION_HANDLED, newSessionHandled)
+        outState.putBoolean(KEY_NOTIF_PERM_REQUESTED, notificationPermissionRequested)
     }
 
-    /** Ask for POST_NOTIFICATIONS once on Android 13+ so run/completion notifications show. */
+    /** Ask for POST_NOTIFICATIONS on Android 13+ so run/completion notifications show.
+     *  Idempotent per Activity instance via [notificationPermissionRequested]. */
     private fun maybeRequestNotificationPermission() {
+        if (notificationPermissionRequested) return
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
         val granted = ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
             PackageManager.PERMISSION_GRANTED
-        if (!granted) requestNotificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        if (!granted) {
+            notificationPermissionRequested = true
+            requestNotificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
     }
 }

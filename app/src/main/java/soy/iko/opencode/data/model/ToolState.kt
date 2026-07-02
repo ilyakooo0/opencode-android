@@ -25,7 +25,7 @@ data object ToolPending : ToolState
 data class ToolRunning(
     val input: JsonElement? = null,
     val title: String? = null,
-    val time: TimeInfo? = null,
+    val time: PartTimeInfo? = null,
 ) : ToolState
 
 @Immutable
@@ -35,7 +35,7 @@ data class ToolCompleted(
     val input: JsonElement? = null,
     val output: String? = null,
     val title: String? = null,
-    val time: TimeInfo? = null,
+    val time: PartTimeInfo? = null,
 ) : ToolState
 
 @Immutable
@@ -44,7 +44,7 @@ data class ToolCompleted(
 data class ToolError(
     val input: JsonElement? = null,
     val error: String? = null,
-    val time: TimeInfo? = null,
+    val time: PartTimeInfo? = null,
 ) : ToolState
 
 /** Fallback for an unrecognized `status`. */

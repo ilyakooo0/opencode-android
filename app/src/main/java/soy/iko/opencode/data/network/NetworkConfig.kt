@@ -153,8 +153,6 @@ object NetworkConfig {
 
     /** Delay before retrying the message-activity observer after a failure. */
     const val observerRetryDelayMs = 5_000L
-    /** Max concurrent assistant runs to track for completion notifications. */
-    const val activeRunsLimit = 200
     /** Debounce before the run foreground-service is started/stopped in response to
      *  run-activity changes. A run that starts and then fails/idles almost immediately
      *  would otherwise dispatch startForegroundService() then stopService() back-to-back;

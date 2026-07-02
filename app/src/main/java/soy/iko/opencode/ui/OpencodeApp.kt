@@ -68,10 +68,18 @@ fun OpencodeApp(container: AppContainer) {
     // setPendingShare under an unchanged connection id — still navigates, while a re-trigger
     // carrying no new share (a bare server switch, which routes through a null connection, or
     // a share the user already navigated for) leaves them where they are.
+    //
+    // Reset the remembered media when the pending list is drained (the chosen ChatScreen
+    // consumes it via consumePendingSharedMedia). Without this, re-sharing the *same* images
+    // after consumption compares equal structurally ([A,B] == [A,B]) and would be treated as
+    // "already handled", silently skipping the session-list navigation the second time.
     var handledShareText by remember { mutableStateOf<String?>(null) }
     var handledSharedMedia by remember { mutableStateOf<List<String>>(emptyList()) }
     LaunchedEffect(pendingShare, pendingSharedMedia, connection) {
-        if (pendingShare == null && pendingSharedMedia.isEmpty()) return@LaunchedEffect
+        if (pendingShare == null && pendingSharedMedia.isEmpty()) {
+            handledSharedMedia = emptyList()
+            return@LaunchedEffect
+        }
         if (connection == null) return@LaunchedEffect
         val newShare = (pendingShare != null && pendingShare != handledShareText) ||
             (pendingSharedMedia.isNotEmpty() && pendingSharedMedia != handledSharedMedia)

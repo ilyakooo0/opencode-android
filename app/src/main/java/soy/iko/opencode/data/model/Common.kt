@@ -11,6 +11,19 @@ data class TimeInfo(
     val completed: Long? = null,
 )
 
+/** Timing carried by message parts and tool states. The opencode server sends `time: { start,
+ *  end?, compacted? }` for these (unlike Session/MessageInfo/Permission, which use the
+ *  created/updated/completed shape of [TimeInfo]). With `ignoreUnknownKeys`, modelling these
+ *  fields with [TimeInfo] would silently discard start/end/compacted — every part/tool time
+ *  would decode to all-nulls — so this separate shape exists for them. */
+@Immutable
+@Serializable
+data class PartTimeInfo(
+    val start: Long? = null,
+    val end: Long? = null,
+    val compacted: Long? = null,
+)
+
 @Immutable
 @Serializable
 data class Tokens(

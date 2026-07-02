@@ -223,14 +223,29 @@ open class OpencodeApiClient private constructor(
         client!!.post("session/${encode(sessionId)}/unrevert").body()
     }
 
-    /** Create a public share link for the session. Returns the session with [Session.share] set. */
-    open suspend fun shareSession(sessionId: String): Session = withRetry {
-        client!!.post("session/${encode(sessionId)}/share").body()
+    /** Create a public share link for the session. Returns the session with [Session.share] set.
+     *  Mint the Idempotency-Key *before* withRetry so a retried POST (first request reached the
+     *  server but its response was lost) doesn't create a second, orphaned, still-valid share. */
+    open suspend fun shareSession(sessionId: String): Session {
+        val idempotencyKey = java.util.UUID.randomUUID().toString()
+        return withRetry {
+            client!!.post("session/${encode(sessionId)}/share") {
+                header("Idempotency-Key", idempotencyKey)
+            }.body()
+        }
     }
 
-    /** Revoke the session's public share link. Returns the session with share cleared. */
-    open suspend fun unshareSession(sessionId: String): Session = withRetry {
-        client!!.delete("session/${encode(sessionId)}/share").body()
+    /** Revoke the session's public share link. Returns the session with share cleared.
+     *  Like [deleteSession], a retried DELETE (first reached the server but the response was
+     *  lost) hits an already-unshared session and gets 404 — revoking a non-shared session is
+     *  effectively success, so swallow 404 rather than surfacing a spurious failure. */
+    open suspend fun unshareSession(sessionId: String): Session {
+        return try {
+            withRetry { client!!.delete("session/${encode(sessionId)}/share").body() }
+        } catch (t: ClientRequestException) {
+            if (t.response.status.value != 404) throw t
+            client!!.get("session/${encode(sessionId)}").body()
+        }
     }
 
     /** Ask the agent to summarize/compact the conversation to reclaim context. The compacted

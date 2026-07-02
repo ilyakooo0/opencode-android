@@ -535,12 +535,9 @@ open class AppContainer private constructor(
                     // represent a finished run worth notifying about.
                     if (isLiveRunActivity(event)) {
                         // The add-under-lock is required both for thread-safety and for the
-                        // LRU access-order refresh (keeps a continuously-streaming session
-                        // from being evicted), so it runs per event.
+                        // access-order refresh (keeps a continuously-streaming session from
+                        // being evicted), so it runs per event.
                         synchronized(activeRuns) {
-                            if (activeRuns.size >= activeRunsLimit) {
-                                activeRuns.remove(activeRuns.iterator().next())
-                            }
                             activeRuns.add(sid)
                             // Derive the flag from the set state *inside* the same lock that
                             // guards the set, so a concurrent reconnect sweep (which clears
@@ -577,9 +574,11 @@ open class AppContainer private constructor(
     /** Session ids currently streaming an assistant run (best-effort, in-process). Backed by
      *  an access-order [java.util.LinkedHashMap] so re-adding an already-present id on each
      *  streaming event refreshes its recency (a plain LinkedHashSet.add is a no-op that does
-     *  NOT reorder). This keeps a long, continuously-streaming session from being evicted as
-     *  the eldest once [activeRunsLimit] other sessions appear — which would drop its
-     *  completion notification when its SessionIdle finally arrives. */
+     *  NOT reorder). Entries are drained by [SessionIdle] (and cleared wholesale on reconnect
+     *  reconcile); we intentionally do NOT cap the set, because evicting the eldest would drop
+     *  its completion notification when its SessionIdle eventually arrives — a busy server
+     *  with many concurrent runs is still bounded by the server's own concurrency, so growth
+     *  is not unbounded in practice. */
     private val activeRuns: MutableSet<String> = java.util.Collections.synchronizedSet(
         java.util.Collections.newSetFromMap(java.util.LinkedHashMap<String, Boolean>(16, 0.75f, true)),
     )
@@ -588,9 +587,6 @@ open class AppContainer private constructor(
      *  count. De-duplicates the many streaming events that share one message id so the
      *  badge counts messages, not deltas. Cleared when a session is viewed or on connect. */
     private val unreadMessageIds = java.util.concurrent.ConcurrentHashMap<String, MutableSet<String>>()
-
-    /** Upper bound on [activeRuns] to prevent unbounded growth if SessionIdle never arrives. */
-    private val activeRunsLimit = NetworkConfig.activeRunsLimit
 
     /** Guards connect/disconnect so concurrent callers can't leak an old connection. */
     private val connectionMutex = Mutex()
@@ -650,14 +646,22 @@ open class AppContainer private constructor(
         onDone: (Boolean) -> Unit,
     ) {
         appScope.launch {
-            val success = runCatchingCancellable {
-                val api = activeConnection.value?.api ?: return@runCatchingCancellable false
-                api.respondPermission(sessionId, permissionId, response)
-                true
-            }.onFailure {
-                Log.w("AppContainer", "notif permission respond failed: ${safeExceptionSummary(it)}")
-            }.getOrDefault(false)
-            onDone(success)
+            // Guarantee onDone (so the BroadcastReceiver's goAsync() finishes) even if the
+            // scope is cancelled mid-call (process shutdown cancels appScope first). Without
+            // this, a cancelled scope leaves pending.finish() never called → a receiver ANR
+            // and the permission response silently lost.
+            var success = false
+            try {
+                success = runCatchingCancellable {
+                    val api = activeConnection.value?.api ?: return@runCatchingCancellable false
+                    api.respondPermission(sessionId, permissionId, response)
+                    true
+                }.onFailure {
+                    Log.w("AppContainer", "notif permission respond failed: ${safeExceptionSummary(it)}")
+                }.getOrDefault(false)
+            } finally {
+                onDone(success)
+            }
         }
     }
 
@@ -671,30 +675,36 @@ open class AppContainer private constructor(
      *  notification on success. */
     open fun sendPromptFromNotification(sessionId: String, text: String, onDone: (Boolean) -> Unit) {
         appScope.launch {
-            // Attribute to the active (or most-recent) profile so a reconnect to a different
-            // server doesn't misfire this against a session id that only exists elsewhere.
-            val profileId = activeConnection.value?.profile?.id
-                ?: runCatchingCancellable { profileStore.profiles.first().firstOrNull()?.id }.getOrNull()
-            val enqueued = if (profileId == null) {
-                false
-            } else {
-                runCatchingCancellable {
-                    outboxStore.enqueue(
-                        OutboxMessage(
-                            id = java.util.UUID.randomUUID().toString(),
-                            profileId = profileId,
-                            sessionId = sessionId,
-                            text = text,
-                            model = null,
-                            createdAt = System.currentTimeMillis(),
-                        ),
-                    )
-                }.onFailure {
-                    Log.w("AppContainer", "notif reply enqueue failed: ${safeExceptionSummary(it)}")
-                }.isSuccess
+            // Guarantee onDone (so the BroadcastReceiver's goAsync() finishes) even if the
+            // scope is cancelled mid-call — see respondToPermissionFromNotification above.
+            var enqueued = false
+            try {
+                // Attribute to the active (or most-recent) profile so a reconnect to a different
+                // server doesn't misfire this against a session id that only exists elsewhere.
+                val profileId = activeConnection.value?.profile?.id
+                    ?: runCatchingCancellable { profileStore.profiles.first().firstOrNull()?.id }.getOrNull()
+                enqueued = if (profileId == null) {
+                    false
+                } else {
+                    runCatchingCancellable {
+                        outboxStore.enqueue(
+                            OutboxMessage(
+                                id = java.util.UUID.randomUUID().toString(),
+                                profileId = profileId,
+                                sessionId = sessionId,
+                                text = text,
+                                model = null,
+                                createdAt = System.currentTimeMillis(),
+                            ),
+                        )
+                    }.onFailure {
+                        Log.w("AppContainer", "notif reply enqueue failed: ${safeExceptionSummary(it)}")
+                    }.isSuccess
+                }
+                if (enqueued) flushOutbox()
+            } finally {
+                onDone(enqueued)
             }
-            if (enqueued) flushOutbox()
-            onDone(enqueued)
         }
     }
 
@@ -750,7 +760,12 @@ open class AppContainer private constructor(
         _isOnline.value = runCatching { cm.activeNetwork != null }.getOrDefault(true)
         val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) { _isOnline.value = true; activeConnection.value?.events?.triggerReconnect() }
-            override fun onLost(network: Network) { _isOnline.value = cm.activeNetwork != null }
+            // Don't flip offline on onLost: during a Wi-Fi→cellular handoff, onLost(WiFi) fires
+            // before onAvailable(cellular), and cm.activeNetwork is transiently null in that
+            // window — eagerly marking offline would skip outbox flushing and flash an offline
+            // indicator. onUnavailable (no networks left at all) is the reliable offline signal.
+            override fun onLost(network: Network) { /* handled by onUnavailable */ }
+            override fun onUnavailable() { _isOnline.value = false }
         }
         // Only match networks that actually provide internet — a capability-less request
         // fires onAvailable for transports that can't reach the server (and would trigger
@@ -854,7 +869,8 @@ open class AppContainer private constructor(
                 .onSuccess { onDeleted() }
                 .onFailure { onError(it) }
         }
-        pendingProfileDeletes.put(id, job)?.cancel()
+        pendingProfileDeletes[id]?.cancel()
+        pendingProfileDeletes[id] = job
     }
 
     /** Cancel a pending deferred profile delete (the Undo action). Returns true if it was
@@ -917,7 +933,8 @@ open class AppContainer private constructor(
                     .onFailure { onError(it) }
             }
         }
-        pendingSessionDeletes.put(id, job)?.cancel()
+        pendingSessionDeletes[id]?.cancel()
+        pendingSessionDeletes[id] = job
     }
 
     /** Cancel a pending deferred session delete (the Undo action). Returns true if it was

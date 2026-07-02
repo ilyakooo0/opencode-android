@@ -32,7 +32,7 @@ data class TextPart(
     val text: String = "",
     val synthetic: Boolean = false,
     val ignored: Boolean = false,
-    val time: TimeInfo? = null,
+    val time: PartTimeInfo? = null,
 ) : Part
 
 @Immutable
@@ -43,7 +43,7 @@ data class ReasoningPart(
     override val messageID: String? = null,
     override val sessionID: String? = null,
     val text: String = "",
-    val time: TimeInfo? = null,
+    val time: PartTimeInfo? = null,
 ) : Part
 
 @Immutable

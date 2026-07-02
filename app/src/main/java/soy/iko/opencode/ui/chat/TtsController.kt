@@ -36,7 +36,10 @@ fun rememberTtsController(): TtsController {
 class TtsController(context: Context) : RememberObserver {
 
     private val mainHandler = Handler(Looper.getMainLooper())
-    private var ready = false
+    // Written from the TextToSpeech init callback (a binder thread) and read from the main
+    // thread in toggle(); @Volatile guarantees the main thread observes a successful init
+    // promptly instead of a stale false, which would silently drop the read-aloud request.
+    @Volatile private var ready = false
     private var shutDown = false
 
     private val _speakingId = mutableStateOf<String?>(null)

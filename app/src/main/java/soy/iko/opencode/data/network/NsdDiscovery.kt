@@ -52,6 +52,12 @@ open class NsdDiscovery(context: Context?) {
         }
         // Thread-safe: mutated by the resolver coroutine and the (main-thread) lost callback.
         val found = java.util.concurrent.ConcurrentHashMap<String, DiscoveredServer>()
+        // Names reported lost before the serialized resolver reached them. Without this, a
+        // service that disappears between onServiceFound and the resolver dequeuing it would
+        // be re-inserted into `found` after onServiceLost already fired (and returned null),
+        // leaving a phantom entry that lingers until discovery stops — the lost callback never
+        // fires twice for the same name. The resolver consults this set and skips the insert.
+        val lostPending = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<String, Boolean>())
         val toResolve = Channel<NsdServiceInfo>(Channel.UNLIMITED)
 
         val resolver = launch {
@@ -66,6 +72,9 @@ open class NsdDiscovery(context: Context?) {
                 // so every later-discovered service queued behind it is never processed and the
                 // emitted list silently stops updating. Abandon a stuck resolve and keep draining.
                 val resolved = withTimeoutOrNull(RESOLVE_TIMEOUT_MS) { resolveService(nsd, info) } ?: continue
+                // The service was reported lost while queued behind other resolves: don't
+                // resurrect it. Clear the marker so the name is free for a future re-appearance.
+                if (lostPending.remove(discoveredName)) continue
                 val name = resolved.serviceName.orEmpty()
                 // Keep only opencode's own advertisements, not every _http._tcp service
                 // (printers, routers, other web servers) on the network.
@@ -84,6 +93,9 @@ open class NsdDiscovery(context: Context?) {
             }
             override fun onServiceLost(serviceInfo: NsdServiceInfo) {
                 val name = serviceInfo.serviceName ?: return
+                // Mark the name lost so the resolver skips it if it hasn't been processed yet.
+                // If it's already in `found` (resolved before the lost), remove and emit now.
+                lostPending.add(name)
                 if (found.remove(name) != null) trySend(found.values.sortedBy { it.name })
             }
             override fun onDiscoveryStopped(serviceType: String?) {}
