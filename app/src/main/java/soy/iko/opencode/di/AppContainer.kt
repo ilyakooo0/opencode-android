@@ -383,10 +383,15 @@ open class AppContainer private constructor(
                 // order, so a poison message would otherwise block every later queued message
                 // for this profile forever. Transient failures (offline again, 5xx, 408/429)
                 // keep the queue intact and retry on the next trigger.
+                // 401/403 (bad/expired credentials) are NOT permanent: the message itself is
+                // deliverable once the user fixes the profile. Dropping it would silently lose
+                // the user's composed offline prompt on a recoverable auth failure. They stay
+                // in the queue and retry on the next flush after auth is restored.
                 val status = result.exceptionOrNull()?.let { responseStatusCode(it) }
-                // Permanent = a non-408/429 4xx, matching withRetry's non-retryable rule.
+                // Permanent = a non-408/429/401/403 4xx, matching withRetry's non-retryable rule
+                // except for auth failures, which are recoverable by re-editing the profile.
                 val permanent = when (status) {
-                    null, 408, 429 -> false
+                    null, 408, 429, 401, 403 -> false
                     in 400..499 -> true
                     else -> false
                 }
@@ -605,6 +610,12 @@ open class AppContainer private constructor(
     /** Resolve the title for [sessionId] (best-effort) and post a completion notification. */
     private suspend fun notifySessionCompleted(sessionId: String) {
         val title = resolveSessionTitle(sessionId)
+        // Re-check viewing right before posting: the call site checks !isActivelyViewing(sid)
+        // at event time, but resolveSessionTitle() suspends on a listSessions() round-trip.
+        // If the user opened the session in that gap, setCurrentSession already cancelled the
+        // prior notification — posting a fresh one here would leave a "session ready" heads-up
+        // lingering while they're already looking at the finished run.
+        if (isActivelyViewing(sessionId)) return
         appContext?.let { SessionNotifications.postCompleted(it, sessionId, title) }
     }
 
@@ -612,12 +623,16 @@ open class AppContainer private constructor(
     private suspend fun notifyPermission(permission: Permission) {
         val sessionId = permission.sessionID.takeIf { it.isNotBlank() } ?: return
         val title = resolveSessionTitle(sessionId)
+        // Re-check viewing just before posting — see notifySessionCompleted for the race.
+        if (isActivelyViewing(sessionId)) return
         appContext?.let { SessionNotifications.postPermission(it, permission, title) }
     }
 
     /** Post an error notification for a failed background run. */
     private suspend fun notifySessionError(sessionId: String) {
         val title = resolveSessionTitle(sessionId)
+        // Re-check viewing just before posting — see notifySessionCompleted for the race.
+        if (isActivelyViewing(sessionId)) return
         appContext?.let { SessionNotifications.postError(it, sessionId, title) }
     }
 
@@ -694,6 +709,13 @@ open class AppContainer private constructor(
         val recent = runCatchingCancellable { profileStore.profiles.first() }
             .getOrDefault(emptyList())
             .firstOrNull() ?: return
+        // The profile read above suspends on DataStore. A manual connect() to a different
+        // server during that window establishes a connection the user explicitly chose; we
+        // must not clobber it by connecting to `recent` on top. connect() unconditionally
+        // closes the active connection, so guard here: if anything is already active, the
+        // user (or another connector) already took the cold-start slot — abort autoConnect.
+        // (disconnectIf below similarly guards the failed-ping teardown by identity.)
+        if (_activeConnection.value != null) return
         _reconnecting.value = true
         var conn: OpencodeConnection? = null
         val ok = runCatchingCancellable {

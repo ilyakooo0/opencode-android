@@ -373,8 +373,14 @@ fun ChatScreen(
         }
     }
 
-    // Stage images shared into the app (via the system share sheet) as attachments, once.
-    LaunchedEffect(Unit) {
+    // Stage images shared into the app (via the system share sheet) as attachments.
+    // Keyed on pendingSharedMedia (not Unit) so the effect re-fires when new media arrives
+    // while this ChatScreen is already composed — which happens in two-pane mode, where the
+    // detail ChatScreen is persistent (keyed on sessionId) and a LaunchedEffect(Unit) would
+    // only fire on first composition. consumePendingSharedMedia() atomically drains the
+    // pending list (compareAndSet to empty), so re-firing on the now-empty value is a no-op.
+    val pendingSharedMedia by container.pendingSharedMedia.collectAsStateWithLifecycle()
+    LaunchedEffect(pendingSharedMedia) {
         val shared = container.consumePendingSharedMedia()
         if (shared.isNotEmpty()) stageUris(shared.map { Uri.parse(it) })
     }

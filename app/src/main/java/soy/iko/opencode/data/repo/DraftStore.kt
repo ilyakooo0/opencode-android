@@ -255,7 +255,7 @@ open class DraftStore private constructor(
         /** Key prefix distinguishing persisted follow-ups from plain drafts in the shared
          *  prefs file. The leading/trailing spaces can't collide with a real opencode session
          *  id (which are non-blank, space-free tokens like "ses_..."). */
-        const val FOLLOWUP_PREFIX = " followup "
+        const val FOLLOWUP_PREFIX = " followup "
     }
 
     /** Shut down the background flush executor. Call from AppContainer.shutdown(). */
