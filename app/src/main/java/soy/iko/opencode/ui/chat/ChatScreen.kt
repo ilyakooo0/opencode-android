@@ -119,7 +119,9 @@ import soy.iko.opencode.data.network.EventStreamClient
 import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
+import soy.iko.opencode.ui.components.CommandPalette
 import soy.iko.opencode.ui.components.ConnectionBanner
+import soy.iko.opencode.ui.components.PaletteAction
 import soy.iko.opencode.ui.components.copyToClipboard
 import soy.iko.opencode.ui.components.LocalRelativeTimeTick
 import soy.iko.opencode.ui.components.rememberRelativeTimeTick
@@ -135,6 +137,7 @@ fun ChatScreen(
     sessionId: String,
     onBack: () -> Unit,
     onOpenFile: ((String) -> Unit)? = null,
+    onOpenSession: ((String) -> Unit)? = null,
 ) {
     val vm: ChatViewModel = viewModel(key = sessionId, factory = vmFactory { ChatViewModel(container, sessionId) })
     val hasMessages by vm.hasMessages.collectAsStateWithLifecycle()
@@ -219,6 +222,30 @@ fun ChatScreen(
     var showRenameDialog by rememberSaveable { mutableStateOf(false) }
     var showDeleteDialog by rememberSaveable { mutableStateOf(false) }
     var showShellDialog by rememberSaveable { mutableStateOf(false) }
+    var showPalette by rememberSaveable { mutableStateOf(false) }
+
+    // Command-palette entries (keyboard-first: Ctrl+K). Labels resolved here so the remembered
+    // action list doesn't need a Composable context. Actions map to the same handlers the
+    // overflow menu drives, so the palette is a keyboard shortcut to them, not a parallel path.
+    val paletteModelLabel = stringResource(R.string.palette_switch_model)
+    val paletteAgentLabel = stringResource(R.string.palette_choose_agent)
+    val paletteCommandLabel = stringResource(R.string.palette_run_command)
+    val paletteSummarizeLabel = stringResource(R.string.palette_summarize)
+    val paletteRenameLabel = stringResource(R.string.rename_session_chat)
+    val paletteShellLabel = stringResource(R.string.run_shell_command)
+    val paletteActions = remember(
+        paletteModelLabel, paletteAgentLabel, paletteCommandLabel,
+        paletteSummarizeLabel, paletteRenameLabel, paletteShellLabel, hasMessages, running,
+    ) {
+        buildList {
+            add(PaletteAction("model", paletteModelLabel) { showModelPicker = true })
+            add(PaletteAction("agent", paletteAgentLabel) { showAgentPicker = true })
+            add(PaletteAction("command", paletteCommandLabel) { showCommandPicker = true })
+            if (hasMessages && !running) add(PaletteAction("summarize", paletteSummarizeLabel) { vm.summarize() })
+            if (!running) add(PaletteAction("shell", paletteShellLabel) { showShellDialog = true })
+            add(PaletteAction("rename", paletteRenameLabel) { showRenameDialog = true })
+        }
+    }
 
     // Keep the screen awake while the agent is working in *this* session. The foreground
     // service that holds process priority during a run is managed app-wide off
@@ -337,6 +364,15 @@ fun ChatScreen(
         }
     }
 
+    // Navigate to a session freshly branched from a message (branchFrom), once it's created.
+    val branchedMsg = stringResource(R.string.branch_created)
+    LaunchedEffect(onOpenSession) {
+        vm.branchEvents.collect { newId ->
+            showToast(shareContext, branchedMsg)
+            onOpenSession?.invoke(newId)
+        }
+    }
+
     // Stage images shared into the app (via the system share sheet) as attachments, once.
     LaunchedEffect(Unit) {
         val shared = container.consumePendingSharedMedia()
@@ -354,6 +390,21 @@ fun ChatScreen(
     BackHandler(enabled = running && !showModelPicker && !showAgentPicker && !showCommandPicker) { showExitConfirm = true }
 
     Scaffold(
+        // Hardware-keyboard shortcuts (tablets / DeX / Chromebooks): Ctrl+K opens the command
+        // palette; Escape closes it, or stops a run. onPreviewKeyEvent on the Scaffold root sees
+        // events before the focused text field, but only Ctrl+K / Escape are consumed so normal
+        // typing (and the composer's own Enter-to-send handling) is untouched.
+        modifier = Modifier.onPreviewKeyEvent { ev ->
+            if (ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+            when {
+                ev.isCtrlPressed && ev.key == Key.K -> { showPalette = true; true }
+                ev.key == Key.Escape && showPalette -> { showPalette = false; true }
+                ev.key == Key.Escape && running && !showStopConfirm && !showExitConfirm -> {
+                    showStopConfirm = true; true
+                }
+                else -> false
+            }
+        },
         topBar = {
             TopAppBar(
                 title = {
@@ -568,12 +619,22 @@ fun ChatScreen(
         bottomBar = {
             val queuedFollowUp by vm.queuedFollowUp.collectAsStateWithLifecycle()
             val todoPlan by vm.todoPlan.collectAsStateWithLifecycle()
+            val queuedOffline by vm.outbox.collectAsStateWithLifecycle()
+            val outboxSending by container.outboxSending.collectAsStateWithLifecycle()
             Column {
                 // Pinned above the composer so the agent's plan and progress stay visible
                 // while scrolled up mid-run; renders nothing when there's no plan.
                 TodoPlanBar(todoPlan)
                 AnimatedVisibility(visible = reverted) {
                     RevertBanner(onUndo = { vm.unrevert() })
+                }
+                AnimatedVisibility(visible = queuedOffline.isNotEmpty()) {
+                    OutboxBanner(
+                        count = queuedOffline.size,
+                        sending = outboxSending,
+                        onFlush = { vm.flushQueued() },
+                        onDiscard = { vm.discardAllQueued() },
+                    )
                 }
                 ChatInputBar(
                     value = draft,
@@ -834,6 +895,11 @@ fun ChatScreen(
                                     onEdit = { text -> vm.editMessage(message.info.id, text) },
                                     onSpeak = { text -> tts.toggle(message.info.id, text) },
                                     isSpeaking = message.info.id == speakingMessageId,
+                                    onQuote = { text ->
+                                        vm.quoteReply(text)
+                                        runCatching { inputFocusRequester.requestFocus() }
+                                    },
+                                    onBranch = { text -> vm.branchFrom(text) },
                                 )
                             }
                         }
@@ -995,6 +1061,10 @@ fun ChatScreen(
             permission = permission,
             onRespond = { response -> vm.respondPermission(permission, response) },
         )
+    }
+
+    if (showPalette) {
+        CommandPalette(actions = paletteActions, onDismiss = { showPalette = false })
     }
 }
 
@@ -1295,6 +1365,55 @@ private fun RevertBanner(onUndo: () -> Unit) {
                 )
             }
             TextButton(onClick = onUndo) { Text(stringResource(R.string.undo)) }
+        }
+    }
+}
+
+/** A banner shown while messages composed offline are queued in the outbox, with a
+ *  "Send now" nudge and a discard. Shows a spinner while the queue is flushing. */
+@Composable
+private fun OutboxBanner(
+    count: Int,
+    sending: Boolean,
+    onFlush: () -> Unit,
+    onDiscard: () -> Unit,
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        tonalElevation = 2.dp,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                if (sending) {
+                    CircularProgressIndicator(
+                        Modifier.size(16.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    )
+                    Spacer(Modifier.size(8.dp))
+                }
+                Text(
+                    if (sending) {
+                        stringResource(R.string.outbox_sending)
+                    } else {
+                        val res = if (count == 1) R.string.outbox_pending_one else R.string.outbox_pending_many
+                        stringResource(res, count)
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                )
+            }
+            if (!sending) {
+                TextButton(onClick = onFlush) { Text(stringResource(R.string.outbox_flush)) }
+                TextButton(onClick = onDiscard) {
+                    Text(stringResource(R.string.outbox_discard_all), color = MaterialTheme.colorScheme.error)
+                }
+            }
         }
     }
 }

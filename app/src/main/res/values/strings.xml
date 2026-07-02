@@ -369,4 +369,107 @@
     <string name="todo_in_progress">In progress</string>
     <string name="todo_completed">Completed</string>
     <string name="todo_cancelled">Cancelled</string>
+
+    <!-- Code blocks -->
+    <string name="code">Code</string>
+    <string name="code_wrap">Wrap lines</string>
+    <string name="code_no_wrap">Don\'t wrap lines</string>
+
+    <!-- Text & display settings -->
+    <string name="text_display">Text &amp; display</string>
+    <string name="chat_text_size">Chat text size</string>
+    <string name="chat_text_size_desc">Scale message and code text</string>
+    <string name="wrap_code_blocks">Wrap code blocks</string>
+    <string name="wrap_code_blocks_desc">Soft-wrap long lines instead of scrolling</string>
+    <string name="reset">Reset</string>
+    <string name="text_size_sample">The quick brown fox jumps over the lazy dog.</string>
+    <string name="text_scale_value">%1$d%%</string>
+
+    <!-- Message actions -->
+    <string name="message_actions">Message actions</string>
+    <string name="quote_reply">Quote reply</string>
+    <string name="branch_session">Branch new session</string>
+    <string name="branch_created">Branched to a new session</string>
+    <string name="branch_failed">Couldn\'t branch session</string>
+
+    <!-- Offline outbox -->
+    <string name="outbox_queued">Offline — message queued, will send when reconnected</string>
+    <string name="outbox_pending_one">1 message queued</string>
+    <string name="outbox_pending_many">%1$d messages queued</string>
+    <string name="outbox_sending">Sending queued messages…</string>
+    <string name="outbox_discard">Discard</string>
+    <string name="outbox_discard_all">Discard queued</string>
+    <string name="outbox_flush">Send now</string>
+
+    <!-- Usage &amp; cost dashboard -->
+    <string name="usage">Usage</string>
+    <string name="usage_title">Usage &amp; cost</string>
+    <string name="usage_total_cost">Total cost</string>
+    <string name="usage_total_tokens">Total tokens</string>
+    <string name="usage_input">Input</string>
+    <string name="usage_output">Output</string>
+    <string name="usage_reasoning">Reasoning</string>
+    <string name="usage_cache">Cache</string>
+    <string name="usage_by_model">By model</string>
+    <string name="usage_this_session">This session</string>
+    <string name="usage_all_sessions">All sessions</string>
+    <string name="usage_empty">No usage recorded yet</string>
+    <string name="usage_messages_count">%1$d assistant messages</string>
+    <string name="usage_loading">Calculating usage…</string>
+    <string name="usage_failed">Couldn\'t load usage</string>
+
+    <!-- Command palette / keyboard -->
+    <string name="command_palette">Command palette</string>
+    <string name="palette_hint">Search actions…</string>
+    <string name="palette_new_session">New session</string>
+    <string name="palette_switch_model">Switch model</string>
+    <string name="palette_choose_agent">Choose agent</string>
+    <string name="palette_run_command">Run slash command</string>
+    <string name="palette_browse_files">Browse files</string>
+    <string name="palette_search">Search conversations</string>
+    <string name="palette_settings">Settings</string>
+    <string name="palette_summarize">Summarize conversation</string>
+    <string name="palette_no_results">No matching actions</string>
+
+    <!-- Widget / tile / shortcuts -->
+    <string name="widget_description">Recent opencode sessions</string>
+    <string name="widget_title">opencode</string>
+    <string name="widget_new_session">New session</string>
+    <string name="widget_empty">No recent sessions</string>
+    <string name="widget_not_connected">Open opencode to connect</string>
+    <string name="shortcut_new_short">New</string>
+    <string name="shortcut_new_long">New session</string>
+    <string name="shortcut_resume_short">Resume</string>
+    <string name="shortcut_resume_long">Resume last session</string>
+    <string name="tile_new_session">New opencode session</string>
+
+    <!-- MCP servers -->
+    <string name="mcp_servers">MCP servers</string>
+    <string name="mcp_empty">No MCP servers configured</string>
+    <string name="mcp_failed">Couldn\'t load MCP servers</string>
+    <string name="mcp_connected">Connected</string>
+    <string name="mcp_failed_state">Failed</string>
+    <string name="mcp_disabled">Disabled</string>
+    <string name="mcp_tools_count">%1$d tools</string>
+
+    <!-- Backup &amp; restore -->
+    <string name="backup_restore">Backup &amp; restore</string>
+    <string name="export_backup">Export backup</string>
+    <string name="import_backup">Import backup</string>
+    <string name="backup_desc">Save or restore servers and settings</string>
+    <string name="backup_exported">Backup exported</string>
+    <string name="backup_imported">Backup imported — restart to apply</string>
+    <string name="backup_export_failed">Couldn\'t export backup</string>
+    <string name="backup_import_failed">Couldn\'t import backup</string>
+    <string name="backup_include_passwords">Include server passwords</string>
+    <string name="backup_include_passwords_desc">Passwords are written in plain text inside the file</string>
+
+    <!-- Per-server security -->
+    <string name="server_security">Security</string>
+    <string name="require_https">Require HTTPS</string>
+    <string name="require_https_desc">Refuse to connect over cleartext HTTP</string>
+    <string name="cert_pin">Certificate pin</string>
+    <string name="cert_pin_hint">sha256/AAAA… (optional)</string>
+    <string name="cert_pin_desc">Pin the server\'s TLS certificate (SHA-256)</string>
+    <string name="cert_pin_invalid">Pin must look like sha256/&lt;base64&gt;</string>
 </resources>

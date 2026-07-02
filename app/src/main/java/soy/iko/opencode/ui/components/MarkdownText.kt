@@ -6,7 +6,10 @@ import android.content.Context
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -14,11 +17,13 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.automirrored.filled.WrapText
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.Typography
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -40,7 +45,6 @@ import com.mikepenz.markdown.compose.components.MarkdownComponentModel
 import com.mikepenz.markdown.compose.components.markdownComponents
 import com.mikepenz.markdown.m3.Markdown
 import org.intellij.markdown.MarkdownElementTypes
-import org.intellij.markdown.ast.ASTNode
 import org.intellij.markdown.ast.getTextInNode
 import soy.iko.opencode.R
 import soy.iko.opencode.data.network.NetworkConfig
@@ -76,10 +80,33 @@ import soy.iko.opencode.data.network.NetworkConfig
 fun MarkdownText(
     markdown: String,
     modifier: Modifier = Modifier,
-    style: TextStyle = MaterialTheme.typography.bodyLarge,
+    @Suppress("UNUSED_PARAMETER") style: TextStyle = MaterialTheme.typography.bodyLarge,
     streaming: Boolean = false,
 ) {
-    val context = LocalContext.current
+    val scale = LocalChatTextScale.current
+    if (scale == 1f) {
+        MarkdownBody(markdown, modifier, streaming)
+    } else {
+        // Scale the entire markdown subtree (headings, lists, code, body) from the user's
+        // chat text-size preference by nesting a MaterialTheme with a scaled typography:
+        // the renderer derives its typography from MaterialTheme, so this reaches every
+        // element without plumbing a scale through the library. colorScheme/shapes default
+        // to the current theme's, so only sizes change. Memoized so a recomposition that
+        // doesn't change the scale doesn't rebuild the 15-role Typography.
+        val base = MaterialTheme.typography
+        val scaled = remember(scale, base) { base.scaledBy(scale) }
+        MaterialTheme(typography = scaled) {
+            MarkdownBody(markdown, modifier, streaming)
+        }
+    }
+}
+
+@Composable
+private fun MarkdownBody(
+    markdown: String,
+    modifier: Modifier = Modifier,
+    streaming: Boolean = false,
+) {
     val components = remember {
         markdownComponents(
             codeFence = { CodeWithCopy(it) },
@@ -138,44 +165,61 @@ fun MarkdownText(
 }
 
 /**
- * Renders a fenced or indented code block with a small copy button in the top-right corner.
- * Self-contained so it doesn't depend on the library's internal code-block composables.
+ * Renders a fenced or indented code block with a header toolbar: the fence's language
+ * label (when present), a wrap toggle (soft-wrap long lines vs. horizontal scroll), and a
+ * copy button. Self-contained so it doesn't depend on the library's internal code-block
+ * composables. The wrap toggle starts from the user's [LocalCodeWrap] preference but can
+ * be flipped per-block.
  */
 @Composable
 private fun CodeWithCopy(model: MarkdownComponentModel) {
     val context = LocalContext.current
     // Key on the content string + the AST node's offset range (stable ints) instead of
     // the model itself. MarkdownComponentModel is not @Immutable/@Stable (it holds an
-    // ASTNode), so remembering on it re-executes extractCode on every recomposition.
+    // ASTNode), so remembering on it re-executes extract* on every recomposition.
     val node = model.node
-    val code = remember(model.content, node.startOffset, node.endOffset) {
-        extractCode(model.content, node)
+    val isFenced = node.type == MarkdownElementTypes.CODE_FENCE
+    val raw = remember(model.content, node.startOffset, node.endOffset) {
+        node.getTextInNode(model.content).toString()
     }
+    val code = remember(raw, isFenced) { extractCodeText(raw, isFenced) }
+    val language = remember(raw, isFenced) { extractFenceLanguage(raw, isFenced) }
     val codeStyle = model.typography.code.copy(fontFamily = FontFamily.Monospace)
-    Box(
+    // Default per-block wrap from the global preference; re-seed if the preference changes
+    // while this block is composed (rememberSaveable would over-persist across blocks).
+    val defaultWrap = LocalCodeWrap.current
+    var wrap by remember(defaultWrap) { mutableStateOf(defaultWrap) }
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .clip(MaterialTheme.shapes.small)
             .background(MaterialTheme.colorScheme.surfaceVariant),
     ) {
-        Text(
-            text = code,
-            style = codeStyle,
+        Row(
             modifier = Modifier
-                .horizontalScroll(rememberScrollState())
                 .fillMaxWidth()
-                .padding(start = 12.dp, top = 12.dp, end = 40.dp, bottom = 12.dp),
-        )
-        Surface(
-            color = MaterialTheme.colorScheme.surface,
-            shape = MaterialTheme.shapes.extraSmall,
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(4.dp),
+                .padding(start = 12.dp, end = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
+            Text(
+                language ?: context.getString(R.string.code),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+            )
+            val wrapLabel = context.getString(if (wrap) R.string.code_no_wrap else R.string.code_wrap)
+            IconButton(onClick = { wrap = !wrap }, modifier = Modifier.size(36.dp)) {
+                Icon(
+                    Icons.AutoMirrored.Filled.WrapText,
+                    contentDescription = wrapLabel,
+                    modifier = Modifier.size(16.dp),
+                    tint = if (wrap) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             IconButton(
                 onClick = { copyToClipboard(context, "code", code) },
-                modifier = Modifier.size(48.dp),
+                modifier = Modifier.size(36.dp),
             ) {
                 Icon(
                     Icons.Filled.ContentCopy,
@@ -185,15 +229,38 @@ private fun CodeWithCopy(model: MarkdownComponentModel) {
                 )
             }
         }
+        // Wrap → let the Text wrap naturally (no horizontal scroll). No-wrap → horizontal
+        // scroll so long lines keep their formatting. Selectable so a portion can be copied.
+        SelectionContainer {
+            Text(
+                text = code,
+                style = codeStyle,
+                modifier = if (wrap) {
+                    Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 12.dp)
+                } else {
+                    Modifier
+                        .horizontalScroll(rememberScrollState())
+                        .fillMaxWidth()
+                        .padding(start = 12.dp, end = 12.dp, bottom = 12.dp)
+                },
+            )
+        }
     }
 }
 
 /**
- * Extract the raw code text from a markdown code node, stripping fence markers
- * (```/~~~ and the language tag) so only the code content is copied.
+ * Extract the fence language tag (e.g. "kotlin" from ```kotlin) so the code block can
+ * label itself. Returns null for indented blocks or fences with no info string. Extracted
+ * as a pure function for testability.
  */
-private fun extractCode(content: String, node: ASTNode): String =
-    extractCodeText(node.getTextInNode(content).toString(), node.type == MarkdownElementTypes.CODE_FENCE)
+internal fun extractFenceLanguage(raw: String, isFenced: Boolean): String? {
+    if (!isFenced) return null
+    val first = raw.lineSequence().firstOrNull()?.trim() ?: return null
+    val info = first.removePrefix("```").removePrefix("~~~").trim()
+    // A fence info string can carry more than the language (e.g. "```ts title=foo"); the
+    // first whitespace-delimited token is the language.
+    return info.substringBefore(' ').takeIf { it.isNotBlank() }
+}
 
 /**
  * Strip fence markers (```/~~~ and the language tag) from a raw code node text so

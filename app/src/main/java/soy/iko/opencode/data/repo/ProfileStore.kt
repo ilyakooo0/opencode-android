@@ -131,6 +131,10 @@ open class ProfileStore private constructor(
         val baseUrl: String,
         val username: String? = null,
         val lastUsed: Long = 0,
+        // Non-secret TLS options; default to prior behavior for profiles saved before these
+        // fields existed (deserialization uses these defaults for missing keys).
+        val requireHttps: Boolean = false,
+        val certPin: String? = null,
     )
 
     open val profiles: Flow<List<ServerProfile>> = appContext?.dataStore?.data?.map { prefs ->
@@ -164,6 +168,8 @@ open class ProfileStore private constructor(
             username = username,
             password = pw,
             lastUsed = lastUsed,
+            requireHttps = requireHttps,
+            certPin = certPin,
         )
     }
 
@@ -210,6 +216,8 @@ open class ProfileStore private constructor(
                 baseUrl = profile.baseUrl,
                 username = profile.username?.takeIf { it.isNotBlank() },
                 lastUsed = preservedLastUsed,
+                requireHttps = profile.requireHttps,
+                certPin = profile.certPin?.takeIf { it.isNotBlank() },
             )
             val updated = current.filterNot { it.id == profile.id } + stored
             prefs[profilesKey] = OpencodeJson.encodeToString(ListSerializer(StoredProfile.serializer()), updated)

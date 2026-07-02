@@ -32,6 +32,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -243,6 +244,7 @@ private fun ServerEditForm(
                 onImeDone = { if (canSave && !state.saving) vm.saveAndConnect(onDone) },
             )
         }
+        SecurityFields(state = state, onUpdate = vm::update)
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -359,6 +361,55 @@ private fun AuthFields(
                 color = if (ok) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
             )
         }
+    }
+}
+
+/** Optional TLS hardening for this server: force HTTPS (upgrade cleartext) and pin the
+ *  server certificate. Both are off by default so the common localhost/HTTP setup is
+ *  unaffected. */
+@Composable
+private fun SecurityFields(
+    state: ServerEditState,
+    onUpdate: (((ServerEditState) -> ServerEditState)) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+        Text(
+            stringResource(R.string.server_security),
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.primary,
+        )
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(stringResource(R.string.require_https), style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    stringResource(R.string.require_https_desc),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(
+                checked = state.requireHttps,
+                onCheckedChange = { v -> onUpdate { it.copy(requireHttps = v) } },
+            )
+        }
+        OutlinedTextField(
+            value = state.certPin,
+            onValueChange = { v -> onUpdate { it.copy(certPin = v) } },
+            label = { Text(stringResource(R.string.cert_pin)) },
+            placeholder = { Text(stringResource(R.string.cert_pin_hint)) },
+            singleLine = true,
+            isError = !state.certPinValid,
+            supportingText = {
+                Text(
+                    stringResource(if (state.certPinValid) R.string.cert_pin_desc else R.string.cert_pin_invalid),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (state.certPinValid) MaterialTheme.colorScheme.onSurfaceVariant
+                        else MaterialTheme.colorScheme.error,
+                )
+            },
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+            modifier = Modifier.fillMaxWidth().testTag("server_cert_pin"),
+        )
     }
 }
 

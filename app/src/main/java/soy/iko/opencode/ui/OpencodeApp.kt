@@ -7,6 +7,7 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -29,10 +30,14 @@ import soy.iko.opencode.ui.file.FileViewScreen
 import soy.iko.opencode.ui.server.ServerEditScreen
 import soy.iko.opencode.ui.server.ServerListScreen
 import soy.iko.opencode.ui.search.GlobalSearchScreen
+import soy.iko.opencode.ui.components.LocalChatTextScale
+import soy.iko.opencode.ui.components.LocalCodeWrap
 import soy.iko.opencode.ui.session.SessionListScreen
 import soy.iko.opencode.ui.session.TwoPaneSessionChat
 import soy.iko.opencode.ui.settings.DiagnosticsScreen
 import soy.iko.opencode.ui.settings.SettingsScreen
+import soy.iko.opencode.ui.usage.UsageScreen
+import soy.iko.opencode.ui.mcp.McpScreen
 import soy.iko.opencode.util.runCatchingCancellable
 
 @Composable
@@ -42,7 +47,12 @@ fun OpencodeApp(container: AppContainer) {
     val pendingShare by container.pendingShare.collectAsStateWithLifecycle()
     val pendingSharedMedia by container.pendingSharedMedia.collectAsStateWithLifecycle()
     val pendingOpenSession by container.pendingOpenSession.collectAsStateWithLifecycle()
+    val pendingNewSession by container.pendingNewSession.collectAsStateWithLifecycle()
     val connection by container.activeConnection.collectAsStateWithLifecycle()
+    // Chat presentation preferences, provided to the whole nav graph so the markdown/code
+    // renderers honor the user's text-size and code-wrap choices everywhere.
+    val chatTextScale by container.settingsStore.chatTextScale.collectAsStateWithLifecycle(initialValue = 1f)
+    val codeWrap by container.settingsStore.codeWrap.collectAsStateWithLifecycle(initialValue = false)
 
     // Hold a foreground priority for as long as ANY session is actively running — not just
     // while a running chat is on screen — so a run started and then backgrounded (or left
@@ -80,6 +90,24 @@ fun OpencodeApp(container: AppContainer) {
         }
     }
 
+    // "New session" from a launcher shortcut / QS tile: once connected, create a fresh
+    // session and open it. Consumed once (compareAndSet) so a recomposition can't re-create.
+    LaunchedEffect(pendingNewSession, connection) {
+        if (!pendingNewSession) return@LaunchedEffect
+        val conn = connection ?: return@LaunchedEffect
+        if (!container.consumePendingNewSession()) return@LaunchedEffect
+        val session = runCatchingCancellable { conn.repository.createSession() }.getOrNull()
+            ?: return@LaunchedEffect
+        if (!navController.popBackStack(Routes.SESSIONS, inclusive = false)) {
+            navController.navigate(Routes.SESSIONS) { launchSingleTop = true }
+        }
+        navController.navigate(Routes.chat(session.id)) { launchSingleTop = true }
+    }
+
+    CompositionLocalProvider(
+        LocalChatTextScale provides chatTextScale,
+        LocalCodeWrap provides codeWrap,
+    ) {
     // Adaptive: on wide screens (tablets / unfolded foldables) show the session list and
     // the open conversation side by side instead of a single-pane back stack.
     BoxWithConstraints {
@@ -206,6 +234,7 @@ fun OpencodeApp(container: AppContainer) {
                 sessionId = entry.arguments?.getString("sessionId").orEmpty(),
                 onBack = { navController.popBackStack() },
                 onOpenFile = { path -> navController.navigate(Routes.fileView(path)) },
+                onOpenSession = { id -> navController.navigate(Routes.chat(id)) },
             )
         }
 
@@ -251,11 +280,21 @@ fun OpencodeApp(container: AppContainer) {
                     }
                 },
                 onOpenDiagnostics = { navController.navigate(Routes.DIAGNOSTICS) },
+                onOpenUsage = { navController.navigate(Routes.USAGE) },
+                onOpenMcp = { navController.navigate(Routes.MCP) },
             )
         }
 
         composable(Routes.DIAGNOSTICS) {
             DiagnosticsScreen(onBack = { navController.popBackStack() })
+        }
+
+        composable(Routes.USAGE) {
+            UsageScreen(container = container, onBack = { navController.popBackStack() })
+        }
+
+        composable(Routes.MCP) {
+            McpScreen(container = container, onBack = { navController.popBackStack() })
         }
 
         composable(Routes.SEARCH) {
@@ -266,5 +305,6 @@ fun OpencodeApp(container: AppContainer) {
             )
         }
         }
+    }
     }
 }

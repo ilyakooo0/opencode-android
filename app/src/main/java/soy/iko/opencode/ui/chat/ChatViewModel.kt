@@ -20,6 +20,7 @@ import soy.iko.opencode.data.model.defaultOption
 import soy.iko.opencode.data.model.toOptions
 import soy.iko.opencode.data.network.EventStreamClient
 import soy.iko.opencode.data.network.NetworkConfig
+import soy.iko.opencode.data.repo.OutboxMessage
 import soy.iko.opencode.data.repo.SessionRepository
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
@@ -298,6 +299,18 @@ class ChatViewModel(
     private val _draft = MutableStateFlow(container.draftStore.get(sessionId))
     val draft: StateFlow<String> = _draft.asStateFlow()
 
+    /** Messages composed for this session while offline/disconnected, queued in the outbox and
+     *  awaiting an automatic flush on reconnect. Surfaced so the composer can show a "queued"
+     *  chip with a discard/send-now affordance. */
+    val outbox: StateFlow<List<OutboxMessage>> =
+        container.outboxStore.messages
+            .map { list -> list.filter { it.sessionId == sessionId } }
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(NetworkConfig.stateFlowSubscriptionTimeoutMs),
+                initialValue = emptyList(),
+            )
+
     /** Attachments staged for the next prompt (images/files). Persisted per-session (as their
      *  self-contained base64 data URLs) via [AttachmentDraftStore] so an interrupted compose
      *  survives process death — the source content Uris wouldn't survive, but the data URLs
@@ -320,6 +333,14 @@ class ChatViewModel(
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
     val shareLinkEvents: Flow<String> = _shareLinkEvents.receiveAsFlow()
+
+    /** One-shot events carrying the id of a session freshly branched from a message, so the
+     *  UI can navigate to it. */
+    private val _branchEvents = Channel<String>(
+        capacity = NetworkConfig.snackbarEventBufferCapacity,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+    val branchEvents: Flow<String> = _branchEvents.receiveAsFlow()
 
     init {
         // DraftStore loads SharedPreferences asynchronously; on a cold start the
@@ -634,12 +655,20 @@ class ChatViewModel(
      * follow-up, a retry) so staged attachments aren't silently re-sent with unrelated text.
      */
     private fun send(text: String, includeAttachments: Boolean): Boolean {
-        val conn = connection ?: return false
         val trimmed = text.trim()
         val attachments = if (includeAttachments) _attachments.value else emptyList()
         // An image-only prompt (attachments, no text) is valid; a blank prompt with nothing
         // attached is not.
-        if ((trimmed.isEmpty() && attachments.isEmpty()) || !_running.compareAndSet(false, true)) return false
+        if (trimmed.isEmpty() && attachments.isEmpty()) return false
+        // Offline, or no active connection: queue the prompt to the outbox (flushed on
+        // reconnect) instead of failing the send. Device-offline is caught even when a stale
+        // connection object lingers, so a phone that lost signal mid-conversation still
+        // captures the message rather than bouncing it off a dead socket.
+        val conn = connection
+        if (conn == null || !container.isOnline.value) {
+            return enqueueOffline(trimmed, attachments)
+        }
+        if (!_running.compareAndSet(false, true)) return false
         _failedDraft.value = null
         // Clear the staged attachments optimistically so the composer empties immediately;
         // restore them if the send fails (mirrors the draft handling below).
@@ -699,6 +728,82 @@ class ChatViewModel(
         }
         return true
     }
+
+    /**
+     * Queue [trimmed] (+ [attachments]) to the offline outbox, clearing the composer
+     * optimistically like a real send. AppContainer flushes the outbox automatically on
+     * reconnect. The prompt is attributed to the active (or most-recent) server profile so a
+     * reconnect to a different server doesn't misfire it. On any failure the draft/attachments
+     * are restored so nothing is lost.
+     */
+    private fun enqueueOffline(trimmed: String, attachments: List<PendingAttachment>): Boolean {
+        _failedDraft.value = null
+        if (attachments.isNotEmpty()) _attachments.value = emptyList()
+        val clearDraft = _draft.value.trim() == trimmed
+        if (clearDraft) {
+            suppressDraftPersist.set(true)
+            _draft.value = ""
+        }
+        viewModelScope.launch {
+            val profileId = connection?.profile?.id
+                ?: runCatchingCancellable { container.profileStore.profiles.first().firstOrNull()?.id }.getOrNull()
+            if (profileId == null) {
+                // No server to attribute the message to — restore the composer and report it
+                // rather than silently dropping the prompt.
+                suppressDraftPersist.set(false)
+                if (_draft.value.isBlank()) updateDraft(trimmed)
+                if (attachments.isNotEmpty() && _attachments.value.isEmpty()) _attachments.value = attachments
+                persistAttachments()
+                _errorEvents.trySend(ChatError(container.string(R.string.no_servers_to_reconnect)))
+                return@launch
+            }
+            runCatchingCancellable {
+                container.outboxStore.enqueue(
+                    OutboxMessage(
+                        id = java.util.UUID.randomUUID().toString(),
+                        profileId = profileId,
+                        sessionId = sessionId,
+                        text = trimmed,
+                        attachments = attachments.map { it.toPersisted() },
+                        model = _selectedModel.value?.ref,
+                        agent = _selectedAgent.value,
+                        createdAt = System.currentTimeMillis(),
+                    ),
+                )
+            }.onSuccess {
+                suppressDraftPersist.set(false)
+                // The staged attachments now live in the outbox item; clear their draft copy.
+                persistAttachments()
+                if (_draft.value.isBlank()) {
+                    lastPersistedDraft = ""
+                    container.draftStore.set(sessionId, "")
+                }
+                // Nudge a flush in case we're actually online with a live connection.
+                container.flushOutbox()
+                _errorEvents.trySend(ChatError(container.string(R.string.outbox_queued)))
+            }.onFailure {
+                suppressDraftPersist.set(false)
+                if (_draft.value.isBlank()) updateDraft(trimmed)
+                if (attachments.isNotEmpty() && _attachments.value.isEmpty()) _attachments.value = attachments
+                persistAttachments()
+                _errorEvents.trySend(ChatError(container.friendlyError(it)))
+            }
+        }
+        return true
+    }
+
+    /** Discard a single queued (offline) message. */
+    fun discardQueued(id: String) {
+        viewModelScope.launch { runCatchingCancellable { container.outboxStore.remove(id) } }
+    }
+
+    /** Discard every queued (offline) message for this session. */
+    fun discardAllQueued() {
+        viewModelScope.launch { runCatchingCancellable { container.outboxStore.removeForSession(sessionId) } }
+    }
+
+    /** Attempt to flush the outbox now (e.g. the user tapped "Send now"). */
+    fun flushQueued() { container.flushOutbox() }
 
     /** Re-send the last draft whose send failed, if any. */
     fun retryFailed() {
@@ -844,6 +949,40 @@ class ChatViewModel(
         _draft.value = text
     }
 
+    /** Prefill the composer with [text] as a Markdown blockquote so the user can respond to a
+     *  specific message inline. Appends to any existing draft (with a blank line) rather than
+     *  overwriting, so quoting doesn't discard text already being typed. */
+    fun quoteReply(text: String) {
+        val quoted = text.trim().lineSequence().joinToString("\n") { "> $it" }
+        if (quoted.isBlank()) return
+        val current = _draft.value
+        _draft.value = if (current.isBlank()) "$quoted\n\n" else "$current\n\n$quoted\n\n"
+    }
+
+    /** Fork the conversation by creating a brand-new session seeded with [text] as its first
+     *  prompt (using the currently-selected model/agent). Emits the new session id via
+     *  [branchEvents] so the UI can navigate to it. There's no server-side "branch" endpoint,
+     *  so this starts a fresh session from the chosen prompt rather than copying history. */
+    fun branchFrom(text: String) {
+        val conn = connection ?: return
+        val prompt = text.trim()
+        if (prompt.isEmpty()) return
+        viewModelScope.launch {
+            runCatchingCancellable {
+                val session = conn.repository.createSession(title = null)
+                conn.repository.sendPrompt(
+                    session.id,
+                    prompt,
+                    model = _selectedModel.value?.ref,
+                    agent = _selectedAgent.value,
+                )
+                session.id
+            }
+                .onSuccess { newId -> _branchEvents.trySend(newId) }
+                .onFailure { _errorEvents.trySend(ChatError(container.string(R.string.branch_failed))) }
+        }
+    }
+
     /** Undo the active revert checkpoint, restoring the hidden messages. */
     fun unrevert() {
         val conn = connection ?: return
@@ -965,6 +1104,7 @@ class ChatViewModel(
                     container.draftStore.remove(sessionId)
                     container.attachmentDraftStore.remove(sessionId)
                     container.messageCacheStore.remove(sessionId)
+                    container.outboxStore.removeForSession(sessionId)
                     _sessionDeleted.value = true
                 }
                 .onFailure { _errorEvents.trySend(ChatError(container.friendlyError(it))) }

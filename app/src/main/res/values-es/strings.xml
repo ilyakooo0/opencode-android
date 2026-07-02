@@ -367,4 +367,107 @@
     <string name="todo_in_progress">En curso</string>
     <string name="todo_completed">Completado</string>
     <string name="todo_cancelled">Cancelado</string>
+
+    <!-- Code blocks -->
+    <string name="code">Código</string>
+    <string name="code_wrap">Ajustar líneas</string>
+    <string name="code_no_wrap">No ajustar líneas</string>
+
+    <!-- Text &amp; display settings -->
+    <string name="text_display">Texto y visualización</string>
+    <string name="chat_text_size">Tamaño del texto del chat</string>
+    <string name="chat_text_size_desc">Escala el texto de mensajes y código</string>
+    <string name="wrap_code_blocks">Ajustar bloques de código</string>
+    <string name="wrap_code_blocks_desc">Ajusta las líneas largas en vez de desplazarlas</string>
+    <string name="reset">Restablecer</string>
+    <string name="text_size_sample">El veloz murciélago hindú comía feliz cardillo.</string>
+    <string name="text_scale_value">%1$d%%</string>
+
+    <!-- Message actions -->
+    <string name="message_actions">Acciones del mensaje</string>
+    <string name="quote_reply">Responder citando</string>
+    <string name="branch_session">Ramificar en sesión nueva</string>
+    <string name="branch_created">Ramificado en una sesión nueva</string>
+    <string name="branch_failed">No se pudo ramificar la sesión</string>
+
+    <!-- Offline outbox -->
+    <string name="outbox_queued">Sin conexión: mensaje en cola, se enviará al reconectar</string>
+    <string name="outbox_pending_one">1 mensaje en cola</string>
+    <string name="outbox_pending_many">%1$d mensajes en cola</string>
+    <string name="outbox_sending">Enviando mensajes en cola…</string>
+    <string name="outbox_discard">Descartar</string>
+    <string name="outbox_discard_all">Descartar la cola</string>
+    <string name="outbox_flush">Enviar ahora</string>
+
+    <!-- Usage &amp; cost dashboard -->
+    <string name="usage">Uso</string>
+    <string name="usage_title">Uso y coste</string>
+    <string name="usage_total_cost">Coste total</string>
+    <string name="usage_total_tokens">Tokens totales</string>
+    <string name="usage_input">Entrada</string>
+    <string name="usage_output">Salida</string>
+    <string name="usage_reasoning">Razonamiento</string>
+    <string name="usage_cache">Caché</string>
+    <string name="usage_by_model">Por modelo</string>
+    <string name="usage_this_session">Esta sesión</string>
+    <string name="usage_all_sessions">Todas las sesiones</string>
+    <string name="usage_empty">Aún no hay uso registrado</string>
+    <string name="usage_messages_count">%1$d mensajes del asistente</string>
+    <string name="usage_loading">Calculando uso…</string>
+    <string name="usage_failed">No se pudo cargar el uso</string>
+
+    <!-- Command palette / keyboard -->
+    <string name="command_palette">Paleta de comandos</string>
+    <string name="palette_hint">Buscar acciones…</string>
+    <string name="palette_new_session">Nueva sesión</string>
+    <string name="palette_switch_model">Cambiar modelo</string>
+    <string name="palette_choose_agent">Elegir agente</string>
+    <string name="palette_run_command">Ejecutar comando</string>
+    <string name="palette_browse_files">Explorar archivos</string>
+    <string name="palette_search">Buscar conversaciones</string>
+    <string name="palette_settings">Ajustes</string>
+    <string name="palette_summarize">Resumir conversación</string>
+    <string name="palette_no_results">No hay acciones coincidentes</string>
+
+    <!-- Widget / tile / shortcuts -->
+    <string name="widget_description">Sesiones recientes de opencode</string>
+    <string name="widget_title">opencode</string>
+    <string name="widget_new_session">Nueva sesión</string>
+    <string name="widget_empty">No hay sesiones recientes</string>
+    <string name="widget_not_connected">Abre opencode para conectar</string>
+    <string name="shortcut_new_short">Nueva</string>
+    <string name="shortcut_new_long">Nueva sesión</string>
+    <string name="shortcut_resume_short">Reanudar</string>
+    <string name="shortcut_resume_long">Reanudar última sesión</string>
+    <string name="tile_new_session">Nueva sesión de opencode</string>
+
+    <!-- MCP servers -->
+    <string name="mcp_servers">Servidores MCP</string>
+    <string name="mcp_empty">No hay servidores MCP configurados</string>
+    <string name="mcp_failed">No se pudieron cargar los servidores MCP</string>
+    <string name="mcp_connected">Conectado</string>
+    <string name="mcp_failed_state">Falló</string>
+    <string name="mcp_disabled">Desactivado</string>
+    <string name="mcp_tools_count">%1$d herramientas</string>
+
+    <!-- Backup &amp; restore -->
+    <string name="backup_restore">Copia de seguridad y restauración</string>
+    <string name="export_backup">Exportar copia</string>
+    <string name="import_backup">Importar copia</string>
+    <string name="backup_desc">Guarda o restaura servidores y ajustes</string>
+    <string name="backup_exported">Copia exportada</string>
+    <string name="backup_imported">Copia importada: reinicia para aplicar</string>
+    <string name="backup_export_failed">No se pudo exportar la copia</string>
+    <string name="backup_import_failed">No se pudo importar la copia</string>
+    <string name="backup_include_passwords">Incluir contraseñas del servidor</string>
+    <string name="backup_include_passwords_desc">Las contraseñas se escriben en texto plano en el archivo</string>
+
+    <!-- Per-server security -->
+    <string name="server_security">Seguridad</string>
+    <string name="require_https">Requerir HTTPS</string>
+    <string name="require_https_desc">Rechazar conexiones por HTTP sin cifrar</string>
+    <string name="cert_pin">Fijación de certificado</string>
+    <string name="cert_pin_hint">sha256/AAAA… (opcional)</string>
+    <string name="cert_pin_desc">Fija el certificado TLS del servidor (SHA-256)</string>
+    <string name="cert_pin_invalid">El pin debe ser sha256/&lt;base64&gt;</string>
 </resources>

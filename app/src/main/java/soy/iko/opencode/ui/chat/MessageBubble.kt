@@ -10,16 +10,24 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.CallSplit
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.FormatQuote
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.StopCircle
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -66,11 +74,53 @@ fun MessageBubble(
     onEdit: ((String) -> Unit)? = null,
     onSpeak: ((String) -> Unit)? = null,
     isSpeaking: Boolean = false,
+    onQuote: ((String) -> Unit)? = null,
+    onBranch: ((String) -> Unit)? = null,
 ) {
     when (message.info) {
-        is UserMessage -> UserBubble(message, imageContext, modifier, onOpenFile, onRevert, onEdit)
+        is UserMessage -> UserBubble(message, imageContext, modifier, onOpenFile, onRevert, onEdit, onQuote, onBranch)
         is UnknownMessage -> UnknownMessageBlock(message, imageContext, modifier, onOpenFile)
-        else -> AssistantBlock(message, isRunning, imageContext, modifier, modelLabel, onOpenFile, onRevert, onSpeak, isSpeaking)
+        else -> AssistantBlock(message, isRunning, imageContext, modifier, modelLabel, onOpenFile, onRevert, onSpeak, isSpeaking, onQuote)
+    }
+}
+
+/** Overflow menu of secondary per-message actions (quote-reply, branch-a-new-session).
+ *  Shown when at least one action is available and there's text to act on. Keeps the
+ *  inline action row (copy/edit/revert/speak) uncluttered while still surfacing the extras. */
+@Composable
+private fun MessageOverflow(
+    text: String,
+    onQuote: ((String) -> Unit)?,
+    onBranch: ((String) -> Unit)?,
+) {
+    if (onQuote == null && onBranch == null) return
+    var expanded by remember { mutableStateOf(false) }
+    val moreLabel = stringResource(R.string.message_actions)
+    androidx.compose.foundation.layout.Box {
+        IconButton(onClick = { expanded = true }) {
+            Icon(
+                Icons.Filled.MoreVert,
+                contentDescription = moreLabel,
+                modifier = Modifier.size(18.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            onQuote?.let { quote ->
+                DropdownMenuItem(
+                    leadingIcon = { Icon(Icons.Filled.FormatQuote, contentDescription = null) },
+                    text = { Text(stringResource(R.string.quote_reply)) },
+                    onClick = { expanded = false; quote(text) },
+                )
+            }
+            onBranch?.let { branch ->
+                DropdownMenuItem(
+                    leadingIcon = { Icon(Icons.Filled.CallSplit, contentDescription = null) },
+                    text = { Text(stringResource(R.string.branch_session)) },
+                    onClick = { expanded = false; branch(text) },
+                )
+            }
+        }
     }
 }
 
@@ -133,6 +183,8 @@ private fun UserBubble(
     onOpenFile: ((String) -> Unit)? = null,
     onRevert: (() -> Unit)? = null,
     onEdit: ((String) -> Unit)? = null,
+    onQuote: ((String) -> Unit)? = null,
+    onBranch: ((String) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val copyLabel = stringResource(R.string.copy)
@@ -191,6 +243,11 @@ private fun UserBubble(
                             )
                         }
                     }
+                    // Quote-reply / branch-a-new-session, tucked behind an overflow so the
+                    // inline row stays compact. Only when there's prompt text to act on.
+                    if (textToCopy != null) {
+                        MessageOverflow(text = textToCopy, onQuote = onQuote, onBranch = onBranch)
+                    }
                 }
             }
         }
@@ -208,6 +265,7 @@ private fun AssistantBlock(
     onRevert: (() -> Unit)? = null,
     onSpeak: ((String) -> Unit)? = null,
     isSpeaking: Boolean = false,
+    onQuote: ((String) -> Unit)? = null,
 ) {
     Column(
         modifier = modifier.fillMaxWidth(),
@@ -278,6 +336,7 @@ private fun AssistantBlock(
                     isSpeaking = isSpeaking,
                     onSpeak = onSpeak,
                     onRevert = onRevert,
+                    onQuote = onQuote,
                 )
             }
         } else {
@@ -294,6 +353,7 @@ private fun AssistantActions(
     isSpeaking: Boolean,
     onSpeak: ((String) -> Unit)?,
     onRevert: (() -> Unit)?,
+    onQuote: ((String) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val copyLabel = stringResource(R.string.copy)
@@ -322,6 +382,11 @@ private fun AssistantActions(
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+        }
+        // Assistant replies can be quoted into the composer (branching is offered only on
+        // user prompts, where seeding a new session with the prompt makes sense).
+        if (textToCopy != null && onQuote != null) {
+            MessageOverflow(text = textToCopy, onQuote = onQuote, onBranch = null)
         }
     }
 }

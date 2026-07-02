@@ -4,13 +4,14 @@
   <CurrentIssues>
     <ID>ComplexCondition:PartRenderer.kt$part.isImage &amp;&amp; imageContext != null &amp;&amp; (part.source != null || !part.url.isNullOrBlank())</ID>
     <ID>CyclomaticComplexMethod:AppContainer.kt$AppContainer$@OptIn(ExperimentalCoroutinesApi::class) private fun observeMessageActivity()</ID>
-    <ID>CyclomaticComplexMethod:ChatScreen.kt$@OptIn(ExperimentalMaterial3Api::class) @Composable fun ChatScreen( container: AppContainer, sessionId: String, onBack: () -&gt; Unit, onOpenFile: ((String) -&gt; Unit)? = null, )</ID>
+    <ID>CyclomaticComplexMethod:ChatScreen.kt$@OptIn(ExperimentalMaterial3Api::class) @Composable fun ChatScreen( container: AppContainer, sessionId: String, onBack: () -&gt; Unit, onOpenFile: ((String) -&gt; Unit)? = null, onOpenSession: ((String) -&gt; Unit)? = null, )</ID>
     <ID>CyclomaticComplexMethod:CodeHighlighter.kt$private fun findNumberEnd(line: String, start: Int): Int</ID>
+    <ID>CyclomaticComplexMethod:OpencodeApp.kt$@Composable fun OpencodeApp(container: AppContainer)</ID>
+    <ID>CyclomaticComplexMethod:SettingsScreen.kt$@OptIn(ExperimentalMaterial3Api::class, ExperimentalCoroutinesApi::class) @Composable fun SettingsScreen( container: AppContainer, onBack: () -&gt; Unit, onManageServers: () -&gt; Unit, onOpenDiagnostics: () -&gt; Unit, onOpenUsage: () -&gt; Unit = {}, onOpenMcp: () -&gt; Unit = {}, )</ID>
     <ID>MatchingDeclarationName:DiffView.kt$DiffLine</ID>
     <ID>MatchingDeclarationName:RemoteImage.kt$ImageLoadContext</ID>
     <ID>TooManyFunctions:AppContainer.kt$AppContainer</ID>
     <ID>TooManyFunctions:ChatViewModel.kt$ChatViewModel : ViewModel</ID>
     <ID>TooManyFunctions:OpencodeApiClient.kt$OpencodeApiClient</ID>
-    <ID>UnusedParameter:MarkdownText.kt$style: TextStyle = MaterialTheme.typography.bodyLarge</ID>
   </CurrentIssues>
 </SmellBaseline>

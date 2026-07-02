@@ -29,6 +29,7 @@ import soy.iko.opencode.data.network.OpencodeApiClient
 import soy.iko.opencode.data.repo.AttachmentDraftStore
 import soy.iko.opencode.data.repo.DraftStore
 import soy.iko.opencode.data.repo.MessageCacheStore
+import soy.iko.opencode.data.repo.OutboxStore
 import soy.iko.opencode.data.repo.PersistedAttachment
 import soy.iko.opencode.data.repo.ProfileStore
 import soy.iko.opencode.data.repo.SessionPrefsStore
@@ -382,6 +383,8 @@ class FakeAppContainer : AppContainer() {
     val fakeSessionPrefsStore = FakeSessionPrefsStore()
     val fakeAttachmentDraftStore = FakeAttachmentDraftStore()
     val fakeMessageCacheStore = FakeMessageCacheStore()
+    // In-memory outbox (no Context / disk); exercises the same reduce logic the app uses.
+    val fakeOutboxStore = object : OutboxStore() {}
     val fakeUnread = MutableStateFlow<Map<String, Int>>(emptyMap())
     private val fakeActiveConnection = MutableStateFlow<OpencodeConnection?>(null)
 
@@ -390,6 +393,7 @@ class FakeAppContainer : AppContainer() {
     override val sessionPrefsStore: SessionPrefsStore = fakeSessionPrefsStore
     override val attachmentDraftStore: AttachmentDraftStore = fakeAttachmentDraftStore
     override val messageCacheStore: MessageCacheStore = fakeMessageCacheStore
+    override val outboxStore: OutboxStore = fakeOutboxStore
     override val activeConnection: StateFlow<OpencodeConnection?> = fakeActiveConnection.asStateFlow()
     override val unread: StateFlow<Map<String, Int>> = fakeUnread.asStateFlow()
 

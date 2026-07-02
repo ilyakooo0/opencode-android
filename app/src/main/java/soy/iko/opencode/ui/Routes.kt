@@ -6,6 +6,8 @@ object Routes {
     const val SESSIONS = "sessions"
     const val SETTINGS = "settings"
     const val DIAGNOSTICS = "diagnostics"
+    const val USAGE = "usage"
+    const val MCP = "mcp"
     const val FILES = "files"
     const val SEARCH = "search"
 

@@ -37,6 +37,7 @@ class MainActivity : FragmentActivity() {
 
     private var shareIntentHandled = false
     private var openSessionHandled = false
+    private var newSessionHandled = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         val splash = installSplashScreen()
@@ -45,6 +46,7 @@ class MainActivity : FragmentActivity() {
         savedInstanceState?.let {
             shareIntentHandled = it.getBoolean(KEY_SHARE_HANDLED, false)
             openSessionHandled = it.getBoolean(KEY_OPEN_SESSION_HANDLED, false)
+            newSessionHandled = it.getBoolean(KEY_NEW_SESSION_HANDLED, false)
         }
         val container = (application as OpencodeApp).container
         handleIntent(intent)
@@ -87,6 +89,7 @@ class MainActivity : FragmentActivity() {
         setIntent(intent)
         shareIntentHandled = false
         openSessionHandled = false
+        newSessionHandled = false
         handleIntent(intent)
     }
 
@@ -109,6 +112,12 @@ class MainActivity : FragmentActivity() {
     private fun handleIntent(intent: Intent?) {
         val container = (application as OpencodeApp).container
         val action = intent?.action
+        // "New session" from a launcher shortcut or the quick-settings tile. Guarded so a
+        // process-death restore (which re-delivers the intent) doesn't spawn a second session.
+        if (action == ACTION_NEW_SESSION && !newSessionHandled) {
+            container.requestNewSession()
+            newSessionHandled = true
+        }
         if ((action == Intent.ACTION_SEND || action == Intent.ACTION_SEND_MULTIPLE) && !shareIntentHandled) {
             val type = intent.type.orEmpty()
             if (action == Intent.ACTION_SEND && type.startsWith("image/")) {
@@ -157,20 +166,25 @@ class MainActivity : FragmentActivity() {
     }
 
     companion object {
-        /** Intent extra carrying a session id to open (notifications / deep links). */
+        /** Intent extra carrying a session id to open (notifications / deep links / widget). */
         const val EXTRA_SESSION_ID = "soy.iko.opencode.extra.SESSION_ID"
+
+        /** Action for the "New session" launcher shortcut and quick-settings tile. */
+        const val ACTION_NEW_SESSION = "soy.iko.opencode.action.NEW_SESSION"
 
         /** Session ids are alphanumeric with dashes/underscores. Reject path traversal. */
         private val VALID_SESSION_ID = Regex("[A-Za-z0-9_-]+")
 
         private const val KEY_SHARE_HANDLED = "shareIntentHandled"
         private const val KEY_OPEN_SESSION_HANDLED = "openSessionHandled"
+        private const val KEY_NEW_SESSION_HANDLED = "newSessionHandled"
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         outState.putBoolean(KEY_SHARE_HANDLED, shareIntentHandled)
         outState.putBoolean(KEY_OPEN_SESSION_HANDLED, openSessionHandled)
+        outState.putBoolean(KEY_NEW_SESSION_HANDLED, newSessionHandled)
     }
 
     /** Ask for POST_NOTIFICATIONS once on Android 13+ so run/completion notifications show. */

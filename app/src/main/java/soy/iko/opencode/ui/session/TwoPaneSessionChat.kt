@@ -130,6 +130,7 @@ fun TwoPaneSessionChat(
                         sessionId = sessionId,
                         onBack = { selected = null },
                         onOpenFile = onOpenFile,
+                        onOpenSession = { id -> selected = id },
                     )
                 }
             }

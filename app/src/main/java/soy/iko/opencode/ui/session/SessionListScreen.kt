@@ -75,6 +75,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.coroutineScope
@@ -84,7 +85,11 @@ import kotlinx.coroutines.launch
 import soy.iko.opencode.data.model.ServerProfile
 import soy.iko.opencode.data.model.Session
 import soy.iko.opencode.data.network.NetworkConfig
+import soy.iko.opencode.data.repo.RecentSession
+import soy.iko.opencode.data.repo.RecentSessionsStore
 import soy.iko.opencode.di.AppContainer
+import soy.iko.opencode.platform.AppShortcuts
+import soy.iko.opencode.platform.SessionsWidgetProvider
 import soy.iko.opencode.R
 import soy.iko.opencode.ui.components.ConnectionBanner
 import soy.iko.opencode.ui.components.LocalRelativeTimeTick
@@ -138,6 +143,19 @@ fun SessionListScreen(
     var showDisconnectConfirm by rememberSaveable { mutableStateOf(false) }
     val pendingDelete = pendingDeleteId?.let { id -> state.sessions.firstOrNull { it.id == id } }
     val pendingRename = pendingRenameId?.let { id -> state.sessions.firstOrNull { it.id == id } }
+
+    // Feed the home-screen widget, launcher shortcuts, and "Resume last" from the loaded
+    // session list — the best source of session titles. Cheap, idempotent, and off the main
+    // thread (the store write dispatches to IO); the widget refresh no-ops when none is placed.
+    val platformContext = LocalContext.current.applicationContext
+    LaunchedEffect(state.sessions) {
+        val sessions = state.sessions
+        if (sessions.isEmpty()) return@LaunchedEffect
+        val recents = sessions.take(RecentSessionsStore.MAX).map { RecentSession(it.id, it.displayTitle) }
+        RecentSessionsStore.write(platformContext, recents)
+        AppShortcuts.update(platformContext, recents.firstOrNull())
+        SessionsWidgetProvider.refresh(platformContext)
+    }
 
     // Close the open dropdown on back press instead of navigating away.
     BackHandler(enabled = showServerMenu) { showServerMenu = false }

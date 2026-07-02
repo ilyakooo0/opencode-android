@@ -3,6 +3,7 @@ package soy.iko.opencode.data.repo
 import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
@@ -20,6 +21,16 @@ class SettingsStore(context: Context) {
     private val dynamicColorKey = booleanPreferencesKey("dynamic_color")
     private val sendOnEnterKey = booleanPreferencesKey("send_on_enter")
     private val appLockKey = booleanPreferencesKey("app_lock")
+    private val chatTextScaleKey = floatPreferencesKey("chat_text_scale")
+    private val codeWrapKey = booleanPreferencesKey("code_wrap")
+
+    companion object {
+        /** Bounds for the chat text-size multiplier so the UI can't be scaled into
+         *  unreadability or an unusable micro-font. 1.0 is the design default. */
+        const val MIN_CHAT_TEXT_SCALE = 0.8f
+        const val MAX_CHAT_TEXT_SCALE = 1.6f
+        const val DEFAULT_CHAT_TEXT_SCALE = 1.0f
+    }
 
     val themeMode: Flow<ThemeMode> = appContext.settingsDataStore.data.map { prefs ->
         runCatching { ThemeMode.valueOf(prefs[themeKey] ?: ThemeMode.SYSTEM.name) }
@@ -44,6 +55,21 @@ class SettingsStore(context: Context) {
         prefs[appLockKey] ?: false
     }
 
+    /** Multiplier applied to chat message (markdown) and code text so users can size the
+     *  conversation for readability independently of the system font scale. Clamped to
+     *  [[MIN_CHAT_TEXT_SCALE], [MAX_CHAT_TEXT_SCALE]] on read so a corrupt/out-of-range
+     *  stored value can never produce an unreadable UI. Defaults to 1.0 (design size). */
+    val chatTextScale: Flow<Float> = appContext.settingsDataStore.data.map { prefs ->
+        (prefs[chatTextScaleKey] ?: DEFAULT_CHAT_TEXT_SCALE)
+            .coerceIn(MIN_CHAT_TEXT_SCALE, MAX_CHAT_TEXT_SCALE)
+    }
+
+    /** When true, fenced/indented code blocks soft-wrap long lines instead of scrolling
+     *  horizontally. Defaults to false (horizontal scroll) to preserve code formatting. */
+    val codeWrap: Flow<Boolean> = appContext.settingsDataStore.data.map { prefs ->
+        prefs[codeWrapKey] ?: false
+    }
+
     suspend fun setThemeMode(mode: ThemeMode) {
         appContext.settingsDataStore.edit { it[themeKey] = mode.name }
     }
@@ -58,5 +84,15 @@ class SettingsStore(context: Context) {
 
     suspend fun setAppLock(enabled: Boolean) {
         appContext.settingsDataStore.edit { it[appLockKey] = enabled }
+    }
+
+    suspend fun setChatTextScale(scale: Float) {
+        appContext.settingsDataStore.edit {
+            it[chatTextScaleKey] = scale.coerceIn(MIN_CHAT_TEXT_SCALE, MAX_CHAT_TEXT_SCALE)
+        }
+    }
+
+    suspend fun setCodeWrap(enabled: Boolean) {
+        appContext.settingsDataStore.edit { it[codeWrapKey] = enabled }
     }
 }

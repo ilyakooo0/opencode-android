@@ -2,6 +2,8 @@ package soy.iko.opencode.ui.settings
 
 import android.content.pm.PackageManager
 import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -24,6 +26,10 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Dns
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Hub
+import androidx.compose.material.icons.filled.QueryStats
+import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
@@ -32,14 +38,19 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -60,17 +71,27 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import soy.iko.opencode.data.network.EventStreamClient
 import soy.iko.opencode.data.repo.CrashLogger
+import soy.iko.opencode.data.repo.SettingsStore
 import soy.iko.opencode.data.repo.ThemeMode
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
 import soy.iko.opencode.ui.canAuthenticateForAppLock
+import soy.iko.opencode.ui.components.showToast
 import soy.iko.opencode.ui.theme.LightPaletteSwatches
 import soy.iko.opencode.ui.theme.DarkPaletteSwatches
 import soy.iko.opencode.util.runCatchingCancellable
+import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalCoroutinesApi::class)
 @Composable
-fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onManageServers: () -> Unit, onOpenDiagnostics: () -> Unit) {
+fun SettingsScreen(
+    container: AppContainer,
+    onBack: () -> Unit,
+    onManageServers: () -> Unit,
+    onOpenDiagnostics: () -> Unit,
+    onOpenUsage: () -> Unit = {},
+    onOpenMcp: () -> Unit = {},
+) {
     val scope = rememberCoroutineScope()
     // Combine the three settings into a single nullable state so the appearance section
     // renders only after the persisted values have loaded, avoiding a brief flash of
@@ -87,6 +108,12 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onManageServers:
         ) { theme, dyn, enter, lock -> SettingsValues(theme, dyn, enter, lock) as SettingsValues? }
     }
     val settings by settingsFlow.collectAsStateWithLifecycle(initialValue = null)
+    // Text/display prefs are collected separately from [settingsFlow] (kotlinx combine
+    // tops out at 5 typed flows) and render independently — they don't need the same
+    // load-gate as the appearance block.
+    val chatTextScale by container.settingsStore.chatTextScale
+        .collectAsStateWithLifecycle(initialValue = SettingsStore.DEFAULT_CHAT_TEXT_SCALE)
+    val codeWrap by container.settingsStore.codeWrap.collectAsStateWithLifecycle(initialValue = false)
     val dynamicColorAvailable = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
     val activeProfile = container.activeConnection.collectAsStateWithLifecycle().value?.profile
     // SSE connection state so the Settings screen can show a dropped stream (the
@@ -119,6 +146,40 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onManageServers:
                 context.packageManager.getPackageInfo(context.packageName, 0).versionName
             }
         }.getOrNull() ?: unknownVersion
+    }
+
+    // Backup/restore via the Storage Access Framework. Export writes the JSON the user names;
+    // import reads a chosen file and applies it. Feedback is a toast (this screen has no snackbar).
+    var includePasswords by rememberSaveable { mutableStateOf(false) }
+    val exportedMsg = stringResource(R.string.backup_exported)
+    val exportFailedMsg = stringResource(R.string.backup_export_failed)
+    val importedMsg = stringResource(R.string.backup_imported)
+    val importFailedMsg = stringResource(R.string.backup_import_failed)
+    val exportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json"),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val ok = runCatchingCancellable {
+                val text = container.backupManager.export(includePasswords)
+                context.contentResolver.openOutputStream(uri)?.use { it.write(text.toByteArray()) }
+                    ?: error("no output stream")
+            }.isSuccess
+            showToast(context, if (ok) exportedMsg else exportFailedMsg)
+        }
+    }
+    val importLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val ok = runCatchingCancellable {
+                val text = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                    ?: error("no input stream")
+                container.backupManager.import(text)
+            }.isSuccess
+            showToast(context, if (ok) importedMsg else importFailedMsg)
+        }
     }
 
     Scaffold(
@@ -251,6 +312,41 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onManageServers:
             HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
 
             Text(
+                stringResource(R.string.text_display),
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.semantics { heading() },
+            )
+            ChatTextSizeControl(
+                scale = chatTextScale,
+                onScaleChange = { scope.launch { runCatchingCancellable { container.settingsStore.setChatTextScale(it) } } },
+            )
+            Spacer(Modifier.size(4.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .toggleable(
+                        value = codeWrap,
+                        onValueChange = { scope.launch { runCatchingCancellable { container.settingsStore.setCodeWrap(it) } } },
+                        role = Role.Switch,
+                    )
+                    .padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(stringResource(R.string.wrap_code_blocks), style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        stringResource(R.string.wrap_code_blocks_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(checked = codeWrap, onCheckedChange = null)
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
+
+            Text(
                 stringResource(R.string.connection),
                 style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.primary,
@@ -316,6 +412,70 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onManageServers:
                 Text(stringResource(R.string.manage_servers), modifier = Modifier.weight(1f).padding(start = 8.dp))
                 Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+            NavRow(
+                icon = Icons.Filled.QueryStats,
+                label = stringResource(R.string.usage_title),
+                enabled = activeProfile != null,
+                onClick = onOpenUsage,
+            )
+            NavRow(
+                icon = Icons.Filled.Hub,
+                label = stringResource(R.string.mcp_servers),
+                enabled = activeProfile != null,
+                onClick = onOpenMcp,
+            )
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
+
+            Text(
+                stringResource(R.string.backup_restore),
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.semantics { heading() },
+            )
+            Text(
+                stringResource(R.string.backup_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .toggleable(
+                        value = includePasswords,
+                        onValueChange = { includePasswords = it },
+                        role = Role.Switch,
+                    )
+                    .padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(stringResource(R.string.backup_include_passwords), style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        stringResource(R.string.backup_include_passwords_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(checked = includePasswords, onCheckedChange = null)
+            }
+            NavRow(
+                icon = Icons.Filled.Upload,
+                label = stringResource(R.string.export_backup),
+                enabled = true,
+                onClick = { runCatching { exportLauncher.launch("opencode-backup.json") } },
+            )
+            NavRow(
+                icon = Icons.Filled.Download,
+                label = stringResource(R.string.import_backup),
+                enabled = true,
+                onClick = {
+                    runCatching {
+                        importLauncher.launch(arrayOf("application/json", "text/plain", "application/octet-stream"))
+                    }
+                },
+            )
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
 
@@ -358,6 +518,83 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onManageServers:
             }
         }
     }
+}
+
+/** A clickable settings row: leading icon, label, trailing chevron, with a disabled state. */
+@Composable
+private fun NavRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .defaultMinSize(minHeight = 48.dp)
+            .clickable(enabled = enabled, role = Role.Button) { onClick() }
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            icon,
+            contentDescription = null,
+            tint = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            label,
+            modifier = Modifier.weight(1f).padding(start = 8.dp),
+            color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Icon(
+            Icons.AutoMirrored.Filled.KeyboardArrowRight,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/** Chat text-size slider with a live sample line, a percentage readout, and a Reset.
+ *  Drives [SettingsStore.chatTextScale]; persists only when the drag settles so a DataStore
+ *  write doesn't fire on every pixel of movement. */
+@Composable
+private fun ChatTextSizeControl(scale: Float, onScaleChange: (Float) -> Unit) {
+    // Local slider state so dragging stays smooth; re-seed when the persisted value changes
+    // (e.g. Reset here, or an external write) so the control stays in sync.
+    var sliderValue by remember(scale) { mutableFloatStateOf(scale) }
+    val body = MaterialTheme.typography.bodyLarge
+    Text(
+        stringResource(R.string.text_size_sample),
+        style = body.copy(fontSize = body.fontSize * sliderValue, lineHeight = body.lineHeight * sliderValue),
+        modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
+    )
+    Text(
+        stringResource(R.string.chat_text_size_desc),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Slider(
+            value = sliderValue,
+            onValueChange = { sliderValue = it },
+            onValueChangeFinished = { onScaleChange(sliderValue) },
+            valueRange = SettingsStore.MIN_CHAT_TEXT_SCALE..SettingsStore.MAX_CHAT_TEXT_SCALE,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            stringResource(R.string.text_scale_value, (sliderValue * 100).roundToInt()),
+            style = MaterialTheme.typography.labelLarge,
+            textAlign = TextAlign.End,
+            modifier = Modifier.widthIn(min = 44.dp).padding(start = 8.dp),
+        )
+    }
+    TextButton(
+        onClick = {
+            sliderValue = SettingsStore.DEFAULT_CHAT_TEXT_SCALE
+            onScaleChange(SettingsStore.DEFAULT_CHAT_TEXT_SCALE)
+        },
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp),
+    ) { Text(stringResource(R.string.reset)) }
 }
 
 @Composable

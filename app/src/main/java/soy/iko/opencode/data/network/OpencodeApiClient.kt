@@ -267,6 +267,12 @@ open class OpencodeApiClient private constructor(
         value
     }
 
+    /** The server's resolved configuration as a raw JSON object. Parsed loosely by callers
+     *  (e.g. the MCP viewer) so a schema addition on the server never breaks decoding. */
+    open suspend fun config(): kotlinx.serialization.json.JsonObject = withRetry {
+        client!!.get("config").body()
+    }
+
     open suspend fun agents(): List<Agent> = agentsMutex.withLock {
         val now = System.currentTimeMillis()
         val cached = cachedAgents

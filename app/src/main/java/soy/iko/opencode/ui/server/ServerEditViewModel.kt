@@ -25,6 +25,10 @@ data class ServerEditState(
     val baseUrl: String = "",
     val username: String = "",
     val password: String = "",
+    /** Upgrade cleartext http:// to https:// for this server. */
+    val requireHttps: Boolean = false,
+    /** Optional OkHttp certificate pin(s), "sha256/<base64>" (whitespace/comma separated). */
+    val certPin: String = "",
     val loaded: Boolean = false,
     val saving: Boolean = false,
     val error: String? = null,
@@ -42,8 +46,10 @@ data class ServerEditState(
      *  Null until a probe runs, and cleared when the base URL is edited. */
     val probeReachable: Boolean? = null,
 ) {
-    val canSave: Boolean get() = baseUrl.isNotBlank() && isValidUrl(baseUrl)
+    val canSave: Boolean get() = baseUrl.isNotBlank() && isValidUrl(baseUrl) && certPinValid
     val isNew: Boolean get() = id == null
+    /** A blank pin is fine (feature off); otherwise every entry must be a valid OkHttp pin. */
+    val certPinValid: Boolean get() = isValidCertPin(certPin)
     /** True if any field differs from its loaded value. */
     val isDirty: Boolean
         get() {
@@ -51,7 +57,9 @@ data class ServerEditState(
             return label.trim() != init.label ||
                 baseUrl.trim() != init.baseUrl ||
                 username.trim() != init.username ||
-                password.trim() != init.password
+                password.trim() != init.password ||
+                requireHttps != init.requireHttps ||
+                certPin.trim() != init.certPin
         }
 }
 
@@ -61,7 +69,18 @@ data class InitialProfile(
     val baseUrl: String,
     val username: String,
     val password: String,
+    val requireHttps: Boolean = false,
+    val certPin: String = "",
 )
+
+/** True when the certificate-pin field is empty (feature off) or every whitespace/comma
+ *  separated entry is a well-formed OkHttp "sha256/<base64>" pin. */
+fun isValidCertPin(raw: String): Boolean {
+    val entries = raw.split(Regex("[\\s,]+")).map { it.trim() }.filter { it.isNotEmpty() }
+    if (entries.isEmpty()) return true
+    val pinRegex = Regex("sha256/[A-Za-z0-9+/=]+")
+    return entries.all { it.matches(pinRegex) }
+}
 
 fun isValidUrl(url: String): Boolean = try {
     val u = java.net.URI(url.trim())
@@ -105,6 +124,8 @@ class ServerEditViewModel(
                         baseUrl = existing.baseUrl,
                         username = existing.username.orEmpty(),
                         password = existing.password.orEmpty(),
+                        requireHttps = existing.requireHttps,
+                        certPin = existing.certPin.orEmpty().trim(),
                     )
                     _state.value = ServerEditState(
                         id = existing.id,
@@ -112,6 +133,8 @@ class ServerEditViewModel(
                         baseUrl = existing.baseUrl,
                         username = existing.username.orEmpty(),
                         password = existing.password.orEmpty(),
+                        requireHttps = existing.requireHttps,
+                        certPin = existing.certPin.orEmpty(),
                         loaded = true,
                         authFieldsVisible = existing.hasAuth,
                         initial = init,
@@ -142,6 +165,8 @@ class ServerEditViewModel(
                         baseUrl = source.baseUrl,
                         username = source.username.orEmpty(),
                         password = source.password.orEmpty(),
+                        requireHttps = source.requireHttps,
+                        certPin = source.certPin.orEmpty(),
                         loaded = true,
                         authFieldsVisible = source.hasAuth,
                         // Snapshot the seeded (copy) values so an untouched duplicate isn't
@@ -152,6 +177,8 @@ class ServerEditViewModel(
                             baseUrl = source.baseUrl.trim(),
                             username = source.username.orEmpty().trim(),
                             password = source.password.orEmpty().trim(),
+                            requireHttps = source.requireHttps,
+                            certPin = source.certPin.orEmpty().trim(),
                         ),
                     )
                     return@launch
@@ -272,6 +299,8 @@ class ServerEditViewModel(
                     username = s.username.trim().takeIf { it.isNotBlank() },
                     password = s.password.trim().takeIf { it.isNotEmpty() },
                     lastUsed = existingLastUsed,
+                    requireHttps = s.requireHttps,
+                    certPin = s.certPin.trim().takeIf { it.isNotBlank() },
                 )
                 container.profileStore.save(saved)
                 if (connectAfter) {

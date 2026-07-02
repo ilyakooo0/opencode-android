@@ -14,6 +14,7 @@ import io.ktor.client.request.header
 import io.ktor.http.URLBuilder
 import io.ktor.http.takeFrom
 import io.ktor.serialization.kotlinx.json.json
+import okhttp3.CertificatePinner
 import java.util.concurrent.TimeUnit
 
 /**
@@ -23,39 +24,53 @@ import java.util.concurrent.TimeUnit
  */
 object HttpClientFactory {
 
-    fun create(profile: ServerProfile): HttpClient = HttpClient(OkHttp) {
-        expectSuccess = true
-
-        engine {
-            config {
-                // A normal read timeout for REST calls. The SSE stream overrides this
-                // to infinite inside the sse {} request block (see EventStreamClient),
-                // so the long-lived event connection is never killed mid-stream.
-                readTimeout(NetworkConfig.readTimeoutSeconds, TimeUnit.SECONDS)
-                connectTimeout(NetworkConfig.connectTimeoutSeconds, TimeUnit.SECONDS)
-                retryOnConnectionFailure(true)
-                pingInterval(NetworkConfig.pingIntervalSeconds, TimeUnit.SECONDS)
-            }
-        }
-
-        install(ContentNegotiation) {
-            json(OpencodeJson)
-        }
-
-        install(SSE)
-
-        // Request-level timeout for REST calls. The SSE stream overrides this to
-        // infinite inside the sse {} request block (see EventStreamClient) so the
-        // long-lived /event connection isn't killed after 60s. The engine's connect
-        // timeout and the SSE idle-timeout watchdog handle stuck SSE connections.
-        install(HttpTimeout) {
-            requestTimeoutMillis = NetworkConfig.restRequestTimeoutMs
-        }
-
-        val normalizedUrl = normalizeBaseUrl(profile.baseUrl)
+    fun create(profile: ServerProfile): HttpClient {
+        // Resolve per-profile TLS options up front so they're available inside the engine
+        // config: optionally upgrade a cleartext http:// URL to https:// ("Require HTTPS"),
+        // and pin the server certificate(s) for HTTPS connections.
+        val normalizedUrl = effectiveBaseUrl(profile)
         val isHttps = normalizedUrl.lowercase().startsWith("https://")
+        val pinHost = runCatching { java.net.URI(normalizedUrl).host }.getOrNull()
+        val pins = parsePins(profile.certPin)
 
-        if (profile.hasAuth) {
+        return HttpClient(OkHttp) {
+            expectSuccess = true
+
+            engine {
+                config {
+                    // A normal read timeout for REST calls. The SSE stream overrides this
+                    // to infinite inside the sse {} request block (see EventStreamClient),
+                    // so the long-lived event connection is never killed mid-stream.
+                    readTimeout(NetworkConfig.readTimeoutSeconds, TimeUnit.SECONDS)
+                    connectTimeout(NetworkConfig.connectTimeoutSeconds, TimeUnit.SECONDS)
+                    retryOnConnectionFailure(true)
+                    pingInterval(NetworkConfig.pingIntervalSeconds, TimeUnit.SECONDS)
+                    // Pin the server certificate(s) when configured and connecting over TLS.
+                    // A malformed pin throws here (surfaced as a connection failure), which is
+                    // the right fail-closed behavior for a security control the user opted into.
+                    if (pins.isNotEmpty() && pinHost != null && isHttps) {
+                        certificatePinner(
+                            CertificatePinner.Builder().apply { pins.forEach { add(pinHost, it) } }.build(),
+                        )
+                    }
+                }
+            }
+
+            install(ContentNegotiation) {
+                json(OpencodeJson)
+            }
+
+            install(SSE)
+
+            // Request-level timeout for REST calls. The SSE stream overrides this to
+            // infinite inside the sse {} request block (see EventStreamClient) so the
+            // long-lived /event connection isn't killed after 60s. The engine's connect
+            // timeout and the SSE idle-timeout watchdog handle stuck SSE connections.
+            install(HttpTimeout) {
+                requestTimeoutMillis = NetworkConfig.restRequestTimeoutMs
+            }
+
+            if (profile.hasAuth) {
             if (isHttps) {
                 install(Auth) {
                     basic {
@@ -94,7 +109,24 @@ object HttpClientFactory {
                 header("Authorization", "Basic $credentials")
             }
         }
+        }
     }
+
+    /** The base URL after applying [ServerProfile.requireHttps]: a cleartext http:// URL is
+     *  upgraded to https:// so the "Require HTTPS" choice is enforced at the transport layer. */
+    private fun effectiveBaseUrl(profile: ServerProfile): String {
+        val normalized = normalizeBaseUrl(profile.baseUrl)
+        return if (profile.requireHttps && normalized.lowercase().startsWith("http://")) {
+            "https://" + normalized.substring("http://".length)
+        } else {
+            normalized
+        }
+    }
+
+    /** Split a certificate-pin field into individual OkHttp pins. Accepts whitespace- or
+     *  comma-separated "sha256/<base64>" entries; blank entries are dropped. */
+    private fun parsePins(raw: String?): List<String> =
+        raw?.split(Regex("[\\s,]+"))?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList()
 
     /** Ensure a scheme and a single trailing slash so relative paths resolve correctly.
      *  Defaults to [https] when no scheme is given so credentials aren't accidentally

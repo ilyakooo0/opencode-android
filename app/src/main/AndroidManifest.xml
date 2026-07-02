@@ -71,6 +71,36 @@
             android:name=".notification.NotificationActionReceiver"
             android:exported="false" />
 
+        <!-- Home-screen widget listing recent sessions. -->
+        <receiver
+            android:name=".platform.SessionsWidgetProvider"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/sessions_widget_info" />
+        </receiver>
+
+        <!-- Serves the widget's session list rows. Bound by the system with BIND_REMOTEVIEWS. -->
+        <service
+            android:name=".platform.SessionsWidgetService"
+            android:permission="android.permission.BIND_REMOTEVIEWS"
+            android:exported="false" />
+
+        <!-- Quick-settings tile: start a new session. Bound by the system. -->
+        <service
+            android:name=".platform.NewSessionTileService"
+            android:icon="@drawable/ic_launcher_foreground"
+            android:label="@string/tile_new_session"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
         <!-- Serves camera-capture temp files (cache/captures) to the system camera app. -->
         <provider
             android:name="androidx.core.content.FileProvider"

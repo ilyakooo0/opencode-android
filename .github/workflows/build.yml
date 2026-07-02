@@ -5,6 +5,12 @@ on:
     branches: [master]
   pull_request:
 
+# Cancel an in-progress run when a newer commit is pushed to the same ref, so CI minutes
+# aren't spent finishing a build that's already superseded.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest

@@ -8,6 +8,7 @@ import android.net.NetworkRequest
 import android.util.Log
 import soy.iko.opencode.data.model.AssistantMessage
 import soy.iko.opencode.data.model.BusEvent
+import soy.iko.opencode.data.model.FilePromptPart
 import soy.iko.opencode.data.model.MessagePartUpdated
 import soy.iko.opencode.data.model.MessageUpdated
 import soy.iko.opencode.data.model.Permission
@@ -19,9 +20,11 @@ import soy.iko.opencode.data.model.ServerProfile
 import soy.iko.opencode.data.model.SessionError
 import soy.iko.opencode.data.model.SessionIdle
 import soy.iko.opencode.data.repo.AttachmentDraftStore
+import soy.iko.opencode.data.repo.BackupManager
 import soy.iko.opencode.data.repo.DraftStore
 import soy.iko.opencode.data.repo.ErrorKind
 import soy.iko.opencode.data.repo.MessageCacheStore
+import soy.iko.opencode.data.repo.OutboxStore
 import soy.iko.opencode.data.repo.SessionPrefsStore
 import soy.iko.opencode.data.repo.ProfileStore
 import soy.iko.opencode.data.repo.SettingsStore
@@ -44,6 +47,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.Job
@@ -90,6 +94,18 @@ open class AppContainer private constructor(
     open val attachmentDraftStore: AttachmentDraftStore by lazy { AttachmentDraftStore(appContext!!) }
     open val sessionPrefsStore: SessionPrefsStore by lazy { SessionPrefsStore(appContext!!) }
     open val messageCacheStore: MessageCacheStore by lazy { MessageCacheStore(appContext!!) }
+    open val outboxStore: OutboxStore by lazy { OutboxStore(appContext!!) }
+    open val backupManager: BackupManager by lazy { BackupManager(profileStore, settingsStore, sessionPrefsStore) }
+
+    /** True while the outbox is actively flushing queued messages to the server, so the UI
+     *  can show a "sending queued messages…" indicator. */
+    private val _outboxSending = MutableStateFlow(false)
+    open val outboxSending: StateFlow<Boolean> = _outboxSending.asStateFlow()
+
+    /** Bumped to nudge an immediate outbox flush (after enqueue, or a manual "Send now"),
+     *  independent of connection/online changes. */
+    private val _outboxFlushTrigger = MutableStateFlow(0)
+    open fun flushOutbox() { _outboxFlushTrigger.update { it + 1 } }
 
     private val _activeConnection = MutableStateFlow<OpencodeConnection?>(null)
     open val activeConnection: StateFlow<OpencodeConnection?> = _activeConnection.asStateFlow()
@@ -127,6 +143,15 @@ open class AppContainer private constructor(
         if (current.isEmpty()) return emptyList()
         return if (_pendingSharedMedia.compareAndSet(current, emptyList())) current else emptyList()
     }
+
+    /**
+     * Set from an external "New session" trigger (launcher shortcut / QS tile). The nav host
+     * consumes it once connected, creating a fresh session and opening it.
+     */
+    private val _pendingNewSession = MutableStateFlow(false)
+    open val pendingNewSession: StateFlow<Boolean> = _pendingNewSession.asStateFlow()
+    open fun requestNewSession() { _pendingNewSession.value = true }
+    open fun consumePendingNewSession(): Boolean = _pendingNewSession.compareAndSet(true, false)
 
     /**
      * A session id to open from an external trigger (a notification tap or a deep link).
@@ -241,7 +266,59 @@ open class AppContainer private constructor(
         if (!skipInit) {
             NotificationChannels.create(appContext!!)
             observeMessageActivity()
+            appScope.launch { runCatchingCancellable { outboxStore.load() } }
+            observeOutbox()
             appScope.launch { autoConnect() }
+        }
+    }
+
+    /**
+     * Flush the offline outbox whenever there's an active connection and the device is
+     * online (and on any manual [flushOutbox] nudge). Queued messages are only sent to the
+     * server they were composed for (matched by profile id), so a reconnect to a different
+     * server never misfires them against a session id that doesn't exist there. Uses a plain
+     * `collect` (not collectLatest) so an in-flight send is never cancelled mid-flight — a
+     * cancelled+retried POST could double-send since each attempt carries a fresh idempotency
+     * key.
+     */
+    private fun observeOutbox() {
+        appScope.launch {
+            combine(activeConnection, isOnline, _outboxFlushTrigger) { conn, online, _ -> conn to online }
+                .collect { (conn, online) ->
+                    if (conn == null || !online) return@collect
+                    flushOutboxNow(conn)
+                }
+        }
+    }
+
+    private suspend fun flushOutboxNow(conn: OpencodeConnection) {
+        val pending = outboxStore.messages.value
+            .filter { it.profileId == conn.profile.id }
+            .sortedBy { it.createdAt }
+        if (pending.isEmpty()) return
+        _outboxSending.value = true
+        try {
+            for (msg in pending) {
+                val sent = runCatchingCancellable {
+                    conn.repository.sendPrompt(
+                        msg.sessionId,
+                        msg.text,
+                        attachments = msg.attachments.map {
+                            FilePromptPart(mime = it.mime, url = it.url, filename = it.filename)
+                        },
+                        model = msg.model,
+                        agent = msg.agent,
+                    )
+                }.onFailure {
+                    Log.w("AppContainer", "Outbox flush failed for ${msg.sessionId}: ${safeExceptionSummary(it)}")
+                }.isSuccess
+                // Stop on the first failure — the connection likely dropped again; the
+                // remaining messages stay queued and retry on the next trigger, preserving
+                // send order.
+                if (sent) outboxStore.remove(msg.id) else break
+            }
+        } finally {
+            _outboxSending.value = false
         }
     }
 
@@ -654,6 +731,7 @@ open class AppContainer private constructor(
                         attachmentDraftStore.remove(id)
                         sessionPrefsStore.forget(id)
                         messageCacheStore.remove(id)
+                        outboxStore.removeForSession(id)
                         onDeleted()
                     }
                     .onFailure { onError(it) }
