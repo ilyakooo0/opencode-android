@@ -372,9 +372,9 @@ class FakeAttachmentDraftStore : AttachmentDraftStore() {
 class FakeMessageCacheStore : MessageCacheStore() {
     private val store = mutableMapOf<String, List<MessageWithParts>>()
 
-    override suspend fun load(sessionId: String): List<MessageWithParts> = store[sessionId].orEmpty()
+    override suspend fun load(profileId: String, sessionId: String): List<MessageWithParts> = store[sessionId].orEmpty()
 
-    override suspend fun save(sessionId: String, messages: List<MessageWithParts>) {
+    override suspend fun save(profileId: String, sessionId: String, messages: List<MessageWithParts>) {
         if (messages.isEmpty()) store.remove(sessionId) else store[sessionId] = messages
     }
 
@@ -448,12 +448,18 @@ class FakeAppContainer : AppContainer() {
         fakeActiveConnection.value = null
     }
 
-    override suspend fun probeServer(baseUrl: String): ProbeResult {
+    override suspend fun probeServer(baseUrl: String, requireHttps: Boolean, certPin: String?): ProbeResult {
         probeCalls = probeCalls + baseUrl
         return probeResult ?: ProbeResult.Reachable
     }
 
-    override suspend fun probeWithCredentials(baseUrl: String, username: String, password: String): Boolean {
+    override suspend fun probeWithCredentials(
+        baseUrl: String,
+        username: String,
+        password: String,
+        requireHttps: Boolean,
+        certPin: String?,
+    ): Boolean {
         probeWithCredentialsCalls = probeWithCredentialsCalls + Triple(baseUrl, username, password)
         return probeWithCredentialsResult ?: true
     }

@@ -246,7 +246,13 @@ open class EventStreamClient(
                     // message carries the request URL and may include auth or paths.
                     Log.w("EventStream", "SSE non-retryable 4xx, awaiting explicit reconnect: ${safeExceptionSummary(e)}")
                     _state.value = ConnectionState.Failed
-                    if (!isActive) break
+                    if (!isActive) {
+                        // Final teardown (last subscriber left) while a 4xx surfaced: end in
+                        // Disconnected like every other loop-exit path. Failed must stay
+                        // observable only while the flow is live/retrying, not after teardown.
+                        _state.value = ConnectionState.Disconnected
+                        break
+                    }
                     // Don't complete the flow: a subscriber may fix the profile and call
                     // triggerReconnect(). Suspend until an explicit reconnect signal
                     // arrives (no backoff delay), then re-attempt the connection. This receive

@@ -919,13 +919,18 @@ open class AppContainer private constructor(
      * The probe client is always closed afterwards so no resources linger. This does not
      * touch the active connection or the profile store.
      */
-    open suspend fun probeServer(baseUrl: String): ProbeResult {
+    open suspend fun probeServer(baseUrl: String, requireHttps: Boolean, certPin: String?): ProbeResult {
         return probeWithProfile(ServerProfile(
             id = "probe",
             label = "",
             baseUrl = baseUrl.trim(),
             username = null,
             password = null,
+            // Probe the same effective URL save()/connect() will use: HttpClientFactory upgrades
+            // http->https and installs the cert pinner when these are set, so a probe without them
+            // would validate a plain-http endpoint the real connection never talks to.
+            requireHttps = requireHttps,
+            certPin = certPin,
         ))
     }
 
@@ -935,13 +940,22 @@ open class AppContainer private constructor(
      * on other failures (unreachable, timeout) so the caller can surface a friendly
      * message. Mirrors [probeServer]'s short-lived-client pattern.
      */
-    open suspend fun probeWithCredentials(baseUrl: String, username: String, password: String): Boolean {
+    open suspend fun probeWithCredentials(
+        baseUrl: String,
+        username: String,
+        password: String,
+        requireHttps: Boolean,
+        certPin: String?,
+    ): Boolean {
         val probeProfile = ServerProfile(
             id = "probe-auth",
             label = "",
             baseUrl = baseUrl.trim(),
             username = username.trim().takeIf { it.isNotBlank() },
             password = password.trim().takeIf { it.isNotEmpty() },
+            // Match the effective URL/pinning save()/connect() will use (see probeServer).
+            requireHttps = requireHttps,
+            certPin = certPin,
         )
         val client = HttpClientFactory.create(probeProfile)
         return try {

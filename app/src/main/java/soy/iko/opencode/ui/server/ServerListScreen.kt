@@ -158,14 +158,18 @@ fun ServerListScreen(
             }
         },
     ) { padding ->
-        Column(modifier = Modifier.fillMaxSize()) {
+        // Consume the top inset on the Column so the reconnecting indicator (its first child)
+        // renders just below the TopAppBar instead of at y=0 under it. The children below then
+        // drop their own top padding (folding the bottom inset into the list's contentPadding)
+        // so the list isn't double-padded at the top.
+        Column(modifier = Modifier.fillMaxSize().padding(top = padding.calculateTopPadding())) {
             if (reconnecting && profiles.isNotEmpty()) {
                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
             }
             if (profiles.isEmpty()) {
                 EmptyServers(
                     onAdd = onAddProfile,
-                    modifier = Modifier.fillMaxSize().padding(padding),
+                    modifier = Modifier.fillMaxSize(),
                 )
             } else {
                 PullToRefreshBox(
@@ -174,9 +178,10 @@ fun ServerListScreen(
                     modifier = Modifier.fillMaxSize(),
                 ) {
                     LazyColumn(
-                        modifier = Modifier.fillMaxSize().padding(padding),
+                        modifier = Modifier.fillMaxSize(),
                         contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                            start = 16.dp, end = 16.dp, top = 16.dp, bottom = 96.dp,
+                            start = 16.dp, end = 16.dp, top = 16.dp,
+                            bottom = 96.dp + padding.calculateBottomPadding(),
                         ),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {

@@ -20,6 +20,7 @@ import soy.iko.opencode.data.network.OpencodeApiClient
 import soy.iko.opencode.util.runCatchingCancellable
 import soy.iko.opencode.util.safeExceptionSummary
 import android.util.Log
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
@@ -46,6 +47,9 @@ open class SessionRepository(
     // Optional on-disk cache so a conversation renders instantly on open and stays readable
     // offline. Null in tests (and any path that doesn't wire it), where caching is skipped.
     private val messageCache: MessageCacheStore? = null,
+    // Profile the cache is namespaced under, so two servers with a colliding session id don't
+    // share a cache file. Empty in tests / when no cache is wired.
+    private val profileId: String = "",
 ) {
     open suspend fun listSessions() = api.listSessions()
     open suspend fun createSession(title: String? = null, directory: String? = null) =
@@ -78,6 +82,58 @@ open class SessionRepository(
      * streaming tokens (each publishing a fresh snapshot) never back-pressures the
      * event reducer — a slow collector simply sees the most recent snapshot.
      */
+    /** Per-subscription helper that persists reduced snapshots to [messageCache], throttled so a
+     *  fast token stream doesn't hammer the disk, plus a NonCancellable teardown flush. Extracted
+     *  from [observeMessages] so this cache-write branching lives in its own methods. [scope] is
+     *  the channelFlow scope, so scheduled saves are torn down with the flow — the teardown flush
+     *  re-persists a trailing write the cancellation dropped. */
+    private inner class CacheWriter(private val scope: CoroutineScope, private val sessionId: String) {
+        private var lastWrite = 0L
+        private var pending: Job? = null
+        // Most recent snapshot handed to [schedule], and the most recent one whose on-disk write
+        // completed. `saved` is assigned from inside the launched save *after* it returns, so a
+        // save cancelled mid-IO by teardown is NOT marked saved and [flushOnTeardown] re-persists
+        // it. Written from the save coroutines, read from the collector/teardown; the only race is
+        // a stale read causing one redundant, idempotent re-save (atomic temp+rename makes a
+        // duplicate write of identical data harmless) — never data loss.
+        private var latest: List<MessageWithParts>? = null
+        private var saved: List<MessageWithParts>? = null
+
+        fun schedule(snapshot: List<MessageWithParts>) {
+            val cache = messageCache ?: return
+            if (snapshot.isEmpty()) return
+            latest = snapshot
+            val now = System.currentTimeMillis()
+            pending?.cancel()
+            // Immediate write once the throttle window has elapsed; otherwise a trailing-edge
+            // write so a burst that ends inside the window (a run's final tokens right after a
+            // write) still persists its last snapshot. A newer snapshot cancels and replaces a
+            // pending trailing write, so continuous streaming coalesces to one write per window.
+            val delayMs = if (now - lastWrite >= NetworkConfig.messageCacheWriteThrottleMs) {
+                lastWrite = now
+                0L
+            } else {
+                NetworkConfig.messageCacheWriteThrottleMs
+            }
+            pending = scope.launch {
+                if (delayMs > 0) delay(delayMs)
+                cache.save(profileId, sessionId, snapshot)
+                saved = snapshot
+            }
+        }
+
+        suspend fun flushOnTeardown() {
+            // Scheduled saves are children of [scope], so teardown cancels a pending trailing
+            // write before its delay elapses — a run's final tokens would never reach disk. Flush
+            // the latest un-saved snapshot under NonCancellable so it survives the cancellation.
+            val cache = messageCache ?: return
+            val pendingSnapshot = latest ?: return
+            if (pendingSnapshot !== saved) {
+                withContext(NonCancellable) { cache.save(profileId, sessionId, pendingSnapshot) }
+            }
+        }
+    }
+
     open fun observeMessages(sessionId: String): Flow<List<MessageWithParts>> = channelFlow {
         val store = MessageStore()
         val lock = Mutex()
@@ -118,12 +174,12 @@ open class SessionRepository(
         // reconnect re-seed that somehow raced ahead isn't clobbered; the initial REST seed
         // (also generation 0) then overrides this with authoritative data when it succeeds.
         messageCache?.let { cache ->
-            val cached = cache.load(sessionId)
+            val cached = cache.load(profileId, sessionId)
             if (cached.isNotEmpty()) {
                 val changed = lock.withLock {
                     if (seedGeneration == 0) {
                         cacheSeededIds = cached.mapTo(mutableSetOf()) { it.info.id }
-                        store.seed(cached)
+                        store.seed(cached, clearPivot = false)
                     } else false
                 }
                 if (changed) publish()
@@ -212,18 +268,10 @@ open class SessionRepository(
         // outside the lock so a slow downstream collector can't stall the drain. This
         // loop also keeps the flow alive until the collector cancels; the launched jobs
         // above are children of this scope and are torn down with it.
-        var lastCacheWrite = 0L
-        var pendingCacheSave: Job? = null
-        // Most recent published snapshot, and the most recent one whose on-disk write has
-        // actually completed. The teardown flush in the finally below persists a pending
-        // trailing snapshot exactly once. savedSnapshot is assigned from inside the launched
-        // saves *after* messageCache.save() returns, so a save cancelled mid-IO by teardown is
-        // NOT marked saved and the finally re-persists it under NonCancellable. It's written
-        // from the save coroutines and read from the collector/finally; the only possible race
-        // is a stale read causing one redundant, idempotent re-save (atomic temp-file+rename
-        // makes a duplicate write of identical data harmless) — never data loss.
-        var latestSnapshot: List<MessageWithParts>? = null
-        var savedSnapshot: List<MessageWithParts>? = null
+        // Per-subscription cache writer: throttled snapshot persistence + a NonCancellable
+        // teardown flush. `this` is the channelFlow scope, so its scheduled saves are torn down
+        // with the flow (the teardown flush re-persists a cancelled trailing write).
+        val cacheWriter = CacheWriter(this, sessionId)
         // Guarantee at least one emission even when nothing seeds the store: with no on-disk
         // cache, a failing initial REST load (swallowed above), and a quiet SSE stream, none of
         // the seed paths publish, so the flow would emit nothing at all. The sole collector
@@ -236,46 +284,13 @@ open class SessionRepository(
             dirty.consumeAsFlow().collect {
                 val snapshot = lock.withLock { store.snapshot() }
                 send(snapshot)
-                // Persist the snapshot to the on-disk cache, throttled so a fast token stream
-                // doesn't hammer the disk — the cache only needs to be "recent enough" for an
-                // instant/offline first paint; the network corrects it on the next open.
-                if (messageCache != null && snapshot.isNotEmpty()) {
-                    latestSnapshot = snapshot
-                    val now = System.currentTimeMillis()
-                    pendingCacheSave?.cancel()
-                    if (now - lastCacheWrite >= NetworkConfig.messageCacheWriteThrottleMs) {
-                        lastCacheWrite = now
-                        pendingCacheSave = launch {
-                            messageCache.save(sessionId, snapshot)
-                            savedSnapshot = snapshot
-                        }
-                    } else {
-                        // Trailing-edge write: a burst that ends inside the throttle window (a run's
-                        // final tokens right after a write) would otherwise never persist its last
-                        // snapshot, so an offline reopen would show the conversation missing its tail.
-                        // Write the latest snapshot once the window elapses; a newer snapshot cancels
-                        // and replaces this, so continuous streaming still coalesces to one write/window.
-                        pendingCacheSave = launch {
-                            delay(NetworkConfig.messageCacheWriteThrottleMs)
-                            messageCache.save(sessionId, snapshot)
-                            savedSnapshot = snapshot
-                        }
-                    }
-                }
+                // Persist to the on-disk cache, throttled so a fast token stream doesn't hammer
+                // the disk — the cache only needs to be "recent enough" for an instant/offline
+                // first paint; the network corrects it on the next open.
+                cacheWriter.schedule(snapshot)
             }
         } finally {
-            // FIX: both cache-saves above run as children of this inner flow scope, so when
-            // ChatViewModel's flatMapLatest switches (an SSE reconnect changing activeConnection)
-            // or onCleared cancels this flow, a pending trailing save is torn down before its delay
-            // elapses — a run's final tokens then never reach the on-disk cache. Flush the latest
-            // un-persisted snapshot here under NonCancellable so it survives the cancellation.
-            // savedSnapshot tracks the snapshot an immediate write already handled, so the common
-            // case (nothing pending) writes nothing extra — at most one write per teardown, never
-            // one per emission.
-            val pending = latestSnapshot
-            if (messageCache != null && pending != null && pending !== savedSnapshot) {
-                withContext(NonCancellable) { messageCache.save(sessionId, pending) }
-            }
+            cacheWriter.flushOnTeardown()
         }
         // Run the whole reducer pipeline — event reduction, list rebuilds, and the O(N)
         // snapshot copy — on Dispatchers.Default rather than the collector's context. The
@@ -380,7 +395,7 @@ internal class MessageStore {
 
     fun snapshot(): List<MessageWithParts> = messages.values.map { it.view() }
 
-    fun seed(initial: List<MessageWithParts>, prune: Boolean = false): Boolean {
+    fun seed(initial: List<MessageWithParts>, prune: Boolean = false, clearPivot: Boolean = true): Boolean {
         var changed = false
         // On re-seed (after SSE reconnect), remove messages that are no longer in the
         // server snapshot (e.g. deleted during the disconnection gap). This keeps the
@@ -439,9 +454,14 @@ internal class MessageStore {
         if (reorderByTime()) changed = true
         if (evictOldMessages()) changed = true
         // Reset the pivot: everything just merged is now the baseline, so only parts/info
-        // that stream in *after* this seed can outrank the next reconnect's snapshot.
-        streamedSincePivot.clear()
-        messageInfoUpdatedSincePivot.clear()
+        // that stream in *after* this seed can outrank the next reconnect's snapshot. The
+        // on-disk cache seed passes clearPivot = false: it runs *before* the authoritative
+        // initial REST seed, so clearing here would strip pivot protection from SSE parts/info
+        // that streamed in since subscribe, letting that REST seed regress them.
+        if (clearPivot) {
+            streamedSincePivot.clear()
+            messageInfoUpdatedSincePivot.clear()
+        }
         return changed
     }
 

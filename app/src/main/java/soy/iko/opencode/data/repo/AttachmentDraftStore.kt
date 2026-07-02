@@ -98,15 +98,17 @@ open class AttachmentDraftStore private constructor(
 
     /** Remove staged attachments for a session (call on session deletion). */
     open suspend fun remove(sessionId: String) {
+        // Keep the per-session Mutex in [locks] rather than evicting it: remove() is not always
+        // terminal — a concurrent teardown save() for the same session must serialize against this
+        // delete under the *same* Mutex instance. Evicting here would let that save() acquire a
+        // fresh Mutex, so the two operations no longer serialize (resurrecting an orphan file, or
+        // theoretically tearing a write). The bounded per-session map growth matches the other
+        // lock-keyed stores.
         lockFor(sessionId).withLock {
             withContext(Dispatchers.IO) {
                 runCatchingCancellable { fileFor(sessionId)?.delete() }
                 Unit
             }
         }
-        // Drop the per-session lock now the session is gone so the map doesn't accumulate one
-        // entry per deleted session over the install's lifetime. Safe because remove() is the
-        // terminal operation for a session id.
-        locks.remove(sessionId)
     }
 }

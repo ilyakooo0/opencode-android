@@ -85,8 +85,18 @@ val FilePart.isImage: Boolean
 private fun decodeDataUri(data: String): ByteArray? {
     val comma = data.indexOf(',')
     if (comma < 0) return null
+    val header = data.substring(0, comma)
     val payload = data.substring(comma + 1)
-    return runCatching { Base64.decode(payload, Base64.DEFAULT) }.getOrNull()
+    // Only ";base64" payloads are Base64; a plain/percent-encoded data URI (e.g.
+    // "data:image/svg+xml,%3Csvg…") must be percent-decoded to bytes instead of Base64-decoded,
+    // which would throw and render the broken-image icon.
+    return runCatching {
+        if (header.contains(";base64", ignoreCase = true)) {
+            Base64.decode(payload, Base64.DEFAULT)
+        } else {
+            android.net.Uri.decode(payload).toByteArray()
+        }
+    }.getOrNull()
 }
 
 /**

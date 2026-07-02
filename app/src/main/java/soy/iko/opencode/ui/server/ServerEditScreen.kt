@@ -87,9 +87,11 @@ fun ServerEditScreen(
     }
 
     // Intercept the system back gesture when the form has unsaved changes so the user
-    // gets a chance to keep editing instead of losing their work silently.
-    BackHandler(enabled = state.isDirty && !state.saving && !showDiscardConfirm) {
-        showDiscardConfirm = true
+    // gets a chance to keep editing instead of losing their work silently. Stays enabled
+    // (as a no-op) while a save is in flight so the gesture can't propagate to the NavHost
+    // and cancel the save's viewModelScope coroutine mid-write — matching safeExit()'s guard.
+    BackHandler(enabled = (state.isDirty || state.saving) && !showDiscardConfirm) {
+        if (!state.saving) showDiscardConfirm = true
     }
 
     Scaffold(

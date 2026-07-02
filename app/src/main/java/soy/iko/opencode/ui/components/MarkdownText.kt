@@ -256,7 +256,9 @@ private fun CodeWithCopy(model: MarkdownComponentModel) {
 internal fun extractFenceLanguage(raw: String, isFenced: Boolean): String? {
     if (!isFenced) return null
     val first = raw.lineSequence().firstOrNull()?.trim() ?: return null
-    val info = first.removePrefix("```").removePrefix("~~~").trim()
+    // Strip the whole opening fence run (CommonMark allows 3+ backticks or tildes, e.g.
+    // ````kotlin), not a fixed 3 chars, before reading the info string.
+    val info = first.trimStart('`', '~').trim()
     // A fence info string can carry more than the language (e.g. "```ts title=foo"); the
     // first whitespace-delimited token is the language.
     return info.substringBefore(' ').takeIf { it.isNotBlank() }

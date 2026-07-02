@@ -31,7 +31,7 @@ open class OpencodeConnection(
 
     open val api: OpencodeApiClient by lazy { OpencodeApiClient(client) }
     open val events: EventStreamClient by lazy { EventStreamClient(client, scope) }
-    open val repository: SessionRepository by lazy { SessionRepository(api, events, messageCache) }
+    open val repository: SessionRepository by lazy { SessionRepository(api, events, messageCache, profile.id) }
 
     /**
      * Cancel the coroutine scope and wait for in-flight work (including the SSE reader)

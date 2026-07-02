@@ -40,8 +40,13 @@ open class MessageCacheStore private constructor(
         appContext?.let { File(it.filesDir, "message_cache").apply { mkdirs() } }
     }
 
-    private fun fileFor(sessionId: String): File? =
-        dir?.let { File(it, idRegex.replace(sessionId, "_") + ".json") }
+    /** Per-profile subdirectory: two servers with a colliding session id must not share a cache
+     *  file, so entries are namespaced by profile id under [dir]. */
+    private fun profileDir(profileId: String): File? =
+        dir?.let { File(it, idRegex.replace(profileId, "_")).apply { mkdirs() } }
+
+    private fun fileFor(profileId: String, sessionId: String): File? =
+        profileDir(profileId)?.let { File(it, idRegex.replace(sessionId, "_") + ".json") }
 
     /** Per-session write lock so concurrent save/remove/load on the same file (e.g. both
      *  panes of two-pane mode saving the same session, or a save racing a delete's remove)
@@ -50,19 +55,19 @@ open class MessageCacheStore private constructor(
     private val locks = java.util.concurrent.ConcurrentHashMap<String, Mutex>()
     private fun lockFor(sessionId: String): Mutex = locks.getOrPut(sessionId) { Mutex() }
 
-    /** Load the cached messages for [sessionId], or empty if none / unreadable. */
-    open suspend fun load(sessionId: String): List<MessageWithParts> = lockFor(sessionId).withLock {
+    /** Load the cached messages for [sessionId] under [profileId], or empty if none / unreadable. */
+    open suspend fun load(profileId: String, sessionId: String): List<MessageWithParts> = lockFor(sessionId).withLock {
         withContext(Dispatchers.IO) {
-            val file = fileFor(sessionId)?.takeIf { it.exists() } ?: return@withContext emptyList()
+            val file = fileFor(profileId, sessionId)?.takeIf { it.exists() } ?: return@withContext emptyList()
             runCatchingCancellable { OpencodeJson.decodeFromString(serializer, file.readText()) }
                 .getOrDefault(emptyList())
         }
     }
 
-    /** Persist [messages] for [sessionId] (an empty list deletes the file). */
-    open suspend fun save(sessionId: String, messages: List<MessageWithParts>): Unit = lockFor(sessionId).withLock {
+    /** Persist [messages] for [sessionId] under [profileId] (an empty list deletes the file). */
+    open suspend fun save(profileId: String, sessionId: String, messages: List<MessageWithParts>): Unit = lockFor(sessionId).withLock {
         withContext(Dispatchers.IO) {
-            val file = fileFor(sessionId) ?: return@withContext
+            val file = fileFor(profileId, sessionId) ?: return@withContext
             runCatchingCancellable {
                 if (messages.isEmpty()) file.delete()
                 else {
@@ -82,17 +87,24 @@ open class MessageCacheStore private constructor(
         }
     }
 
-    /** Remove a session's cached messages (call on deletion). */
+    /** Remove a session's cached messages (call on deletion). Clears the entry in every profile
+     *  namespace: session ids are unique per server and deletion is terminal, so the caller
+     *  needn't know which profile owned it. The per-session lock is intentionally NOT evicted —
+     *  a concurrent teardown save() for this id must serialize against the same [Mutex] instance,
+     *  and the map is bounded by the number of distinct sessions touched. */
     open suspend fun remove(sessionId: String) {
         lockFor(sessionId).withLock {
             withContext(Dispatchers.IO) {
-                runCatchingCancellable { fileFor(sessionId)?.delete() }
+                runCatchingCancellable {
+                    val name = idRegex.replace(sessionId, "_") + ".json"
+                    dir?.listFiles()?.forEach { entry ->
+                        if (entry.isDirectory) File(entry, name).delete()
+                    }
+                    // Back-compat: pre-namespacing caches were written flat under [dir].
+                    dir?.let { File(it, name).delete() }
+                }
                 Unit
             }
         }
-        // Drop the per-session lock now the session is gone so the map doesn't accumulate one
-        // entry per deleted session over the install's lifetime. Safe because remove() is the
-        // terminal operation for a session id (no further save/load is expected after deletion).
-        locks.remove(sessionId)
     }
 }

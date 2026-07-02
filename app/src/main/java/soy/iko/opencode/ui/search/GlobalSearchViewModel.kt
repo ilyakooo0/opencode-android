@@ -99,7 +99,11 @@ class GlobalSearchViewModel(private val container: AppContainer) : ViewModel() {
         // Preserve the session order (already recency-sorted by the server) in the results.
         val ordered = toSearch.mapNotNull { hits[it.id] }
         _state.update {
-            it.copy(searching = false, results = ordered, hasSearched = true, truncated = truncated)
+            // If the query changed while this search was finishing (e.g. the user cleared the
+            // box), cancelling this job can race the final write; only publish results for the
+            // query still displayed so a stale result set can't land after the reset.
+            if (it.query.trim() != query) it
+            else it.copy(searching = false, results = ordered, hasSearched = true, truncated = truncated)
         }
     }
 

@@ -102,16 +102,24 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
     val timeTick = rememberRelativeTimeTick()
 
     // Report-delete undo events, shown via a single collectLatest collector rather than a
-    // per-confirm launch. A serialized showSnackbar would queue each report's undo behind
-    // the previous one's full window, so under rapid deletes a later report's delete timer
-    // (started at confirm time) fires before its snackbar is ever shown — a dead Undo
-    // button. collectLatest cancels the current snackbar and shows the newest immediately,
-    // keeping each Undo window aligned with its own timer. Mirrors ServerListScreen.
+    // per-confirm launch: a serialized showSnackbar would queue each report's undo behind the
+    // previous one's full window. collectLatest instead cancels the current snackbar and shows
+    // the newest immediately. Because the actual delete is scheduled at confirm time (on the
+    // CrashLogger's own scope, so it still commits if the user navigates away during the undo
+    // window), a superseded report would otherwise be deleted with no reachable Undo; the
+    // collector withdraws the previously-pending report's scheduled delete when a newer one
+    // supersedes its snackbar, keeping every delete undoable for its whole window.
     val reportDeleteEvents = remember {
         MutableSharedFlow<String>(extraBufferCapacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
     }
     LaunchedEffect(Unit) {
+        var pending: String? = null
         reportDeleteEvents.collectLatest { name ->
+            // Only reached when a newer delete arrives (collectLatest supersedes the prior
+            // snackbar) — navigating away tears down this collector without a new emission, so
+            // that report's delete still commits. cancelScheduledDelete no-ops if it already fired.
+            pending?.let { logger.cancelScheduledDelete(it) }
+            pending = name
             coroutineScope {
                 val dismisser = launch {
                     delay(NetworkConfig.undoReportDeleteDelayMs)
@@ -125,6 +133,7 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                 dismisser.cancel()
                 if (result == SnackbarResult.ActionPerformed) {
                     logger.cancelScheduledDelete(name)
+                    pending = null
                 }
             }
         }

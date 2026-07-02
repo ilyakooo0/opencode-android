@@ -3,6 +3,7 @@ package soy.iko.opencode.data.network
 import android.content.Context
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
+import android.os.Build
 import android.util.Log
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
@@ -16,9 +17,10 @@ import kotlin.coroutines.resume
 /** A server discovered on the local network via mDNS/DNS-SD. */
 data class DiscoveredServer(val name: String, val host: String, val port: Int) {
     val baseUrl: String get() {
-        // FIX 14: IPv6 literals (e.g. "fe80::1%wlan0", "2001:db8::1") must be bracketed and
-        // have their scope id dropped to form a valid URL authority; IPv4 hosts are unchanged.
-        val formattedHost = if (host.contains(':')) "[${host.substringBefore('%')}]" else host
+        // IPv6 literals (e.g. "fe80::1%wlan0", "2001:db8::1") must be bracketed to form a valid
+        // URL authority; a link-local zone id's '%' is percent-encoded to "%25" per RFC 6874
+        // ("[fe80::1%25wlan0]") rather than dropped, so link-local hosts stay dialable. IPv4 unchanged.
+        val formattedHost = if (host.contains(':')) "[${host.replace("%", "%25")}]" else host
         return "http://$formattedHost:$port"
     }
 }
@@ -54,6 +56,11 @@ open class NsdDiscovery(context: Context?) {
 
         val resolver = launch {
             for (info in toResolve) {
+                // Key the map by the name from discovery: onServiceFound/onServiceLost both use
+                // NsdServiceInfo.serviceName, whereas the resolved info's serviceName can differ —
+                // keying by the resolved name would leave a departed server that onServiceLost
+                // can't match, so it would linger in the emitted list forever.
+                val discoveredName = info.serviceName.orEmpty()
                 // NsdManager.resolveService occasionally never invokes its listener. Without a
                 // timeout, one stuck resolve would hang this single serialized resolver forever,
                 // so every later-discovered service queued behind it is never processed and the
@@ -65,7 +72,7 @@ open class NsdDiscovery(context: Context?) {
                 if (!name.startsWith("opencode", ignoreCase = true)) continue
                 @Suppress("DEPRECATION")
                 val host = resolved.host?.hostAddress ?: continue
-                found[name] = DiscoveredServer(name = name, host = host, port = resolved.port)
+                found[discoveredName] = DiscoveredServer(name = name, host = host, port = resolved.port)
                 trySend(found.values.sortedBy { it.name })
             }
         }
@@ -99,16 +106,54 @@ open class NsdDiscovery(context: Context?) {
 
     private suspend fun resolveService(nsd: NsdManager, info: NsdServiceInfo): NsdServiceInfo? =
         suspendCancellableCoroutine { cont ->
-            val listener = object : NsdManager.ResolveListener {
-                override fun onResolveFailed(serviceInfo: NsdServiceInfo?, errorCode: Int) {
-                    if (cont.isActive) cont.resume(null)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                // API 34 deprecated the one-shot resolveService (which has no cancel API and
+                // whose listener leaks on timeout, wedging the platform's serialized slot so the
+                // next resolve fails with ALREADY_ACTIVE) in favour of a persistent callback that
+                // can be detached. A timed-out (cancelled) resolve unregisters its callback in
+                // invokeOnCancellation, and a settled one unregisters itself, so nothing lingers.
+                val settled = java.util.concurrent.atomic.AtomicBoolean(false)
+                lateinit var callback: NsdManager.ServiceInfoCallback
+                callback = object : NsdManager.ServiceInfoCallback {
+                    override fun onServiceInfoCallbackRegistrationFailed(errorCode: Int) {
+                        if (settled.compareAndSet(false, true) && cont.isActive) cont.resume(null)
+                    }
+                    override fun onServiceUpdated(serviceInfo: NsdServiceInfo) {
+                        if (settled.compareAndSet(false, true)) {
+                            runCatching { nsd.unregisterServiceInfoCallback(callback) }
+                            if (cont.isActive) cont.resume(serviceInfo)
+                        }
+                    }
+                    override fun onServiceLost() {
+                        if (settled.compareAndSet(false, true)) {
+                            runCatching { nsd.unregisterServiceInfoCallback(callback) }
+                            if (cont.isActive) cont.resume(null)
+                        }
+                    }
+                    override fun onServiceInfoCallbackUnregistered() {}
                 }
-                override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
-                    if (cont.isActive) cont.resume(serviceInfo)
+                cont.invokeOnCancellation {
+                    if (settled.compareAndSet(false, true)) {
+                        runCatching { nsd.unregisterServiceInfoCallback(callback) }
+                    }
                 }
+                runCatching { nsd.registerServiceInfoCallback(info, { it.run() }, callback) }
+                    .onFailure { if (settled.compareAndSet(false, true) && cont.isActive) cont.resume(null) }
+            } else {
+                // Pre-34: the deprecated one-shot resolveService has no cancel API, so a stuck
+                // resolve abandoned by RESOLVE_TIMEOUT_MS can still wedge the platform's single
+                // serialized slot; this is a platform limitation we can only bound, not clear.
+                val listener = object : NsdManager.ResolveListener {
+                    override fun onResolveFailed(serviceInfo: NsdServiceInfo?, errorCode: Int) {
+                        if (cont.isActive) cont.resume(null)
+                    }
+                    override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
+                        if (cont.isActive) cont.resume(serviceInfo)
+                    }
+                }
+                runCatching { @Suppress("DEPRECATION") nsd.resolveService(info, listener) }
+                    .onFailure { if (cont.isActive) cont.resume(null) }
             }
-            runCatching { @Suppress("DEPRECATION") nsd.resolveService(info, listener) }
-                .onFailure { if (cont.isActive) cont.resume(null) }
         }
 
     private companion object {

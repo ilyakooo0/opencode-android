@@ -19,6 +19,7 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -101,6 +102,18 @@ fun NewSessionDialog(
         )
     }
     var customText by rememberSaveable { mutableStateOf("") }
+
+    // The initializer above may have run while options were still loading (serverDefault
+    // null), pinning choice to DirChoice.Known(preselect). Once the real serverDefault
+    // arrives, knownDirs filters that path out (it has its own row), so no DirectoryRow
+    // matches a Known(serverDefault) choice and every radio shows unselected. Collapse it
+    // into ServerDefault so the selected radio always tracks a visible row.
+    LaunchedEffect(options.serverDefault) {
+        val current = choice
+        if (current is DirChoice.Known && current.path == options.serverDefault) {
+            choice = DirChoice.ServerDefault
+        }
+    }
 
     val resolved: String? = when (val c = choice) {
         is DirChoice.ServerDefault -> null

@@ -1482,7 +1482,10 @@ private fun RenameSessionChatDialog(
     onDismiss: () -> Unit,
     onConfirm: (String) -> Unit,
 ) {
-    var title by rememberSaveable(initialTitle) { mutableStateOf(initialTitle) }
+    // Seed the field once (no key input) so a later external title change — e.g. opencode
+    // auto-generating a session title after the first prompt, arriving via SessionUpdated —
+    // doesn't re-initialize the box and discard the user's in-progress edit.
+    var title by rememberSaveable { mutableStateOf(initialTitle) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.rename_session_chat)) },

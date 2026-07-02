@@ -5,10 +5,7 @@ import android.content.ContextWrapper
 import android.os.Build
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -25,6 +22,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -53,6 +51,20 @@ private val lockAuthenticators: Int
 /** Whether device authentication is currently possible, so Settings can gate the toggle. */
 fun canAuthenticateForAppLock(context: Context): Boolean =
     BiometricManager.from(context).canAuthenticate(lockAuthenticators) == BiometricManager.BIOMETRIC_SUCCESS
+
+/**
+ * Whether app-lock auth is *permanently* impossible on this device (no hardware, nothing
+ * enrolled, or a pending security update). Only these states may fail the gate open. A transient
+ * error (sensor busy / temporarily unavailable) must NOT fail open — that would unlock the app on
+ * a momentary glitch — so the gate stays locked and lets the user retry.
+ */
+private fun appLockPermanentlyUnavailable(context: Context): Boolean =
+    when (BiometricManager.from(context).canAuthenticate(lockAuthenticators)) {
+        BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED,
+        BiometricManager.BIOMETRIC_ERROR_NO_HARDWARE,
+        BiometricManager.BIOMETRIC_ERROR_SECURITY_UPDATE_REQUIRED -> true
+        else -> false
+    }
 
 /** Unwrap a [FragmentActivity] from a (possibly wrapped) Compose [Context]. */
 private fun Context.findFragmentActivity(): FragmentActivity? {
@@ -83,10 +95,11 @@ fun AppLockGate(enabled: Boolean, content: @Composable () -> Unit) {
         content()
         return
     }
-    // Fail open if device authentication is no longer possible (e.g. the user enabled app-lock
-    // while a credential was enrolled and later removed their PIN/biometric): authenticate()
+    // Fail open only if device authentication is *permanently* impossible (e.g. the user enabled
+    // app-lock while a credential was enrolled and later removed their PIN/biometric): authenticate()
     // would otherwise always hit onAuthenticationError and strand the user on a permanent lockout.
-    if (!canAuthenticateForAppLock(context)) {
+    // A transient authenticator error keeps the lock up (the user retries) rather than unlocking.
+    if (appLockPermanentlyUnavailable(context)) {
         content()
         return
     }
@@ -146,7 +159,13 @@ fun AppLockGate(enabled: Boolean, content: @Composable () -> Unit) {
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_STOP -> unlocked = false
+                Lifecycle.Event.ON_STOP -> {
+                    unlocked = false
+                    // The system dismisses an in-flight prompt on background and posts its
+                    // onAuthenticationError asynchronously; clear the flag now so ON_START re-prompts
+                    // instead of no-opping on a stale authInFlight and stranding the manual button.
+                    authInFlight = false
+                }
                 Lifecycle.Event.ON_START -> if (!unlocked) authenticate()
                 else -> {}
             }
@@ -155,43 +174,47 @@ fun AppLockGate(enabled: Boolean, content: @Composable () -> Unit) {
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        content()
-        if (!unlocked) {
-            // Opaque overlay covering the content. The no-op clickable swallows touches so
-            // the hidden UI beneath can't be interacted with while locked.
-            val interaction = remember { MutableInteractionSource() }
-            Surface(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .clickable(interactionSource = interaction, indication = null) {},
-                color = MaterialTheme.colorScheme.background,
+    // Compose content ONLY while unlocked. Drawing the lock as an overlay *over* a still-composed
+    // content() cannot cover a Dialog / ModalBottomSheet / DropdownMenu / Popup: those render in
+    // separate windows z-ordered above the Activity content, so an open permission dialog or picker
+    // sheet would stay visible and interactive above the lock — an authentication bypass. Not
+    // composing content while locked removes those sub-windows entirely. The SaveableStateHolder
+    // preserves navigation/scroll/input state across the re-lock so unlocking returns the user where
+    // they were, replacing the previous "keep composed underneath" approach.
+    val stateHolder = rememberSaveableStateHolder()
+    if (unlocked) {
+        stateHolder.SaveableStateProvider(APP_LOCK_CONTENT_KEY) { content() }
+    } else {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = MaterialTheme.colorScheme.background,
+        ) {
+            Column(
+                modifier = Modifier.fillMaxSize().padding(32.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
             ) {
-                Column(
-                    modifier = Modifier.fillMaxSize().padding(32.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center,
+                Icon(
+                    Icons.Filled.Lock,
+                    contentDescription = null,
+                    modifier = Modifier.size(48.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    stringResource(R.string.app_locked),
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(top = 16.dp),
+                )
+                Button(
+                    onClick = { authenticate() },
+                    enabled = !authInFlight,
+                    modifier = Modifier.padding(top = 24.dp),
                 ) {
-                    Icon(
-                        Icons.Filled.Lock,
-                        contentDescription = null,
-                        modifier = Modifier.size(48.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Text(
-                        stringResource(R.string.app_locked),
-                        style = MaterialTheme.typography.titleMedium,
-                        modifier = Modifier.padding(top = 16.dp),
-                    )
-                    Button(
-                        onClick = { authenticate() },
-                        enabled = !authInFlight,
-                        modifier = Modifier.padding(top = 24.dp),
-                    ) {
-                        Text(stringResource(R.string.app_unlock))
-                    }
+                    Text(stringResource(R.string.app_unlock))
                 }
             }
         }
     }
 }
+
+private const val APP_LOCK_CONTENT_KEY = "app_lock_content"

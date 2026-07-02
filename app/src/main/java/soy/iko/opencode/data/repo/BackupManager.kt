@@ -114,7 +114,10 @@ class BackupManager(
             )
         }
         data.settings?.let { settings ->
-            runCatching { settingsStore.setThemeMode(ThemeMode.valueOf(settings.themeMode)) }
+            // Parse the enum defensively (a bad name from an edited backup shouldn't abort the
+            // import) WITHOUT wrapping the suspend setThemeMode call — wrapping it would swallow
+            // a CancellationException and break structured concurrency.
+            ThemeMode.entries.find { it.name == settings.themeMode }?.let { settingsStore.setThemeMode(it) }
             settingsStore.setDynamicColor(settings.dynamicColor)
             settingsStore.setSendOnEnter(settings.sendOnEnter)
             settingsStore.setAppLock(settings.appLock)

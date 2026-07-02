@@ -226,8 +226,10 @@ class ServerEditViewModel(
         // FIX 11: remember which URL we probed so a stale result is dropped if the
         // user edited the base URL away while the probe was in flight.
         val probedUrl = s.baseUrl.trim()
+        val probedRequireHttps = s.requireHttps
+        val probedCertPin = s.certPin.trim().takeIf { it.isNotBlank() }
         viewModelScope.launch {
-            val result = runCatchingCancellable { container.probeServer(probedUrl) }
+            val result = runCatchingCancellable { container.probeServer(probedUrl, probedRequireHttps, probedCertPin) }
             result.onSuccess { pr ->
                 _state.update {
                     // Stale result (URL edited away mid-probe): drop the reachability verdict but
@@ -280,8 +282,12 @@ class ServerEditViewModel(
         val probedUrl = s.baseUrl.trim()
         val probedUser = s.username.trim()
         val probedPass = s.password.trim()
+        val probedRequireHttps = s.requireHttps
+        val probedCertPin = s.certPin.trim().takeIf { it.isNotBlank() }
         viewModelScope.launch {
-            val result = runCatchingCancellable { container.probeWithCredentials(probedUrl, probedUser, probedPass) }
+            val result = runCatchingCancellable {
+                container.probeWithCredentials(probedUrl, probedUser, probedPass, probedRequireHttps, probedCertPin)
+            }
             result.onSuccess { ok ->
                 _state.update {
                     // Stale result: clear the spinner but drop the verdict (see probe()).

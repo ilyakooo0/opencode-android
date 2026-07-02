@@ -101,6 +101,23 @@ fun TwoPaneSessionChat(
         }
     }
 
+    // The hasAppeared latch above can't survive process death (plain remember), so a
+    // `selected` restored across process death whose session was deleted server-side while
+    // dead never "appears" and is kept forever — the detail pane then renders ChatScreen for
+    // a nonexistent session (permanent load error). Once the first list load completes
+    // successfully without the restored target, clear it. Guarded to run once (non-saveable
+    // flag, so it re-arms after process death) and only on a successful, completed load — not
+    // during the initial load, and not for a freshly-created session whose refresh keeps
+    // `loading` false while its row is still pending.
+    var initialSelectionValidated by remember { mutableStateOf(false) }
+    LaunchedEffect(sessionListState.loading, sessionListState.error, sessionListState.sessions) {
+        if (initialSelectionValidated) return@LaunchedEffect
+        if (sessionListState.loading || sessionListState.error != null) return@LaunchedEffect
+        initialSelectionValidated = true
+        val target = selected ?: return@LaunchedEffect
+        if (sessionListState.sessions.none { it.id == target }) selected = null
+    }
+
     // Inject a pending share into the currently selected session's draft (if any).
     // Unlike single-pane mode where the session list is navigated to specifically for
     // the share, in two-pane mode the list is always visible — so we inject into the

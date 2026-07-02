@@ -53,6 +53,7 @@ import kotlinx.coroutines.flow.retryWhen
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -241,6 +242,11 @@ class ChatViewModel(
      *  further idle to clear it — a stuck spinner + foreground service. Cleared on reconnect so
      *  genuine reconnect-recovery re-lighting (its actual purpose) still works. */
     @Volatile private var runEndedByIdle = false
+
+    /** The in-flight REST title resolution for the current connection. Launched from — and
+     *  cancelled by — the per-connection reset block so it can't observe or restore a previous
+     *  server's stale title. */
+    private var sessionTitleJob: Job? = null
 
     /** True while an abort REST call is in flight, so the Stop button can show a
      *  spinner and prevent double-taps from firing a second abort. */
@@ -557,6 +563,7 @@ class ChatViewModel(
                     _running.value = false
                     _aborting.value = false
                     clearPermissions()
+                    sessionTitleJob?.cancel()
                     return@collectLatest
                 }
                 _running.value = false
@@ -572,6 +579,24 @@ class ChatViewModel(
                 // restore path — would drop a legitimately queued/recovered follow-up.
                 _selectedAgent.value = null
                 _sessionTitle.value = null
+                // Resolve the app-bar title via REST for THIS connection. Launched from the same
+                // block that just nulled _sessionTitle (and cancelled the previous fetch) so it can
+                // never observe or restore the previous server's stale title — the old separate
+                // collector could, racing that reset. The assignment is guarded on a still-null
+                // title so a fresher SSE SessionUpdated (from the event collector below) wins.
+                sessionTitleJob?.cancel()
+                sessionTitleJob = viewModelScope.launch {
+                    runCatchingCancellable { conn.repository.listSessions() }
+                        .getOrNull()
+                        ?.firstOrNull { it.id == sessionId }
+                        ?.let { session ->
+                            if (_sessionTitle.value == null) {
+                                _sessionTitle.value = session.displayTitle
+                                _reverted.value = session.isReverted
+                                _shareUrl.value = session.share?.url?.takeIf { it.isNotBlank() }
+                            }
+                        }
+                }
                 try {
                     conn.events.events.collect { event ->
                         if (SessionRepository.isIdle(event, sessionId)) {
@@ -601,7 +626,9 @@ class ChatViewModel(
                         // Restore the run indicator if a live streaming event arrives while it's
                         // cleared — e.g. an SSE reconnect mid-run reset _running to false, but the
                         // agent is still working. Don't revive it once the user has hit Stop.
-                        if (SessionRepository.isRunActivity(event, sessionId) && !_aborting.value && !_running.value && !runEndedByIdle) {
+                        val relightRunIndicator = SessionRepository.isRunActivity(event, sessionId) &&
+                            !_aborting.value && !_running.value && !runEndedByIdle
+                        if (relightRunIndicator) {
                             _running.value = true
                         }
                         when (event) {
@@ -671,24 +698,6 @@ class ChatViewModel(
             onNull = { _commands.value = emptyList() },
             reloadTrigger = _commandsReload,
         )
-        // Resolve the human-readable session title for the app bar (non-fatal).
-        // Skips the REST call when the SSE event collector already delivered the title
-        // (SessionUpdated fires shortly after connect), avoiding a redundant full
-        // session-list download.
-        viewModelScope.launch {
-            container.activeConnection.collectLatest { conn ->
-                if (conn == null) return@collectLatest
-                if (_sessionTitle.value != null) return@collectLatest
-                runCatchingCancellable { conn.repository.listSessions() }
-                    .getOrNull()
-                    ?.firstOrNull { it.id == sessionId }
-                    ?.let { session ->
-                        _sessionTitle.value = session.displayTitle
-                        _reverted.value = session.isReverted
-                        _shareUrl.value = session.share?.url?.takeIf { it.isNotBlank() }
-                    }
-            }
-        }
         // If the SSE stream drops mid-run, the run indicator would spin forever;
         // reset it so the UI doesn't look stuck while the banner shows "Reconnecting…".
         viewModelScope.launch {
@@ -952,6 +961,9 @@ class ChatViewModel(
             _errorEvents.trySend(ChatError(container.string(R.string.command_busy)))
             return
         }
+        // A new run is starting: reopen the re-light gate (as send() does) so a mid-run SSE
+        // reconnect keeps the working indicator lit instead of leaving it stuck off.
+        runEndedByIdle = false
         viewModelScope.launch {
             runCatchingCancellable {
                 conn.repository.runCommand(sessionId, command.name, agent = command.agent)
@@ -1034,7 +1046,7 @@ class ChatViewModel(
      *  Overwrites the current draft — this is an explicit edit action on that message. */
     fun editMessage(messageId: String, text: String) {
         revertTo(messageId)
-        _draft.value = text
+        _draft.value = text.take(NetworkConfig.maxDraftLengthChars)
     }
 
     /** Prefill the composer with [text] as a Markdown blockquote so the user can respond to a
@@ -1044,7 +1056,10 @@ class ChatViewModel(
         val quoted = text.trim().lineSequence().joinToString("\n") { "> $it" }
         if (quoted.isBlank()) return
         val current = _draft.value
-        _draft.value = if (current.isBlank()) "$quoted\n\n" else "$current\n\n$quoted\n\n"
+        val combined = if (current.isBlank()) "$quoted\n\n" else "$current\n\n$quoted\n\n"
+        // Cap like the composer's typed/pasted/dictated input so quoting onto a near-full draft
+        // can't push it past the limit (negative remaining counter + an over-cap prompt sent).
+        _draft.value = combined.take(NetworkConfig.maxDraftLengthChars)
     }
 
     /** Fork the conversation by creating a brand-new session seeded with [text] as its first
@@ -1118,6 +1133,9 @@ class ChatViewModel(
             _errorEvents.trySend(ChatError(container.string(R.string.command_busy)))
             return
         }
+        // A new run is starting: reopen the re-light gate (as send() does) so a mid-run SSE
+        // reconnect keeps the working indicator lit instead of leaving it stuck off.
+        runEndedByIdle = false
         viewModelScope.launch {
             runCatchingCancellable { conn.api.summarize(sessionId, model) }
                 .onFailure {
@@ -1134,6 +1152,9 @@ class ChatViewModel(
             _errorEvents.trySend(ChatError(container.string(R.string.command_busy)))
             return
         }
+        // A new run is starting: reopen the re-light gate (as send() does) so a mid-run SSE
+        // reconnect keeps the working indicator lit instead of leaving it stuck off.
+        runEndedByIdle = false
         viewModelScope.launch {
             runCatchingCancellable { conn.api.initSession(sessionId) }
                 .onFailure {
@@ -1157,6 +1178,9 @@ class ChatViewModel(
             _errorEvents.trySend(ChatError(container.string(R.string.command_busy)))
             return
         }
+        // A new run is starting: reopen the re-light gate (as send() does) so a mid-run SSE
+        // reconnect keeps the working indicator lit instead of leaving it stuck off.
+        runEndedByIdle = false
         viewModelScope.launch {
             runCatchingCancellable { conn.api.shell(sessionId, cmd, agent, _selectedModel.value?.ref) }
                 .onFailure {
