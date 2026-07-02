@@ -189,7 +189,7 @@ fun DiffView(diff: String, modifier: Modifier = Modifier) {
                 onClick = { expanded = true },
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp),
             ) {
-                Text(stringResource(R.string.show_more))
+                Text(stringResource(R.string.show_more_lines, lines.size - COLLAPSED_DIFF_LINES))
             }
         }
         Spacer(Modifier.height(10.dp))

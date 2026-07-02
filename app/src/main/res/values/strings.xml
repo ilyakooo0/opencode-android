@@ -138,6 +138,7 @@
     <string name="thoughts">Thoughts</string>
     <string name="show_more">Show more</string>
     <string name="show_less">Show less</string>
+    <string name="show_more_lines">Show %1$d more lines</string>
     <string name="tool_completed">Completed</string>
     <string name="tool_error">Error</string>
     <string name="tool_running">Running</string>
@@ -270,4 +271,7 @@
     <string name="session_deleted_chat">Session deleted</string>
     <string name="today">Today</string>
     <string name="yesterday">Yesterday</string>
+
+    <!-- Search -->
+    <string name="clear_search">Clear search</string>
 </resources>

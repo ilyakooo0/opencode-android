@@ -19,6 +19,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
@@ -105,6 +106,13 @@ fun FileBrowserScreen(
                 modifier = Modifier.fillMaxWidth().padding(12.dp).testTag("file_search"),
                 label = { Text(stringResource(R.string.search_files)) },
                 leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                trailingIcon = if (state.query.isNotEmpty()) {
+                    {
+                        IconButton(onClick = { vm.setQuery("") }) {
+                            Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.clear_search))
+                        }
+                    }
+                } else null,
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 keyboardActions = KeyboardActions(onSearch = { keyboardController?.hide() }),

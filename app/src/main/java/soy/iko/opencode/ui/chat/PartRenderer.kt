@@ -293,6 +293,13 @@ private fun ToolCallView(part: ToolPart, modifier: Modifier) {
                 onToggleExpand = if (detail.length > COLLAPSED_LIMIT) {
                     { expanded = !expanded }
                 } else null,
+                // How many lines are hidden while collapsed, so the expand affordance can
+                // tell the user the scale of what's truncated instead of a bare "Show more".
+                // `collapsed` is a prefix of `detail`, so its line count never exceeds it;
+                // 0 (a single long line cut mid-way) falls back to the generic label.
+                moreLines = if (detail.length > COLLAPSED_LIMIT) {
+                    detail.lines().size - collapsed.lines().size
+                } else 0,
                 expandedState = expandedState,
                 collapsedState = collapsedState,
                 onCopy = { copyToClipboard(context, "output", detail) },
@@ -315,6 +322,7 @@ private fun CollapsibleDetail(
     keySuffix: String,
     expanded: Boolean = false,
     onToggleExpand: (() -> Unit)? = null,
+    moreLines: Int = 0,
     expandedState: String = "",
     collapsedState: String = "",
     onCopy: (() -> Unit)? = null,
@@ -370,7 +378,11 @@ private fun CollapsibleDetail(
                     modifier = Modifier.size(16.dp),
                 )
                 Text(
-                    if (expanded) stringResource(R.string.show_less) else stringResource(R.string.show_more),
+                    when {
+                        expanded -> stringResource(R.string.show_less)
+                        moreLines > 0 -> stringResource(R.string.show_more_lines, moreLines)
+                        else -> stringResource(R.string.show_more)
+                    },
                     style = MaterialTheme.typography.labelSmall,
                     modifier = Modifier.padding(start = 4.dp),
                 )
