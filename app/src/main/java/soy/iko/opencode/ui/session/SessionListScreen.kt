@@ -111,6 +111,7 @@ fun SessionListScreen(
     val connectionState by vm.connectionState.collectAsStateWithLifecycle()
     val unread by vm.unread.collectAsStateWithLifecycle()
     val creating by vm.creating.collectAsStateWithLifecycle()
+    val directoryOptions by vm.directoryOptions.collectAsStateWithLifecycle()
     val anyRunActive by container.anyRunActive.collectAsStateWithLifecycle()
     val activeConnection by container.activeConnection.collectAsStateWithLifecycle()
     val isOnline by container.isOnline.collectAsStateWithLifecycle()
@@ -124,6 +125,12 @@ fun SessionListScreen(
     val timeTick = rememberRelativeTimeTick()
     var showServerMenu by rememberSaveable { mutableStateOf(false) }
     var showSortMenu by rememberSaveable { mutableStateOf(false) }
+    var showNewSessionDialog by rememberSaveable { mutableStateOf(false) }
+    // Open the new-session directory picker, kicking off a fetch of the server's known
+    // directories so they're ready by the time the user looks at the list.
+    val openNewSession = {
+        if (!creating) { vm.loadDirectoryOptions(); showNewSessionDialog = true }
+    }
     var pendingDeleteId by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingRenameId by rememberSaveable { mutableStateOf<String?>(null) }
     var showDisconnectConfirm by rememberSaveable { mutableStateOf(false) }
@@ -231,7 +238,7 @@ fun SessionListScreen(
         snackbarHost = { SnackbarHost(snackbar) },
         floatingActionButton = {
             ExtendedFloatingActionButton(
-                onClick = { if (!creating) vm.createSession(onCreated = onOpenSession) },
+                onClick = openNewSession,
                 icon = {
                     if (creating) {
                         CircularProgressIndicator(
@@ -268,7 +275,7 @@ fun SessionListScreen(
                 onRefresh = vm::refresh,
                 onQueryChange = vm::setQuery,
                 onOpenSession = onOpenSession,
-                onCreateSession = { vm.createSession(onCreated = onOpenSession) },
+                onCreateSession = openNewSession,
                 onRename = { pendingRenameId = it },
                 onDelete = { pendingDeleteId = it },
             )
@@ -322,6 +329,28 @@ fun SessionListScreen(
             dismissButton = {
                 TextButton(onClick = { showDisconnectConfirm = false }) { Text(stringResource(R.string.cancel)) }
             },
+        )
+    }
+
+    if (showNewSessionDialog) {
+        // Distinct session directories, most-recent first (state.sessions is sorted), so the
+        // picker can offer directories the user has recently worked in even if the server's
+        // project list is unavailable.
+        val sessionDirectories = remember(state.sessions) {
+            state.sessions.mapNotNull { it.directory?.takeIf { d -> d.isNotBlank() } }.distinct()
+        }
+        NewSessionDialog(
+            options = directoryOptions,
+            sessionDirectories = sessionDirectories,
+            lastChosenDirectory = vm.lastChosenDirectory,
+            creating = creating,
+            onCreate = { dir ->
+                vm.createSession(directory = dir) { id ->
+                    showNewSessionDialog = false
+                    onOpenSession(id)
+                }
+            },
+            onDismiss = { showNewSessionDialog = false },
         )
     }
 }
@@ -599,6 +628,33 @@ private fun SessionCard(
                         session.time?.updated ?: session.time?.created,
                         modifier = Modifier.padding(top = 2.dp),
                     )
+                    // The working directory the agent runs in for this session. Shown because
+                    // the list spans sessions across directories, so the folder name tells
+                    // otherwise-similar sessions apart at a glance.
+                    session.displayDirectory?.let { dir ->
+                        val dirDesc = stringResource(R.string.session_directory_desc, session.directory.orEmpty())
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .padding(top = 2.dp)
+                                .semantics { contentDescription = dirDesc },
+                        ) {
+                            Icon(
+                                Icons.Filled.Folder,
+                                contentDescription = null,
+                                modifier = Modifier.size(12.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Text(
+                                dir,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(start = 4.dp),
+                            )
+                        }
+                    }
                 }
                 // Overflow menu replaces the inline edit + delete IconButtons so the
                 // card row is decluttered — two always-visible icons per row made a

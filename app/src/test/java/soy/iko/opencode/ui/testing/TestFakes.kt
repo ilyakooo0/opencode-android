@@ -17,7 +17,9 @@ import soy.iko.opencode.data.model.FileNode
 import soy.iko.opencode.data.model.FileStatusEntry
 import soy.iko.opencode.data.model.MessageWithParts
 import soy.iko.opencode.data.model.ModelRef
+import soy.iko.opencode.data.model.PathInfo
 import soy.iko.opencode.data.model.PermissionResponse
+import soy.iko.opencode.data.model.Project
 import soy.iko.opencode.data.model.ProvidersResponse
 import soy.iko.opencode.data.model.ServerProfile
 import soy.iko.opencode.data.model.Session
@@ -117,6 +119,10 @@ class FakeOpencodeApiClient : OpencodeApiClient() {
     var fileSearchResults: List<String> = emptyList()
     var fileStatusEntries: List<FileStatusEntry> = emptyList()
     var fileContent: FileContent = FileContent(content = "")
+    var projectsList: List<Project> = emptyList()
+    var pathInfo: PathInfo = PathInfo()
+    var lastCreatedDirectory: String? = null
+        private set
     var sendPromptThrows: Throwable? = null
     var respondPermissionThrows: Throwable? = null
     var cacheInvalidated = false
@@ -140,7 +146,13 @@ class FakeOpencodeApiClient : OpencodeApiClient() {
 
     override suspend fun listSessions(): List<Session> = sessions
 
-    override suspend fun createSession(title: String?): Session = createdSession
+    override suspend fun createSession(title: String?, directory: String?): Session {
+        lastCreatedDirectory = directory
+        return createdSession
+    }
+
+    override suspend fun listProjects(): List<Project> = projectsList
+    override suspend fun currentPath(): PathInfo = pathInfo
 
     override suspend fun updateSession(id: String, title: String): Session {
         return sessions.firstOrNull { it.id == id }?.copy(title = title) ?: Session(id = id, title = title)
@@ -243,6 +255,8 @@ class FakeSessionRepository(
     var listSessionsGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
     var abortCalls: List<String> = emptyList()
         private set
+    var lastCreatedDirectory: String? = null
+        private set
 
     /** When non-null, [observeMessages] returns this flow instead of [messages]. */
     var observeMessagesOverride: kotlinx.coroutines.flow.Flow<List<MessageWithParts>>? = null
@@ -252,7 +266,10 @@ class FakeSessionRepository(
         listSessionsThrows?.let { throw it }
         return sessions
     }
-    override suspend fun createSession(title: String?): Session = createdSession
+    override suspend fun createSession(title: String?, directory: String?): Session {
+        lastCreatedDirectory = directory
+        return createdSession
+    }
     override suspend fun deleteSession(id: String) { /* no-op */ }
     override suspend fun abort(sessionId: String) { abortCalls = abortCalls + sessionId }
 

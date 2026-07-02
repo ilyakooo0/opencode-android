@@ -206,6 +206,52 @@ class SessionListViewModelTest {
         assertEquals("new-id", createdId)
     }
 
+    @Test
+    fun createSession_passesDirectoryAndRemembersIt() = testScope.runTest {
+        val repo = FakeSessionRepository(FakeOpencodeApiClient(), FakeEventStreamClient())
+        repo.createdSession = Session(id = "new-id", title = "New", directory = "/home/me/proj")
+        val container = makeContainer(repo = repo)
+        val vm = makeVm(container)
+
+        vm.createSession(directory = "/home/me/proj") { }
+        testScheduler.advanceUntilIdle()
+        assertEquals("/home/me/proj", repo.lastCreatedDirectory)
+        assertEquals("/home/me/proj", vm.lastChosenDirectory)
+    }
+
+    @Test
+    fun createSession_blankDirectoryPassesNull() = testScope.runTest {
+        val repo = FakeSessionRepository(FakeOpencodeApiClient(), FakeEventStreamClient())
+        val container = makeContainer(repo = repo)
+        val vm = makeVm(container)
+
+        vm.createSession(directory = "   ") { }
+        testScheduler.advanceUntilIdle()
+        assertNull(repo.lastCreatedDirectory)
+        assertNull(vm.lastChosenDirectory)
+    }
+
+    @Test
+    fun loadDirectoryOptions_populatesProjectsAndServerDefault() = testScope.runTest {
+        val api = FakeOpencodeApiClient()
+        api.projectsList = listOf(
+            soy.iko.opencode.data.model.Project(id = "p1", worktree = "/home/me/a"),
+            soy.iko.opencode.data.model.Project(id = "p2", worktree = "/home/me/b"),
+        )
+        api.pathInfo = soy.iko.opencode.data.model.PathInfo(directory = "/home/me/cwd")
+        val repo = FakeSessionRepository(api, FakeEventStreamClient())
+        val container = makeContainer(api = api, repo = repo)
+        val vm = makeVm(container)
+
+        vm.loadDirectoryOptions()
+        testScheduler.advanceUntilIdle()
+        val opts = vm.directoryOptions.value
+        assertTrue(opts.loaded)
+        assertFalse(opts.loading)
+        assertEquals(listOf("/home/me/a", "/home/me/b"), opts.projects)
+        assertEquals("/home/me/cwd", opts.serverDefault)
+    }
+
     // --- deleteSession ---
 
     @Test

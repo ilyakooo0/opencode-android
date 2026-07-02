@@ -79,6 +79,13 @@
 
     <!-- Session list -->
     <string name="new_session">New session</string>
+    <string name="create">Create</string>
+    <string name="directory_label">Directory</string>
+    <string name="directory_server_default">Server default</string>
+    <string name="directory_custom">Enter a path…</string>
+    <string name="directory_custom_hint">/path/to/project</string>
+    <string name="directory_loading">Loading directories…</string>
+    <string name="session_directory_desc">Directory: %1$s</string>
     <string name="unread">Unread</string>
     <string name="unread_count">%1$d unread</string>
     <string name="no_sessions_yet">No sessions yet</string>

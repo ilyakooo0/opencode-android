@@ -3,6 +3,7 @@
   <ManuallySuppressedIssues/>
   <CurrentIssues>
     <ID>ComplexCondition:PartRenderer.kt$part.isImage &amp;&amp; imageContext != null &amp;&amp; (part.source != null || !part.url.isNullOrBlank())</ID>
+    <ID>CyclomaticComplexMethod:AppContainer.kt$AppContainer$@OptIn(ExperimentalCoroutinesApi::class) private fun observeMessageActivity()</ID>
     <ID>CyclomaticComplexMethod:ChatScreen.kt$@OptIn(ExperimentalMaterial3Api::class) @Composable fun ChatScreen( container: AppContainer, sessionId: String, onBack: () -&gt; Unit, onOpenFile: ((String) -&gt; Unit)? = null, )</ID>
     <ID>CyclomaticComplexMethod:CodeHighlighter.kt$private fun findNumberEnd(line: String, start: Int): Int</ID>
     <ID>MatchingDeclarationName:DiffView.kt$DiffLine</ID>

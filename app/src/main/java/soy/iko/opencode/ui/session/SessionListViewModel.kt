@@ -43,6 +43,17 @@ import kotlinx.coroutines.sync.withPermit
 /** Sort order for the session list. */
 enum class SessionSortMode { RECENT, TITLE }
 
+/** Directory options for the new-session picker: worktree paths the server knows about
+ *  ([projects]) and the server's default working directory ([serverDefault], its cwd).
+ *  [loaded] distinguishes "not fetched yet" from "fetched, none found". */
+@Immutable
+data class DirectoryOptionsState(
+    val loading: Boolean = false,
+    val loaded: Boolean = false,
+    val projects: List<String> = emptyList(),
+    val serverDefault: String? = null,
+)
+
 @Immutable
 data class SessionListState(
     val sessions: List<Session> = emptyList(),
@@ -413,13 +424,20 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    fun createSession(onCreated: (String) -> Unit) {
+    /**
+     * Create a new session, optionally in a specific worktree [directory] (the agent's
+     * working directory for that session). A null/blank directory lets the server use its
+     * launch cwd — the pre-directory behavior. The chosen directory is remembered
+     * ([lastChosenDirectory]) so the next new-session picker can preselect it.
+     */
+    fun createSession(directory: String? = null, onCreated: (String) -> Unit) {
         val conn = container.activeConnection.value ?: return
         if (!_creating.compareAndSet(false, true)) return
+        val dir = directory?.takeIf { it.isNotBlank() }
         viewModelScope.launch {
             try {
-                runCatchingCancellable { conn.repository.createSession() }
-                    .onSuccess { onCreated(it.id); refresh() }
+                runCatchingCancellable { conn.repository.createSession(directory = dir) }
+                    .onSuccess { lastChosenDirectory = dir; onCreated(it.id); refresh() }
                     .onFailure {
                         _state.update { it.copy(error = null) }
                         _transientErrors.tryEmit(container.friendlyError(it))
@@ -427,6 +445,43 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
             } finally {
                 _creating.value = false
             }
+        }
+    }
+
+    /** The directory the user last created a session in (this VM lifetime), so the picker
+     *  can preselect it. Best-effort: not persisted across process death. */
+    var lastChosenDirectory: String? = null
+        private set
+
+    private val _directoryOptions = MutableStateFlow(DirectoryOptionsState())
+    val directoryOptions: StateFlow<DirectoryOptionsState> = _directoryOptions.asStateFlow()
+
+    private var directoryOptionsJob: Job? = null
+
+    /**
+     * Load the directory options for the new-session picker: the server's known projects
+     * (`GET /project`) plus its default working directory (`GET /path`). Best-effort — a
+     * failure leaves an empty option set, and the picker still offers the directories of
+     * existing sessions and manual path entry. Safe to call on each dialog open; an
+     * in-flight load is not restarted.
+     */
+    fun loadDirectoryOptions() {
+        val conn = container.activeConnection.value ?: return
+        if (_directoryOptions.value.loading) return
+        _directoryOptions.update { it.copy(loading = true) }
+        directoryOptionsJob = viewModelScope.launch {
+            val projects = runCatchingCancellable { conn.api.listProjects() }
+                .getOrDefault(emptyList())
+                .mapNotNull { it.worktree.takeIf { w -> w.isNotBlank() } }
+                .distinct()
+            val serverDefault = runCatchingCancellable { conn.api.currentPath() }
+                .getOrNull()?.directory?.takeIf { it.isNotBlank() }
+            _directoryOptions.value = DirectoryOptionsState(
+                loading = false,
+                loaded = true,
+                projects = projects,
+                serverDefault = serverDefault,
+            )
         }
     }
 

@@ -39,7 +39,8 @@ open class SessionRepository(
     private val eventStream: EventStreamClient,
 ) {
     open suspend fun listSessions() = api.listSessions()
-    open suspend fun createSession(title: String? = null) = api.createSession(title)
+    open suspend fun createSession(title: String? = null, directory: String? = null) =
+        api.createSession(title, directory)
     open suspend fun deleteSession(id: String) = api.deleteSession(id)
     open suspend fun abort(sessionId: String) = api.abort(sessionId)
 

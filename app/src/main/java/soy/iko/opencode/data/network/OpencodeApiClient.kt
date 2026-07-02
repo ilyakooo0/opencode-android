@@ -9,8 +9,10 @@ import soy.iko.opencode.data.model.FileNode
 import soy.iko.opencode.data.model.FileStatusEntry
 import soy.iko.opencode.data.model.MessageWithParts
 import soy.iko.opencode.data.model.ModelRef
+import soy.iko.opencode.data.model.PathInfo
 import soy.iko.opencode.data.model.PermissionReplyBody
 import soy.iko.opencode.data.model.PermissionResponse
+import soy.iko.opencode.data.model.Project
 import soy.iko.opencode.data.model.PromptPart
 import soy.iko.opencode.data.model.PromptRequest
 import soy.iko.opencode.data.model.ProvidersResponse
@@ -71,18 +73,38 @@ open class OpencodeApiClient private constructor(
         client!!.get("session").body()
     }
 
-    open suspend fun createSession(title: String? = null): Session {
+    /**
+     * Create a session, optionally in a specific worktree [directory]. The directory is a
+     * query parameter (not a body field): the server records it on the session and resolves
+     * it by session id thereafter, so follow-up calls (messages, commands, abort, …) don't
+     * — and shouldn't — re-send it. A null/blank [directory] lets the server fall back to
+     * its own launch cwd, preserving the pre-directory behavior.
+     */
+    open suspend fun createSession(title: String? = null, directory: String? = null): Session {
         // Generate the idempotency key before entering withRetry so every retry attempt
         // shares it. Without this, a POST that reached the server but whose response was
         // lost (reset/timeout) would be retried and create a second orphan session.
         val idempotencyKey = java.util.UUID.randomUUID().toString()
+        val dir = directory?.takeIf { it.isNotBlank() }
         return withRetry {
             client!!.post("session") {
                 contentType(ContentType.Application.Json)
                 header("Idempotency-Key", idempotencyKey)
+                if (dir != null) parameter("directory", dir)
                 setBody(CreateSessionRequest(title = title))
             }.body()
         }
+    }
+
+    /** List the projects (worktree roots) the server knows about, for the directory picker. */
+    open suspend fun listProjects(): List<Project> = withRetry {
+        client!!.get("project").body()
+    }
+
+    /** The server's current path info; its [PathInfo.directory] is the default (cwd) a
+     *  session with no directory override runs in. */
+    open suspend fun currentPath(): PathInfo = withRetry {
+        client!!.get("path").body()
     }
 
     open suspend fun updateSession(id: String, title: String): Session = withRetry {

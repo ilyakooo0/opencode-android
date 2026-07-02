@@ -81,7 +81,10 @@ android {
         // minor/style issues don't gate development.
         abortOnError = true
         // Dependency upgrades are tracked by Renovate, so don't lint for them here.
-        disable += setOf("GradleDependency", "AndroidGradlePluginVersion")
+        // ProduceStateDoesNotAssignValue false-positives on valid produceState calls that
+        // assign `value` via a conditional/`withContext` expression (see FileViewScreen's
+        // match-index scan), so it's disabled rather than worked around at each call site.
+        disable += setOf("GradleDependency", "AndroidGradlePluginVersion", "ProduceStateDoesNotAssignValue")
     }
 
     packaging {

@@ -3,9 +3,12 @@ package soy.iko.opencode
 import soy.iko.opencode.data.model.BusEvent
 import soy.iko.opencode.data.model.FileContent
 import soy.iko.opencode.data.model.FileNode
+import soy.iko.opencode.data.model.PathInfo
 import soy.iko.opencode.data.model.PermissionReplied
 import soy.iko.opencode.data.model.PermissionUpdated
+import soy.iko.opencode.data.model.Project
 import soy.iko.opencode.data.model.ProvidersResponse
+import soy.iko.opencode.data.model.Session
 import soy.iko.opencode.data.model.defaultOption
 import soy.iko.opencode.data.model.toOptions
 import soy.iko.opencode.data.network.OpencodeJson
@@ -43,6 +46,40 @@ class M5DecodingTest {
         """.trimIndent()
         val event = decode(BusEvent.serializer(), json) as PermissionUpdated
         assertEquals("src/Main.kt", event.properties.patternText)
+    }
+
+    @Test
+    fun decodesSessionWithDirectory() {
+        // A session created in a specific worktree carries directory + projectID; older
+        // servers omit them, so both must be optional (default null).
+        val withDir = decode(
+            Session.serializer(),
+            """{"id":"ses_1","title":"Fix bug","directory":"/home/me/code/my-project","projectID":"prj_1"}""",
+        )
+        assertEquals("/home/me/code/my-project", withDir.directory)
+        assertEquals("prj_1", withDir.projectID)
+        assertEquals("my-project", withDir.displayDirectory)
+
+        val withoutDir = decode(Session.serializer(), """{"id":"ses_2","title":"No dir"}""")
+        assertNull(withoutDir.directory)
+        assertNull(withoutDir.displayDirectory)
+    }
+
+    @Test
+    fun decodesProjectsAndPath() {
+        val projects = decode(
+            ListSerializer(Project.serializer()),
+            """[{"id":"p1","worktree":"/home/me/a","vcs":"git","time":{"created":1}},{"id":"p2","worktree":"/home/me/b"}]""",
+        )
+        assertEquals(2, projects.size)
+        assertEquals("/home/me/a", projects[0].worktree)
+        assertEquals("git", projects[0].vcs)
+
+        val path = decode(
+            PathInfo.serializer(),
+            """{"directory":"/home/me/cwd","worktree":"/home/me/cwd","state":"/s","config":"/c"}""",
+        )
+        assertEquals("/home/me/cwd", path.directory)
     }
 
     @Test
