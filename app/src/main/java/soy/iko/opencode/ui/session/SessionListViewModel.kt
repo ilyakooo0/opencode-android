@@ -70,7 +70,12 @@ private fun Iterable<Session>.sortedByMode(mode: SessionSortMode): List<Session>
     SessionSortMode.RECENT ->
         sortedByDescending { it.time?.updated ?: it.time?.created ?: 0L }
     SessionSortMode.TITLE ->
-        sortedWith(compareBy<Session> { it.displayTitle.lowercase() }.thenByDescending { it.time?.updated ?: it.time?.created ?: 0L })
+        // CASE_INSENSITIVE_ORDER avoids allocating a lowercased title per comparison; this
+        // sort re-runs on every debounced list flush during streaming.
+        sortedWith(
+            compareBy<Session, String>(String.CASE_INSENSITIVE_ORDER) { it.displayTitle }
+                .thenByDescending { it.time?.updated ?: it.time?.created ?: 0L },
+        )
 }
 
 class SessionListViewModel(private val container: AppContainer) : ViewModel() {

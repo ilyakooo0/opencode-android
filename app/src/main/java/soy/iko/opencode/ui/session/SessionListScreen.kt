@@ -442,6 +442,14 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
                                     false
                                 },
                             )
+                            // Per-item callbacks memoized on the session id so SessionCard
+                            // stays skippable: the list emits a fresh SessionListState on
+                            // every background preview/unread update, and freshly-allocated
+                            // lambdas would otherwise force every visible card to recompose
+                            // on each of those emissions even when its own data is unchanged.
+                            val onCardClick = remember(session.id) { { onOpenSession(session.id) } }
+                            val onCardRename = remember(session.id) { { onRename(session.id) } }
+                            val onCardDelete = remember(session.id) { { onDelete(session.id) } }
                             SwipeToDismissBox(
                                 state = swipeState,
                                 enableDismissFromStartToEnd = false,
@@ -468,9 +476,9 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
                                     preview = state.previews[session.id],
                                     unreadCount = unread[session.id] ?: 0,
                                     isSelected = session.id == selectedSessionId,
-                                    onClick = { onOpenSession(session.id) },
-                                    onRename = { onRename(session.id) },
-                                    onDelete = { onDelete(session.id) },
+                                    onClick = onCardClick,
+                                    onRename = onCardRename,
+                                    onDelete = onCardDelete,
                                     modifier = Modifier.testTag("session_card"),
                                 )
                             }

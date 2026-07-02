@@ -61,7 +61,12 @@ fun ProvidersResponse.toOptions(): List<ModelOption> =
                 modelLabel = info.displayName(modelKey),
             )
         }
-    }.sortedWith(compareBy({ it.providerLabel.lowercase() }, { it.modelLabel.lowercase() }))
+    }.sortedWith(
+        // CASE_INSENSITIVE_ORDER compares in place; compareBy { it.x.lowercase() } would
+        // allocate a fresh lowercased string on every comparison (O(N log N) allocations).
+        compareBy<ModelOption, String>(String.CASE_INSENSITIVE_ORDER) { it.providerLabel }
+            .thenBy(String.CASE_INSENSITIVE_ORDER) { it.modelLabel },
+    )
 
 /** The default option to preselect: the server's default for some provider, else the first model. */
 fun ProvidersResponse.defaultOption(options: List<ModelOption> = toOptions()): ModelOption? {

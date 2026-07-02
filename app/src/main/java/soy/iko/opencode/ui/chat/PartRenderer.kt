@@ -284,6 +284,14 @@ private fun ToolCallView(part: ToolPart, modifier: Modifier) {
             // looksLikeDiff scans the whole string; memoize so a recomposition that doesn't
             // change `display` (e.g. an unrelated state flip) doesn't re-scan on every pass.
             val isDiff = remember(display) { looksLikeDiff(display) }
+            // How many lines are hidden while collapsed. detail.lines() splits the whole
+            // (potentially multi-KB) output, so memoize it — otherwise it re-splits on
+            // every recomposition, including each streaming update of a running tool.
+            // `collapsed` is a prefix of `detail`, so its line count never exceeds it;
+            // 0 (a single long line cut mid-way) falls back to the generic label.
+            val moreLines = remember(detail, collapsed) {
+                if (detail.length > COLLAPSED_LIMIT) detail.lines().size - collapsed.lines().size else 0
+            }
             CollapsibleDetail(
                 label = null,
                 detail = display,
@@ -293,13 +301,7 @@ private fun ToolCallView(part: ToolPart, modifier: Modifier) {
                 onToggleExpand = if (detail.length > COLLAPSED_LIMIT) {
                     { expanded = !expanded }
                 } else null,
-                // How many lines are hidden while collapsed, so the expand affordance can
-                // tell the user the scale of what's truncated instead of a bare "Show more".
-                // `collapsed` is a prefix of `detail`, so its line count never exceeds it;
-                // 0 (a single long line cut mid-way) falls back to the generic label.
-                moreLines = if (detail.length > COLLAPSED_LIMIT) {
-                    detail.lines().size - collapsed.lines().size
-                } else 0,
+                moreLines = moreLines,
                 expandedState = expandedState,
                 collapsedState = collapsedState,
                 onCopy = { copyToClipboard(context, "output", detail) },

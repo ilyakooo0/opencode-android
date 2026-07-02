@@ -125,10 +125,14 @@ private const val COLLAPSED_DIFF_LINES = 200
 @Composable
 fun DiffView(diff: String, modifier: Modifier = Modifier) {
     val lines = remember(diff) { parseDiff(diff) }
-    val addColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
-    val removeColor = MaterialTheme.colorScheme.error.copy(alpha = 0.15f)
-    val addText = MaterialTheme.colorScheme.primary
-    val removeText = MaterialTheme.colorScheme.error
+    // Derive the four row colors once per color scheme instead of allocating fresh Color
+    // objects (the .copy() calls) on every recomposition — a diff re-parses/recomposes
+    // per token while its output streams under the collapse limit.
+    val scheme = MaterialTheme.colorScheme
+    val addColor = remember(scheme) { scheme.primary.copy(alpha = 0.15f) }
+    val removeColor = remember(scheme) { scheme.error.copy(alpha = 0.15f) }
+    val addText = scheme.primary
+    val removeText = scheme.error
     val context = LocalContext.current
     val hScrollState = rememberScrollState()
     var expanded by rememberSaveable(diff) { mutableStateOf(false) }

@@ -302,13 +302,17 @@ open class AppContainer private constructor(
                     // Track sessions actively streaming so we know which idle events
                     // represent a finished run worth notifying about.
                     if (isLiveRunActivity(event)) {
+                        // The add-under-lock is required both for thread-safety and for the
+                        // LRU access-order refresh (keeps a continuously-streaming session
+                        // from being evicted), so it runs per event. Only the flag write is
+                        // skippable once it's already set.
                         synchronized(activeRuns) {
                             if (activeRuns.size >= activeRunsLimit) {
                                 activeRuns.remove(activeRuns.iterator().next())
                             }
                             activeRuns.add(sid)
                         }
-                        _anyRunActive.value = true
+                        if (!_anyRunActive.value) _anyRunActive.value = true
                     }
                 } }.onFailure { Log.w("AppContainer", "Message activity observer failed, will retry: ${safeExceptionSummary(it)}") }
                 if (!isActive) break

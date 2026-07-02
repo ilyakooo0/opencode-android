@@ -1100,7 +1100,7 @@ private fun buildMessageListItems(
 ): List<MessageListItem> {
     if (messages.isEmpty()) return emptyList()
     val today = java.time.LocalDate.now(java.time.ZoneId.systemDefault())
-    val dateFmt = java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM)
+    val dateFmt = mediumDateFormat()
     val result = ArrayList<MessageListItem>(messages.size + 4)
     var lastDayKey: String? = null
     var sepOrdinal = 0
@@ -1116,11 +1116,42 @@ private fun buildMessageListItems(
     return result
 }
 
-/** A stable bucket key for a timestamp's calendar day (epoch-days as a string). */
-private fun dayKey(epochMillis: Long): String {
-    val instant = java.time.Instant.ofEpochMilli(epochMillis)
-    val date = instant.atZone(java.time.ZoneId.systemDefault()).toLocalDate()
-    return date.toEpochDay().toString()
+/**
+ * A stable bucket key for a timestamp's calendar day (epoch-days as a string).
+ *
+ * [buildMessageListItems] re-runs on every streaming snapshot (the memo is keyed on the
+ * whole `messages` list, which must stay so the live message's fresh parts render), so a
+ * naive implementation would re-allocate an `Instant`/`ZonedDateTime`/`LocalDate` for
+ * every message on every token. Message timestamps are immutable once assigned, so we
+ * memoize the parse per epoch-millis: after the first snapshot, each unchanged message is
+ * a cheap hash lookup. Bounded LRU (access-order) caps memory; only touched on the main
+ * thread during composition, so the coarse lock is uncontended.
+ */
+private val dayKeyCache = object : LinkedHashMap<Long, String>(128, 0.75f, true) {
+    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, String>): Boolean = size > 1024
+}
+
+private fun dayKey(epochMillis: Long): String = synchronized(dayKeyCache) {
+    dayKeyCache.getOrPut(epochMillis) {
+        java.time.Instant.ofEpochMilli(epochMillis)
+            .atZone(java.time.ZoneId.systemDefault()).toLocalDate().toEpochDay().toString()
+    }
+}
+
+// The medium-date formatter is an ICU locale lookup; cache one instance instead of
+// allocating a fresh one per buildMessageListItems call, rebuilding only if the default
+// locale changes at runtime. Main-thread-only, so no synchronization is needed.
+private var cachedDateFmt: java.text.DateFormat? = null
+private var cachedDateFmtLocale: java.util.Locale? = null
+
+private fun mediumDateFormat(): java.text.DateFormat {
+    val locale = java.util.Locale.getDefault()
+    val existing = cachedDateFmt
+    if (existing != null && cachedDateFmtLocale == locale) return existing
+    return java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM).also {
+        cachedDateFmt = it
+        cachedDateFmtLocale = locale
+    }
 }
 
 /**

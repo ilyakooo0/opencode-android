@@ -28,7 +28,7 @@ import androidx.compose.ui.text.withStyle
 /** Language families recognized by [highlightLine]. The set of keywords is shared
  *  across C-family languages (kotlin, java, js, ts, swift, rust, go, c, cpp) since the
  *  common keywords overlap heavily; python has its own set; shell has its own. */
-private enum class Language {
+internal enum class Language {
     C_FAMILY, // kotlin, java, js, ts, swift, rust, go, c, cpp, csharp, scala
     PYTHON,
     SHELL, // sh, bash, zsh
@@ -117,10 +117,30 @@ fun rememberHighlightPalette(): HighlightPalette {
  * which matters because the file viewer renders lazily but can scroll through
  * thousands of lines — a heavy highlighter would jank on fast scrolls.
  */
-fun highlightLine(line: String, filename: String, palette: HighlightPalette): AnnotatedString {
+fun highlightLine(line: String, filename: String, palette: HighlightPalette): AnnotatedString =
+    highlightLine(line, syntaxFor(filename), palette)
+
+/**
+ * A file's language classification, resolved once from its name. Resolving this per file
+ * (instead of re-parsing the extension inside [highlightLine] for every line) keeps the
+ * hot per-line highlight path free of the `substringAfterLast`/`lowercase` work.
+ */
+class FileSyntax internal constructor(
+    internal val lang: Language,
+    internal val keywords: Set<String>,
+)
+
+/** Resolve the [FileSyntax] for a filename. Cheap; call once per file and reuse. */
+fun syntaxFor(filename: String): FileSyntax {
     val lang = languageFor(filename)
+    return FileSyntax(lang, keywordsFor(lang))
+}
+
+/** Highlight a single line using a pre-resolved [FileSyntax]. See [FileSyntax]. */
+fun highlightLine(line: String, syntax: FileSyntax, palette: HighlightPalette): AnnotatedString {
+    val lang = syntax.lang
     if (lang == Language.NONE) return AnnotatedString(line)
-    val keywords = keywordsFor(lang)
+    val keywords = syntax.keywords
     val builder = AnnotatedString.Builder(line.length + 8)
     val baseStyle = SpanStyle(color = palette.base, fontFamily = FontFamily.Monospace)
     val mono = FontFamily.Monospace

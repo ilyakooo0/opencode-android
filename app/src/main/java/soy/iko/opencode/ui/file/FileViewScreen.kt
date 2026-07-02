@@ -54,6 +54,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -77,9 +78,13 @@ import soy.iko.opencode.R
 import soy.iko.opencode.ui.components.DiffView
 import soy.iko.opencode.ui.components.copyToClipboard
 import soy.iko.opencode.ui.components.highlightLine
+import soy.iko.opencode.ui.components.syntaxFor
 import soy.iko.opencode.ui.components.rememberHighlightPalette
 import soy.iko.opencode.ui.vmFactory
 import soy.iko.opencode.util.runCatchingCancellable
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -110,11 +115,19 @@ fun FileViewScreen(
     val listState = rememberLazyListState()
     val rawText = state.content?.content.orEmpty()
     val lines = remember(rawText) { rawText.split("\n") }
-    val matchIndices = remember(lines, findQuery) {
+    // Debounce the query so each keystroke doesn't trigger a full-file scan, and run the
+    // scan on Dispatchers.Default so a large file doesn't jank the keyboard while typing.
+    var debouncedFind by remember { mutableStateOf("") }
+    LaunchedEffect(findQuery) {
         val q = findQuery.trim()
-        if (q.isEmpty()) emptyList()
-        else lines.mapIndexed { index, line -> if (line.contains(q, ignoreCase = true)) index else -1 }
-            .filter { it >= 0 }
+        if (q.isEmpty()) debouncedFind = "" else { delay(150); debouncedFind = q }
+    }
+    val matchIndices by produceState(emptyList<Int>(), lines, debouncedFind) {
+        val q = debouncedFind
+        value = if (q.isEmpty()) emptyList()
+        else withContext(Dispatchers.Default) {
+            lines.mapIndexedNotNull { index, line -> index.takeIf { line.contains(q, ignoreCase = true) } }
+        }
     }
     // Keep the current match index in range when the match set shrinks (e.g. the file
     // reloaded with fewer matches), so the counter never shows a stale "10 / 3".
@@ -163,12 +176,17 @@ fun FileViewScreen(
                 // state. During the crossfade the exiting layer still renders the old
                 // content; passing the outer matchIndices (computed from the new content)
                 // would highlight and scroll the wrong lines until the animation settles.
-                val sMatchIndices = remember(s.content?.content, findQuery) {
-                    val q = findQuery.trim()
+                val sMatchIndices = remember(s.content?.content, debouncedFind, lines, rawText) {
+                    val q = debouncedFind
                     if (q.isEmpty()) emptyList()
-                    else (s.content?.content.orEmpty()).split("\n")
-                        .mapIndexed { index, line -> if (line.contains(q, ignoreCase = true)) index else -1 }
-                        .filter { it >= 0 }
+                    else {
+                        // Reuse the already-split `lines` when this layer shows the current
+                        // content (the common case); only re-split for the exiting layer's
+                        // stale content during the crossfade.
+                        val sContent = s.content?.content
+                        val sLines = if (sContent == rawText) lines else sContent.orEmpty().split("\n")
+                        sLines.mapIndexedNotNull { index, line -> index.takeIf { line.contains(q, ignoreCase = true) } }
+                    }
                 }
                 FileViewStateContent(
                     state = s,
@@ -498,6 +516,8 @@ private fun FileTextContent(
     }
     val hScrollState = rememberScrollState()
     val palette = rememberHighlightPalette()
+    // Resolve the file's language once instead of re-parsing the extension for every line.
+    val syntax = remember(filename) { syntaxFor(filename) }
     val q = findQuery.trim()
     val matchSet = remember(matchIndices) { matchIndices.toHashSet() }
     LazyColumn(
@@ -527,7 +547,7 @@ private fun FileTextContent(
                 // O(n) tokenizer + AnnotatedString allocation runs only when the line text,
                 // file, or palette actually changes — not on every recomposition (e.g. every
                 // keystroke into find-in-file, which would otherwise re-highlight all visible lines).
-                val highlighted = remember(line, filename, palette) { highlightLine(line, filename, palette) }
+                val highlighted = remember(line, syntax, palette) { highlightLine(line, syntax, palette) }
                 Text(
                     highlighted,
                     modifier = Modifier.padding(start = 8.dp),
