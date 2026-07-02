@@ -161,9 +161,14 @@ class ChatViewModel(
                 // A value flowed through: the stream recovered, so allow the next distinct
                 // failure to surface a fresh snackbar again.
                 loadErrorSnackbarShown = false
+                // Clear the error on ANY successful emission, including an empty list. An empty
+                // session that hit one transient error would otherwise stay latched on the
+                // "Failed to load / Retry" screen forever, because the later successful EMPTY
+                // emission couldn't clear the flag. hasShownMessages stays gated on non-empty
+                // (an empty session has genuinely shown nothing yet).
+                _loadError.value = false
                 if (it.isNotEmpty()) {
                     hasShownMessages = true
-                    _loadError.value = false
                 }
             }
             .retryWhen { cause, _ ->
@@ -1196,11 +1201,17 @@ class ChatViewModel(
         // asynchronous apply() (not a synchronous commit) so the main thread isn't
         // blocked on disk I/O — Android's SharedPreferences framework guarantees
         // pending apply() writes are flushed before the process exits.
-        // Always flush — including an empty draft. Persistence is otherwise debounced, so if
-        // the user cleared the input and navigated back within the debounce window, the
+        // Flush the pending draft — including an empty one. Persistence is otherwise debounced,
+        // so if the user cleared the input and navigated back within the debounce window, the
         // debounce coroutine was cancelled with viewModelScope and the prefs still hold the
-        // previous non-empty draft. flushDraft() removes the key when the text is blank, so an
-        // unconditional flush commits the clear instead of resurrecting the deleted text.
-        container.draftStore.flushDraft(sessionId, _draft.value)
+        // previous non-empty draft. flushDraft() removes the key when the text is blank, so
+        // flushing commits the clear instead of resurrecting the deleted text.
+        //
+        // BUT respect the send-in-flight guard: send() optimistically clears _draft to "" WITHOUT
+        // persisting the clear so a failed send can restore the text. If the user taps Send then
+        // immediately navigates back (cancelling the in-flight send), flushing the blank _draft here
+        // would remove the persisted key and erase the pre-send draft with no recovery. Skip the
+        // flush while a send is in flight so the pre-send draft stays persisted (recoverable).
+        if (!suppressDraftPersist.get()) container.draftStore.flushDraft(sessionId, _draft.value)
     }
 }

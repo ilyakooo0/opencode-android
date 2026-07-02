@@ -24,6 +24,7 @@ import soy.iko.opencode.data.repo.BackupManager
 import soy.iko.opencode.data.repo.DraftStore
 import soy.iko.opencode.data.repo.ErrorKind
 import soy.iko.opencode.data.repo.MessageCacheStore
+import soy.iko.opencode.data.repo.OutboxMessage
 import soy.iko.opencode.data.repo.OutboxStore
 import soy.iko.opencode.data.repo.SessionPrefsStore
 import soy.iko.opencode.data.repo.ProfileStore
@@ -511,15 +512,18 @@ open class AppContainer private constructor(
                     if (isLiveRunActivity(event)) {
                         // The add-under-lock is required both for thread-safety and for the
                         // LRU access-order refresh (keeps a continuously-streaming session
-                        // from being evicted), so it runs per event. Only the flag write is
-                        // skippable once it's already set.
+                        // from being evicted), so it runs per event.
                         synchronized(activeRuns) {
                             if (activeRuns.size >= activeRunsLimit) {
                                 activeRuns.remove(activeRuns.iterator().next())
                             }
                             activeRuns.add(sid)
+                            // Derive the flag from the set state *inside* the same lock that
+                            // guards the set, so a concurrent reconnect sweep (which clears
+                            // both under this lock) can't interleave and leave the flag pinned
+                            // true with an empty set — a stuck foreground service + "working…".
+                            _anyRunActive.value = activeRuns.isNotEmpty()
                         }
-                        if (!_anyRunActive.value) _anyRunActive.value = true
                     }
                 } }.onFailure { Log.w("AppContainer", "Message activity observer failed, will retry: ${safeExceptionSummary(it)}") }
                 if (!isActive) break
@@ -600,29 +604,63 @@ open class AppContainer private constructor(
 
     /** Respond to a permission from a notification action (Allow once / Always / Reject),
      *  off any UI. Runs on the process-lived app scope; [onDone] fires when the call resolves
-     *  so the receiver's goAsync() result can finish. No-ops if the connection is gone. */
+     *  so the receiver's goAsync() result can finish. Its Boolean is true only when a live
+     *  connection existed AND respondPermission succeeded — the receiver uses it to decide
+     *  whether to dismiss the notification. A missing connection makes the respond a no-op,
+     *  so it must report failure (not success) rather than let the notification vanish with
+     *  the tool left unanswered. */
     open fun respondToPermissionFromNotification(
         sessionId: String,
         permissionId: String,
         response: PermissionResponse,
-        onDone: () -> Unit,
+        onDone: (Boolean) -> Unit,
     ) {
         appScope.launch {
-            runCatchingCancellable {
-                activeConnection.value?.api?.respondPermission(sessionId, permissionId, response)
-            }.onFailure { Log.w("AppContainer", "notif permission respond failed: ${safeExceptionSummary(it)}") }
-            onDone()
+            val success = runCatchingCancellable {
+                val api = activeConnection.value?.api ?: return@runCatchingCancellable false
+                api.respondPermission(sessionId, permissionId, response)
+                true
+            }.onFailure {
+                Log.w("AppContainer", "notif permission respond failed: ${safeExceptionSummary(it)}")
+            }.getOrDefault(false)
+            onDone(success)
         }
     }
 
     /** Send a follow-up prompt from a notification's inline reply, off any UI. Uses the
-     *  server's default model/agent. [onDone] fires when the send resolves. */
-    open fun sendPromptFromNotification(sessionId: String, text: String, onDone: () -> Unit) {
+     *  server's default model/agent. Routes through the durable [outboxStore] — the same path
+     *  the in-app composer uses ([soy.iko.opencode.ui.chat.ChatViewModel.enqueueOffline]) —
+     *  rather than a direct repository send, so a reply composed while disconnected survives to
+     *  be flushed on reconnect instead of being silently dropped. [flushOutbox] nudges an
+     *  immediate send when a connection is live, so an online reply still goes out now. [onDone]
+     *  reports whether the reply was durably enqueued so the receiver only dismisses the
+     *  notification on success. */
+    open fun sendPromptFromNotification(sessionId: String, text: String, onDone: (Boolean) -> Unit) {
         appScope.launch {
-            runCatchingCancellable {
-                activeConnection.value?.repository?.sendPrompt(sessionId, text, model = null)
-            }.onFailure { Log.w("AppContainer", "notif reply send failed: ${safeExceptionSummary(it)}") }
-            onDone()
+            // Attribute to the active (or most-recent) profile so a reconnect to a different
+            // server doesn't misfire this against a session id that only exists elsewhere.
+            val profileId = activeConnection.value?.profile?.id
+                ?: runCatchingCancellable { profileStore.profiles.first().firstOrNull()?.id }.getOrNull()
+            val enqueued = if (profileId == null) {
+                false
+            } else {
+                runCatchingCancellable {
+                    outboxStore.enqueue(
+                        OutboxMessage(
+                            id = java.util.UUID.randomUUID().toString(),
+                            profileId = profileId,
+                            sessionId = sessionId,
+                            text = text,
+                            model = null,
+                            createdAt = System.currentTimeMillis(),
+                        ),
+                    )
+                }.onFailure {
+                    Log.w("AppContainer", "notif reply enqueue failed: ${safeExceptionSummary(it)}")
+                }.isSuccess
+            }
+            if (enqueued) flushOutbox()
+            onDone(enqueued)
         }
     }
 

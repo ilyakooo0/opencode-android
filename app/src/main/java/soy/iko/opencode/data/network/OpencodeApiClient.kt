@@ -62,14 +62,22 @@ open class OpencodeApiClient private constructor(
     // between sessions on the same server.
     private data class CachedEntry<T>(val value: T, val fetchedAt: Long)
     // Per-catalog mutexes so a slow fetch of one catalog doesn't block the others.
-    // The lock is held during the fetch to prevent a thundering-herd stampede when
-    // multiple coroutines miss the cache simultaneously.
+    // The fetch runs OUTSIDE the lock (holding it across the network call would serialize
+    // all callers and stall invalidation). To keep that correct, each catalog carries a
+    // generation counter, bumped under the mutex by its invalidateXCache(): a fetch captures
+    // the generation before it starts and, when it completes, only writes its result back if
+    // the generation is unchanged — so an invalidation that raced the in-flight fetch is not
+    // defeated by the pre-invalidation result being stored afterwards.
     private val providersMutex = Mutex()
     private val agentsMutex = Mutex()
     private val commandsMutex = Mutex()
     private var cachedProviders: CachedEntry<ProvidersResponse>? = null
     private var cachedAgents: CachedEntry<List<Agent>>? = null
     private var cachedCommands: CachedEntry<List<Command>>? = null
+    // Generation counters (guarded by the matching mutex above) for the invalidation-race guard.
+    private var providersGeneration = 0
+    private var agentsGeneration = 0
+    private var commandsGeneration = 0
 
     /** Lightweight connectivity check. Throws on non-2xx / network failure. */
     open suspend fun ping() {
@@ -263,17 +271,23 @@ open class OpencodeApiClient private constructor(
     }
 
     open suspend fun providers(): ProvidersResponse {
+        val generation: Int
         providersMutex.withLock {
             val cached = cachedProviders
             if (cached != null && System.currentTimeMillis() - cached.fetchedAt < NetworkConfig.catalogCacheTtlMs) {
                 return cached.value
             }
+            generation = providersGeneration
         }
         // Fetch outside the lock so a slow/retrying request (and its backoff) can't stall other
         // callers or cache invalidation. Concurrent cold callers may double-fetch — acceptable
         // for a rarely-fetched catalog — and the last store wins.
         val value = withRetry { client!!.get("config/providers").body<ProvidersResponse>() }
-        providersMutex.withLock { cachedProviders = CachedEntry(value, System.currentTimeMillis()) }
+        providersMutex.withLock {
+            // FIX 15: skip the store if an invalidateProvidersCache() raced this fetch — the
+            // result predates the invalidation and would otherwise resurrect stale data.
+            if (providersGeneration == generation) cachedProviders = CachedEntry(value, System.currentTimeMillis())
+        }
         return value
     }
 
@@ -284,50 +298,61 @@ open class OpencodeApiClient private constructor(
     }
 
     open suspend fun agents(): List<Agent> {
+        val generation: Int
         agentsMutex.withLock {
             val cached = cachedAgents
             if (cached != null && System.currentTimeMillis() - cached.fetchedAt < NetworkConfig.catalogCacheTtlMs) {
                 return cached.value
             }
+            generation = agentsGeneration
         }
         // Fetch outside the lock (see providers()): a slow/retrying request can't stall other
         // callers or cache invalidation; a rare concurrent double-fetch is acceptable here.
         val value = withRetry { client!!.get("agent").body<List<Agent>>() }
-        agentsMutex.withLock { cachedAgents = CachedEntry(value, System.currentTimeMillis()) }
+        agentsMutex.withLock {
+            // FIX 15: skip the store if an invalidateAgentsCache() raced this fetch (see providers()).
+            if (agentsGeneration == generation) cachedAgents = CachedEntry(value, System.currentTimeMillis())
+        }
         return value
     }
 
     open suspend fun commands(): List<Command> {
+        val generation: Int
         commandsMutex.withLock {
             val cached = cachedCommands
             if (cached != null && System.currentTimeMillis() - cached.fetchedAt < NetworkConfig.catalogCacheTtlMs) {
                 return cached.value
             }
+            generation = commandsGeneration
         }
         // Fetch outside the lock (see providers()): a slow/retrying request can't stall other
         // callers or cache invalidation; a rare concurrent double-fetch is acceptable here.
         val value = withRetry { client!!.get("command").body<List<Command>>() }
-        commandsMutex.withLock { cachedCommands = CachedEntry(value, System.currentTimeMillis()) }
+        commandsMutex.withLock {
+            // FIX 15: skip the store if an invalidateCommandsCache() raced this fetch (see providers()).
+            if (commandsGeneration == generation) cachedCommands = CachedEntry(value, System.currentTimeMillis())
+        }
         return value
     }
 
     /** Invalidate the catalog cache (e.g. on server switch). */
     open suspend fun invalidateCache() {
-        providersMutex.withLock { cachedProviders = null }
-        agentsMutex.withLock { cachedAgents = null }
-        commandsMutex.withLock { cachedCommands = null }
+        // FIX 15: bump each generation so an in-flight fetch drops its now-stale result.
+        providersMutex.withLock { cachedProviders = null; providersGeneration++ }
+        agentsMutex.withLock { cachedAgents = null; agentsGeneration++ }
+        commandsMutex.withLock { cachedCommands = null; commandsGeneration++ }
     }
 
     open suspend fun invalidateProvidersCache() {
-        providersMutex.withLock { cachedProviders = null }
+        providersMutex.withLock { cachedProviders = null; providersGeneration++ }
     }
 
     open suspend fun invalidateAgentsCache() {
-        agentsMutex.withLock { cachedAgents = null }
+        agentsMutex.withLock { cachedAgents = null; agentsGeneration++ }
     }
 
     open suspend fun invalidateCommandsCache() {
-        commandsMutex.withLock { cachedCommands = null }
+        commandsMutex.withLock { cachedCommands = null; commandsGeneration++ }
     }
 
     /** Respond to a permission request so a paused tool run can proceed. */

@@ -243,7 +243,9 @@ private fun SearchResults(results: List<String>, onOpenFile: (String) -> Unit) {
         return
     }
     LazyColumn(modifier = Modifier.fillMaxSize()) {
-        items(results, key = { it }) { path ->
+        // Key on path + index (not the bare path): a duplicate path from findFiles would
+        // otherwise crash LazyColumn with "Key already used". Mirrors TextResults/SymbolResults.
+        itemsIndexed(results, key = { i, p -> "$p:$i" }) { _, path ->
             // Split the path into directory (muted) + filename (emphasized) so results
             // are scannable instead of a wall of identical-looking full paths.
             val dir = path.substringBeforeLast('/', missingDelimiterValue = "").trimEnd('/')

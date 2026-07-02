@@ -84,6 +84,13 @@ fun AppLockGate(enabled: Boolean, content: @Composable () -> Unit) {
         content()
         return
     }
+    // Fail open if device authentication is no longer possible (e.g. the user enabled app-lock
+    // while a credential was enrolled and later removed their PIN/biometric): authenticate()
+    // would otherwise always hit onAuthenticationError and strand the user on a permanent lockout.
+    if (!canAuthenticateForAppLock(context)) {
+        content()
+        return
+    }
 
     // Survives config changes / process-death restore so a rotation doesn't re-prompt, but
     // defaults to locked on a fresh start.

@@ -79,7 +79,18 @@ open class AttachmentDraftStore private constructor(
             val file = fileFor(sessionId) ?: return@withContext
             runCatchingCancellable {
                 if (attachments.isEmpty()) file.delete()
-                else file.writeText(json.encodeToString(attachments))
+                else {
+                    // FIX: write atomically (temp file + rename) like RecentSessionsStore so a
+                    // process kill mid-write can't leave a truncated file that fails to decode
+                    // and silently drops the staged attachments on reload.
+                    val encoded = json.encodeToString(attachments)
+                    val tmp = File(file.parentFile, file.name + ".tmp")
+                    tmp.writeText(encoded)
+                    if (!tmp.renameTo(file)) {
+                        file.writeText(encoded)
+                        tmp.delete()
+                    }
+                }
             }.onFailure { Log.w("AttachmentDraftStore", "Failed to persist attachments for $sessionId", it) }
             Unit
         }

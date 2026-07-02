@@ -1,5 +1,6 @@
 package soy.iko.opencode.ui.settings
 
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.util.Log
 import androidx.compose.foundation.background
@@ -240,7 +241,11 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                                         runCatchingCancellable { context.startActivity(Intent.createChooser(send, shareLabel)) }
                                             .onFailure {
                                                 Log.w("Diagnostics", "Failed to share crash report", it)
-                                                showToast(context, context.getString(R.string.no_share_app))
+                                                // FIX 20: "no app to share" only fits ActivityNotFoundException; other
+                                                // failures (e.g. an oversized report exceeding the Binder limit →
+                                                // TransactionTooLargeException) get a generic toast, not that misleading one.
+                                                val msg = if (it is ActivityNotFoundException) R.string.no_share_app else R.string.error_generic
+                                                showToast(context, context.getString(msg))
                                             }
                                     }
                                 }) {
@@ -291,7 +296,11 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                             runCatchingCancellable { context.startActivity(Intent.createChooser(send, shareLabel)) }
                                 .onFailure {
                                     Log.w("Diagnostics", "Failed to share crash report", it)
-                                    showToast(context, context.getString(R.string.no_share_app))
+                                    // FIX 20: "no app to share" only fits ActivityNotFoundException; other failures
+                                    // (e.g. an oversized report exceeding the Binder limit → TransactionTooLargeException)
+                                    // get a generic toast, not that misleading one.
+                                    val msg = if (it is ActivityNotFoundException) R.string.no_share_app else R.string.error_generic
+                                    showToast(context, context.getString(msg))
                                 }
                         },
                     ) { Text(stringResource(R.string.share)) }

@@ -15,6 +15,7 @@ import io.ktor.http.URLBuilder
 import io.ktor.http.takeFrom
 import io.ktor.serialization.kotlinx.json.json
 import okhttp3.CertificatePinner
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.util.concurrent.TimeUnit
 
 /**
@@ -30,8 +31,17 @@ object HttpClientFactory {
         // and pin the server certificate(s) for HTTPS connections.
         val normalizedUrl = effectiveBaseUrl(profile)
         val isHttps = normalizedUrl.lowercase().startsWith("https://")
-        val pinHost = runCatching { java.net.URI(normalizedUrl).host }.getOrNull()
+        // Parse the host with OkHttp's own parser (not java.net.URI, which rejects hosts OkHttp
+        // accepts, e.g. underscores in "my_server.local"). If pinning is configured over HTTPS
+        // but the host can't be parsed, fail closed: never build an unpinned client — that would
+        // be a silent security downgrade for a user who opted into pinning.
+        val pinHost = normalizedUrl.toHttpUrlOrNull()?.host
         val pins = parsePins(profile.certPin)
+        if (pins.isNotEmpty() && isHttps && pinHost == null) {
+            throw IllegalStateException(
+                "Certificate pinning is configured but the server host could not be parsed from $normalizedUrl",
+            )
+        }
 
         return HttpClient(OkHttp) {
             expectSuccess = true

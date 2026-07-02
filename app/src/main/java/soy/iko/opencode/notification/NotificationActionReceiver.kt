@@ -31,11 +31,13 @@ class NotificationActionReceiver : BroadcastReceiver() {
                 val response = PermissionResponse.entries.firstOrNull {
                     it.wire == intent.getStringExtra(EXTRA_RESPONSE)
                 } ?: return
-                // Dismiss the notification immediately for responsive feedback; the reply
-                // itself continues in the background.
-                SessionNotifications.cancelPermission(context, sessionId)
                 val pending = goAsync()
-                container.respondToPermissionFromNotification(sessionId, permissionId, response) {
+                container.respondToPermissionFromNotification(sessionId, permissionId, response) { success ->
+                    // Only dismiss the notification once the tool was actually answered. If
+                    // there was no live connection (respond is a no-op) or the call failed,
+                    // leave it up so the user can retry — otherwise it vanishes with the
+                    // permission request left unanswered.
+                    if (success) SessionNotifications.cancelPermission(context, sessionId)
                     pending.finish()
                 }
             }
@@ -44,10 +46,11 @@ class NotificationActionReceiver : BroadcastReceiver() {
                     ?.getCharSequence(KEY_REPLY_TEXT)?.toString()?.trim()
                     ?.takeIf { it.isNotEmpty() } ?: return
                 val pending = goAsync()
-                container.sendPromptFromNotification(sessionId, text) {
-                    // The follow-up is on its way; clear the "session ready" notification.
-                    // A fresh run (and its foreground indicator) now signals progress.
-                    SessionNotifications.cancel(context, sessionId)
+                container.sendPromptFromNotification(sessionId, text) { enqueued ->
+                    // The reply is durably queued (and flushed now if online); clear the
+                    // "session ready" notification. If the enqueue failed, leave it up so the
+                    // reply isn't silently lost and the user can retry.
+                    if (enqueued) SessionNotifications.cancel(context, sessionId)
                     pending.finish()
                 }
             }

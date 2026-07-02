@@ -42,6 +42,10 @@ private class SessionsWidgetFactory(private val context: Context) : RemoteViewsS
 
     override fun getLoadingView(): RemoteViews? = null
     override fun getViewTypeCount(): Int = 1
-    override fun getItemId(position: Int): Long = position.toLong()
+    // FIX 17: derive a stable id from the session id (not the position) so prepending a new
+    // session doesn't mis-recycle RemoteViews and show stale row content. Falls back to the
+    // position for an out-of-range index.
+    override fun getItemId(position: Int): Long =
+        items.getOrNull(position)?.id?.hashCode()?.toLong() ?: position.toLong()
     override fun hasStableIds(): Boolean = true
 }

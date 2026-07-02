@@ -187,22 +187,13 @@ fun FileViewScreen(
                 transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(180)) },
                 label = "fileViewState",
             ) { s ->
-                // Derive match indices from THIS layer's content (s), not the outer/newest
-                // state. During the crossfade the exiting layer still renders the old
-                // content; passing the outer matchIndices (computed from the new content)
-                // would highlight and scroll the wrong lines until the animation settles.
-                val sMatchIndices = remember(s.content?.content, debouncedFind, lines, rawText) {
-                    val q = debouncedFind
-                    if (q.isEmpty()) emptyList()
-                    else {
-                        // Reuse the already-split `lines` when this layer shows the current
-                        // content (the common case); only re-split for the exiting layer's
-                        // stale content during the crossfade.
-                        val sContent = s.content?.content
-                        val sLines = if (sContent == rawText) lines else sContent.orEmpty().split("\n")
-                        sLines.mapIndexedNotNull { index, line -> index.takeIf { line.contains(q, ignoreCase = true) } }
-                    }
-                }
+                // Single source of truth for matches: the off-thread `matchIndices` produceState
+                // (keyed on the file content + debounced query). Both navigation (onPrev/onNext +
+                // scroll) and display (counter + highlight) read from it, so the counter can't show
+                // a new query while next/prev act on a stale set. The earlier in-composition
+                // per-layer scan re-ran the whole-file O(n) match on the UI thread each keystroke
+                // (the exact work produceState was moved off-thread to avoid); it's acceptable for
+                // the crossfade's exiting layer to briefly use this unified set until it settles.
                 FileViewStateContent(
                     state = s,
                     filename = filename,
@@ -219,7 +210,7 @@ fun FileViewScreen(
                     findActive = findActive,
                     findQuery = findQuery,
                     onQueryChange = { findQuery = it; matchPos = 0 },
-                    matchIndices = sMatchIndices,
+                    matchIndices = matchIndices,
                     matchPos = matchPos,
                     onPrev = { if (matchIndices.isNotEmpty()) matchPos = (matchPos - 1 + matchIndices.size) % matchIndices.size },
                     onNext = { if (matchIndices.isNotEmpty()) matchPos = (matchPos + 1) % matchIndices.size },

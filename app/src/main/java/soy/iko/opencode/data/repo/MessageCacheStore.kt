@@ -65,7 +65,18 @@ open class MessageCacheStore private constructor(
             val file = fileFor(sessionId) ?: return@withContext
             runCatchingCancellable {
                 if (messages.isEmpty()) file.delete()
-                else file.writeText(OpencodeJson.encodeToString(serializer, messages))
+                else {
+                    // FIX: write atomically (temp file + rename) like RecentSessionsStore so a
+                    // process kill mid-write can't leave a truncated file that fails to decode,
+                    // wiping the cached conversation on the next open.
+                    val encoded = OpencodeJson.encodeToString(serializer, messages)
+                    val tmp = File(file.parentFile, file.name + ".tmp")
+                    tmp.writeText(encoded)
+                    if (!tmp.renameTo(file)) {
+                        file.writeText(encoded)
+                        tmp.delete()
+                    }
+                }
             }.onFailure { Log.w("MessageCacheStore", "Failed to cache messages for $sessionId", it) }
             Unit
         }

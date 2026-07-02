@@ -84,14 +84,19 @@ fun TwoPaneSessionChat(
         lastProfileId = currentId
     }
 
-    // Clear the selection when the open session is deleted (it drops out of the list).
-    // Guard on a loaded, non-empty list so the freshly opened selection isn't cleared
-    // during the initial empty/loading state before sessions arrive.
+    // Clear the selection only when the open session is *deleted* — i.e. it was present
+    // in the list and then dropped out. A freshly created session sets `selected` to the
+    // new id before the async refresh lands, so the id is legitimately absent from the
+    // (still-stale) list for a moment; a naive "not in list" check would wrongly clear it
+    // and blank the detail pane. The `hasAppeared` latch (reset whenever `selected`
+    // changes, via remember keyed to it) distinguishes "never appeared yet" (keep) from
+    // "appeared, then removed" (a real deletion → clear).
+    var hasAppeared by remember(selected) { mutableStateOf(false) }
     LaunchedEffect(selected, sessionListState.sessions) {
-        val target = selected
-        if (target != null && sessionListState.sessions.isNotEmpty() &&
-            sessionListState.sessions.none { it.id == target }
-        ) {
+        val target = selected ?: return@LaunchedEffect
+        if (sessionListState.sessions.any { it.id == target }) {
+            hasAppeared = true
+        } else if (hasAppeared) {
             selected = null
         }
     }
