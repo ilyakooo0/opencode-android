@@ -14,6 +14,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -141,7 +142,12 @@ open class ProfileStore private constructor(
         // suspend + redispatch overhead.
         val pwPrefs = prefsForPasswords()
         stored.map { it.toProfile(pwPrefs) }
-    } ?: kotlinx.coroutines.flow.flowOf(emptyList())
+    }
+        // The .map above runs in the *collector's* context, and every consumer collects on
+        // viewModelScope (Main). Without this, kotlinx JSON decode + EncryptedSharedPreferences
+        // AES decryption would run on the UI thread on each emission. flowOn moves that work to IO.
+        ?.flowOn(Dispatchers.IO)
+        ?: kotlinx.coroutines.flow.flowOf(emptyList())
 
     private fun StoredProfile.toProfile(pwPrefs: SharedPreferences): ServerProfile {
         val pw = username?.let { pwPrefs.getString(passwordKey(id), null) }

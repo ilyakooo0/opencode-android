@@ -130,11 +130,28 @@ class MessageStoreTest {
     }
 
     @Test
-    fun messageUpdatedOverwritesExistingInfo() {
+    fun messageUpdatedOverwritesExistingInfoWhenChanged() {
         val store = MessageStore()
         store.reduce(session, msgUpdated("m1"))
-        val changed = store.reduce(session, msgUpdated("m1"))
+        // A second update carrying genuinely new info (e.g. cost/token totals filled in on
+        // completion) overwrites in place and reports a change.
+        val changed = store.reduce(
+            session,
+            MessageUpdated(MessageUpdated.Props(AssistantMessage(id = "m1", sessionID = session, cost = 0.42))),
+        )
         assertTrue(changed)
+        assertEquals(1, store.snapshot().size)
+        assertEquals(0.42, (store.snapshot().single().info as AssistantMessage).cost!!, 1e-9)
+    }
+
+    @Test
+    fun messageUpdatedWithIdenticalInfoIsNoOp() {
+        val store = MessageStore()
+        store.reduce(session, msgUpdated("m1"))
+        // Re-sending byte-identical info publishes nothing, avoiding a redundant O(N) snapshot
+        // (mirrors upsertPart's identical-part guard).
+        val changed = store.reduce(session, msgUpdated("m1"))
+        assertFalse(changed)
         assertEquals(1, store.snapshot().size)
     }
 

@@ -144,6 +144,10 @@ private fun ServerEditForm(
     onDone: () -> Unit,
 ) {
     val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
+    // canSave parses the base URL with java.net.URI (which throws — and fills a stack trace —
+    // on the common half-typed URL). Memoize on baseUrl so it runs once per edit instead of
+    // being re-parsed at each of the enabled= call sites on every keystroke's recomposition.
+    val canSave = remember(state.baseUrl) { state.canSave }
     Column(
         modifier = Modifier
             .padding(padding)
@@ -190,7 +194,7 @@ private fun ServerEditForm(
         )
         OutlinedButton(
             onClick = { vm.probe() },
-            enabled = state.canSave && !state.probing && !state.saving,
+            enabled = canSave && !state.probing && !state.saving,
             modifier = Modifier.fillMaxWidth().testTag("server_probe"),
         ) {
             if (state.probing) {
@@ -229,7 +233,7 @@ private fun ServerEditForm(
                 onTogglePassword = onTogglePassword,
                 onUpdate = vm::update,
                 onTestCredentials = vm::testCredentials,
-                onImeDone = { if (state.canSave && !state.saving) vm.saveAndConnect(onDone) },
+                onImeDone = { if (canSave && !state.saving) vm.saveAndConnect(onDone) },
             )
         }
         Row(
@@ -241,7 +245,7 @@ private fun ServerEditForm(
                     haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                     vm.save(onDone)
                 },
-                enabled = state.canSave && !state.saving,
+                enabled = canSave && !state.saving,
                 modifier = Modifier.weight(1f),
             ) {
                 if (state.saving) {
@@ -260,7 +264,7 @@ private fun ServerEditForm(
                     haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                     vm.saveAndConnect(onDone)
                 },
-                enabled = state.canSave && !state.saving,
+                enabled = canSave && !state.saving,
                 modifier = Modifier.weight(1f),
             ) {
                 Text(stringResource(R.string.save_and_connect))
@@ -288,6 +292,9 @@ private fun AuthFields(
 ) {
     val showPasswordLabel = stringResource(R.string.show_password)
     val hidePasswordLabel = stringResource(R.string.hide_password)
+    // Memoize the URI parse on baseUrl so the test-credentials button doesn't re-parse it on
+    // every keystroke's recomposition (see ServerEditForm).
+    val canSave = remember(state.baseUrl) { state.canSave }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(
             stringResource(R.string.auth_required),
@@ -324,7 +331,7 @@ private fun AuthFields(
             onClick = onTestCredentials,
             // Require at least one credential field: testCredentials() no-ops when both are
             // blank, so without this the button is tappable but silently does nothing.
-            enabled = state.canSave && !state.testingCredentials && !state.saving &&
+            enabled = canSave && !state.testingCredentials && !state.saving &&
                 (state.username.isNotBlank() || state.password.isNotBlank()),
             modifier = Modifier.fillMaxWidth().testTag("server_test_creds"),
         ) {

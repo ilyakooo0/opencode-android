@@ -523,9 +523,13 @@ private fun FileTextContent(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 // Heuristic syntax highlighting per line. Falls back to plain text for
-                // unknown extensions, so non-code files render unchanged.
+                // unknown extensions, so non-code files render unchanged. Memoized so the
+                // O(n) tokenizer + AnnotatedString allocation runs only when the line text,
+                // file, or palette actually changes — not on every recomposition (e.g. every
+                // keystroke into find-in-file, which would otherwise re-highlight all visible lines).
+                val highlighted = remember(line, filename, palette) { highlightLine(line, filename, palette) }
                 Text(
-                    highlightLine(line, filename, palette),
+                    highlighted,
                     modifier = Modifier.padding(start = 8.dp),
                     style = MaterialTheme.typography.bodySmall,
                 )

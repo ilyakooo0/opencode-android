@@ -1,6 +1,7 @@
 package soy.iko.opencode.data.repo
 
 import soy.iko.opencode.data.model.BusEvent
+import soy.iko.opencode.data.model.MessageInfo
 import soy.iko.opencode.data.model.MessagePartRemoved
 import soy.iko.opencode.data.model.MessagePartUpdated
 import soy.iko.opencode.data.model.MessageRemoved
@@ -17,11 +18,13 @@ import soy.iko.opencode.data.network.OpencodeApiClient
 import soy.iko.opencode.util.runCatchingCancellable
 import soy.iko.opencode.util.safeExceptionSummary
 import android.util.Log
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.consumeAsFlow
 import kotlinx.coroutines.flow.conflate
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -159,7 +162,13 @@ open class SessionRepository(
             val snapshot = lock.withLock { store.snapshot() }
             send(snapshot)
         }
-    }.conflate()
+        // Run the whole reducer pipeline — event reduction, list rebuilds, and the O(N)
+        // snapshot copy — on Dispatchers.Default rather than the collector's context. The
+        // sole consumer collects via stateIn(viewModelScope), i.e. Main.immediate, so without
+        // this every streamed token's reduce()/snapshot() would execute on the UI thread
+        // (hundreds/sec on a fast run). The seed REST calls here only suspend, so moving them
+        // off Main is harmless. JSON decoding already runs off-Main upstream in EventStreamClient.
+    }.flowOn(Dispatchers.Default).conflate()
 
     companion object {
         /** Convenience: is this event a run-completion signal for [sessionId]?
@@ -178,8 +187,34 @@ open class SessionRepository(
  * Exposed as `internal` so the reducer logic can be unit-tested directly.
  */
 internal class MessageStore {
-    // messageId -> (info + parts), insertion-ordered.
-    private val messages = LinkedHashMap<String, MessageWithParts>()
+    // messageId -> mutable holder (info + insertion-ordered parts); the map itself is
+    // insertion-ordered.
+    private val messages = LinkedHashMap<String, Holder>()
+
+    /**
+     * Mutable per-message holder. Parts live in an insertion-ordered map keyed by part id, so a
+     * streamed part update is an O(1) put instead of an O(P) list rebuild. The immutable
+     * [MessageWithParts] view is materialized lazily and cached until the next mutation — so a
+     * burst of streamed token updates rebuilds a message's part list at most once per published
+     * [snapshot], not once per token. The cached view is also reference-stable across snapshots
+     * while unchanged, so Compose skips recomposing bubbles that didn't change.
+     */
+    private class Holder(var info: MessageInfo, val parts: LinkedHashMap<String, Part>) {
+        private var cached: MessageWithParts? = null
+        fun view(): MessageWithParts =
+            cached ?: MessageWithParts(info, parts.values.toList()).also { cached = it }
+        /** Adopt an existing immutable instance as the cache — avoids an immediate rebuild and
+         *  preserves its identity (e.g. when seeding an authoritative REST snapshot). */
+        fun adopt(m: MessageWithParts) { cached = m }
+        fun invalidate() { cached = null }
+    }
+
+    /** Build a [Holder] from an immutable message, reusing [m] itself as the cached view. */
+    private fun holderOf(m: MessageWithParts): Holder {
+        val parts = LinkedHashMap<String, Part>(m.parts.size)
+        for (p in m.parts) parts[p.id] = p
+        return Holder(m.info, parts).also { it.adopt(m) }
+    }
 
     /** Part ids upserted via [reduce] since the last reseed pivot ([beginReseed]) or seed.
      *  On a reconnect re-seed these are the parts that streamed in *during* the REST fetch,
@@ -211,7 +246,7 @@ internal class MessageStore {
     /** Maximum number of messages to keep in memory; oldest are evicted when exceeded. */
     internal val maxMessages = NetworkConfig.maxInMemoryMessages
 
-    fun snapshot(): List<MessageWithParts> = messages.values.toList()
+    fun snapshot(): List<MessageWithParts> = messages.values.map { it.view() }
 
     fun seed(initial: List<MessageWithParts>, prune: Boolean = false): Boolean {
         var changed = false
@@ -230,7 +265,7 @@ internal class MessageStore {
         for (m in initial) {
             val existing = messages[m.info.id]
             if (existing == null) {
-                messages[m.info.id] = m
+                messages[m.info.id] = holderOf(m)
                 changed = true
             } else {
                 // A part streamed in between subscribe and this initial load may already
@@ -238,7 +273,8 @@ internal class MessageStore {
                 // overwriting so that newer streamed part isn't discarded: take the
                 // snapshot's part order, swap in the streamed version where ids overlap,
                 // append any streamed-only parts, and adopt the authoritative REST info.
-                val streamedById = existing.parts.associateBy { it.id }
+                // existing.parts is already keyed by part id (insertion-ordered).
+                val streamedById = existing.parts
                 val snapshotIds = m.parts.mapTo(mutableSetOf()) { it.id }
                 // Prefer the in-memory version of an overlapping part ONLY if it streamed
                 // in since the reseed pivot (i.e. during this fetch), so it's newer than
@@ -247,7 +283,7 @@ internal class MessageStore {
                 val ordered = m.parts.map { p ->
                     if (p.id in streamedSincePivot) streamedById[p.id] ?: p else p
                 }.toMutableList()
-                for (p in existing.parts) {
+                for (p in existing.parts.values) {
                     if (p.id !in snapshotIds) ordered.add(p)
                 }
                 // Adopt the authoritative REST info unless the in-memory info was itself
@@ -256,8 +292,8 @@ internal class MessageStore {
                 // in-memory info that went stale during a disconnect.
                 val info = if (existing.info is UnknownMessage || m.info.id !in messageInfoUpdatedSincePivot) m.info else existing.info
                 val merged = MessageWithParts(info = info, parts = ordered)
-                if (merged != existing) {
-                    messages[m.info.id] = merged
+                if (merged != existing.view()) {
+                    messages[m.info.id] = holderOf(merged)
                     changed = true
                 }
             }
@@ -284,7 +320,13 @@ internal class MessageStore {
     private fun reorderByTime(): Boolean {
         val entries = messages.entries.map { it.key to it.value }
         val sorted = entries.sortedBy { it.second.info.time?.created ?: Long.MAX_VALUE }
-        if (sorted.map { it.first } == entries.map { it.first }) return false
+        // Detect a reordering by comparing keys positionally, instead of allocating two more
+        // N-sized key lists just to compare them.
+        var changed = false
+        for (i in sorted.indices) {
+            if (sorted[i].first != entries[i].first) { changed = true; break }
+        }
+        if (!changed) return false
         messages.clear()
         for ((k, v) in sorted) messages[k] = v
         return true
@@ -293,30 +335,7 @@ internal class MessageStore {
     /** Returns true if the state changed (and a new snapshot should be published). */
     fun reduce(sessionId: String, event: BusEvent): Boolean {
         return when (event) {
-            is MessageUpdated -> {
-                val info = event.properties.info
-                if (info.sessionID != sessionId) {
-                    false
-                } else {
-                    // An UnknownMessage with an empty id (e.g. from an unrecognized
-                    // server role with no id field) would collide with other such
-                    // messages in the map. Generate a unique synthetic key so each
-                    // unknown message gets its own entry instead of overwriting others.
-                    val key = if (info.id.isEmpty() && info is UnknownMessage) {
-                        "unknown-${unknownCounter.incrementAndGet()}"
-                    } else {
-                        info.id
-                    }
-                    val existing = messages[key]
-                    messages[key] = existing?.copy(info = info) ?: MessageWithParts(info)
-                    // Record that this message's info streamed in live, so a re-seed after a
-                    // reconnect knows it's newer than the REST snapshot and keeps it (see
-                    // seed()/beginReseed()).
-                    messageInfoUpdatedSincePivot.add(key)
-                    if (existing == null) evictOldMessages()
-                    true
-                }
-            }
+            is MessageUpdated -> handleMessageUpdated(sessionId, event)
 
             is MessagePartUpdated -> {
                 val part = event.properties.part
@@ -343,6 +362,34 @@ internal class MessageStore {
         }
     }
 
+    private fun handleMessageUpdated(sessionId: String, event: MessageUpdated): Boolean {
+        val info = event.properties.info
+        if (info.sessionID != sessionId) return false
+        // An UnknownMessage with an empty id (e.g. from an unrecognized server role with no id
+        // field) would collide with other such messages in the map. Generate a unique synthetic
+        // key so each unknown message gets its own entry instead of overwriting others.
+        val key = if (info.id.isEmpty() && info is UnknownMessage) {
+            "unknown-${unknownCounter.incrementAndGet()}"
+        } else {
+            info.id
+        }
+        val existing = messages[key]
+        // A server re-sending byte-identical info is a no-op: skip it so we don't publish a
+        // redundant snapshot (mirrors upsertPart's identical-part guard).
+        if (existing != null && existing.info == info) return false
+        if (existing == null) {
+            messages[key] = Holder(info, LinkedHashMap())
+        } else {
+            existing.info = info
+            existing.invalidate()
+        }
+        // Record that this message's info streamed in live, so a re-seed after a reconnect knows
+        // it's newer than the REST snapshot and keeps it (see seed()/beginReseed()).
+        messageInfoUpdatedSincePivot.add(key)
+        if (existing == null) evictOldMessages()
+        return true
+    }
+
     /** Returns false if [eventSession] is non-null and doesn't match [sessionId]. */
     private fun matchesSession(eventSession: String?, sessionId: String): Boolean =
         eventSession == null || eventSession == sessionId
@@ -359,25 +406,27 @@ internal class MessageStore {
         if (!matchesSession(event.properties.sessionID, sessionId)) return false
         val removed = messages.remove(id) ?: return false
         messageInfoUpdatedSincePivot.remove(id)
-        removed.parts.forEach { streamedSincePivot.remove(it.id) }
+        removed.parts.keys.forEach { streamedSincePivot.remove(it) }
         return true
     }
 
     private fun upsertPart(messageId: String, part: Part): Boolean {
         val current = messages[messageId]
-        val parts = current?.parts.orEmpty()
-        val idx = parts.indexOfFirst { it.id == part.id }
-        if (idx >= 0 && parts[idx] == part) return false
-        val newParts = if (idx >= 0) {
-            parts.toMutableList().also { it[idx] = part }
+        if (current != null) {
+            // O(1) map lookup + put, vs the former O(P) indexOfFirst scan and full-list copy
+            // on every streamed token. A LinkedHashMap re-put keeps the part's original
+            // position (replace-in-place); a new id is appended — matching the old list order.
+            if (current.parts[part.id] == part) return false
+            current.parts[part.id] = part
+            current.invalidate()
         } else {
-            parts + part
-        }
-        messages[messageId] = current?.copy(parts = newParts)
-            ?: MessageWithParts(
+            val parts = LinkedHashMap<String, Part>()
+            parts[part.id] = part
+            messages[messageId] = Holder(
                 info = UnknownMessage(id = messageId, sessionID = part.sessionID ?: ""),
-                parts = newParts,
+                parts = parts,
             )
+        }
         // Record that this part streamed in, so a re-seed after a reconnect knows it's
         // newer than the REST snapshot and keeps it (see seed()/beginReseed()).
         streamedSincePivot.add(part.id)
@@ -387,9 +436,8 @@ internal class MessageStore {
 
     private fun removePart(messageId: String, partId: String): Boolean {
         val current = messages[messageId] ?: return false
-        val newParts = current.parts.filterNot { it.id == partId }
-        if (newParts.size == current.parts.size) return false
-        messages[messageId] = current.copy(parts = newParts)
+        if (current.parts.remove(partId) == null) return false
+        current.invalidate()
         return true
     }
 
@@ -404,7 +452,7 @@ internal class MessageStore {
             // unbounded over a long-running session that never reconnects (they're only
             // otherwise cleared on reseed/seed).
             messageInfoUpdatedSincePivot.remove(oldestKey)
-            removed?.parts?.forEach { streamedSincePivot.remove(it.id) }
+            removed?.parts?.keys?.forEach { streamedSincePivot.remove(it) }
             evicted = true
         }
         return evicted

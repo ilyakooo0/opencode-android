@@ -637,8 +637,10 @@ fun ChatScreen(
                                 // Only the last (streaming) message needs isRunning — it drives the
                                 // reasoning-block spinner. Passing the live flag to every bubble
                                 // makes all visible messages recompose whenever a run starts or stops.
-                                val modelLabel = (message.info as? soy.iko.opencode.data.model.AssistantMessage)
-                                    ?.let { resolveModelLabel(it, models) }
+                                val modelLabel = remember(message.info, models) {
+                                    (message.info as? soy.iko.opencode.data.model.AssistantMessage)
+                                        ?.let { resolveModelLabel(it, models) }
+                                }
                                 MessageBubble(
                                     message,
                                     isRunning = running && message.info.id == lastMessageId,
