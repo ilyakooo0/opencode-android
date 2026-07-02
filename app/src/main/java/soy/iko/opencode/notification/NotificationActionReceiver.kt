@@ -28,11 +28,12 @@ class NotificationActionReceiver : BroadcastReceiver() {
         when (intent.action) {
             ACTION_PERMISSION -> {
                 val permissionId = intent.getStringExtra(EXTRA_PERMISSION_ID)?.takeIf { it.isNotBlank() } ?: return
+                val profileId = intent.getStringExtra(EXTRA_PROFILE_ID)?.takeIf { it.isNotBlank() }
                 val response = PermissionResponse.entries.firstOrNull {
                     it.wire == intent.getStringExtra(EXTRA_RESPONSE)
                 } ?: return
                 val pending = goAsync()
-                container.respondToPermissionFromNotification(sessionId, permissionId, response) { success ->
+                container.respondToPermissionFromNotification(sessionId, permissionId, response, profileId) { success ->
                     // Only dismiss the notification once the tool was actually answered. If
                     // there was no live connection (respond is a no-op) or the call failed,
                     // leave it up so the user can retry — otherwise it vanishes with the
@@ -62,6 +63,7 @@ class NotificationActionReceiver : BroadcastReceiver() {
         const val ACTION_REPLY = "soy.iko.opencode.action.REPLY"
         const val EXTRA_SESSION_ID = "soy.iko.opencode.extra.SESSION_ID"
         const val EXTRA_PERMISSION_ID = "soy.iko.opencode.extra.PERMISSION_ID"
+        const val EXTRA_PROFILE_ID = "soy.iko.opencode.extra.PROFILE_ID"
         const val EXTRA_RESPONSE = "soy.iko.opencode.extra.RESPONSE"
         const val KEY_REPLY_TEXT = "soy.iko.opencode.key.REPLY_TEXT"
     }

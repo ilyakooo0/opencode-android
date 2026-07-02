@@ -76,10 +76,15 @@ fun OpencodeApp(container: AppContainer) {
     var handledShareText by remember { mutableStateOf<String?>(null) }
     var handledSharedMedia by remember { mutableStateOf<List<String>>(emptyList()) }
     LaunchedEffect(pendingShare, pendingSharedMedia, connection) {
-        if (pendingShare == null && pendingSharedMedia.isEmpty()) {
-            handledSharedMedia = emptyList()
-            return@LaunchedEffect
-        }
+        // Reset the remembered handled state for each channel independently as it drains,
+        // so re-sharing the same payload after consumption is still recognized as new. A
+        // joint reset (only when both are empty) would drop a text-only re-share that
+        // follows a text+media share of the same text: the text channel matches its
+        // remembered value while the media channel is empty (not "new"), so neither clause
+        // fires and the share is silently swallowed.
+        if (pendingShare == null) handledShareText = null
+        if (pendingSharedMedia.isEmpty()) handledSharedMedia = emptyList()
+        if (pendingShare == null && pendingSharedMedia.isEmpty()) return@LaunchedEffect
         if (connection == null) return@LaunchedEffect
         val newShare = (pendingShare != null && pendingShare != handledShareText) ||
             (pendingSharedMedia.isNotEmpty() && pendingSharedMedia != handledSharedMedia)

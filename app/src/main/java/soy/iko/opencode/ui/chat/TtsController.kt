@@ -77,9 +77,16 @@ class TtsController(context: Context) : RememberObserver {
             // distinct id so their per-utterance onDone doesn't clear the Stop state early.
             val utteranceId = if (index == chunks.lastIndex) id else "$id#$index"
             val result = tts.speak(chunk, queueMode, null, utteranceId)
-            // If even the first chunk can't be enqueued, nothing plays and no callback fires;
-            // bail without marking this message as speaking so the button doesn't stick.
-            if (index == 0 && result != TextToSpeech.SUCCESS) { _speakingId.value = null; return }
+            // If any chunk can't be enqueued, the final chunk's onDone (which would clear
+            // the Stop state) never fires — leaving the Stop button stuck with partial or
+            // no audio. Bail without marking this message as speaking so the button doesn't
+            // stick. A mid-queue failure also breaks the contiguous playback, so stopping
+            // is the safe default rather than playing a truncated prefix silently.
+            if (result != TextToSpeech.SUCCESS) {
+                if (index == 0) _speakingId.value = null
+                else stop()
+                return
+            }
         }
         _speakingId.value = id
     }

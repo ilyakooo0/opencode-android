@@ -17,7 +17,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -46,7 +45,13 @@ fun PermissionDialog(
     // so a null -> permissionB transition can collapse to just permissionB, reusing this
     // composable for a different permission. Without the key `responded` would stay true
     // and every button (and back-press) would be a no-op — an undismissable modal.
-    var responded by rememberSaveable(permission.id) { mutableStateOf(false) }
+    // Plain `remember` (not `rememberSaveable`): a failed respondPermission re-enqueues
+    // the same permission id (ChatViewModel.respondPermission -> enqueuePermission), and
+    // rememberSaveable would restore a stale `true` from the Bundle across a config
+    // change in between, locking the re-queued modal with all buttons no-op. Plain
+    // remember resets to false on every fresh composition, so a re-queued permission is
+    // always answerable.
+    var responded by remember(permission.id) { mutableStateOf(false) }
     val respond: (PermissionResponse) -> Unit = { response ->
         if (!responded) {
             responded = true

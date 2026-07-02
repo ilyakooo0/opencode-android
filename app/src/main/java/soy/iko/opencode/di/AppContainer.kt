@@ -27,6 +27,7 @@ import soy.iko.opencode.data.repo.MessageCacheStore
 import soy.iko.opencode.data.repo.OutboxMessage
 import soy.iko.opencode.data.repo.OutboxStore
 import soy.iko.opencode.data.repo.SessionPrefsStore
+import soy.iko.opencode.data.repo.SessionRepository
 import soy.iko.opencode.data.repo.ProfileStore
 import soy.iko.opencode.data.repo.SettingsStore
 import soy.iko.opencode.data.repo.classifyError
@@ -58,6 +59,7 @@ import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -450,14 +452,23 @@ open class AppContainer private constructor(
             while (isActive) {
                 runCatchingCancellable {
                     activeConnection
-                        .flatMapLatest { conn -> conn?.events?.events ?: emptyFlow() }
-                        .collect { event ->
+                        .flatMapLatest { conn ->
+                            // Capture the originating connection so notification coroutines
+                            // resolve titles and route permission responses against THIS
+                            // server, not whichever happens to be active when they resume.
+                            // A server switch during a listSessions() round-trip would
+                            // otherwise resolve the title (or POST the permission reply)
+                            // against the new server, where the session/permission doesn't
+                            // exist — showing an opaque id or silently losing the reply.
+                            conn?.events?.events?.map { conn to it } ?: emptyFlow()
+                        }
+                        .collect { (conn, event) ->
                     // A permission request needs the user's approval. Post a heads-up
                     // notification (with Allow/Reject actions) unless the user is actively
                     // viewing this session, where the in-app permission dialog handles it.
                     if (event is PermissionUpdated) {
                         val psid = event.properties.sessionID.takeIf { it.isNotBlank() } ?: return@collect
-                        if (!isActivelyViewing(psid)) appScope.launch { notifyPermission(event.properties) }
+                        if (!isActivelyViewing(psid)) appScope.launch { notifyPermission(event.properties, conn) }
                         return@collect
                     }
                     // The permission was answered (in-app, from the notification, or
@@ -477,7 +488,7 @@ open class AppContainer private constructor(
                             }
                         }
                         if (wasRunning && !isActivelyViewing(esid)) {
-                            appScope.launch { notifySessionError(esid) }
+                            appScope.launch { notifySessionError(esid, conn.repository) }
                         }
                         return@collect
                     }
@@ -502,7 +513,7 @@ open class AppContainer private constructor(
                             // the shared-event collector here would stall the SharedFlow,
                             // overflowing its DROP_OLDEST buffer and silently dropping live
                             // parts/updates for every other subscriber (e.g. the message reducer).
-                            appScope.launch { notifySessionCompleted(idleSid) }
+                            appScope.launch { notifySessionCompleted(idleSid, conn.repository) }
                         }
                         return@collect
                     }
@@ -597,15 +608,18 @@ open class AppContainer private constructor(
         const val LAST_USED_SAVE_THRESHOLD_MS = 60_000L
     }
 
-    /** Resolve the human-readable title for [sessionId] (best-effort), falling back to the id. */
-    private suspend fun resolveSessionTitle(sessionId: String): String =
+    /** Resolve the human-readable title for [sessionId] (best-effort), falling back to the id.
+     *  Uses [originRepo] — the repository of the connection that emitted the event — so a
+     *  server switch during the listSessions() round-trip doesn't resolve the title against
+     *  an unrelated server (showing an opaque id, or worse, a colliding session's title). */
+    private suspend fun resolveSessionTitle(sessionId: String, originRepo: SessionRepository): String =
         runCatchingCancellable {
-            activeConnection.value?.repository?.listSessions()?.firstOrNull { it.id == sessionId }?.displayTitle
+            originRepo.listSessions()?.firstOrNull { it.id == sessionId }?.displayTitle
         }.getOrNull() ?: sessionId
 
     /** Resolve the title for [sessionId] (best-effort) and post a completion notification. */
-    private suspend fun notifySessionCompleted(sessionId: String) {
-        val title = resolveSessionTitle(sessionId)
+    private suspend fun notifySessionCompleted(sessionId: String, originRepo: SessionRepository) {
+        val title = resolveSessionTitle(sessionId, originRepo)
         // Re-check viewing right before posting: the call site checks !isActivelyViewing(sid)
         // at event time, but resolveSessionTitle() suspends on a listSessions() round-trip.
         // If the user opened the session in that gap, setCurrentSession already cancelled the
@@ -615,18 +629,20 @@ open class AppContainer private constructor(
         appContext?.let { SessionNotifications.postCompleted(it, sessionId, title) }
     }
 
-    /** Post a heads-up permission notification for [permission], resolving its session title. */
-    private suspend fun notifyPermission(permission: Permission) {
+    /** Post a heads-up permission notification for [permission], resolving its session title.
+     *  [originConn] is the connection that emitted the permission event — its profile id is
+     *  embedded in the notification so the receiver routes the response back to THIS server. */
+    private suspend fun notifyPermission(permission: Permission, originConn: OpencodeConnection) {
         val sessionId = permission.sessionID.takeIf { it.isNotBlank() } ?: return
-        val title = resolveSessionTitle(sessionId)
+        val title = resolveSessionTitle(sessionId, originConn.repository)
         // Re-check viewing just before posting — see notifySessionCompleted for the race.
         if (isActivelyViewing(sessionId)) return
-        appContext?.let { SessionNotifications.postPermission(it, permission, title) }
+        appContext?.let { SessionNotifications.postPermission(it, permission, title, originConn.profile.id) }
     }
 
     /** Post an error notification for a failed background run. */
-    private suspend fun notifySessionError(sessionId: String) {
-        val title = resolveSessionTitle(sessionId)
+    private suspend fun notifySessionError(sessionId: String, originRepo: SessionRepository) {
+        val title = resolveSessionTitle(sessionId, originRepo)
         // Re-check viewing just before posting — see notifySessionCompleted for the race.
         if (isActivelyViewing(sessionId)) return
         appContext?.let { SessionNotifications.postError(it, sessionId, title) }
@@ -638,11 +654,19 @@ open class AppContainer private constructor(
      *  connection existed AND respondPermission succeeded — the receiver uses it to decide
      *  whether to dismiss the notification. A missing connection makes the respond a no-op,
      *  so it must report failure (not success) rather than let the notification vanish with
-     *  the tool left unanswered. */
+     *  the tool left unanswered.
+     *
+     *  [profileId] is the id of the server that posted the permission request (embedded in
+     *  the notification's PendingIntent). If it doesn't match the currently active
+     *  connection's profile, the response is NOT sent: posting it to a different server
+     *  would 404 (treated as "already resolved" success by respondPermission), dismissing
+     *  the notification while the original server's tool stays paused forever. Reporting
+     *  failure instead leaves the notification up so the user can switch back and retry. */
     open fun respondToPermissionFromNotification(
         sessionId: String,
         permissionId: String,
         response: PermissionResponse,
+        profileId: String?,
         onDone: (Boolean) -> Unit,
     ) {
         appScope.launch {
@@ -653,8 +677,12 @@ open class AppContainer private constructor(
             var success = false
             try {
                 success = runCatchingCancellable {
-                    val api = activeConnection.value?.api ?: return@runCatchingCancellable false
-                    api.respondPermission(sessionId, permissionId, response)
+                    val conn = activeConnection.value ?: return@runCatchingCancellable false
+                    // Route to the originating server only. A mismatch means the user
+                    // switched servers while the permission was pending; sending the reply
+                    // to the wrong server would be silently swallowed as a 404-success.
+                    if (profileId != null && conn.profile.id != profileId) return@runCatchingCancellable false
+                    conn.api.respondPermission(sessionId, permissionId, response)
                     true
                 }.onFailure {
                     Log.w("AppContainer", "notif permission respond failed: ${safeExceptionSummary(it)}")

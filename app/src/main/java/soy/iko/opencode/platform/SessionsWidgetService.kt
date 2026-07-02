@@ -8,6 +8,7 @@ import soy.iko.opencode.MainActivity
 import soy.iko.opencode.R
 import soy.iko.opencode.data.repo.RecentSession
 import soy.iko.opencode.data.repo.RecentSessionsStore
+import java.security.MessageDigest
 
 /** Serves the list rows for [SessionsWidgetProvider] from [RecentSessionsStore]. */
 class SessionsWidgetService : RemoteViewsService() {
@@ -42,10 +43,26 @@ private class SessionsWidgetFactory(private val context: Context) : RemoteViewsS
 
     override fun getLoadingView(): RemoteViews? = null
     override fun getViewTypeCount(): Int = 1
-    // FIX 17: derive a stable id from the session id (not the position) so prepending a new
-    // session doesn't mis-recycle RemoteViews and show stale row content. Falls back to the
-    // position for an out-of-range index.
-    override fun getItemId(position: Int): Long =
-        items.getOrNull(position)?.id?.hashCode()?.toLong() ?: position.toLong()
+    // Derive a stable id from the session id via a collision-resistant SHA-256 digest
+    // (truncated to 63 bits) rather than String.hashCode(), whose 32-bit output can
+    // collide for distinct session ids — with hasStableIds=true the RemoteViews framework
+    // would then mis-recycle two sessions' row content. Mirrors SessionNotifications.notifId.
+    // Falls back to the position for an out-of-range index.
+    override fun getItemId(position: Int): Long {
+        val id = items.getOrNull(position)?.id ?: return position.toLong()
+        val digest = runCatching { MessageDigest.getInstance("SHA-256").digest(id.toByteArray()) }
+            .getOrNull() ?: return position.toLong()
+        // Take the first 8 bytes, mask to 63 bits (always positive) to fit a Long id.
+        // The shl/or/and infix precedence requires parenthesizing each shift individually
+        // (see SessionNotifications.notifId for the rationale).
+        return (((digest[0].toLong() and 0xFF) shl 56) or
+            ((digest[1].toLong() and 0xFF) shl 48) or
+            ((digest[2].toLong() and 0xFF) shl 40) or
+            ((digest[3].toLong() and 0xFF) shl 32) or
+            ((digest[4].toLong() and 0xFF) shl 24) or
+            ((digest[5].toLong() and 0xFF) shl 16) or
+            ((digest[6].toLong() and 0xFF) shl 8) or
+            (digest[7].toLong() and 0xFF)).and(0x7FFFFFFFFFFFFFFF)
+    }
     override fun hasStableIds(): Boolean = true
 }

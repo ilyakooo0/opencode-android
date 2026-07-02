@@ -55,6 +55,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.launch
 
 /**
@@ -598,62 +600,77 @@ class ChatViewModel(
                         }
                 }
                 try {
-                    conn.events.events.collect { event ->
-                        if (SessionRepository.isIdle(event, sessionId)) {
-                            _running.value = false
-                            runEndedByIdle = true
-                            // Auto-send a queued follow-up once the previous run finishes,
-                            // so the user's drafted-while-running message isn't lost.
-                            val queued = _queuedFollowUp.value
-                            if (queued != null) {
-                                setQueuedFollowUp(null)
-                                send(queued, includeAttachments = false)
-                            }
-                        }
-                        if (SessionRepository.isError(event, sessionId)) {
-                            _running.value = false
-                            runEndedByIdle = true
-                            // The run errored, so the queued follow-up won't auto-send.
-                            // Restore it to the input (if free) so the user's typed text
-                            // isn't silently lost; otherwise just clear the queue.
-                            val queued = _queuedFollowUp.value
-                            if (!queued.isNullOrEmpty() && _draft.value.isEmpty()) {
-                                _draft.value = queued
-                            }
-                            setQueuedFollowUp(null)
-                            _errorEvents.trySend(ChatError(container.string(R.string.error_agent_reported)))
-                        }
-                        // Restore the run indicator if a live streaming event arrives while it's
-                        // cleared — e.g. an SSE reconnect mid-run reset _running to false, but the
-                        // agent is still working. Don't revive it once the user has hit Stop.
-                        val relightRunIndicator = SessionRepository.isRunActivity(event, sessionId) &&
-                            !_aborting.value && !_running.value && !runEndedByIdle
-                        if (relightRunIndicator) {
-                            _running.value = true
-                        }
-                        when (event) {
-                            is PermissionUpdated ->
-                                if (event.properties.sessionID == sessionId) enqueuePermission(event.properties)
-                            is PermissionReplied ->
-                                if (event.properties.sessionID == sessionId) event.properties.permissionID?.let { resolvePermission(it) }
-                            is SessionUpdated ->
-                                if (event.properties.info.id == sessionId) {
-                                    val info = event.properties.info
-                                    _sessionTitle.value = info.displayTitle
-                                    _reverted.value = info.isReverted
-                                    _shareUrl.value = info.share?.url?.takeIf { it.isNotBlank() }
+                    // Loop the inner collect so a transient non-cancellation exception (a
+                    // malformed SSE event decoding error, an unexpected channel close)
+                    // doesn't terminate the event collector for this connection. Without
+                    // the loop, the catch returns the collectLatest lambda normally, so
+                    // collectLatest considers this connection's block complete and never
+                    // re-runs it — the chat would go permanently silent (no streaming,
+                    // no permission prompts, no title updates) until a server switch.
+                    while (currentCoroutineContext().isActive) {
+                        try {
+                            conn.events.events.collect { event ->
+                                if (SessionRepository.isIdle(event, sessionId)) {
+                                    _running.value = false
+                                    runEndedByIdle = true
+                                    // Auto-send a queued follow-up once the previous run finishes,
+                                    // so the user's drafted-while-running message isn't lost.
+                                    val queued = _queuedFollowUp.value
+                                    if (queued != null) {
+                                        setQueuedFollowUp(null)
+                                        send(queued, includeAttachments = false)
+                                    }
                                 }
-                            is SessionDeleted ->
-                                if (event.properties.info?.id == sessionId || event.properties.sessionID == sessionId) {
-                                    _sessionDeleted.value = true
+                                if (SessionRepository.isError(event, sessionId)) {
+                                    _running.value = false
+                                    runEndedByIdle = true
+                                    // The run errored, so the queued follow-up won't auto-send.
+                                    // Restore it to the input (if free) so the user's typed text
+                                    // isn't silently lost; otherwise just clear the queue.
+                                    val queued = _queuedFollowUp.value
+                                    if (!queued.isNullOrEmpty() && _draft.value.isEmpty()) {
+                                        _draft.value = queued
+                                    }
+                                    setQueuedFollowUp(null)
+                                    _errorEvents.trySend(ChatError(container.string(R.string.error_agent_reported)))
                                 }
-                            else -> {}
+                                // Restore the run indicator if a live streaming event arrives while it's
+                                // cleared — e.g. an SSE reconnect mid-run reset _running to false, but the
+                                // agent is still working. Don't revive it once the user has hit Stop.
+                                val relightRunIndicator = SessionRepository.isRunActivity(event, sessionId) &&
+                                    !_aborting.value && !_running.value && !runEndedByIdle
+                                if (relightRunIndicator) {
+                                    _running.value = true
+                                }
+                                when (event) {
+                                    is PermissionUpdated ->
+                                        if (event.properties.sessionID == sessionId) enqueuePermission(event.properties)
+                                    is PermissionReplied ->
+                                        if (event.properties.sessionID == sessionId) event.properties.permissionID?.let { resolvePermission(it) }
+                                    is SessionUpdated ->
+                                        if (event.properties.info.id == sessionId) {
+                                            val info = event.properties.info
+                                            _sessionTitle.value = info.displayTitle
+                                            _reverted.value = info.isReverted
+                                            _shareUrl.value = info.share?.url?.takeIf { it.isNotBlank() }
+                                        }
+                                    is SessionDeleted ->
+                                        if (event.properties.info?.id == sessionId || event.properties.sessionID == sessionId) {
+                                            _sessionDeleted.value = true
+                                        }
+                                    else -> {}
+                                }
+                            }
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            Log.w("ChatViewModel", "SSE event collector error, restarting", e)
                         }
                     }
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
-                    Log.w("ChatViewModel", "SSE event collector error", e)
+                    Log.w("ChatViewModel", "SSE event collector loop error", e)
                 }
             }
         }
@@ -704,16 +721,29 @@ class ChatViewModel(
             container.activeConnection.collectLatest { conn ->
                 if (conn == null) return@collectLatest
                 try {
-                    conn.events.state.collect { state ->
-                        if ((state == EventStreamClient.ConnectionState.Disconnected ||
-                             state == EventStreamClient.ConnectionState.Failed) && _running.value) {
-                            _running.value = false
+                    // Loop so a transient non-cancellation exception doesn't terminate the
+                    // state watcher for this connection. Without the loop, a single thrown
+                    // error returns the collectLatest lambda and the _running reset on
+                    // Disconnected/Failed never fires again for this connection — a dropped
+                    // stream leaves the working spinner (and the RunForegroundService) stuck.
+                    while (currentCoroutineContext().isActive) {
+                        try {
+                            conn.events.state.collect { state ->
+                                if ((state == EventStreamClient.ConnectionState.Disconnected ||
+                                     state == EventStreamClient.ConnectionState.Failed) && _running.value) {
+                                    _running.value = false
+                                }
+                            }
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            Log.w("ChatViewModel", "SSE state collector error, restarting", e)
                         }
                     }
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
-                    Log.w("ChatViewModel", "SSE state collector error", e)
+                    Log.w("ChatViewModel", "SSE state collector loop error", e)
                 }
             }
         }

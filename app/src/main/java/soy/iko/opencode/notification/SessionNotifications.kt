@@ -136,9 +136,11 @@ object SessionNotifications {
 
     /** Post a heads-up notification for a permission request with Allow once / Always /
      *  Reject action buttons. [sessionTitle] labels the notification; [permission]'s title/
-     *  pattern/type supplies the detail line. */
+     *  pattern/type supplies the detail line. [profileId] is embedded in the action intents
+     *  so the receiver routes the response back to the server that posted the request, not
+     *  whichever server happens to be active when the user taps. */
     @SuppressLint("MissingPermission")
-    fun postPermission(context: Context, permission: Permission, sessionTitle: String) {
+    fun postPermission(context: Context, permission: Permission, sessionTitle: String, profileId: String?) {
         if (!canPost(context)) return
         val sessionId = permission.sessionID.takeIf { it.isNotBlank() } ?: return
         val notifId = notifId(NS_PERMISSION, sessionId)
@@ -169,6 +171,7 @@ object SessionNotifications {
                 putExtra(NotificationActionReceiver.EXTRA_SESSION_ID, sessionId)
                 putExtra(NotificationActionReceiver.EXTRA_PERMISSION_ID, permission.id)
                 putExtra(NotificationActionReceiver.EXTRA_RESPONSE, response.wire)
+                profileId?.let { putExtra(NotificationActionReceiver.EXTRA_PROFILE_ID, it) }
             }
             val pending = PendingIntent.getBroadcast(
                 context, notifId + response.ordinal + 1, intent,
