@@ -262,15 +262,19 @@ open class OpencodeApiClient private constructor(
         }
     }
 
-    open suspend fun providers(): ProvidersResponse = providersMutex.withLock {
-        val now = System.currentTimeMillis()
-        val cached = cachedProviders
-        if (cached != null && now - cached.fetchedAt < NetworkConfig.catalogCacheTtlMs) {
-            return@withLock cached.value
+    open suspend fun providers(): ProvidersResponse {
+        providersMutex.withLock {
+            val cached = cachedProviders
+            if (cached != null && System.currentTimeMillis() - cached.fetchedAt < NetworkConfig.catalogCacheTtlMs) {
+                return cached.value
+            }
         }
+        // Fetch outside the lock so a slow/retrying request (and its backoff) can't stall other
+        // callers or cache invalidation. Concurrent cold callers may double-fetch — acceptable
+        // for a rarely-fetched catalog — and the last store wins.
         val value = withRetry { client!!.get("config/providers").body<ProvidersResponse>() }
-        cachedProviders = CachedEntry(value, System.currentTimeMillis())
-        value
+        providersMutex.withLock { cachedProviders = CachedEntry(value, System.currentTimeMillis()) }
+        return value
     }
 
     /** The server's resolved configuration as a raw JSON object. Parsed loosely by callers
@@ -279,26 +283,32 @@ open class OpencodeApiClient private constructor(
         client!!.get("config").body()
     }
 
-    open suspend fun agents(): List<Agent> = agentsMutex.withLock {
-        val now = System.currentTimeMillis()
-        val cached = cachedAgents
-        if (cached != null && now - cached.fetchedAt < NetworkConfig.catalogCacheTtlMs) {
-            return@withLock cached.value
+    open suspend fun agents(): List<Agent> {
+        agentsMutex.withLock {
+            val cached = cachedAgents
+            if (cached != null && System.currentTimeMillis() - cached.fetchedAt < NetworkConfig.catalogCacheTtlMs) {
+                return cached.value
+            }
         }
+        // Fetch outside the lock (see providers()): a slow/retrying request can't stall other
+        // callers or cache invalidation; a rare concurrent double-fetch is acceptable here.
         val value = withRetry { client!!.get("agent").body<List<Agent>>() }
-        cachedAgents = CachedEntry(value, System.currentTimeMillis())
-        value
+        agentsMutex.withLock { cachedAgents = CachedEntry(value, System.currentTimeMillis()) }
+        return value
     }
 
-    open suspend fun commands(): List<Command> = commandsMutex.withLock {
-        val now = System.currentTimeMillis()
-        val cached = cachedCommands
-        if (cached != null && now - cached.fetchedAt < NetworkConfig.catalogCacheTtlMs) {
-            return@withLock cached.value
+    open suspend fun commands(): List<Command> {
+        commandsMutex.withLock {
+            val cached = cachedCommands
+            if (cached != null && System.currentTimeMillis() - cached.fetchedAt < NetworkConfig.catalogCacheTtlMs) {
+                return cached.value
+            }
         }
+        // Fetch outside the lock (see providers()): a slow/retrying request can't stall other
+        // callers or cache invalidation; a rare concurrent double-fetch is acceptable here.
         val value = withRetry { client!!.get("command").body<List<Command>>() }
-        cachedCommands = CachedEntry(value, System.currentTimeMillis())
-        value
+        commandsMutex.withLock { cachedCommands = CachedEntry(value, System.currentTimeMillis()) }
+        return value
     }
 
     /** Invalidate the catalog cache (e.g. on server switch). */
@@ -397,9 +407,10 @@ internal suspend fun <T> withRetryInternal(
         } catch (c: kotlinx.coroutines.CancellationException) {
             throw c
         } catch (t: ClientRequestException) {
-            // 429 (Too Many Requests) is transient — retry with backoff.
-            // All other 4xx are non-retryable.
-            if (t.response.status.value != 429) throw t
+            // 408 (Request Timeout) and 429 (Too Many Requests) are transient — retry with
+            // backoff. All other 4xx are non-retryable (a 401/404 won't succeed on retry).
+            val status = t.response.status.value
+            if (status != 408 && status != 429) throw t
             lastError = t
             if (attempt < maxAttempts) {
                 delay(jitteredBackoff(attempt, initialDelayMs, jitterFactor))
@@ -451,6 +462,10 @@ internal fun jitteredBackoff(
     return (baseDelay + jitter).coerceAtLeast(0)
 }
 
-/** URL-encode a path segment, replacing + with %20 (URLEncoder uses query-param encoding). */
-private fun encode(segment: String): String =
-    URLEncoder.encode(segment, "UTF-8").replace("+", "%20")
+/** URL-encode a path segment, replacing + with %20 (URLEncoder uses query-param encoding).
+ *  URLEncoder leaves '.' unencoded, so a "." or ".." segment would otherwise survive as a real
+ *  path-traversal component; percent-encode a segment that is nothing but dots. */
+private fun encode(segment: String): String {
+    val encoded = URLEncoder.encode(segment, "UTF-8").replace("+", "%20")
+    return if (encoded.isNotEmpty() && encoded.all { it == '.' }) encoded.replace(".", "%2E") else encoded
+}

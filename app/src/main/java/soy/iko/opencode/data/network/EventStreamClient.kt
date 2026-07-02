@@ -237,8 +237,16 @@ open class EventStreamClient(
                     if (!isActive) break
                     // Don't complete the flow: a subscriber may fix the profile and call
                     // triggerReconnect(). Suspend until an explicit reconnect signal
-                    // arrives (no backoff delay), then re-attempt the connection.
-                    reconnectSignal.receive()
+                    // arrives (no backoff delay), then re-attempt the connection. This receive
+                    // is outside the try above, so reset state to Disconnected if the last
+                    // subscriber leaves (cancellation) while we're parked here — otherwise the
+                    // stream would be torn down with state stuck at Failed.
+                    try {
+                        reconnectSignal.receive()
+                    } catch (c: CancellationException) {
+                        _state.value = ConnectionState.Disconnected
+                        throw c
+                    }
                     continue
                 } else if (isActive) {
                     Log.w("EventStream", "SSE stream error, will retry: ${safeExceptionSummary(e)}")

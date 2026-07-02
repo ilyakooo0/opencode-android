@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -19,6 +20,8 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import coil.compose.SubcomposeAsyncImage
 import coil.request.ImageRequest
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material.icons.Icons
@@ -53,19 +56,23 @@ fun ServerProfile.toImageContext(): ImageLoadContext {
 val FilePart.isImage: Boolean
     get() = mime?.startsWith("image/") == true
 
+private fun decodeDataUri(data: String): ByteArray? {
+    val comma = data.indexOf(',')
+    if (comma < 0) return null
+    val payload = data.substring(comma + 1)
+    return runCatching { Base64.decode(payload, Base64.DEFAULT) }.getOrNull()
+}
+
 /**
  * Resolve a [FilePart] to a Coil-loadable model: a decoded [ByteArray] for inline
  * data URIs, an absolute URL string otherwise. Returns null when nothing loadable.
  */
 private fun FilePart.resolveModel(ctx: ImageLoadContext): Any? {
     val src = source
-    if (!src.isNullOrBlank() && src.startsWith("data:")) {
-        val comma = src.indexOf(',')
-        if (comma < 0) return null
-        val payload = src.substring(comma + 1)
-        return runCatching { Base64.decode(payload, Base64.DEFAULT) }.getOrNull()
-    }
+    if (!src.isNullOrBlank() && src.startsWith("data:")) return decodeDataUri(src)
     val url = url ?: return null
+    // Attachments are persisted as a data URL in `part.url`, so a data URI can arrive here too.
+    if (url.startsWith("data:")) return decodeDataUri(url)
     // Resolve the URL (absolute, relative, or server-absolute like "/media/x.png") against
     // the base, collapsing any ../ segments. Both absolute and relative forms must clear the
     // same-origin check below — an absolute foreign URL (e.g. "https://evil.com/x.png") would
@@ -107,15 +114,17 @@ private fun effectivePort(uri: java.net.URI): Int {
 @Composable
 fun RemoteImage(part: FilePart, ctx: ImageLoadContext, modifier: Modifier = Modifier) {
     val context = LocalContext.current
-    val model = remember(part.source, part.url, ctx.baseUrl) { part.resolveModel(ctx) } ?: return
-    val request = remember(part.source, part.url, ctx.baseUrl, ctx.basicAuthHeader) {
+    val model = produceState<Any?>(initialValue = null, part.source, part.url, ctx.baseUrl) {
+        value = withContext(Dispatchers.Default) { part.resolveModel(ctx) }
+    }.value ?: return
+    val request = remember(part.source, part.url, ctx.baseUrl, ctx.basicAuthHeader, model) {
         ImageRequest.Builder(context)
             .data(model)
             .apply {
-                // Only send Basic auth over HTTPS; sending credentials over
-                // cleartext HTTP would expose them on the network.
-                val isHttps = (model as? String)?.startsWith("https://") == true
-                if (isHttps) ctx.basicAuthHeader?.let { addHeader("Authorization", it) }
+                // resolveModel already verified same-origin, so a String model can only point at
+                // the user's own server — attaching Basic auth over http (not just https) is safe.
+                // A data-URI model is a ByteArray, so gate on the model being a URL String.
+                if (model is String) ctx.basicAuthHeader?.let { addHeader("Authorization", it) }
             }
             .crossfade(true)
             .build()

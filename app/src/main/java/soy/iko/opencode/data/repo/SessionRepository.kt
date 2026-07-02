@@ -1,5 +1,6 @@
 package soy.iko.opencode.data.repo
 
+import soy.iko.opencode.data.model.AssistantMessage
 import soy.iko.opencode.data.model.BusEvent
 import soy.iko.opencode.data.model.FilePromptPart
 import soy.iko.opencode.data.model.MessageInfo
@@ -20,6 +21,8 @@ import soy.iko.opencode.util.runCatchingCancellable
 import soy.iko.opencode.util.safeExceptionSummary
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
@@ -162,22 +165,28 @@ open class SessionRepository(
             }
         }
 
-        val initialResult = runCatchingCancellable { api.listMessages(sessionId) }
-            .onFailure { Log.w("SessionRepository", "Initial message load failed for $sessionId; relying on cache/SSE: ${safeExceptionSummary(it)}") }
-        // Apply the initial seed only if no reconnect re-seed has run yet (generation still 0).
-        // A re-seed is always a fresher full snapshot, so if the (possibly slow) initial fetch
-        // returns after one has applied, seeding this older REST data would clobber the newer
-        // state — reverting a completed run to "running", regressing cost/token/part state —
-        // until the next SSE event or reconnect healed it. Only seed on SUCCESS: on failure
-        // (e.g. offline) keep whatever's shown (the cache seed above) rather than clearing it.
-        val seeded = lock.withLock {
-            val list = initialResult.getOrNull()
-            if (seedGeneration == 0 && list != null) {
-                store.seed(list)
-                true
-            } else false
+        // Load the authoritative message list concurrently with the drain loop below so the
+        // cache seed and any early SSE-reduced parts are emitted immediately. Running it inline
+        // here (before the drain starts) would withhold the already-reduced cached conversation
+        // until this fetch resolved — a blank screen for the whole withRetry backoff when offline.
+        launch {
+            val initialResult = runCatchingCancellable { api.listMessages(sessionId) }
+                .onFailure { Log.w("SessionRepository", "Initial message load failed for $sessionId; relying on cache/SSE: ${safeExceptionSummary(it)}") }
+            // Apply the initial seed only if no reconnect re-seed has run yet (generation still 0).
+            // A re-seed is always a fresher full snapshot, so if the (possibly slow) initial fetch
+            // returns after one has applied, seeding this older REST data would clobber the newer
+            // state — reverting a completed run to "running", regressing cost/token/part state —
+            // until the next SSE event or reconnect healed it. Only seed on SUCCESS: on failure
+            // (e.g. offline) keep whatever's shown (the cache seed above) rather than clearing it.
+            val seeded = lock.withLock {
+                val list = initialResult.getOrNull()
+                if (seedGeneration == 0 && list != null) {
+                    store.seed(list)
+                    true
+                } else false
+            }
+            if (seeded) publish()
         }
-        if (seeded) publish()
 
         // Single drain: one snapshot+send per conflated dirty signal. The snapshot is
         // taken under the lock so a reader never sees a half-reduced state; send() runs
@@ -185,6 +194,7 @@ open class SessionRepository(
         // loop also keeps the flow alive until the collector cancels; the launched jobs
         // above are children of this scope and are torn down with it.
         var lastCacheWrite = 0L
+        var pendingCacheSave: Job? = null
         dirty.consumeAsFlow().collect {
             val snapshot = lock.withLock { store.snapshot() }
             send(snapshot)
@@ -193,9 +203,20 @@ open class SessionRepository(
             // instant/offline first paint; the network corrects it on the next open.
             if (messageCache != null && snapshot.isNotEmpty()) {
                 val now = System.currentTimeMillis()
+                pendingCacheSave?.cancel()
                 if (now - lastCacheWrite >= NetworkConfig.messageCacheWriteThrottleMs) {
                     lastCacheWrite = now
-                    launch { messageCache.save(sessionId, snapshot) }
+                    pendingCacheSave = launch { messageCache.save(sessionId, snapshot) }
+                } else {
+                    // Trailing-edge write: a burst that ends inside the throttle window (a run's
+                    // final tokens right after a write) would otherwise never persist its last
+                    // snapshot, so an offline reopen would show the conversation missing its tail.
+                    // Write the latest snapshot once the window elapses; a newer snapshot cancels
+                    // and replaces this, so continuous streaming still coalesces to one write/window.
+                    pendingCacheSave = launch {
+                        delay(NetworkConfig.messageCacheWriteThrottleMs)
+                        messageCache.save(sessionId, snapshot)
+                    }
                 }
             }
         }
@@ -216,6 +237,20 @@ open class SessionRepository(
 
         fun isError(event: BusEvent, sessionId: String): Boolean =
             event is SessionError && event.properties.sessionID == sessionId
+
+        /** Does this event indicate an in-progress run for [sessionId]? A live streamed part or
+         *  an assistant message that isn't yet complete/errored means the agent is still working.
+         *  Used to restore the "running" indicator after an SSE reconnect: if the run is still
+         *  going, such live events keep arriving; a run that finished during the outage produces
+         *  none (its completion arrives via the REST re-seed, not the event stream). */
+        fun isRunActivity(event: BusEvent, sessionId: String): Boolean = when (event) {
+            is MessagePartUpdated -> event.properties.sessionID == sessionId
+            is MessageUpdated -> {
+                val info = event.properties.info
+                info.sessionID == sessionId && info is AssistantMessage && !info.isComplete && info.error == null
+            }
+            else -> false
+        }
     }
 }
 

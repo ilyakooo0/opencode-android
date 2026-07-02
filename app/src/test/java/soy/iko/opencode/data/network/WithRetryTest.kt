@@ -77,7 +77,7 @@ class WithRetryTest {
 
     @Test
     fun tooManyRequestsIsRetried() = runTest {
-        // 429 (Too Many Requests) is the only 4xx that should retry — all other 4xx
+        // 408 and 429 are the only transient 4xx that should retry — all other 4xx
         // surface immediately. Verify the special case isn't silently lost.
         val rateLimited = httpError(HttpStatusCode.TooManyRequests)
         assertTrue("expected ClientRequestException, got $rateLimited", rateLimited is ClientRequestException)
@@ -90,6 +90,22 @@ class WithRetryTest {
             }
         }
         assertEquals("429 must be retried like a transient failure", 3, calls)
+    }
+
+    @Test
+    fun requestTimeoutIsRetried() = runTest {
+        // 408 (Request Timeout) is transient — the client MAY repeat the request.
+        val timeout = httpError(HttpStatusCode.RequestTimeout)
+        assertTrue("expected ClientRequestException, got $timeout", timeout is ClientRequestException)
+        assertEquals(408, (timeout as ClientRequestException).response.status.value)
+        var calls = 0
+        runCatching {
+            withRetryInternal(maxAttempts = 3, initialDelayMs = 0) {
+                calls++
+                throw timeout
+            }
+        }
+        assertEquals("408 must be retried like a transient failure", 3, calls)
     }
 
     @Test

@@ -290,5 +290,5 @@ private var lastToast: Toast? = null
 
 internal fun showToast(context: Context, message: String) {
     lastToast?.cancel()
-    lastToast = Toast.makeText(context, message, Toast.LENGTH_SHORT).also { it.show() }
+    lastToast = Toast.makeText(context.applicationContext, message, Toast.LENGTH_SHORT).also { it.show() }
 }

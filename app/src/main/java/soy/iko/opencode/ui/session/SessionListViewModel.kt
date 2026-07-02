@@ -257,6 +257,10 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
                 }
                 sessionUpdateJob?.cancel()
                 pendingSessionUpdates.clear()
+                // Drop the previous server's directory-options load and result so a stale
+                // fetch can't populate the new server's new-session picker.
+                directoryOptionsJob?.cancel()
+                _directoryOptions.value = DirectoryOptionsState()
                 // Cancel any deferred deletes still pending from the previous connection.
                 // Their captured connection is now closed, so they can only fail; letting
                 // them run would fire onError and re-inject a session belonging to the old

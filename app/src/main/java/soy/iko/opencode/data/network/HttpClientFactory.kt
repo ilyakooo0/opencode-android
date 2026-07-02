@@ -80,11 +80,15 @@ object HttpClientFactory {
                                 password = profile.password.orEmpty(),
                             )
                         }
-                        // Send eagerly so opencode doesn't need a 401 challenge round-trip.
-                        // The Auth plugin is only installed for HTTPS profiles — over HTTP,
-                        // even reactive (401-challenge) credential sending would leak
+                        // Send eagerly so opencode doesn't need a 401 challenge round-trip, but
+                        // only to the configured host: a cross-host redirect must not carry the
+                        // credentials off-origin (the plugin would still answer a genuine 401 from
+                        // the real host reactively). The Auth plugin is only installed for HTTPS
+                        // profiles — over HTTP, even reactive credential sending would leak
                         // passwords in cleartext, so we don't install it at all.
-                        sendWithoutRequest { true }
+                        sendWithoutRequest { request ->
+                            pinHost != null && request.url.host.equals(pinHost, ignoreCase = true)
+                        }
                     }
                 }
             } else {
@@ -113,10 +117,14 @@ object HttpClientFactory {
     }
 
     /** The base URL after applying [ServerProfile.requireHttps]: a cleartext http:// URL is
-     *  upgraded to https:// so the "Require HTTPS" choice is enforced at the transport layer. */
+     *  upgraded to https:// so the "Require HTTPS" choice is enforced at the transport layer.
+     *  A configured certificate pin also forces TLS: a pin is meaningless over cleartext and
+     *  would otherwise be silently dropped, so we honor the opt-in security control by upgrading
+     *  rather than connecting unpinned in the clear. */
     private fun effectiveBaseUrl(profile: ServerProfile): String {
         val normalized = normalizeBaseUrl(profile.baseUrl)
-        return if (profile.requireHttps && normalized.lowercase().startsWith("http://")) {
+        val forceHttps = profile.requireHttps || parsePins(profile.certPin).isNotEmpty()
+        return if (forceHttps && normalized.lowercase().startsWith("http://")) {
             "https://" + normalized.substring("http://".length)
         } else {
             normalized

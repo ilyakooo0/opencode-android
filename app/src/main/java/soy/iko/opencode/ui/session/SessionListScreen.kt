@@ -457,13 +457,10 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 keyboardActions = KeyboardActions(onSearch = { keyboardController?.hide() }),
             )
-            val sessions = remember(state.sessions, state.query, state.previews) {
-                // Fast-path an empty query: filtered just returns sessions, so skip
-                // the recompute (and the fresh list reference) when only previews
-                // churned in the background. With a non-empty query the previews
-                // map affects the match set, so recompute on any of the three.
-                if (state.query.isBlank()) state.sessions else state.filtered
-            }
+            val sessions = remember(
+                state.sessions, state.query, state.previews,
+                state.pinnedIds, state.archivedIds, state.showArchived,
+            ) { state.filtered }
             if (sessions.isEmpty()) {
                 Box(
                     modifier = Modifier.fillMaxSize(),

@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import soy.iko.opencode.data.model.ServerProfile
 import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.di.AppContainer
+import soy.iko.opencode.di.OpencodeConnection
 import soy.iko.opencode.R
 import soy.iko.opencode.util.runCatchingCancellable
 import kotlinx.coroutines.channels.BufferOverflow
@@ -64,13 +65,17 @@ class ServerListViewModel(private val container: AppContainer) : ViewModel() {
         _connecting.value = profile.id
         viewModelScope.launch {
             try {
+                var conn: OpencodeConnection? = null
                 val result = runCatchingCancellable {
-                    val conn = container.connect(profile)
-                    conn.api.ping()
+                    conn = container.connect(profile)
+                    conn!!.api.ping()
                 }
                 result.onSuccess { onConnected() }
                     .onFailure {
-                        container.disconnect()
+                        // Only tear down the connection we created: a concurrent connect (or the
+                        // cold-start auto-connect) may have replaced the active one, and
+                        // disconnect() closes whatever is active — which would drop that one.
+                        if (conn != null && container.activeConnection.value === conn) container.disconnect()
                         _errorEvents.tryEmit(ConnectError(container.friendlyError(it), profile))
                     }
             } finally {

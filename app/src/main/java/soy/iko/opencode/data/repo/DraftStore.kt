@@ -154,7 +154,7 @@ open class DraftStore private constructor(
                 }.apply()
             }.onFailure { Log.w("DraftStore", "Failed to persist $key", it) }
         }
-        if (prefsInitialized.get()) write() else flushExecutor.execute { write() }
+        if (prefsInitialized.get()) write() else runCatching { flushExecutor.execute { write() } }
     }
 
     /** Update the in-memory draft immediately without persisting to disk.
@@ -239,12 +239,14 @@ open class DraftStore private constructor(
             // Prefs not yet opened — dispatch to a background thread to avoid a
             // synchronous disk read on the main thread (which would ANR). The draft
             // may be lost if the process exits before the write completes.
-            flushExecutor.execute {
-                runCatching {
-                    prefs.edit().apply {
-                        if (text.isBlank()) remove(sessionId) else putString(sessionId, text)
-                    }.apply()
-                }.onFailure { Log.w("DraftStore", "Failed to flush draft for $sessionId", it) }
+            runCatching {
+                flushExecutor.execute {
+                    runCatching {
+                        prefs.edit().apply {
+                            if (text.isBlank()) remove(sessionId) else putString(sessionId, text)
+                        }.apply()
+                    }.onFailure { Log.w("DraftStore", "Failed to flush draft for $sessionId", it) }
+                }
             }
         }
     }

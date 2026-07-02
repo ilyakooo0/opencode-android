@@ -30,6 +30,7 @@ import soy.iko.opencode.data.repo.ProfileStore
 import soy.iko.opencode.data.repo.SettingsStore
 import soy.iko.opencode.data.repo.classifyError
 import soy.iko.opencode.data.repo.responseStatusCode
+import soy.iko.opencode.data.network.EventStreamClient
 import soy.iko.opencode.data.network.HttpClientFactory
 import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.data.network.OpencodeApiClient
@@ -48,6 +49,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
@@ -267,6 +269,7 @@ open class AppContainer private constructor(
         if (!skipInit) {
             NotificationChannels.create(appContext!!)
             observeMessageActivity()
+            observeRunReconcileOnReconnect()
             observeRunForegroundService()
             appScope.launch { runCatchingCancellable { outboxStore.load() } }
             observeOutbox()
@@ -289,6 +292,37 @@ open class AppContainer private constructor(
         appScope.launch {
             anyRunActive.collect { active ->
                 if (active) RunForegroundService.start(ctx) else RunForegroundService.stop(ctx)
+            }
+        }
+    }
+
+    /**
+     * Reconcile active-run tracking on an SSE *reconnect*. A run that completes during a stream
+     * outage never delivers its `SessionIdle`, so its id would stay in [activeRuns] and pin
+     * [anyRunActive] (and the foreground service + "working…" notification) on indefinitely. On a
+     * reconnect we clear the tracking and let live streaming events re-populate it: a genuinely
+     * in-progress run re-adds itself within moments via [isLiveRunActivity], while a run that
+     * finished during the outage produces no further live events (its completion arrives only via
+     * the REST re-seed), so it correctly stays cleared. The first connect of a connection is not a
+     * reconnect; `connect()` already resets [activeRuns], so only subsequent Connected transitions
+     * trigger the sweep.
+     */
+    private fun observeRunReconcileOnReconnect() {
+        appScope.launch {
+            activeConnection.collectLatest { conn ->
+                if (conn == null) return@collectLatest
+                var hasConnectedBefore = false
+                conn.events.state.collect { state ->
+                    if (state == EventStreamClient.ConnectionState.Connected) {
+                        if (hasConnectedBefore) {
+                            synchronized(activeRuns) {
+                                activeRuns.clear()
+                                _anyRunActive.value = false
+                            }
+                        }
+                        hasConnectedBefore = true
+                    }
+                }
             }
         }
     }
@@ -604,12 +638,20 @@ open class AppContainer private constructor(
             .getOrDefault(emptyList())
             .firstOrNull() ?: return
         _reconnecting.value = true
+        var conn: OpencodeConnection? = null
         val ok = runCatchingCancellable {
-            val conn = connect(recent)
-            conn.api.ping()
+            conn = connect(recent)
+            conn!!.api.ping()
         }.isSuccess
         _reconnecting.value = false
-        if (ok) _autoConnectDone.value = true else disconnect()
+        if (ok) {
+            _autoConnectDone.value = true
+        } else if (conn != null && activeConnection.value === conn) {
+            // Only tear down the connection we created: a manual connect to a different server
+            // during the ping window may have already replaced it, and disconnect() closes
+            // whatever is currently active — which would silently drop that new connection.
+            disconnect()
+        }
     }
 
     /**

@@ -26,10 +26,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import soy.iko.opencode.R
 import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.ui.chat.ChatScreen
+import soy.iko.opencode.ui.vmFactory
 
 /**
  * Master–detail layout for wide screens (≥ 840dp, e.g. tablets / unfolded foldables):
@@ -56,6 +58,10 @@ fun TwoPaneSessionChat(
     val pendingOpenSession by container.pendingOpenSession.collectAsStateWithLifecycle()
     val pendingShare by container.pendingShare.collectAsStateWithLifecycle()
     val activeConnection by container.activeConnection.collectAsStateWithLifecycle()
+    // Same VM instance the left pane's SessionListScreen creates (shared ViewModelStoreOwner,
+    // keyed by class), so its session list drives the detail pane's stale-selection cleanup.
+    val sessionListVm: SessionListViewModel = viewModel(factory = vmFactory { SessionListViewModel(container) })
+    val sessionListState by sessionListVm.state.collectAsStateWithLifecycle()
 
     // A notification tap / deep link requests a session: open it in the detail pane.
     LaunchedEffect(pendingOpenSession) {
@@ -76,6 +82,18 @@ fun TwoPaneSessionChat(
         val currentId = activeConnection?.profile?.id
         if (lastProfileId != null && lastProfileId != currentId) selected = null
         lastProfileId = currentId
+    }
+
+    // Clear the selection when the open session is deleted (it drops out of the list).
+    // Guard on a loaded, non-empty list so the freshly opened selection isn't cleared
+    // during the initial empty/loading state before sessions arrive.
+    LaunchedEffect(selected, sessionListState.sessions) {
+        val target = selected
+        if (target != null && sessionListState.sessions.isNotEmpty() &&
+            sessionListState.sessions.none { it.id == target }
+        ) {
+            selected = null
+        }
     }
 
     // Inject a pending share into the currently selected session's draft (if any).

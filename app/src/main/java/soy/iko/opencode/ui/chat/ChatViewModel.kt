@@ -263,6 +263,28 @@ class ChatViewModel(
     private val _pendingPermission = MutableStateFlow<Permission?>(null)
     val pendingPermission: StateFlow<Permission?> = _pendingPermission.asStateFlow()
 
+    // Unanswered permission requests keyed by id, insertion-ordered. The dialog shows the most
+    // recent; when one is answered/replied — or a response fails — we fall back to the next so a
+    // request that arrived while another was in flight isn't silently dropped (its tool run would
+    // otherwise stay paused server-side with no UI affordance). Only touched on the VM's main
+    // dispatcher (event collector + viewModelScope launches), so no extra synchronization is needed.
+    private val pendingPermissions = LinkedHashMap<String, Permission>()
+
+    private fun enqueuePermission(permission: Permission) {
+        pendingPermissions[permission.id] = permission
+        _pendingPermission.value = pendingPermissions.values.lastOrNull()
+    }
+
+    private fun resolvePermission(id: String) {
+        pendingPermissions.remove(id)
+        _pendingPermission.value = pendingPermissions.values.lastOrNull()
+    }
+
+    private fun clearPermissions() {
+        pendingPermissions.clear()
+        _pendingPermission.value = null
+    }
+
     private val _agents = MutableStateFlow<List<Agent>>(emptyList())
     val agents: StateFlow<List<Agent>> = _agents.asStateFlow()
 
@@ -504,11 +526,11 @@ class ChatViewModel(
                     // returns with no connection) until a later reconnect happens to clear it.
                     _running.value = false
                     _aborting.value = false
-                    _pendingPermission.value = null
+                    clearPermissions()
                     return@collectLatest
                 }
                 _running.value = false
-                _pendingPermission.value = null
+                clearPermissions()
                 _failedDraft.value = null
                 // NOTE: deliberately not clearing _queuedFollowUp here. It's session-scoped
                 // user intent that is now persisted; wiping it on every (re)connect — which
@@ -540,11 +562,17 @@ class ChatViewModel(
                             setQueuedFollowUp(null)
                             _errorEvents.trySend(ChatError(container.string(R.string.error_agent_reported)))
                         }
+                        // Restore the run indicator if a live streaming event arrives while it's
+                        // cleared — e.g. an SSE reconnect mid-run reset _running to false, but the
+                        // agent is still working. Don't revive it once the user has hit Stop.
+                        if (SessionRepository.isRunActivity(event, sessionId) && !_aborting.value && !_running.value) {
+                            _running.value = true
+                        }
                         when (event) {
                             is PermissionUpdated ->
-                                if (event.properties.sessionID == sessionId) _pendingPermission.value = event.properties
+                                if (event.properties.sessionID == sessionId) enqueuePermission(event.properties)
                             is PermissionReplied ->
-                                if (event.properties.sessionID == sessionId && event.properties.permissionID == _pendingPermission.value?.id) _pendingPermission.value = null
+                                if (event.properties.sessionID == sessionId) event.properties.permissionID?.let { resolvePermission(it) }
                             is SessionUpdated ->
                                 if (event.properties.info.id == sessionId) {
                                     val info = event.properties.info
@@ -1143,16 +1171,15 @@ class ChatViewModel(
 
     fun respondPermission(permission: Permission, response: PermissionResponse) {
         val conn = connection ?: return
-        // Clear optimistically; permission.replied will confirm. If the call fails we
-        // restore the pending permission so the user can retry instead of being stuck
-        // with a dismissed dialog and a paused tool run.
-        _pendingPermission.value = null
+        // Dismiss optimistically (revealing any queued request); permission.replied will confirm.
+        // If the call fails we re-surface this request so the user can retry instead of being stuck
+        // with a dismissed dialog and a tool run that's still paused server-side.
+        resolvePermission(permission.id)
         viewModelScope.launch {
             runCatchingCancellable { conn.api.respondPermission(sessionId, permission.id, response) }
                 .onFailure {
                     _errorEvents.trySend(ChatError(container.friendlyError(it)))
-                    // Only restore if no new permission has arrived in the meantime.
-                    if (_pendingPermission.value == null) _pendingPermission.value = permission
+                    enqueuePermission(permission)
                 }
         }
     }
