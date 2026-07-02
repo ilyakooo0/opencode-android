@@ -84,6 +84,16 @@ object NetworkConfig {
     /** Debounce delay before firing a file-search request after the user stops typing. */
     const val fileSearchDebounceMs = 250L
 
+    // --- Attachments (chat composer) ---
+
+    /** Max size of a single attachment (image/file) before it's rejected. Base64 inflates
+     *  the payload ~33%, and the whole prompt body is held in memory, so cap generously but
+     *  finitely to avoid OOM / oversized requests. */
+    const val maxAttachmentBytes = 10L * 1024 * 1024
+
+    /** Max number of attachments staged for one prompt, to bound memory and request size. */
+    const val maxAttachments = 8
+
     // --- StateFlow sharing (WhileSubscribed) ---
 
     /** Grace period before a cold StateFlow is stopped after its last subscriber leaves. */

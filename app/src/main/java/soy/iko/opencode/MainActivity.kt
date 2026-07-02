@@ -3,9 +3,12 @@ package soy.iko.opencode
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import androidx.activity.ComponentActivity
+import android.view.WindowManager
+import androidx.core.content.IntentCompat
+import soy.iko.opencode.data.network.NetworkConfig
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -16,12 +19,17 @@ import androidx.compose.runtime.remember
 import kotlinx.coroutines.flow.combine
 import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import soy.iko.opencode.data.repo.ThemeMode
+import soy.iko.opencode.ui.AppLockGate
 import soy.iko.opencode.ui.OpencodeApp as OpencodeAppUi
 import soy.iko.opencode.ui.theme.OpencodeTheme
 
-class MainActivity : ComponentActivity() {
+// FragmentActivity (not ComponentActivity) so androidx.biometric BiometricPrompt can attach
+// for the app-lock gate; FragmentActivity extends ComponentActivity, so Compose/edge-to-edge
+// /activity-result APIs are unaffected.
+class MainActivity : FragmentActivity() {
 
     private val requestNotificationPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -51,7 +59,14 @@ class MainActivity : ComponentActivity() {
                 container.settingsStore.themeMode
                     .combine(container.settingsStore.dynamicColor, ::Pair)
             }.collectAsStateWithLifecycle(initialValue = null)
+            val appLock by container.settingsStore.appLock.collectAsStateWithLifecycle(initialValue = false)
             LaunchedEffect(theme) { if (theme != null) themeLoaded = true }
+            // Hide the app's content from screenshots / the recents thumbnail while app lock
+            // is enabled, so protected server details don't leak there.
+            LaunchedEffect(appLock) {
+                if (appLock) window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                else window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+            }
             theme?.let { (themeMode, dynamicColor) ->
                 val dark = when (themeMode) {
                     ThemeMode.SYSTEM -> isSystemInDarkTheme()
@@ -59,7 +74,9 @@ class MainActivity : ComponentActivity() {
                     ThemeMode.DARK -> true
                 }
                 OpencodeTheme(darkTheme = dark, dynamicColor = dynamicColor) {
-                    OpencodeAppUi(container = container)
+                    AppLockGate(enabled = appLock) {
+                        OpencodeAppUi(container = container)
+                    }
                 }
             }
         }
@@ -77,13 +94,32 @@ class MainActivity : ComponentActivity() {
      *  and session ids from notification taps / deep links so we can open them. */
     private fun handleIntent(intent: Intent?) {
         val container = (application as OpencodeApp).container
-        if (intent?.action == Intent.ACTION_SEND && !shareIntentHandled) {
-            val text = intent.getStringExtra(Intent.EXTRA_TEXT)
-                ?.takeIf { it.isNotBlank() }
-                ?.take(10_000) // cap to prevent unbounded memory usage from malicious shares
-            if (text != null) {
-                container.setPendingShare(text)
-                shareIntentHandled = true
+        val action = intent?.action
+        if ((action == Intent.ACTION_SEND || action == Intent.ACTION_SEND_MULTIPLE) && !shareIntentHandled) {
+            val type = intent.type.orEmpty()
+            if (action == Intent.ACTION_SEND && type.startsWith("image/")) {
+                // A single shared image → stage as an attachment in the next opened session.
+                val uri = IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)
+                if (uri != null) {
+                    container.setPendingSharedMedia(listOf(uri.toString()))
+                    shareIntentHandled = true
+                }
+            } else if (action == Intent.ACTION_SEND_MULTIPLE && type.startsWith("image/")) {
+                val uris = IntentCompat.getParcelableArrayListExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)
+                    ?.take(NetworkConfig.maxAttachments)
+                    .orEmpty()
+                if (uris.isNotEmpty()) {
+                    container.setPendingSharedMedia(uris.map { it.toString() })
+                    shareIntentHandled = true
+                }
+            } else {
+                val text = intent.getStringExtra(Intent.EXTRA_TEXT)
+                    ?.takeIf { it.isNotBlank() }
+                    ?.take(10_000) // cap to prevent unbounded memory usage from malicious shares
+                if (text != null) {
+                    container.setPendingShare(text)
+                    shareIntentHandled = true
+                }
             }
         }
         // Deep link: opencode://session/{sessionId}  (or the EXTRA_SESSION_ID extra).

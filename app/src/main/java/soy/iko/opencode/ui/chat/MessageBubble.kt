@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -58,11 +59,28 @@ fun MessageBubble(
     imageContext: ImageLoadContext? = null,
     modelLabel: String? = null,
     onOpenFile: ((String) -> Unit)? = null,
+    onRevert: (() -> Unit)? = null,
 ) {
     when (message.info) {
-        is UserMessage -> UserBubble(message, imageContext, modifier, onOpenFile)
+        is UserMessage -> UserBubble(message, imageContext, modifier, onOpenFile, onRevert)
         is UnknownMessage -> UnknownMessageBlock(message, imageContext, modifier, onOpenFile)
-        else -> AssistantBlock(message, isRunning, imageContext, modifier, modelLabel, onOpenFile)
+        else -> AssistantBlock(message, isRunning, imageContext, modifier, modelLabel, onOpenFile, onRevert)
+    }
+}
+
+/** A small "revert to before this message" icon button, shown next to Copy when a revert
+ *  handler is supplied. Reverting is undoable (see the chat's revert banner), so it acts
+ *  immediately without a confirmation dialog. */
+@Composable
+private fun RevertButton(onRevert: () -> Unit) {
+    val label = stringResource(R.string.revert_to_here)
+    IconButton(onClick = onRevert) {
+        Icon(
+            Icons.Filled.Restore,
+            contentDescription = label,
+            modifier = Modifier.size(18.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
@@ -107,6 +125,7 @@ private fun UserBubble(
     imageContext: ImageLoadContext?,
     modifier: Modifier,
     onOpenFile: ((String) -> Unit)? = null,
+    onRevert: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val copyLabel = stringResource(R.string.copy)
@@ -134,19 +153,22 @@ private fun UserBubble(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 MessageTimestampText(message.info)
-                // Copy affordance for user prompts, mirroring the assistant block.
-                // Without it, reusing a prior prompt requires discovering the
-                // long-press on the markdown text (and only TextParts support that).
-                if (textToCopy != null) {
-                    IconButton(
-                        onClick = { copyToClipboard(context, "message", textToCopy) },
-                    ) {
-                        Icon(
-                            Icons.Filled.ContentCopy,
-                            contentDescription = copyLabel,
-                            modifier = Modifier.size(18.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    onRevert?.let { RevertButton(it) }
+                    // Copy affordance for user prompts, mirroring the assistant block.
+                    // Without it, reusing a prior prompt requires discovering the
+                    // long-press on the markdown text (and only TextParts support that).
+                    if (textToCopy != null) {
+                        IconButton(
+                            onClick = { copyToClipboard(context, "message", textToCopy) },
+                        ) {
+                            Icon(
+                                Icons.Filled.ContentCopy,
+                                contentDescription = copyLabel,
+                                modifier = Modifier.size(18.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 }
             }
@@ -162,6 +184,7 @@ private fun AssistantBlock(
     modifier: Modifier,
     modelLabel: String? = null,
     onOpenFile: ((String) -> Unit)? = null,
+    onRevert: (() -> Unit)? = null,
 ) {
     Column(
         modifier = modifier.fillMaxWidth(),
@@ -229,16 +252,19 @@ private fun AssistantBlock(
                         .joinToString("\n\n") { it.text }
                         .takeIf { it.isNotBlank() }
                 }
-                if (textToCopy != null) {
-                    IconButton(
-                        onClick = { copyToClipboard(context, "message", textToCopy) },
-                    ) {
-                        Icon(
-                            Icons.Filled.ContentCopy,
-                            contentDescription = copyLabel,
-                            modifier = Modifier.size(18.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    onRevert?.let { RevertButton(it) }
+                    if (textToCopy != null) {
+                        IconButton(
+                            onClick = { copyToClipboard(context, "message", textToCopy) },
+                        ) {
+                            Icon(
+                                Icons.Filled.ContentCopy,
+                                contentDescription = copyLabel,
+                                modifier = Modifier.size(18.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 }
             }

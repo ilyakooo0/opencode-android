@@ -1,6 +1,7 @@
 package soy.iko.opencode.data.repo
 
 import soy.iko.opencode.data.model.BusEvent
+import soy.iko.opencode.data.model.FilePromptPart
 import soy.iko.opencode.data.model.MessageInfo
 import soy.iko.opencode.data.model.MessagePartRemoved
 import soy.iko.opencode.data.model.MessagePartUpdated
@@ -44,8 +45,13 @@ open class SessionRepository(
     open suspend fun deleteSession(id: String) = api.deleteSession(id)
     open suspend fun abort(sessionId: String) = api.abort(sessionId)
 
-    open suspend fun sendPrompt(sessionId: String, text: String, model: ModelRef?, agent: String? = null) =
-        api.sendPrompt(sessionId, text, model, agent)
+    open suspend fun sendPrompt(
+        sessionId: String,
+        text: String,
+        attachments: List<FilePromptPart> = emptyList(),
+        model: ModelRef?,
+        agent: String? = null,
+    ) = api.sendPrompt(sessionId, text, attachments, model, agent)
 
     open suspend fun runCommand(
         sessionId: String,

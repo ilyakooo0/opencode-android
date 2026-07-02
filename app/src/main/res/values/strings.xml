@@ -73,6 +73,8 @@
     <string name="show_password">Show password</string>
     <string name="hide_password">Hide password</string>
     <string name="test_credentials">Test credentials</string>
+    <string name="discover_on_network">Discover on network</string>
+    <string name="searching_network">Searching the local network…</string>
     <string name="testing_credentials">Testing…</string>
     <string name="credentials_ok">Credentials accepted.</string>
     <string name="credentials_rejected">Credentials rejected.</string>
@@ -281,4 +283,49 @@
 
     <!-- Search -->
     <string name="clear_search">Clear search</string>
+    <string name="search_in_files">Search file contents…</string>
+    <string name="search_symbols_label">Search symbols…</string>
+    <string name="search_mode_files">Files</string>
+    <string name="search_mode_text">Contents</string>
+    <string name="search_mode_symbols">Symbols</string>
+
+    <!-- Attachments -->
+    <string name="add_attachment">Add attachment</string>
+    <string name="attach_photo">Photo</string>
+    <string name="attach_camera">Camera</string>
+    <string name="attach_file">File</string>
+    <string name="attachment_too_large">File is too large to attach.</string>
+    <string name="attachment_failed">Couldn\'t attach that file.</string>
+    <string name="attachment_limit">Attachment limit reached.</string>
+    <string name="no_camera_app">No camera available.</string>
+
+    <!-- Voice input -->
+    <string name="voice_input">Voice input</string>
+    <string name="voice_prompt">Speak your message</string>
+    <string name="no_voice_app">Voice input isn\'t available on this device.</string>
+
+    <!-- Revert -->
+    <string name="revert_to_here">Revert to here</string>
+    <string name="reverted_banner">Reverted — later messages are hidden.</string>
+
+    <!-- Sharing / summarize / init / shell -->
+    <string name="create_share_link">Create share link</string>
+    <string name="copy_share_link">Copy share link</string>
+    <string name="stop_sharing">Stop sharing</string>
+    <string name="link_copied">Link copied</string>
+    <string name="summarize_conversation">Summarize conversation</string>
+    <string name="generate_agents_md">Generate AGENTS.md</string>
+    <string name="run_shell_command">Run shell command</string>
+    <string name="shell_command_label">Command</string>
+    <string name="shell_command_hint">ls -la</string>
+    <string name="needs_model">Select a model first.</string>
+
+    <!-- App lock (biometric) -->
+    <string name="app_lock">App lock</string>
+    <string name="app_lock_desc">Require biometric or device credential to open the app.</string>
+    <string name="app_lock_unavailable">No biometric or device credential is set up.</string>
+    <string name="app_lock_prompt_title">Unlock opencode</string>
+    <string name="app_lock_prompt_subtitle">Authenticate to access your servers.</string>
+    <string name="app_locked">opencode is locked</string>
+    <string name="app_unlock">Unlock</string>
 </resources>

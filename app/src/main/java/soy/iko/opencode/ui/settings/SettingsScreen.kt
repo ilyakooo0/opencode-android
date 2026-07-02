@@ -63,6 +63,7 @@ import soy.iko.opencode.data.repo.CrashLogger
 import soy.iko.opencode.data.repo.ThemeMode
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
+import soy.iko.opencode.ui.canAuthenticateForAppLock
 import soy.iko.opencode.ui.theme.LightPaletteSwatches
 import soy.iko.opencode.ui.theme.DarkPaletteSwatches
 import soy.iko.opencode.util.runCatchingCancellable
@@ -82,7 +83,8 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onManageServers:
             container.settingsStore.themeMode,
             container.settingsStore.dynamicColor,
             container.settingsStore.sendOnEnter,
-        ) { theme, dyn, enter -> SettingsValues(theme, dyn, enter) as SettingsValues? }
+            container.settingsStore.appLock,
+        ) { theme, dyn, enter, lock -> SettingsValues(theme, dyn, enter, lock) as SettingsValues? }
     }
     val settings by settingsFlow.collectAsStateWithLifecycle(initialValue = null)
     val dynamicColorAvailable = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
@@ -202,6 +204,39 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit, onManageServers:
                     Switch(
                         checked = s.sendOnEnter,
                         onCheckedChange = null,
+                    )
+                }
+
+                // App lock: gate on device capability. Always allow turning it *off* (in case
+                // the enrolled biometric was later removed), but only allow turning it on when
+                // a biometric or device credential is actually available.
+                val appLockAvailable = remember { canAuthenticateForAppLock(context) }
+                val appLockToggleable = appLockAvailable || s.appLock
+                Spacer(Modifier.size(4.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .toggleable(
+                            value = s.appLock,
+                            enabled = appLockToggleable,
+                            onValueChange = { scope.launch { runCatchingCancellable { container.settingsStore.setAppLock(it) } } },
+                            role = Role.Switch,
+                        )
+                        .padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(stringResource(R.string.app_lock), style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            stringResource(if (appLockToggleable) R.string.app_lock_desc else R.string.app_lock_unavailable),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = s.appLock,
+                        onCheckedChange = null,
+                        enabled = appLockToggleable,
                     )
                 }
             } else {
@@ -388,6 +423,7 @@ private data class SettingsValues(
     val themeMode: ThemeMode,
     val dynamicColor: Boolean,
     val sendOnEnter: Boolean,
+    val appLock: Boolean,
 )
 
 /** Small circular count badge used to indicate pending crash reports. */

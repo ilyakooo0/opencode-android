@@ -5,6 +5,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import soy.iko.opencode.data.model.FileNode
 import soy.iko.opencode.data.model.FileStatusEntry
+import soy.iko.opencode.data.model.FindMatch
+import soy.iko.opencode.data.model.SymbolResult
 import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
@@ -23,18 +25,26 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
+/** What a search query targets: file names, file contents (ripgrep), or workspace symbols. */
+enum class SearchMode { FILES, TEXT, SYMBOL }
+
 @Immutable
 data class FileBrowserState(
     val path: String = "",
     val entries: List<FileNode> = emptyList(),
     val statusMap: Map<String, FileStatusEntry> = emptyMap(),
+    val mode: SearchMode = SearchMode.FILES,
     val query: String = "",
     val results: List<String> = emptyList(),
+    val textResults: List<FindMatch> = emptyList(),
+    val symbolResults: List<SymbolResult> = emptyList(),
     val searching: Boolean = false,
     val loading: Boolean = true,
     val error: String? = null,
 ) {
-    val isSearching: Boolean get() = query.isNotBlank()
+    /** True when the results view (rather than the directory listing) should be shown:
+     *  any content/symbol mode, or file-name mode with a non-blank query. */
+    val isSearching: Boolean get() = mode != SearchMode.FILES || query.isNotBlank()
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -131,8 +141,11 @@ class FileBrowserViewModel(private val container: AppContainer) : ViewModel() {
         }
         _state.update { it.copy(
             path = path,
+            mode = SearchMode.FILES,
             query = "",
             results = emptyList(),
+            textResults = emptyList(),
+            symbolResults = emptyList(),
             searching = false,
             loading = true,
             error = null,
@@ -159,10 +172,36 @@ class FileBrowserViewModel(private val container: AppContainer) : ViewModel() {
         open(parent)
     }
 
+    /** Switch what the query targets (file names / contents / symbols) and re-run it. */
+    fun setMode(mode: SearchMode) {
+        if (_state.value.mode == mode) return
+        searchJob?.cancel()
+        _state.update {
+            it.copy(
+                mode = mode,
+                results = emptyList(),
+                textResults = emptyList(),
+                symbolResults = emptyList(),
+                searching = false,
+                error = null,
+            )
+        }
+        val query = _state.value.query
+        if (mode == SearchMode.FILES && query.isBlank()) open(_state.value.path) else setQuery(query)
+    }
+
     fun setQuery(query: String) {
         _state.update { it.copy(query = query, error = null) }
         searchJob?.cancel()
         openJob?.cancel()
+        when (_state.value.mode) {
+            SearchMode.FILES -> searchFiles(query)
+            SearchMode.TEXT -> searchContent(query) { it.findText(query) }
+            SearchMode.SYMBOL -> searchSymbols(query)
+        }
+    }
+
+    private fun searchFiles(query: String) {
         if (query.isBlank()) {
             _state.update { it.copy(results = emptyList(), searching = false) }
             // Cancelling openJob above may have interrupted an in-flight directory load,
@@ -185,6 +224,42 @@ class FileBrowserViewModel(private val container: AppContainer) : ViewModel() {
             delay(NetworkConfig.fileSearchDebounceMs) // debounce
             runCatchingCancellable { client.findFiles(query) }
                 .onSuccess { results -> _state.update { it.copy(results = results, searching = false) } }
+                .onFailure { e -> _state.update { it.copy(searching = false, error = container.friendlyError(e)) } }
+        }
+    }
+
+    private fun searchContent(query: String, fetch: suspend (soy.iko.opencode.data.network.OpencodeApiClient) -> List<FindMatch>) {
+        if (query.isBlank()) {
+            _state.update { it.copy(textResults = emptyList(), searching = false, loading = false) }
+            return
+        }
+        _state.update { it.copy(loading = false, searching = true) }
+        val client = api ?: run {
+            _state.update { it.copy(searching = false, error = container.string(R.string.not_connected)) }
+            return
+        }
+        searchJob = viewModelScope.launch {
+            delay(NetworkConfig.fileSearchDebounceMs)
+            runCatchingCancellable { fetch(client) }
+                .onSuccess { results -> _state.update { it.copy(textResults = results, searching = false) } }
+                .onFailure { e -> _state.update { it.copy(searching = false, error = container.friendlyError(e)) } }
+        }
+    }
+
+    private fun searchSymbols(query: String) {
+        if (query.isBlank()) {
+            _state.update { it.copy(symbolResults = emptyList(), searching = false, loading = false) }
+            return
+        }
+        _state.update { it.copy(loading = false, searching = true) }
+        val client = api ?: run {
+            _state.update { it.copy(searching = false, error = container.string(R.string.not_connected)) }
+            return
+        }
+        searchJob = viewModelScope.launch {
+            delay(NetworkConfig.fileSearchDebounceMs)
+            runCatchingCancellable { client.findSymbol(query) }
+                .onSuccess { results -> _state.update { it.copy(symbolResults = results, searching = false) } }
                 .onFailure { e -> _state.update { it.copy(searching = false, error = container.friendlyError(e)) } }
         }
     }

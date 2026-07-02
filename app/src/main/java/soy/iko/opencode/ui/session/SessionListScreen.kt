@@ -446,6 +446,9 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
                     }
                 }
             } else {
+                // Order child (sub-)sessions immediately under their parent, tracking depth
+                // so the UI can indent them into a tree.
+                val nodes = remember(sessions) { buildSessionTree(sessions) }
                 PullToRefreshBox(
                     isRefreshing = refreshing,
                     onRefresh = onRefresh,
@@ -456,7 +459,8 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
                         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 96.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        items(sessions, key = { it.id }) { session ->
+                        items(nodes, key = { it.session.id }) { node ->
+                            val session = node.session
                             // Swipe end-to-start reveals a delete affordance and opens the
                             // same confirmation dialog as the trash icon. We never commit
                             // the dismissal (always reset to Settled) so the card snaps back
@@ -482,7 +486,11 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
                             SwipeToDismissBox(
                                 state = swipeState,
                                 enableDismissFromStartToEnd = false,
-                                modifier = Modifier.animateItem(),
+                                // Indent sub-sessions under their parent (capped so deep
+                                // nesting doesn't squeeze the card off-screen).
+                                modifier = Modifier
+                                    .animateItem()
+                                    .padding(start = (node.depth.coerceAtMost(3) * 16).dp),
                                 backgroundContent = {
                                     Box(
                                         modifier = Modifier
@@ -517,6 +525,40 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
             }
         }
     }
+}
+
+/** A session plus its nesting [depth] (0 = top level) for the sub-session tree. */
+private data class SessionNode(val session: soy.iko.opencode.data.model.Session, val depth: Int)
+
+/**
+ * Order [sessions] so each child (a session whose `parentID` is also present) appears
+ * immediately after its parent, tracking depth for indentation. The input order (already
+ * sorted by the VM) is preserved for roots and within each sibling group. Sessions whose
+ * parent isn't in the list are treated as roots; a `parentID` cycle can't drop a row (any
+ * session not reached from a root is appended at depth 0).
+ */
+private fun buildSessionTree(sessions: List<soy.iko.opencode.data.model.Session>): List<SessionNode> {
+    // Fast path: no parent links at all (the common case) → everything is top-level.
+    if (sessions.none { it.parentID != null }) return sessions.map { SessionNode(it, 0) }
+    val ids = sessions.mapTo(HashSet()) { it.id }
+    val childrenByParent = LinkedHashMap<String, MutableList<soy.iko.opencode.data.model.Session>>()
+    val roots = ArrayList<soy.iko.opencode.data.model.Session>()
+    for (s in sessions) {
+        val parent = s.parentID
+        if (parent != null && parent in ids) childrenByParent.getOrPut(parent) { ArrayList() }.add(s)
+        else roots.add(s)
+    }
+    val result = ArrayList<SessionNode>(sessions.size)
+    val visited = HashSet<String>()
+    fun emit(session: soy.iko.opencode.data.model.Session, depth: Int) {
+        if (!visited.add(session.id)) return
+        result.add(SessionNode(session, depth))
+        childrenByParent[session.id]?.forEach { emit(it, depth + 1) }
+    }
+    roots.forEach { emit(it, 0) }
+    // Safety: append any session not reachable from a root (e.g. a parentID cycle).
+    for (s in sessions) if (s.id !in visited) result.add(SessionNode(s, 0))
+    return result
 }
 
 @Composable

@@ -8,6 +8,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
+    <!-- Camera is used opportunistically for attachment capture via the system camera app
+         (ACTION_IMAGE_CAPTURE), so it's optional — devices without a camera still install. -->
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
+
     <application
         android:name=".OpencodeApp"
         android:allowBackup="false"
@@ -36,6 +40,17 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="text/plain" />
             </intent-filter>
+            <!-- Receive images shared from other apps (single or multiple) to attach to a prompt. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+            </intent-filter>
             <!-- Deep link to a session: opencode://session/{sessionId} -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
@@ -49,6 +64,17 @@
             android:name=".notification.RunForegroundService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+
+        <!-- Serves camera-capture temp files (cache/captures) to the system camera app. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 
 </manifest>

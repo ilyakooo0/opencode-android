@@ -19,6 +19,7 @@ class SettingsStore(context: Context) {
     private val themeKey = stringPreferencesKey("theme_mode")
     private val dynamicColorKey = booleanPreferencesKey("dynamic_color")
     private val sendOnEnterKey = booleanPreferencesKey("send_on_enter")
+    private val appLockKey = booleanPreferencesKey("app_lock")
 
     val themeMode: Flow<ThemeMode> = appContext.settingsDataStore.data.map { prefs ->
         runCatching { ThemeMode.valueOf(prefs[themeKey] ?: ThemeMode.SYSTEM.name) }
@@ -36,6 +37,13 @@ class SettingsStore(context: Context) {
         prefs[sendOnEnterKey] ?: true
     }
 
+    /** When true, the app requires device biometric/credential authentication on launch
+     *  (and when returning from the background) before the UI is shown, protecting the
+     *  stored server credentials. Defaults to false so the app is usable out of the box. */
+    val appLock: Flow<Boolean> = appContext.settingsDataStore.data.map { prefs ->
+        prefs[appLockKey] ?: false
+    }
+
     suspend fun setThemeMode(mode: ThemeMode) {
         appContext.settingsDataStore.edit { it[themeKey] = mode.name }
     }
@@ -46,5 +54,9 @@ class SettingsStore(context: Context) {
 
     suspend fun setSendOnEnter(enabled: Boolean) {
         appContext.settingsDataStore.edit { it[sendOnEnterKey] = enabled }
+    }
+
+    suspend fun setAppLock(enabled: Boolean) {
+        appContext.settingsDataStore.edit { it[appLockKey] = enabled }
     }
 }

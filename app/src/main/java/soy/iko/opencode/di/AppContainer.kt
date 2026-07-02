@@ -106,6 +106,17 @@ open class AppContainer private constructor(
         return if (_pendingShare.compareAndSet(current, null)) current else null
     }
 
+    /** Image/file Uris (as strings) shared into the app, staged as attachments in the next
+     *  opened session. Consumed once by the first ChatScreen to compose after the share. */
+    private val _pendingSharedMedia = MutableStateFlow<List<String>>(emptyList())
+    open val pendingSharedMedia: StateFlow<List<String>> = _pendingSharedMedia.asStateFlow()
+    open fun setPendingSharedMedia(uris: List<String>) { _pendingSharedMedia.value = uris }
+    open fun consumePendingSharedMedia(): List<String> {
+        val current = _pendingSharedMedia.value
+        if (current.isEmpty()) return emptyList()
+        return if (_pendingSharedMedia.compareAndSet(current, emptyList())) current else emptyList()
+    }
+
     /**
      * A session id to open from an external trigger (a notification tap or a deep link).
      * The nav host consumes it once a connection is active.

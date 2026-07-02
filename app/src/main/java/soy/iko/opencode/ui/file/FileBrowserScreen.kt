@@ -2,6 +2,7 @@ package soy.iko.opencode.ui.file
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -26,6 +28,7 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -49,14 +52,21 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import soy.iko.opencode.data.model.FileStatusEntry
+import soy.iko.opencode.data.model.FindMatch
+import soy.iko.opencode.data.model.SymbolResult
+import soy.iko.opencode.data.model.symbolKindLabel
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
 import soy.iko.opencode.ui.vmFactory
@@ -65,7 +75,7 @@ import soy.iko.opencode.ui.vmFactory
 @Composable
 fun FileBrowserScreen(
     container: AppContainer,
-    onOpenFile: (String) -> Unit,
+    onOpenFile: (path: String, line: Int?) -> Unit,
     onBack: () -> Unit,
 ) {
     val vm: FileBrowserViewModel = viewModel(factory = vmFactory { FileBrowserViewModel(container) })
@@ -103,8 +113,18 @@ fun FileBrowserScreen(
             OutlinedTextField(
                 value = state.query,
                 onValueChange = vm::setQuery,
-                modifier = Modifier.fillMaxWidth().padding(12.dp).testTag("file_search"),
-                label = { Text(stringResource(R.string.search_files)) },
+                modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 12.dp).testTag("file_search"),
+                label = {
+                    Text(
+                        stringResource(
+                            when (state.mode) {
+                                SearchMode.FILES -> R.string.search_files
+                                SearchMode.TEXT -> R.string.search_in_files
+                                SearchMode.SYMBOL -> R.string.search_symbols_label
+                            },
+                        ),
+                    )
+                },
                 leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                 trailingIcon = if (state.query.isNotEmpty()) {
                     {
@@ -117,6 +137,16 @@ fun FileBrowserScreen(
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 keyboardActions = KeyboardActions(onSearch = { keyboardController?.hide() }),
             )
+            // Mode selector: file names / contents / symbols.
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                SearchModeChip(stringResource(R.string.search_mode_files), state.mode == SearchMode.FILES) { vm.setMode(SearchMode.FILES) }
+                SearchModeChip(stringResource(R.string.search_mode_text), state.mode == SearchMode.TEXT) { vm.setMode(SearchMode.TEXT) }
+                SearchModeChip(stringResource(R.string.search_mode_symbols), state.mode == SearchMode.SYMBOL) { vm.setMode(SearchMode.SYMBOL) }
+            }
+            Spacer(Modifier.size(8.dp))
 
             androidx.compose.material3.pulltorefresh.PullToRefreshBox(
                 isRefreshing = refreshing,
@@ -149,12 +179,16 @@ fun FileBrowserScreen(
                                 Text(stringResource(R.string.retry))
                             }
                         }
-                        state.isSearching -> SearchResults(state.results, onOpenFile)
+                        state.mode == SearchMode.TEXT ->
+                            TextResults(state.textResults) { path, line -> onOpenFile(path, line) }
+                        state.mode == SearchMode.SYMBOL ->
+                            SymbolResults(state.symbolResults) { path, line -> onOpenFile(path, line) }
+                        state.isSearching -> SearchResults(state.results) { onOpenFile(it, null) }
                         else -> DirectoryListing(
                             state = state,
                             onOpenDir = vm::open,
                             onUp = vm::up,
-                            onOpenFile = onOpenFile,
+                            onOpenFile = { onOpenFile(it, null) },
                         )
                     }
                 }
@@ -223,6 +257,139 @@ private fun SearchResults(results: List<String>, onOpenFile: (String) -> Unit) {
             )
             HorizontalDivider()
         }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SearchModeChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    FilterChip(selected = selected, onClick = onClick, label = { Text(label) })
+}
+
+/** Content (ripgrep) search results: file + line number, with the matched line highlighted. */
+@Composable
+private fun TextResults(results: List<FindMatch>, onOpen: (String, Int?) -> Unit) {
+    if (results.isEmpty()) {
+        EmptyFileState(
+            icon = Icons.Filled.Search,
+            message = stringResource(R.string.no_matches),
+            modifier = Modifier.fillMaxWidth().padding(24.dp),
+        )
+        return
+    }
+    LazyColumn(modifier = Modifier.fillMaxSize()) {
+        itemsIndexed(results, key = { i, m -> "${m.filePath}:${m.lineNumber}:$i" }) { _, match ->
+            val name = match.filePath.substringAfterLast('/')
+            val dir = match.filePath.substringBeforeLast('/', missingDelimiterValue = "").trimEnd('/')
+            val highlighted = remember(match) { highlightMatchLine(match) }
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(role = Role.Button) { onOpen(match.filePath, match.lineNumber) }
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        name,
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    Text(
+                        ":${match.lineNumber}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontFamily = FontFamily.Monospace,
+                        modifier = Modifier.padding(start = 4.dp),
+                    )
+                }
+                if (dir.isNotEmpty()) {
+                    Text(
+                        dir,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Text(
+                    highlighted,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+            HorizontalDivider()
+        }
+    }
+}
+
+/** Workspace symbol results: symbol name + kind, and the file:line it's defined at. */
+@Composable
+private fun SymbolResults(results: List<SymbolResult>, onOpen: (String, Int?) -> Unit) {
+    if (results.isEmpty()) {
+        EmptyFileState(
+            icon = Icons.Filled.Search,
+            message = stringResource(R.string.no_matches),
+            modifier = Modifier.fillMaxWidth().padding(24.dp),
+        )
+        return
+    }
+    LazyColumn(modifier = Modifier.fillMaxSize()) {
+        itemsIndexed(results, key = { i, s -> "${s.filePath}:${s.name}:$i" }) { _, symbol ->
+            val fileName = symbol.filePath.substringAfterLast('/')
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(role = Role.Button) { onOpen(symbol.filePath, symbol.displayLine) }
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        symbol.name,
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    Text(
+                        symbolKindLabel(symbol.kind),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(start = 8.dp),
+                    )
+                }
+                Text(
+                    "$fileName:${symbol.displayLine}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontFamily = FontFamily.Monospace,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            HorizontalDivider()
+        }
+    }
+}
+
+/** Build the matched line with each ripgrep submatch bolded. Offsets are byte columns
+ *  within the line; clamped to the (trimmed) line length so a multibyte line can't crash. */
+private fun highlightMatchLine(match: FindMatch): androidx.compose.ui.text.AnnotatedString {
+    val line = match.lineText
+    return buildAnnotatedString {
+        var cursor = 0
+        for (sub in match.submatches.sortedBy { it.start }) {
+            val start = sub.start.coerceIn(0, line.length)
+            val end = sub.end.coerceIn(start, line.length)
+            if (start > cursor) append(line.substring(cursor, start))
+            withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(line.substring(start, end)) }
+            cursor = end
+        }
+        if (cursor < line.length) append(line.substring(cursor))
     }
 }
 

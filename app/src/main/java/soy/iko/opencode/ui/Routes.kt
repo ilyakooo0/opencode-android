@@ -19,5 +19,9 @@ object Routes {
     fun chat(sessionId: String) = "$CHAT/${android.net.Uri.encode(sessionId)}"
 
     const val FILE_VIEW = "file_view"
-    fun fileView(path: String) = "$FILE_VIEW?path=${android.net.Uri.encode(path)}"
+    fun fileView(path: String, line: Int? = null): String {
+        val base = "$FILE_VIEW?path=${android.net.Uri.encode(path)}"
+        // A positive [line] scrolls the viewer to that 1-based line (from a search hit).
+        return if (line != null && line > 0) "$base&line=$line" else base
+    }
 }

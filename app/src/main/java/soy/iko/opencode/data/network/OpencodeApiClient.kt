@@ -10,13 +10,20 @@ import soy.iko.opencode.data.model.FileStatusEntry
 import soy.iko.opencode.data.model.MessageWithParts
 import soy.iko.opencode.data.model.ModelRef
 import soy.iko.opencode.data.model.PathInfo
+import soy.iko.opencode.data.model.FilePromptPart
+import soy.iko.opencode.data.model.FindMatch
 import soy.iko.opencode.data.model.PermissionReplyBody
 import soy.iko.opencode.data.model.PermissionResponse
 import soy.iko.opencode.data.model.Project
 import soy.iko.opencode.data.model.PromptPart
 import soy.iko.opencode.data.model.PromptRequest
 import soy.iko.opencode.data.model.ProvidersResponse
+import soy.iko.opencode.data.model.RevertRequest
 import soy.iko.opencode.data.model.Session
+import soy.iko.opencode.data.model.ShellRequest
+import soy.iko.opencode.data.model.SummarizeRequest
+import soy.iko.opencode.data.model.SymbolResult
+import soy.iko.opencode.data.model.TextPromptPart
 import soy.iko.opencode.data.model.UpdateSessionRequest
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
@@ -132,6 +139,7 @@ open class OpencodeApiClient private constructor(
     open suspend fun sendPrompt(
         sessionId: String,
         text: String,
+        attachments: List<FilePromptPart> = emptyList(),
         model: ModelRef? = null,
         agent: String? = null,
     ): MessageWithParts {
@@ -140,13 +148,20 @@ open class OpencodeApiClient private constructor(
         // each attempt would get a fresh UUID and the server couldn't deduplicate a
         // request that reached it but whose response was lost (e.g. timeout).
         val idempotencyKey = java.util.UUID.randomUUID().toString()
+        // A text part is only included when there's actual text, so an image-only prompt
+        // (attachments, empty text) doesn't send an empty text part. Attachments follow
+        // the text so the model reads the instruction first.
+        val parts = buildList<PromptPart> {
+            if (text.isNotEmpty()) add(TextPromptPart(text))
+            addAll(attachments)
+        }
         return withRetry {
             client!!.post("session/${encode(sessionId)}/message") {
                 contentType(ContentType.Application.Json)
                 header("Idempotency-Key", idempotencyKey)
                 setBody(
                     PromptRequest(
-                        parts = listOf(PromptPart(text = text)),
+                        parts = parts,
                         model = model,
                         agent = agent,
                     ),
@@ -176,6 +191,68 @@ open class OpencodeApiClient private constructor(
                 header("Idempotency-Key", idempotencyKey)
                 setBody(CommandRequest(command = command, arguments = arguments, agent = agent))
             }.body()
+        }
+    }
+
+    /** Revert the session to just before [messageId] (optionally part [partId]); the
+     *  server hides everything after the checkpoint. Returns the updated session. Naturally
+     *  idempotent (reverting to the same point twice yields the same state). */
+    open suspend fun revert(sessionId: String, messageId: String, partId: String? = null): Session = withRetry {
+        client!!.post("session/${encode(sessionId)}/revert") {
+            contentType(ContentType.Application.Json)
+            setBody(RevertRequest(messageID = messageId, partID = partId))
+        }.body()
+    }
+
+    /** Undo the active revert checkpoint, restoring the hidden messages. */
+    open suspend fun unrevert(sessionId: String): Session = withRetry {
+        client!!.post("session/${encode(sessionId)}/unrevert").body()
+    }
+
+    /** Create a public share link for the session. Returns the session with [Session.share] set. */
+    open suspend fun shareSession(sessionId: String): Session = withRetry {
+        client!!.post("session/${encode(sessionId)}/share").body()
+    }
+
+    /** Revoke the session's public share link. Returns the session with share cleared. */
+    open suspend fun unshareSession(sessionId: String): Session = withRetry {
+        client!!.delete("session/${encode(sessionId)}/share").body()
+    }
+
+    /** Ask the agent to summarize/compact the conversation to reclaim context. The compacted
+     *  summary streams back via SSE like any run; this just triggers it. */
+    open suspend fun summarize(sessionId: String, model: ModelRef) {
+        val idempotencyKey = java.util.UUID.randomUUID().toString()
+        withRetry {
+            client!!.post("session/${encode(sessionId)}/summarize") {
+                contentType(ContentType.Application.Json)
+                header("Idempotency-Key", idempotencyKey)
+                setBody(SummarizeRequest(providerID = model.providerID, modelID = model.modelID))
+            }.body<String>()
+        }
+    }
+
+    /** Analyze the project and (re)generate its AGENTS.md. The body is omitted so the server
+     *  assigns the message id and uses its default model; the run streams back via SSE. */
+    open suspend fun initSession(sessionId: String) {
+        val idempotencyKey = java.util.UUID.randomUUID().toString()
+        withRetry {
+            client!!.post("session/${encode(sessionId)}/init") {
+                header("Idempotency-Key", idempotencyKey)
+            }.body<String>()
+        }
+    }
+
+    /** Run a one-off shell [command] in the session's worktree. Output streams back via SSE.
+     *  [agent] scopes the run (the server requires it). */
+    open suspend fun shell(sessionId: String, command: String, agent: String, model: ModelRef? = null) {
+        val idempotencyKey = java.util.UUID.randomUUID().toString()
+        withRetry {
+            client!!.post("session/${encode(sessionId)}/shell") {
+                contentType(ContentType.Application.Json)
+                header("Idempotency-Key", idempotencyKey)
+                setBody(ShellRequest(agent = agent, command = command, model = model))
+            }.body<String>()
         }
     }
 
@@ -256,6 +333,16 @@ open class OpencodeApiClient private constructor(
 
     open suspend fun findFiles(query: String): List<String> = withRetry {
         client!!.get("find/file") { parameter("query", query) }.body()
+    }
+
+    /** Ripgrep content search across the project (`GET /find?pattern=`). */
+    open suspend fun findText(pattern: String): List<FindMatch> = withRetry {
+        client!!.get("find") { parameter("pattern", pattern) }.body()
+    }
+
+    /** LSP workspace symbol search (`GET /find/symbol?query=`). */
+    open suspend fun findSymbol(query: String): List<SymbolResult> = withRetry {
+        client!!.get("find/symbol") { parameter("query", query) }.body()
     }
 
     open suspend fun listDirectory(path: String): List<FileNode> = withRetry {

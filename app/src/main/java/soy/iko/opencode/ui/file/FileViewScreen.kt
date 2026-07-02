@@ -92,6 +92,7 @@ fun FileViewScreen(
     container: AppContainer,
     path: String,
     onBack: () -> Unit,
+    initialLine: Int? = null,
 ) {
     val vm: FileViewModel = viewModel(factory = vmFactory { FileViewModel(container, path) })
     val state by vm.state.collectAsStateWithLifecycle()
@@ -102,9 +103,11 @@ fun FileViewScreen(
     }
     val shareLabel = stringResource(R.string.share)
     // Diff vs raw view toggle. Defaults to showing the diff when one exists; the user can
-    // switch to the raw new content. Persisted via rememberSaveable across rotation.
+    // switch to the raw new content. Persisted via rememberSaveable across rotation. When the
+    // viewer is opened at a specific line (from a search hit), start on the raw view so the
+    // targeted line is actually rendered (the diff view has no line list to scroll).
     val hasDiff = state.content?.diff != null && state.content?.diff?.isNotBlank() == true
-    var showDiff by rememberSaveable(path) { mutableStateOf(true) }
+    var showDiff by rememberSaveable(path) { mutableStateOf(initialLine == null) }
     val showToggle = hasDiff && state.content?.content.orEmpty().isNotEmpty()
     // Find-in-file and line-wrapping state, persisted so a rotation or reload keeps the
     // user's query/mode.
@@ -137,6 +140,18 @@ fun FileViewScreen(
     // Scroll to the current match whenever it (or the match set) changes.
     LaunchedEffect(matchPos, matchIndices) {
         matchIndices.getOrNull(matchPos)?.let { idx -> runCatchingCancellable { listState.animateScrollToItem(idx) } }
+    }
+    // Opened at a specific line (from a search hit): scroll there once the raw content loads.
+    // One-shot so a later find-in-file navigation isn't overridden.
+    var didInitialLineScroll by rememberSaveable(path) { mutableStateOf(false) }
+    LaunchedEffect(state.content, initialLine) {
+        val line = initialLine ?: return@LaunchedEffect
+        if (didInitialLineScroll) return@LaunchedEffect
+        val content = state.content ?: return@LaunchedEffect
+        if (content.isBinary) return@LaunchedEffect
+        val target = (line - 1).coerceIn(0, (lines.size - 1).coerceAtLeast(0))
+        runCatchingCancellable { listState.scrollToItem(target) }
+        didInitialLineScroll = true
     }
 
     Scaffold(

@@ -2,6 +2,7 @@ package soy.iko.opencode.ui.server
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,6 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -41,6 +43,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -52,6 +55,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import soy.iko.opencode.data.network.NsdDiscovery
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
 import soy.iko.opencode.ui.vmFactory
@@ -218,6 +222,9 @@ private fun ServerEditForm(
                 modifier = Modifier.fillMaxWidth(),
             )
         }
+        DiscoverySection(
+            onPick = { url -> vm.update { it.copy(baseUrl = url, error = null, probeReachable = null) } },
+        )
         if (!state.authFieldsVisible) {
             Text(
                 stringResource(R.string.auth_help),
@@ -351,6 +358,62 @@ private fun AuthFields(
                 style = MaterialTheme.typography.bodySmall,
                 color = if (ok) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
             )
+        }
+    }
+}
+
+/**
+ * Optional LAN discovery: browses for opencode servers advertised via mDNS (`--mdns`) and
+ * offers each as a one-tap fill for the base URL. Collapsed by default so the discovery (and
+ * its multicast traffic) only runs while the section is expanded — the collection stops when
+ * the section is collapsed or the screen leaves composition.
+ */
+@Composable
+private fun DiscoverySection(onPick: (String) -> Unit) {
+    val context = LocalContext.current
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    Column(modifier = Modifier.fillMaxWidth()) {
+        TextButton(
+            onClick = { expanded = !expanded },
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp),
+        ) {
+            Icon(Icons.Filled.Wifi, contentDescription = null, modifier = Modifier.size(18.dp))
+            Text(stringResource(R.string.discover_on_network), modifier = Modifier.padding(start = 8.dp))
+        }
+        if (expanded) {
+            val discovery = remember { NsdDiscovery(context) }
+            val servers by remember(discovery) { discovery.discover() }
+                .collectAsStateWithLifecycle(initialValue = emptyList())
+            if (servers.isEmpty()) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(vertical = 8.dp),
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Text(
+                        stringResource(R.string.searching_network),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 8.dp),
+                    )
+                }
+            } else {
+                servers.forEach { server ->
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onPick(server.baseUrl) }
+                            .padding(vertical = 8.dp),
+                    ) {
+                        Text(server.name, style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            server.baseUrl,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
         }
     }
 }

@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import soy.iko.opencode.data.model.Agent
 import soy.iko.opencode.data.model.Command
+import soy.iko.opencode.data.model.FilePromptPart
 import soy.iko.opencode.data.model.MessageWithParts
 import soy.iko.opencode.data.model.ModelOption
 import soy.iko.opencode.data.model.Permission
@@ -45,6 +46,7 @@ import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.retryWhen
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -55,6 +57,23 @@ import kotlinx.coroutines.launch
  * inherit a Retry that silently re-submits the last prompt.
  */
 data class ChatError(val message: String, val retryable: Boolean = false)
+
+/**
+ * An attachment staged to send with the next prompt. [previewModel] is a Coil-loadable model
+ * for the thumbnail (the source content Uri, as a string) for images, or null for non-image
+ * files (rendered with a generic icon). [part] is the wire form (a base64 data URL) sent to
+ * the server.
+ */
+@androidx.compose.runtime.Immutable
+data class PendingAttachment(
+    val id: String,
+    val name: String,
+    val mime: String,
+    val previewModel: Any?,
+    val part: FilePromptPart,
+) {
+    val isImage: Boolean get() = mime.startsWith("image/")
+}
 
 @OptIn(ExperimentalCoroutinesApi::class, kotlinx.coroutines.FlowPreview::class)
 class ChatViewModel(
@@ -245,6 +264,28 @@ class ChatViewModel(
     private val _draft = MutableStateFlow(container.draftStore.get(sessionId))
     val draft: StateFlow<String> = _draft.asStateFlow()
 
+    /** Attachments staged for the next prompt (images/files). In-memory only — a huge base64
+     *  payload isn't worth persisting across process death, and the source Uris wouldn't
+     *  survive anyway. Cleared on a successful send. */
+    private val _attachments = MutableStateFlow<List<PendingAttachment>>(emptyList())
+    val attachments: StateFlow<List<PendingAttachment>> = _attachments.asStateFlow()
+
+    /** True while a revert checkpoint is active for this session (messages after it are hidden
+     *  server-side). Drives the "reverted" banner with its Undo. */
+    private val _reverted = MutableStateFlow(false)
+    val reverted: StateFlow<Boolean> = _reverted.asStateFlow()
+
+    /** The active public share URL for this session, or null when not shared. */
+    private val _shareUrl = MutableStateFlow<String?>(null)
+    val shareUrl: StateFlow<String?> = _shareUrl.asStateFlow()
+
+    /** One-shot events carrying a freshly-created share URL so the UI can copy/share it. */
+    private val _shareLinkEvents = Channel<String>(
+        capacity = NetworkConfig.snackbarEventBufferCapacity,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+    val shareLinkEvents: Flow<String> = _shareLinkEvents.receiveAsFlow()
+
     init {
         // DraftStore loads SharedPreferences asynchronously; on a cold start the
         // synchronous get() above returns "" until the background load completes.
@@ -415,7 +456,7 @@ class ChatViewModel(
                             val queued = _queuedFollowUp.value
                             if (queued != null) {
                                 setQueuedFollowUp(null)
-                                send(queued)
+                                send(queued, includeAttachments = false)
                             }
                         }
                         if (SessionRepository.isError(event, sessionId)) {
@@ -436,7 +477,12 @@ class ChatViewModel(
                             is PermissionReplied ->
                                 if (event.properties.sessionID == sessionId && event.properties.permissionID == _pendingPermission.value?.id) _pendingPermission.value = null
                             is SessionUpdated ->
-                                if (event.properties.info.id == sessionId) _sessionTitle.value = event.properties.info.displayTitle
+                                if (event.properties.info.id == sessionId) {
+                                    val info = event.properties.info
+                                    _sessionTitle.value = info.displayTitle
+                                    _reverted.value = info.isReverted
+                                    _shareUrl.value = info.share?.url?.takeIf { it.isNotBlank() }
+                                }
                             is SessionDeleted ->
                                 if (event.properties.info?.id == sessionId || event.properties.sessionID == sessionId) {
                                     _sessionDeleted.value = true
@@ -503,7 +549,11 @@ class ChatViewModel(
                 runCatchingCancellable { conn.repository.listSessions() }
                     .getOrNull()
                     ?.firstOrNull { it.id == sessionId }
-                    ?.let { _sessionTitle.value = it.displayTitle }
+                    ?.let { session ->
+                        _sessionTitle.value = session.displayTitle
+                        _reverted.value = session.isReverted
+                        _shareUrl.value = session.share?.url?.takeIf { it.isNotBlank() }
+                    }
             }
         }
         // If the SSE stream drops mid-run, the run indicator would spin forever;
@@ -527,12 +577,25 @@ class ChatViewModel(
         }
     }
 
-    /** Sends [text]; returns true on success so the caller can clear the draft only then. */
-    fun send(text: String): Boolean {
+    /** Sends [text] together with any staged attachments; returns true on success so the
+     *  caller can clear the draft only then. */
+    fun send(text: String): Boolean = send(text, includeAttachments = true)
+
+    /**
+     * Core send. [includeAttachments] is false for the internal auto-send paths (a queued
+     * follow-up, a retry) so staged attachments aren't silently re-sent with unrelated text.
+     */
+    private fun send(text: String, includeAttachments: Boolean): Boolean {
         val conn = connection ?: return false
         val trimmed = text.trim()
-        if (trimmed.isEmpty() || !_running.compareAndSet(false, true)) return false
+        val attachments = if (includeAttachments) _attachments.value else emptyList()
+        // An image-only prompt (attachments, no text) is valid; a blank prompt with nothing
+        // attached is not.
+        if ((trimmed.isEmpty() && attachments.isEmpty()) || !_running.compareAndSet(false, true)) return false
         _failedDraft.value = null
+        // Clear the staged attachments optimistically so the composer empties immediately;
+        // restore them if the send fails (mirrors the draft handling below).
+        if (attachments.isNotEmpty()) _attachments.value = emptyList()
         // Clear the in-memory draft for the UI immediately, but don't persist the clear
         // yet — if the send fails and the process dies before we restore, the draft
         // would be lost forever. The persisted draft is cleared only on success.
@@ -551,6 +614,7 @@ class ChatViewModel(
                 conn.repository.sendPrompt(
                     sessionId,
                     trimmed,
+                    attachments = attachments.map { it.part },
                     model = _selectedModel.value?.ref,
                     agent = _selectedAgent.value,
                 )
@@ -559,6 +623,9 @@ class ChatViewModel(
                 _failedDraft.value = trimmed
                 // Only restore the draft if the user hasn't typed anything new since.
                 if (_draft.value.isBlank()) updateDraft(trimmed)
+                // Restore the staged attachments too, so a failed send doesn't lose them —
+                // but only if the user hasn't staged new ones in the meantime.
+                if (attachments.isNotEmpty() && _attachments.value.isEmpty()) _attachments.value = attachments
                 // Retryable: this is the failed send whose prompt Retry re-submits.
                 _errorEvents.trySend(ChatError(container.friendlyError(it), retryable = true))
                 _running.value = false
@@ -585,7 +652,9 @@ class ChatViewModel(
         val draft = _failedDraft.value ?: return
         // Don't clear _failedDraft until send() accepts the text — if _running is
         // already true, send() returns false and the draft would be lost forever.
-        if (send(draft)) {
+        // Attachments aren't re-sent on retry (they were optimistically restored to the
+        // composer on the original failure, so they'll ride the next manual send).
+        if (send(draft, includeAttachments = false)) {
             _failedDraft.value = null
         }
     }
@@ -675,6 +744,125 @@ class ChatViewModel(
         }
     }
 
+    fun addAttachment(attachment: PendingAttachment) {
+        _attachments.update { it + attachment }
+    }
+
+    fun removeAttachment(id: String) {
+        _attachments.update { list -> list.filterNot { it.id == id } }
+    }
+
+    fun clearAttachments() {
+        _attachments.value = emptyList()
+    }
+
+    /** Revert the conversation to just before [messageId], hiding everything after it. The
+     *  authoritative state also arrives via SessionUpdated; we flag it here for immediate
+     *  feedback. */
+    fun revertTo(messageId: String) {
+        val conn = connection ?: return
+        viewModelScope.launch {
+            runCatchingCancellable { conn.api.revert(sessionId, messageId) }
+                .onSuccess { _reverted.value = it.isReverted }
+                .onFailure { _errorEvents.trySend(ChatError(container.friendlyError(it))) }
+        }
+    }
+
+    /** Undo the active revert checkpoint, restoring the hidden messages. */
+    fun unrevert() {
+        val conn = connection ?: return
+        viewModelScope.launch {
+            runCatchingCancellable { conn.api.unrevert(sessionId) }
+                .onSuccess { _reverted.value = it.isReverted }
+                .onFailure { _errorEvents.trySend(ChatError(container.friendlyError(it))) }
+        }
+    }
+
+    /** Create (or fetch the existing) public share link. The URL is exposed via [shareUrl]
+     *  and also emitted once via [shareLinkEvents] so the UI can copy it to the clipboard. */
+    fun shareSession() {
+        val conn = connection ?: return
+        viewModelScope.launch {
+            runCatchingCancellable { conn.api.shareSession(sessionId) }
+                .onSuccess { session ->
+                    val url = session.share?.url?.takeIf { it.isNotBlank() }
+                    _shareUrl.value = url
+                    if (url != null) _shareLinkEvents.trySend(url)
+                }
+                .onFailure { _errorEvents.trySend(ChatError(container.friendlyError(it))) }
+        }
+    }
+
+    /** Revoke the session's public share link. */
+    fun unshareSession() {
+        val conn = connection ?: return
+        viewModelScope.launch {
+            runCatchingCancellable { conn.api.unshareSession(sessionId) }
+                .onSuccess { _shareUrl.value = it.share?.url?.takeIf { it.isNotBlank() } }
+                .onFailure { _errorEvents.trySend(ChatError(container.friendlyError(it))) }
+        }
+    }
+
+    /** Compact the conversation via the summarize endpoint; the summary streams back via SSE.
+     *  Uses the currently-selected model (required by the endpoint). */
+    fun summarize() {
+        val conn = connection ?: return
+        val model = _selectedModel.value?.ref ?: run {
+            _errorEvents.trySend(ChatError(container.string(R.string.needs_model)))
+            return
+        }
+        if (!_running.compareAndSet(false, true)) {
+            _errorEvents.trySend(ChatError(container.string(R.string.command_busy)))
+            return
+        }
+        viewModelScope.launch {
+            runCatchingCancellable { conn.api.summarize(sessionId, model) }
+                .onFailure {
+                    _errorEvents.trySend(ChatError(container.friendlyError(it)))
+                    _running.value = false
+                }
+        }
+    }
+
+    /** Analyze the project and (re)generate its AGENTS.md; the run streams back via SSE. */
+    fun initProject() {
+        val conn = connection ?: return
+        if (!_running.compareAndSet(false, true)) {
+            _errorEvents.trySend(ChatError(container.string(R.string.command_busy)))
+            return
+        }
+        viewModelScope.launch {
+            runCatchingCancellable { conn.api.initSession(sessionId) }
+                .onFailure {
+                    _errorEvents.trySend(ChatError(container.friendlyError(it)))
+                    _running.value = false
+                }
+        }
+    }
+
+    /** Run a one-off shell [command] in the session's worktree; output streams back via SSE.
+     *  The server requires an agent to scope the run — use the selected one, else the primary. */
+    fun runShell(command: String) {
+        val conn = connection ?: return
+        val cmd = command.trim()
+        if (cmd.isEmpty()) return
+        val agent = _selectedAgent.value
+            ?: _agents.value.firstOrNull { it.isPrimary }?.name
+            ?: _agents.value.firstOrNull()?.name
+            ?: DEFAULT_SHELL_AGENT
+        if (!_running.compareAndSet(false, true)) {
+            _errorEvents.trySend(ChatError(container.string(R.string.command_busy)))
+            return
+        }
+        viewModelScope.launch {
+            runCatchingCancellable { conn.api.shell(sessionId, cmd, agent, _selectedModel.value?.ref) }
+                .onFailure {
+                    _errorEvents.trySend(ChatError(container.friendlyError(it)))
+                    _running.value = false
+                }
+        }
+    }
+
     /** Rename the current session via PATCH /session/:id. On success updates [sessionTitle]
      *  so the top bar reflects the new name immediately. A failure surfaces as a snackbar;
      *  the caller keeps the dialog open so the user can retry without retyping. */
@@ -749,6 +937,12 @@ class ChatViewModel(
                     if (_pendingPermission.value == null) _pendingPermission.value = permission
                 }
         }
+    }
+
+    private companion object {
+        /** Fallback agent for the shell endpoint when none is selected and no agent catalog
+         *  loaded. opencode's default primary agent is "build". */
+        const val DEFAULT_SHELL_AGENT = "build"
     }
 
     override fun onCleared() {

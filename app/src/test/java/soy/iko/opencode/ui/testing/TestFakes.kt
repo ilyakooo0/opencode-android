@@ -173,6 +173,7 @@ class FakeOpencodeApiClient : OpencodeApiClient() {
     override suspend fun sendPrompt(
         sessionId: String,
         text: String,
+        attachments: List<soy.iko.opencode.data.model.FilePromptPart>,
         model: ModelRef?,
         agent: String?,
     ): MessageWithParts {
@@ -276,6 +277,7 @@ class FakeSessionRepository(
     override suspend fun sendPrompt(
         sessionId: String,
         text: String,
+        attachments: List<soy.iko.opencode.data.model.FilePromptPart>,
         model: ModelRef?,
         agent: String?,
     ): MessageWithParts {

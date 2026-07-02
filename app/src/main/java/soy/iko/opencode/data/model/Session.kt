@@ -17,6 +17,10 @@ data class Session(
     // needn't re-send it on follow-up calls (see OpencodeApiClient.createSession).
     val directory: String? = null,
     val projectID: String? = null,
+    // Present only while the session is shared (POST /session/:id/share); cleared on unshare.
+    val share: Share? = null,
+    // Present only while a revert checkpoint is active (POST /session/:id/revert); cleared on unrevert.
+    val revert: Revert? = null,
 ) {
     val displayTitle: String get() = title?.takeIf { it.isNotBlank() } ?: "Untitled session"
 
@@ -24,6 +28,27 @@ data class Session(
      *  or the full path when it has no separators. Null/blank when no directory is set. */
     val displayDirectory: String?
         get() = directory?.takeIf { it.isNotBlank() }?.trimEnd('/')?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
+
+    /** True while the session has an active public share link. */
+    val isShared: Boolean get() = !share?.url.isNullOrBlank()
+
+    /** True while a revert checkpoint is active (messages after it are hidden server-side). */
+    val isReverted: Boolean get() = revert != null
+
+    /** Public share link for the session, from `POST /session/:id/share`. */
+    @Immutable
+    @Serializable
+    data class Share(val url: String = "")
+
+    /** The active revert checkpoint, from `POST /session/:id/revert`. */
+    @Immutable
+    @Serializable
+    data class Revert(
+        val messageID: String = "",
+        val partID: String? = null,
+        val snapshot: String? = null,
+        val diff: String? = null,
+    )
 }
 
 /** Body for `POST /session`. */

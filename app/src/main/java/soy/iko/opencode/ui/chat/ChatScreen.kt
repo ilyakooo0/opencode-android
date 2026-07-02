@@ -1,7 +1,16 @@
 package soy.iko.opencode.ui.chat
 
+import android.app.Activity
+import android.content.Intent
+import android.net.Uri
+import android.speech.RecognizerIntent
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -17,6 +26,9 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -25,12 +37,19 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.PhotoCamera
+import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -91,6 +110,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import coil.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -107,6 +127,7 @@ import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
 import soy.iko.opencode.ui.components.ConnectionBanner
+import soy.iko.opencode.ui.components.copyToClipboard
 import soy.iko.opencode.ui.components.LocalRelativeTimeTick
 import soy.iko.opencode.ui.components.rememberRelativeTimeTick
 import soy.iko.opencode.ui.components.showToast
@@ -145,6 +166,9 @@ fun ChatScreen(
     val sessionTitle by vm.sessionTitle.collectAsStateWithLifecycle()
     val sessionDeleted by vm.sessionDeleted.collectAsStateWithLifecycle()
     val draft by vm.draft.collectAsStateWithLifecycle()
+    val attachments by vm.attachments.collectAsStateWithLifecycle()
+    val reverted by vm.reverted.collectAsStateWithLifecycle()
+    val shareUrl by vm.shareUrl.collectAsStateWithLifecycle()
     val reconnecting by vm.reconnecting.collectAsStateWithLifecycle()
     val sendOnEnter by container.settingsStore.sendOnEnter.collectAsStateWithLifecycle(initialValue = true)
     val isOnline by container.isOnline.collectAsStateWithLifecycle()
@@ -201,18 +225,18 @@ fun ChatScreen(
     var showOverflowMenu by rememberSaveable { mutableStateOf(false) }
     var showRenameDialog by rememberSaveable { mutableStateOf(false) }
     var showDeleteDialog by rememberSaveable { mutableStateOf(false) }
+    var showShellDialog by rememberSaveable { mutableStateOf(false) }
 
-    // Keep the screen awake and hold a foreground priority while the agent is working,
-    // so backgrounding mid-run doesn't let Doze choke the SSE stream.
+    // Keep the screen awake while the agent is working in *this* session. The foreground
+    // service that holds process priority during a run is managed app-wide off
+    // container.anyRunActive (see OpencodeApp) so it survives navigating away from the chat
+    // mid-run — otherwise leaving the screen would drop priority and Doze could choke the
+    // SSE stream before the completion notification fires.
     val currentView = LocalView.current
     val appContext = LocalContext.current.applicationContext
     DisposableEffect(running) {
         currentView.keepScreenOn = running
-        if (running) soy.iko.opencode.notification.RunForegroundService.start(appContext)
-        onDispose {
-            currentView.keepScreenOn = false
-            soy.iko.opencode.notification.RunForegroundService.stop(appContext)
-        }
+        onDispose { currentView.keepScreenOn = false }
     }
 
     LaunchedEffect(Unit) {
@@ -226,6 +250,104 @@ fun ChatScreen(
             }
             if (result == androidx.compose.material3.SnackbarResult.ActionPerformed) vm.retryFailed()
         }
+    }
+
+    // --- Attachments, voice, and share-link plumbing ---
+    val attachTooLargeMsg = stringResource(R.string.attachment_too_large)
+    val attachFailedMsg = stringResource(R.string.attachment_failed)
+    val attachLimitMsg = stringResource(R.string.attachment_limit)
+    val noCameraMsg = stringResource(R.string.no_camera_app)
+    val noVoiceMsg = stringResource(R.string.no_voice_app)
+    val voicePrompt = stringResource(R.string.voice_prompt)
+    val linkCopiedMsg = stringResource(R.string.link_copied)
+
+    // Convert each picked Uri to a base64 attachment off the main thread, honoring the
+    // per-prompt count cap and surfacing per-file errors without aborting the batch.
+    fun stageUris(uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        scope.launch {
+            for (uri in uris) {
+                if (vm.attachments.value.size >= NetworkConfig.maxAttachments) {
+                    snackbar.showSnackbar(attachLimitMsg)
+                    break
+                }
+                when (val result = uri.toAttachmentResult(appContext)) {
+                    is AttachmentResult.Ok -> vm.addAttachment(result.attachment)
+                    AttachmentResult.TooLarge -> snackbar.showSnackbar(attachTooLargeMsg)
+                    AttachmentResult.Failed -> snackbar.showSnackbar(attachFailedMsg)
+                }
+            }
+        }
+    }
+
+    val photoPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickMultipleVisualMedia(NetworkConfig.maxAttachments),
+    ) { uris -> stageUris(uris) }
+
+    val filePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetMultipleContents(),
+    ) { uris -> stageUris(uris) }
+
+    // Uri survives a config change mid-capture so the TakePicture result still resolves.
+    var pendingCaptureUri by rememberSaveable { mutableStateOf<Uri?>(null) }
+    val cameraLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.TakePicture(),
+    ) { success ->
+        val uri = pendingCaptureUri
+        pendingCaptureUri = null
+        if (success && uri != null) stageUris(listOf(uri))
+    }
+
+    val voiceLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val spoken = result.data
+                ?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+                ?.firstOrNull()
+                ?.takeIf { it.isNotBlank() }
+            if (spoken != null) {
+                // Append to the existing draft rather than replacing, so dictation adds to
+                // whatever the user already typed.
+                val current = vm.draft.value
+                val combined = if (current.isBlank()) spoken else "$current $spoken"
+                vm.updateDraft(combined.take(NetworkConfig.maxDraftLengthChars))
+            }
+        }
+    }
+
+    fun launchCamera() {
+        val uri = newCameraCaptureUri(appContext)
+        if (uri == null) {
+            scope.launch { snackbar.showSnackbar(attachFailedMsg) }
+            return
+        }
+        pendingCaptureUri = uri
+        runCatching { cameraLauncher.launch(uri) }
+            .onFailure { pendingCaptureUri = null; scope.launch { snackbar.showSnackbar(noCameraMsg) } }
+    }
+
+    fun launchVoice() {
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_PROMPT, voicePrompt)
+        }
+        runCatching { voiceLauncher.launch(intent) }
+            .onFailure { scope.launch { snackbar.showSnackbar(noVoiceMsg) } }
+    }
+
+    // A freshly-created share link is copied to the clipboard so the user can paste it right away.
+    LaunchedEffect(Unit) {
+        vm.shareLinkEvents.collect { url ->
+            copyToClipboard(shareContext, "share", url)
+            snackbar.showSnackbar(linkCopiedMsg)
+        }
+    }
+
+    // Stage images shared into the app (via the system share sheet) as attachments, once.
+    LaunchedEffect(Unit) {
+        val shared = container.consumePendingSharedMedia()
+        if (shared.isNotEmpty()) stageUris(shared.map { Uri.parse(it) })
     }
 
     fun doSend() {
@@ -331,6 +453,12 @@ fun ChatScreen(
                     val modelLabel = stringResource(R.string.choose_model)
                     val renameLabel = stringResource(R.string.rename_session_chat)
                     val deleteLabel = stringResource(R.string.delete_session_chat)
+                    val createShareLabel = stringResource(R.string.create_share_link)
+                    val copyShareLabel = stringResource(R.string.copy_share_link)
+                    val stopShareLabel = stringResource(R.string.stop_sharing)
+                    val summarizeLabel = stringResource(R.string.summarize_conversation)
+                    val initLabel = stringResource(R.string.generate_agents_md)
+                    val shellLabel = stringResource(R.string.run_shell_command)
                     Box {
                         IconButton(onClick = { showOverflowMenu = true }) {
                             Icon(Icons.Filled.MoreVert, contentDescription = moreLabel)
@@ -374,6 +502,45 @@ fun ChatScreen(
                                 onClick = { showOverflowMenu = false; showModelPicker = true },
                             )
                             androidx.compose.material3.HorizontalDivider()
+                            // Session sharing: create a public link, copy an existing one, or revoke it.
+                            if (shareUrl == null) {
+                                DropdownMenuItem(
+                                    text = { Text(createShareLabel) },
+                                    enabled = hasMessages,
+                                    onClick = { showOverflowMenu = false; vm.shareSession() },
+                                )
+                            } else {
+                                DropdownMenuItem(
+                                    text = { Text(copyShareLabel) },
+                                    onClick = {
+                                        showOverflowMenu = false
+                                        shareUrl?.let {
+                                            copyToClipboard(shareContext, "share", it)
+                                            scope.launch { snackbar.showSnackbar(linkCopiedMsg) }
+                                        }
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(stopShareLabel) },
+                                    onClick = { showOverflowMenu = false; vm.unshareSession() },
+                                )
+                            }
+                            DropdownMenuItem(
+                                text = { Text(summarizeLabel) },
+                                enabled = hasMessages && !running,
+                                onClick = { showOverflowMenu = false; vm.summarize() },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(initLabel) },
+                                enabled = !running,
+                                onClick = { showOverflowMenu = false; vm.initProject() },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(shellLabel) },
+                                enabled = !running,
+                                onClick = { showOverflowMenu = false; showShellDialog = true },
+                            )
+                            androidx.compose.material3.HorizontalDivider()
                             DropdownMenuItem(
                                 text = { Text(renameLabel) },
                                 onClick = { showOverflowMenu = false; showRenameDialog = true },
@@ -407,20 +574,35 @@ fun ChatScreen(
         snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
             val queuedFollowUp by vm.queuedFollowUp.collectAsStateWithLifecycle()
-            ChatInputBar(
-                value = draft,
-                onValueChange = vm::updateDraft,
-                running = running,
-                aborting = aborting,
-                enabled = activeConnection != null,
-                sendOnEnter = sendOnEnter,
-                onSend = ::doSend,
-                onAbort = { showStopConfirm = true },
-                queuedFollowUp = queuedFollowUp,
-                onQueueFollowUp = vm::queueFollowUp,
-                onCancelQueue = { vm.queueFollowUp("") },
-                focusRequester = inputFocusRequester,
-            )
+            Column {
+                AnimatedVisibility(visible = reverted) {
+                    RevertBanner(onUndo = { vm.unrevert() })
+                }
+                ChatInputBar(
+                    value = draft,
+                    onValueChange = vm::updateDraft,
+                    running = running,
+                    aborting = aborting,
+                    enabled = activeConnection != null,
+                    sendOnEnter = sendOnEnter,
+                    onSend = ::doSend,
+                    onAbort = { showStopConfirm = true },
+                    queuedFollowUp = queuedFollowUp,
+                    onQueueFollowUp = vm::queueFollowUp,
+                    onCancelQueue = { vm.queueFollowUp("") },
+                    focusRequester = inputFocusRequester,
+                    attachments = attachments,
+                    onRemoveAttachment = vm::removeAttachment,
+                    onPickPhoto = {
+                        photoPicker.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                        )
+                    },
+                    onPickFile = { filePicker.launch("*/*") },
+                    onCamera = { launchCamera() },
+                    onVoice = { launchVoice() },
+                )
+            }
         },
     ) { padding ->
         // Collect messages inside the content lambda so streaming token updates
@@ -647,6 +829,7 @@ fun ChatScreen(
                                     imageContext = imageContext,
                                     modelLabel = modelLabel,
                                     onOpenFile = onOpenFile,
+                                    onRevert = { vm.revertTo(message.info.id) },
                                 )
                             }
                         }
@@ -758,6 +941,16 @@ fun ChatScreen(
         )
     }
 
+    if (showShellDialog) {
+        ShellCommandDialog(
+            onDismiss = { showShellDialog = false },
+            onRun = { cmd ->
+                showShellDialog = false
+                vm.runShell(cmd)
+            },
+        )
+    }
+
     if (showModelPicker) {
         ModelPickerSheet(
             options = models,
@@ -815,7 +1008,15 @@ private fun ChatInputBar(
     onQueueFollowUp: (String) -> Unit,
     onCancelQueue: () -> Unit,
     focusRequester: androidx.compose.ui.focus.FocusRequester,
+    attachments: List<PendingAttachment>,
+    onRemoveAttachment: (String) -> Unit,
+    onPickPhoto: () -> Unit,
+    onPickFile: () -> Unit,
+    onCamera: () -> Unit,
+    onVoice: () -> Unit,
 ) {
+    // Sendable when there's text OR at least one attachment (an image-only prompt is valid).
+    val hasContent = value.isNotBlank() || attachments.isNotEmpty()
     Surface(tonalElevation = 3.dp, modifier = Modifier.imePadding()) {
         Column(modifier = Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.navigationBars)) {
             // A queued follow-up replaces the Stop button with a "queued" chip so the
@@ -846,10 +1047,52 @@ private fun ChatInputBar(
                     }
                 }
             }
+            // Staged attachments: horizontally-scrollable thumbnails/chips, each removable.
+            if (attachments.isNotEmpty()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(start = 8.dp, end = 8.dp, top = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    attachments.forEach { att ->
+                        AttachmentChip(att, onRemove = { onRemoveAttachment(att.id) })
+                    }
+                }
+            }
             Row(
                 modifier = Modifier.fillMaxWidth().padding(8.dp),
                 verticalAlignment = Alignment.Bottom,
             ) {
+                // Attach menu: photo picker, camera, or any file.
+                var showAttachMenu by remember { mutableStateOf(false) }
+                Box {
+                    IconButton(onClick = { showAttachMenu = true }, enabled = enabled) {
+                        Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.add_attachment))
+                    }
+                    DropdownMenu(expanded = showAttachMenu, onDismissRequest = { showAttachMenu = false }) {
+                        DropdownMenuItem(
+                            leadingIcon = { Icon(Icons.Filled.PhotoLibrary, contentDescription = null) },
+                            text = { Text(stringResource(R.string.attach_photo)) },
+                            onClick = { showAttachMenu = false; onPickPhoto() },
+                        )
+                        DropdownMenuItem(
+                            leadingIcon = { Icon(Icons.Filled.PhotoCamera, contentDescription = null) },
+                            text = { Text(stringResource(R.string.attach_camera)) },
+                            onClick = { showAttachMenu = false; onCamera() },
+                        )
+                        DropdownMenuItem(
+                            leadingIcon = { Icon(Icons.Filled.Description, contentDescription = null) },
+                            text = { Text(stringResource(R.string.attach_file)) },
+                            onClick = { showAttachMenu = false; onPickFile() },
+                        )
+                    }
+                }
+                // Voice dictation: appends recognized speech to the draft.
+                IconButton(onClick = onVoice, enabled = enabled) {
+                    Icon(Icons.Filled.Mic, contentDescription = stringResource(R.string.voice_input))
+                }
                 OutlinedTextField(
                     value = value,
                     onValueChange = { v ->
@@ -865,11 +1108,13 @@ private fun ChatInputBar(
                             if (event.type != KeyEventType.KeyDown || event.key != Key.Enter) return@onPreviewKeyEvent false
                             // With "Send on Enter" on, Enter sends (Shift+Enter newlines).
                             // With it off, Enter inserts a newline and Ctrl+Enter sends.
-                            val send = when {
-                                !enabled || value.isBlank() -> false
-                                sendOnEnter -> !event.isShiftPressed
-                                else -> event.isCtrlPressed
-                            }
+                            val send = enterShouldSend(
+                                enabled = enabled,
+                                hasContent = hasContent,
+                                sendOnEnter = sendOnEnter,
+                                shift = event.isShiftPressed,
+                                ctrl = event.isCtrlPressed,
+                            )
                             if (send) {
                                 if (running) onQueueFollowUp(value) else onSend()
                                 true
@@ -904,39 +1149,72 @@ private fun ChatInputBar(
                         capitalization = KeyboardCapitalization.Sentences,
                     ),
                     keyboardActions = KeyboardActions(onSend = {
-                        if (enabled && value.isNotBlank()) {
+                        if (enabled && hasContent) {
                             if (running) onQueueFollowUp(value) else onSend()
                         }
                     }),
                 )
-                if (running) {
-                    // Show a spinner while the abort REST call is in flight so the user
-                    // sees the stop was sent, and disable to prevent a double-tap.
-                    IconButton(
-                        onClick = onAbort,
-                        enabled = !aborting,
-                        modifier = Modifier.padding(start = 4.dp).testTag("stop_button"),
-                    ) {
-                        if (aborting) {
-                            val stopLabel = stringResource(R.string.stop)
-                            CircularProgressIndicator(
-                                Modifier.size(18.dp).semantics { contentDescription = stopLabel },
-                                strokeWidth = 2.dp,
-                            )
-                        } else {
-                            Icon(Icons.Filled.Stop, contentDescription = stringResource(R.string.stop))
-                        }
-                    }
-                } else {
-                    IconButton(
-                        onClick = onSend,
-                        enabled = enabled && value.isNotBlank(),
-                        modifier = Modifier.padding(start = 4.dp).testTag("send_button"),
-                    ) {
-                        Icon(Icons.AutoMirrored.Filled.Send, contentDescription = stringResource(R.string.send))
-                    }
-                }
+                ComposerTrailingButton(
+                    running = running,
+                    aborting = aborting,
+                    canSend = enabled && hasContent,
+                    onSend = onSend,
+                    onAbort = onAbort,
+                )
             }
+        }
+    }
+}
+
+/** Whether a hardware Enter keypress should send: never when disabled/empty; otherwise
+ *  Enter sends (unless Shift) when send-on-Enter is on, else only Ctrl+Enter sends. */
+private fun enterShouldSend(
+    enabled: Boolean,
+    hasContent: Boolean,
+    sendOnEnter: Boolean,
+    shift: Boolean,
+    ctrl: Boolean,
+): Boolean = when {
+    !enabled || !hasContent -> false
+    sendOnEnter -> !shift
+    else -> ctrl
+}
+
+/** The composer's trailing button: a Stop (with in-flight spinner) while a run is active,
+ *  otherwise Send. Extracted so [ChatInputBar] stays under the complexity threshold. */
+@Composable
+private fun ComposerTrailingButton(
+    running: Boolean,
+    aborting: Boolean,
+    canSend: Boolean,
+    onSend: () -> Unit,
+    onAbort: () -> Unit,
+) {
+    if (running) {
+        // Show a spinner while the abort REST call is in flight so the user sees the stop
+        // was sent, and disable to prevent a double-tap.
+        IconButton(
+            onClick = onAbort,
+            enabled = !aborting,
+            modifier = Modifier.padding(start = 4.dp).testTag("stop_button"),
+        ) {
+            if (aborting) {
+                val stopLabel = stringResource(R.string.stop)
+                CircularProgressIndicator(
+                    Modifier.size(18.dp).semantics { contentDescription = stopLabel },
+                    strokeWidth = 2.dp,
+                )
+            } else {
+                Icon(Icons.Filled.Stop, contentDescription = stringResource(R.string.stop))
+            }
+        }
+    } else {
+        IconButton(
+            onClick = onSend,
+            enabled = canSend,
+            modifier = Modifier.padding(start = 4.dp).testTag("send_button"),
+        ) {
+            Icon(Icons.AutoMirrored.Filled.Send, contentDescription = stringResource(R.string.send))
         }
     }
 }
@@ -995,6 +1273,110 @@ private fun EmptyConversation(
             }
         }
     }
+}
+
+/** A staged attachment: an image thumbnail (or a generic file icon) with its name and a
+ *  remove button, shown in the composer above the input field. */
+@Composable
+private fun AttachmentChip(attachment: PendingAttachment, onRemove: () -> Unit) {
+    Surface(
+        shape = MaterialTheme.shapes.small,
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        tonalElevation = 1.dp,
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 6.dp)) {
+            if (attachment.previewModel != null) {
+                AsyncImage(
+                    model = attachment.previewModel,
+                    contentDescription = attachment.name,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.size(36.dp).clip(MaterialTheme.shapes.extraSmall),
+                )
+            } else {
+                Icon(
+                    Icons.Filled.Description,
+                    contentDescription = null,
+                    modifier = Modifier.size(24.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Text(
+                attachment.name,
+                style = MaterialTheme.typography.labelMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.widthIn(max = 120.dp).padding(horizontal = 6.dp),
+            )
+            IconButton(onClick = onRemove, modifier = Modifier.size(28.dp)) {
+                Icon(
+                    Icons.Filled.Close,
+                    contentDescription = stringResource(R.string.remove),
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+        }
+    }
+}
+
+/** A banner shown while a revert checkpoint is active, offering an Undo (unrevert). */
+@Composable
+private fun RevertBanner(onUndo: () -> Unit) {
+    Surface(
+        color = MaterialTheme.colorScheme.tertiaryContainer,
+        tonalElevation = 2.dp,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                Icon(
+                    Icons.Filled.Restore,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onTertiaryContainer,
+                    modifier = Modifier.size(18.dp),
+                )
+                Text(
+                    stringResource(R.string.reverted_banner),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                    modifier = Modifier.padding(start = 8.dp),
+                )
+            }
+            TextButton(onClick = onUndo) { Text(stringResource(R.string.undo)) }
+        }
+    }
+}
+
+/** Prompt for a one-off shell command to run in the session's worktree. */
+@Composable
+private fun ShellCommandDialog(onDismiss: () -> Unit, onRun: (String) -> Unit) {
+    var command by rememberSaveable { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.run_shell_command)) },
+        text = {
+            OutlinedTextField(
+                value = command,
+                onValueChange = { command = it },
+                modifier = Modifier.fillMaxWidth(),
+                placeholder = { Text(stringResource(R.string.shell_command_hint)) },
+                label = { Text(stringResource(R.string.shell_command_label)) },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { if (command.isNotBlank()) onRun(command.trim()) }),
+            )
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { if (command.isNotBlank()) onRun(command.trim()) },
+                enabled = command.isNotBlank(),
+            ) { Text(stringResource(R.string.run)) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
+    )
 }
 
 /**

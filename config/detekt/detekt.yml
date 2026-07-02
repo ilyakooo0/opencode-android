@@ -47,6 +47,14 @@ style:
   FunctionOnlyReturningConstant:
     active: false
 
+empty-blocks:
+  active: true
+  EmptyFunctionBlock:
+    active: true
+    # Android listener interfaces (e.g. NsdManager.DiscoveryListener) force overriding
+    # callbacks the caller doesn't need; empty no-op overrides are idiomatic there.
+    ignoreOverridden: true
+
 exceptions:
   active: true
   TooGenericExceptionCaught:
