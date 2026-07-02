@@ -61,6 +61,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -440,6 +441,15 @@ fun ChatScreen(
         val listItems = remember(messages, todayLabel, yesterdayLabel) {
             buildMessageListItems(messages, todayLabel, yesterdayLabel)
         }
+        // listItems is a plain (non-snapshot) local, rebuilt each recomposition. The
+        // derivedStateOf and snapshotFlow lambdas below are created once (keyless
+        // remember / LaunchedEffect(Unit)); reading `listItems` directly inside them
+        // would capture the first composition's list — which is empty, since `messages`
+        // starts empty — freezing it forever. That pinned isPinnedToBottom at true and
+        // AutoScrollSignal.size at 0, breaking streaming auto-scroll and the
+        // jump-to-latest FAB. rememberUpdatedState hands those lambdas a stable State
+        // whose value tracks the latest list.
+        val currentListItems by rememberUpdatedState(listItems)
 
         val isPinnedToBottom by remember {
             derivedStateOf {
@@ -449,8 +459,9 @@ fun ChatScreen(
                 // includes the working indicator — otherwise the pin check targets
                 // listItems.lastIndex, the typing row sits just below the viewport,
                 // and the user never sees the progress indicator even when pinned.
-                val effectiveLast = if (running) listItems.size else listItems.lastIndex
-                lastVisible >= effectiveLast || listItems.isEmpty()
+                val items = currentListItems
+                val effectiveLast = if (running) items.size else items.lastIndex
+                lastVisible >= effectiveLast || items.isEmpty()
             }
         }
 
@@ -495,13 +506,14 @@ fun ChatScreen(
                 // and tool output — not just TextPart — keeps a pinned view following a long
                 // reasoning/tool block while it streams (previously it stalled at 0).
                 val lastLen = streamingContentLength(messages.lastOrNull()?.parts?.lastOrNull())
-                AutoScrollSignal(listItems.size, lastLen, isPinnedToBottom)
+                AutoScrollSignal(currentListItems.size, lastLen, isPinnedToBottom)
             }.collect { signal ->
                 if (signal.size > 0 && signal.pinned) {
                     // Scroll to the effective last index, including the trailing
                     // "__typing" row when a run is active so the working indicator
                     // is brought into view (not just the last message).
-                    val target = if (running) listItems.size else listItems.lastIndex
+                    val items = currentListItems
+                    val target = if (running) items.size else items.lastIndex
                     listState.scrollToItem(target)
                 }
             }
@@ -1056,9 +1068,13 @@ private sealed interface MessageListItem {
         override val contentType: Any get() = message.info::class
     }
 
-    data class Separator(val label: String) : MessageListItem {
-        // Stable key per label so a recomposition doesn't re-create the item.
-        override val key: Any get() = "sep_$label"
+    data class Separator(val label: String, val ordinal: Int) : MessageListItem {
+        // Key on the day-occurrence ordinal, not the label: two non-contiguous groups
+        // can share a label (e.g. an untimestamped message — empty label — between two
+        // same-day messages, or two untimestamped groups), and a label-only key would
+        // then collide, which makes LazyColumn throw on duplicate keys. The ordinal is
+        // stable for a given message ordering so slots aren't needlessly recreated.
+        override val key: Any get() = "sep_${ordinal}_$label"
         // Separators share a contentType so the LazyColumn can recycle their slots.
         override val contentType: Any get() = "separator"
     }
@@ -1085,11 +1101,12 @@ private fun buildMessageListItems(
     val dateFmt = java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM)
     val result = ArrayList<MessageListItem>(messages.size + 4)
     var lastDayKey: String? = null
+    var sepOrdinal = 0
     for (message in messages) {
         val ts = message.info.time?.created ?: message.info.time?.updated ?: message.info.time?.completed
         val dayKey = ts?.let { dayKey(it) } ?: ""
         if (dayKey != lastDayKey) {
-            result.add(MessageListItem.Separator(dayLabel(dayKey, ts ?: 0L, today, todayLabel, yesterdayLabel, dateFmt)))
+            result.add(MessageListItem.Separator(dayLabel(dayKey, ts ?: 0L, today, todayLabel, yesterdayLabel, dateFmt), sepOrdinal++))
             lastDayKey = dayKey
         }
         result.add(MessageListItem.Message(message))

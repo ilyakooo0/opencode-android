@@ -21,9 +21,9 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.channelFlow
-import kotlinx.coroutines.flow.produceIn
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.onTimeout
 import kotlinx.coroutines.selects.select
 import java.io.IOException
@@ -108,7 +108,15 @@ open class EventStreamClient(
                 onTimeout(idleTimeoutMs) { null }
             }
             if (result == null) throw IOException("SSE idle timeout, reconnecting")
-            val sse = result.getOrNull() ?: break
+            val sse = result.getOrNull()
+            if (sse == null) {
+                // The producer channel is closed. A non-null cause means `incoming`
+                // failed (e.g. a socket reset bridged from the producer) — rethrow it so
+                // the outer loop logs and retries with backoff. A clean close (null
+                // cause) just ends this attempt and lets the loop reconnect.
+                result.exceptionOrNull()?.let { throw it }
+                break
+            }
             val data = sse.data
             if (data == null) {
                 // A comment or keep-alive event (no data field) resets the idle watchdog
@@ -169,9 +177,33 @@ open class EventStreamClient(
                     // made while the previous stream was healthy, so it doesn't suppress
                     // the next legitimate backoff.
                     while (reconnectSignal.tryReceive().isSuccess) { /* drain */ }
-                    // `incoming` is a cold Flow; bridge it to a ReceiveChannel so each
-                    // element can be raced against an idle timeout via select.
-                    val events = incoming.produceIn(scope)
+                    // Bridge ktor's `incoming` flow to a channel so each element can be
+                    // raced against the idle-timeout watchdog via select. We collect it
+                    // ourselves instead of `incoming.produceIn(scope)`: produceIn launches
+                    // the collector as a child of this channelFlow, so when `incoming`
+                    // throws on an abnormal socket close — a TCP reset, i.e. the common
+                    // mobile case: Wi-Fi⇄cellular handoff, server or proxy RST — the child's
+                    // failure cancels the whole channelFlow and bypasses the retry `catch`
+                    // below. That killed reconnect outright and surfaced the IOException as
+                    // an uncaught crash through the (handler-less) shareIn scope. Collecting
+                    // into our own channel and closing it with the cause keeps the failure
+                    // local: readSseEvents sees the closed channel, rethrows the cause, and
+                    // the normal retry/backoff path handles it. (A clean EOF closes the
+                    // channel with no cause → readSseEvents breaks and reconnects as before.)
+                    val events = Channel<ServerSentEvent>(Channel.BUFFERED)
+                    val producer = scope.launch {
+                        try {
+                            incoming.collect { events.send(it) }
+                            events.close()
+                        } catch (c: CancellationException) {
+                            events.close(c)
+                            throw c
+                        } catch (t: Throwable) {
+                            // Deliver the failure via the channel rather than letting it
+                            // propagate up and cancel the parent channelFlow.
+                            events.close(t)
+                        }
+                    }
                     // Reset the backoff only once real data actually arrives, not on
                     // block entry: a server that accepts the connection then immediately
                     // drops it would otherwise loop forever at the initial backoff and
@@ -186,6 +218,7 @@ open class EventStreamClient(
                             send(it)
                         }
                     } finally {
+                        producer.cancel()
                         events.cancel()
                     }
                 }

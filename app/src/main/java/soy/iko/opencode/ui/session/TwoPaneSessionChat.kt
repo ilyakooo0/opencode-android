@@ -16,6 +16,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -114,12 +115,21 @@ fun TwoPaneSessionChat(
                 EmptyDetail()
             } else {
                 BackHandler { selected = null }
-                ChatScreen(
-                    container = container,
-                    sessionId = sessionId,
-                    onBack = { selected = null },
-                    onOpenFile = onOpenFile,
-                )
+                // key() on the session id so switching conversations in two-pane mode
+                // gives ChatScreen a fresh composition. Without it, position-anchored
+                // state (rememberLazyListState, didInitialScroll, and the LaunchedEffect(Unit)
+                // that wires error/retry snackbars) persists across the switch: the new
+                // session inherits the old scroll offset, skips its initial scroll-to-bottom,
+                // and its error events go unhandled. viewModel(key=sessionId) already swaps
+                // the VM; this aligns the composition state with it.
+                key(sessionId) {
+                    ChatScreen(
+                        container = container,
+                        sessionId = sessionId,
+                        onBack = { selected = null },
+                        onOpenFile = onOpenFile,
+                    )
+                }
             }
         }
     }
