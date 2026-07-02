@@ -9,7 +9,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import android.util.Log
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.util.concurrent.Executors
 
 /**
@@ -180,13 +179,11 @@ open class DraftStore private constructor(
             if (text.isBlank()) updated.remove(sessionId) else updated[sessionId] = text
             updated
         }
-        withContext(Dispatchers.IO) {
-            runCatching {
-                prefs.edit().apply {
-                    if (text.isBlank()) remove(sessionId) else putString(sessionId, text)
-                }.apply()
-            }.onFailure { Log.w("DraftStore", "Failed to persist draft for $sessionId", it) }
-        }
+        // Route persistence through the single-thread flushExecutor (like the other writers)
+        // rather than the shared IO pool, so this write can't race ahead of an earlier queued
+        // flush and land stale. writeAsync persists sessionId=text (or removes it when blank),
+        // which is exactly this draft's persistence.
+        writeAsync(sessionId, text)
     }
 
     /** Remove the draft for a session (call on session deletion to avoid orphaned entries).
@@ -204,10 +201,15 @@ open class DraftStore private constructor(
             updated.remove(sessionId)
             updated
         }
-        withContext(Dispatchers.IO) {
-            runCatching {
-                prefs.edit().remove(sessionId).remove(FOLLOWUP_PREFIX + sessionId).apply()
-            }.onFailure { Log.w("DraftStore", "Failed to remove draft for $sessionId", it) }
+        // Submit the (combined draft + follow-up) removal to the same single-thread
+        // flushExecutor the other writers use, so it can't race ahead of an earlier queued
+        // write and resurrect stale text. Mirrors flushDraft's submission pattern.
+        runCatching {
+            flushExecutor.execute {
+                runCatching {
+                    prefs.edit().remove(sessionId).remove(FOLLOWUP_PREFIX + sessionId).apply()
+                }.onFailure { Log.w("DraftStore", "Failed to remove draft for $sessionId", it) }
+            }
         }
     }
 

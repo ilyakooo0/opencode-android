@@ -106,6 +106,13 @@ open class SessionRepository(
         // initial load) clobbering a newer seed. Only mutated/read under [lock].
         var seedGeneration = 0
 
+        // Message ids introduced by the on-disk cache seed below. The initial REST seed uses
+        // these to prune ghosts: a cache-seeded message absent from the authoritative REST
+        // snapshot was deleted server-side while the app was closed. Restricting the prune to
+        // cache-seeded ids means live SSE messages added since subscribe (not yet indexed by
+        // REST) are never dropped. Written/read only in this collector coroutine.
+        var cacheSeededIds: Set<String> = emptySet()
+
         // Seed from the on-disk cache first so the conversation renders instantly — and stays
         // readable offline — before the network responds. Guarded on generation 0 so a
         // reconnect re-seed that somehow raced ahead isn't clobbered; the initial REST seed
@@ -113,7 +120,12 @@ open class SessionRepository(
         messageCache?.let { cache ->
             val cached = cache.load(sessionId)
             if (cached.isNotEmpty()) {
-                val changed = lock.withLock { if (seedGeneration == 0) store.seed(cached) else false }
+                val changed = lock.withLock {
+                    if (seedGeneration == 0) {
+                        cacheSeededIds = cached.mapTo(mutableSetOf()) { it.info.id }
+                        store.seed(cached)
+                    } else false
+                }
                 if (changed) publish()
             }
         }
@@ -183,8 +195,13 @@ open class SessionRepository(
             val seeded = lock.withLock {
                 val list = initialResult.getOrNull()
                 if (seedGeneration == 0 && list != null) {
-                    store.seed(list)
-                    true
+                    // Prune ghosts first: cache-seeded messages absent from this authoritative
+                    // REST snapshot were deleted server-side while the app was closed. Without
+                    // this they'd survive restart forever (re-seeded from cache, never pruned by
+                    // the reconnect path, and re-persisted by the drain loop).
+                    val pruned = store.pruneStaleCacheSeeded(cacheSeededIds, list)
+                    val changed = store.seed(list)
+                    pruned || changed
                 } else false
             }
             if (seeded) publish()
@@ -197,10 +214,14 @@ open class SessionRepository(
         // above are children of this scope and are torn down with it.
         var lastCacheWrite = 0L
         var pendingCacheSave: Job? = null
-        // Most recent published snapshot, and the one a same-cycle immediate write already
-        // handled. The teardown flush in the finally below uses these to persist a pending
-        // trailing snapshot exactly once. Both are read/written only in this collector
-        // coroutine (never from the launched saves), so there's no cross-thread race.
+        // Most recent published snapshot, and the most recent one whose on-disk write has
+        // actually completed. The teardown flush in the finally below persists a pending
+        // trailing snapshot exactly once. savedSnapshot is assigned from inside the launched
+        // saves *after* messageCache.save() returns, so a save cancelled mid-IO by teardown is
+        // NOT marked saved and the finally re-persists it under NonCancellable. It's written
+        // from the save coroutines and read from the collector/finally; the only possible race
+        // is a stale read causing one redundant, idempotent re-save (atomic temp-file+rename
+        // makes a duplicate write of identical data harmless) — never data loss.
         var latestSnapshot: List<MessageWithParts>? = null
         var savedSnapshot: List<MessageWithParts>? = null
         try {
@@ -216,8 +237,10 @@ open class SessionRepository(
                     pendingCacheSave?.cancel()
                     if (now - lastCacheWrite >= NetworkConfig.messageCacheWriteThrottleMs) {
                         lastCacheWrite = now
-                        savedSnapshot = snapshot
-                        pendingCacheSave = launch { messageCache.save(sessionId, snapshot) }
+                        pendingCacheSave = launch {
+                            messageCache.save(sessionId, snapshot)
+                            savedSnapshot = snapshot
+                        }
                     } else {
                         // Trailing-edge write: a burst that ends inside the throttle window (a run's
                         // final tokens right after a write) would otherwise never persist its last
@@ -227,6 +250,7 @@ open class SessionRepository(
                         pendingCacheSave = launch {
                             delay(NetworkConfig.messageCacheWriteThrottleMs)
                             messageCache.save(sessionId, snapshot)
+                            savedSnapshot = snapshot
                         }
                     }
                 }
@@ -269,7 +293,10 @@ open class SessionRepository(
          *  going, such live events keep arriving; a run that finished during the outage produces
          *  none (its completion arrives via the REST re-seed, not the event stream). */
         fun isRunActivity(event: BusEvent, sessionId: String): Boolean = when (event) {
-            is MessagePartUpdated -> event.properties.sessionID == sessionId
+            // The session id rides on the part for message.part.updated; properties.sessionID
+            // is null on the wire. Mirror reduce()'s `part.sessionID ?: properties.sessionID`
+            // so a run that's only streaming parts still re-lights the indicator on reconnect.
+            is MessagePartUpdated -> (event.properties.part.sessionID ?: event.properties.sessionID) == sessionId
             is MessageUpdated -> {
                 val info = event.properties.info
                 info.sessionID == sessionId && info is AssistantMessage && !info.isComplete && info.error == null
@@ -407,6 +434,23 @@ internal class MessageStore {
         // that stream in *after* this seed can outrank the next reconnect's snapshot.
         streamedSincePivot.clear()
         messageInfoUpdatedSincePivot.clear()
+        return changed
+    }
+
+    /** Remove messages that were seeded from the on-disk cache ([cacheSeededIds]) but are
+     *  absent from the authoritative REST snapshot [rest] — i.e. deleted server-side while the
+     *  app was closed. Restricted to cache-seeded ids so a message added by a live SSE event
+     *  since subscribe (which the REST endpoint may not have indexed yet) is never pruned.
+     *  This is what actually removes ghosts on restart; the reconnect re-seed deliberately
+     *  keeps prune=false to avoid racing just-arrived SSE. Call under the same lock as [seed].
+     *  Returns true if anything was removed. */
+    fun pruneStaleCacheSeeded(cacheSeededIds: Set<String>, rest: List<MessageWithParts>): Boolean {
+        if (cacheSeededIds.isEmpty()) return false
+        val restIds = rest.mapTo(mutableSetOf()) { it.info.id }
+        var changed = false
+        for (id in cacheSeededIds) {
+            if (id !in restIds && messages.remove(id) != null) changed = true
+        }
         return changed
     }
 

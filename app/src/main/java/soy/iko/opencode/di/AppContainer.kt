@@ -52,6 +52,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.Job
@@ -219,6 +221,7 @@ open class AppContainer private constructor(
             appContext?.let {
                 SessionNotifications.cancel(it, id)
                 SessionNotifications.cancelPermission(it, id)
+                SessionNotifications.cancelError(it, id)
             }
         }
     }
@@ -266,18 +269,6 @@ open class AppContainer private constructor(
             ErrorKind.UNKNOWN -> string(R.string.error_generic)
         }
 
-    init {
-        if (!skipInit) {
-            NotificationChannels.create(appContext!!)
-            observeMessageActivity()
-            observeRunReconcileOnReconnect()
-            observeRunForegroundService()
-            appScope.launch { runCatchingCancellable { outboxStore.load() } }
-            observeOutbox()
-            appScope.launch { autoConnect() }
-        }
-    }
-
     /**
      * Drive the [RunForegroundService] from the process-lived [appScope] rather than from the
      * Activity's composition. Previously the start/stop was wired to a
@@ -291,9 +282,18 @@ open class AppContainer private constructor(
     private fun observeRunForegroundService() {
         val ctx = appContext ?: return
         appScope.launch {
-            anyRunActive.collect { active ->
-                if (active) RunForegroundService.start(ctx) else RunForegroundService.stop(ctx)
-            }
+            // Debounce so a run that starts then fails/idles almost immediately doesn't
+            // dispatch startForegroundService() then stopService() back-to-back — if the stop
+            // wins that race before the service calls startForeground(), Android raises the
+            // "did not then call startForeground()" crash ~5s later. Collapsing the window
+            // emits only the settled state; distinctUntilChanged drops a no-op re-emit when a
+            // brief true→false→true flurry settles back to the value already applied.
+            anyRunActive
+                .debounce(NetworkConfig.runForegroundDebounceMs)
+                .distinctUntilChanged()
+                .collect { active ->
+                    if (active) RunForegroundService.start(ctx) else RunForegroundService.stop(ctx)
+                }
         }
     }
 
@@ -355,7 +355,7 @@ open class AppContainer private constructor(
         _outboxSending.value = true
         try {
             for (msg in pending) {
-                val sent = runCatchingCancellable {
+                val result = runCatchingCancellable {
                     conn.repository.sendPrompt(
                         msg.sessionId,
                         msg.text,
@@ -372,11 +372,30 @@ open class AppContainer private constructor(
                     )
                 }.onFailure {
                     Log.w("AppContainer", "Outbox flush failed for ${msg.sessionId}: ${safeExceptionSummary(it)}")
-                }.isSuccess
-                // Stop on the first failure — the connection likely dropped again; the
-                // remaining messages stay queued and retry on the next trigger, preserving
-                // send order.
-                if (sent) outboxStore.remove(msg.id) else break
+                }
+                if (result.isSuccess) {
+                    outboxStore.remove(msg.id)
+                    continue
+                }
+                // A permanently-undeliverable message (a non-408/429 4xx — e.g. the target
+                // session was deleted server-side, yielding a 404) must be dropped, not left at
+                // the head of the queue. The loop stops at the first failure to preserve send
+                // order, so a poison message would otherwise block every later queued message
+                // for this profile forever. Transient failures (offline again, 5xx, 408/429)
+                // keep the queue intact and retry on the next trigger.
+                val status = result.exceptionOrNull()?.let { responseStatusCode(it) }
+                // Permanent = a non-408/429 4xx, matching withRetry's non-retryable rule.
+                val permanent = when (status) {
+                    null, 408, 429 -> false
+                    in 400..499 -> true
+                    else -> false
+                }
+                if (permanent) {
+                    Log.w("AppContainer", "Dropping undeliverable outbox message ${msg.id} for ${msg.sessionId} (HTTP $status)")
+                    outboxStore.remove(msg.id)
+                } else {
+                    break
+                }
             }
         } finally {
             _outboxSending.value = false
@@ -684,11 +703,13 @@ open class AppContainer private constructor(
         _reconnecting.value = false
         if (ok) {
             _autoConnectDone.value = true
-        } else if (conn != null && activeConnection.value === conn) {
+        } else {
+            val created = conn
             // Only tear down the connection we created: a manual connect to a different server
             // during the ping window may have already replaced it, and disconnect() closes
             // whatever is currently active — which would silently drop that new connection.
-            disconnect()
+            // disconnectIf re-checks identity under the mutex to close the check-then-close race.
+            if (created != null) disconnectIf(created)
         }
     }
 
@@ -744,17 +765,31 @@ open class AppContainer private constructor(
         // Previously this was fire-and-forget (launch on appScope), which raced with
         // a subsequent connect(): connect() could acquire the mutex, create a new
         // connection, and then the pending disconnect() would close it.
+        connectionMutex.withLock { teardownActiveLocked() }
+    }
+
+    /** Tear down [expected] only if it is still the active connection, with the identity
+     *  check performed *under* the mutex. A caller that checks `activeConnection.value === x`
+     *  itself and then calls [disconnect] has a TOCTOU race: a concurrent connect() to a
+     *  different server can replace the active connection in the gap, and [disconnect] would
+     *  then close that new connection. autoConnect()'s failed-ping teardown uses this. */
+    private suspend fun disconnectIf(expected: OpencodeConnection) {
         connectionMutex.withLock {
-            _activeConnection.value?.close()
-            _activeConnection.value = null
-            // Reset run/unread state on disconnect too. With no SSE stream there's no
-            // SessionIdle to drain activeRuns, so without this the working indicator
-            // (anyRunActive) and unread badges would stay pinned until the next connect().
-            activeRuns.clear()
-            _anyRunActive.value = false
-            _unread.value = emptyMap()
-            unreadMessageIds.clear()
+            if (_activeConnection.value === expected) teardownActiveLocked()
         }
+    }
+
+    /** Close and reset the active connection. Caller MUST hold [connectionMutex]. */
+    private suspend fun teardownActiveLocked() {
+        _activeConnection.value?.close()
+        _activeConnection.value = null
+        // Reset run/unread state on disconnect too. With no SSE stream there's no
+        // SessionIdle to drain activeRuns, so without this the working indicator
+        // (anyRunActive) and unread badges would stay pinned until the next connect().
+        activeRuns.clear()
+        _anyRunActive.value = false
+        _unread.value = emptyMap()
+        unreadMessageIds.clear()
     }
 
     /** Deferred profile deletions keyed by id, run on the process-lived [appScope] (not a
@@ -926,6 +961,22 @@ open class AppContainer private constructor(
             }
         } finally {
             runCatching { client.close() }
+        }
+    }
+
+    // Declared last so every property above is fully initialized before these observers start.
+    // They only launch coroutines into appScope (Dispatchers.IO) — nothing here runs
+    // synchronously during construction — so placing init at the end removes any dependence on
+    // the textual declaration order of the fields those observers reference.
+    init {
+        if (!skipInit) {
+            NotificationChannels.create(appContext!!)
+            observeMessageActivity()
+            observeRunReconcileOnReconnect()
+            observeRunForegroundService()
+            appScope.launch { runCatchingCancellable { outboxStore.load() } }
+            observeOutbox()
+            appScope.launch { autoConnect() }
         }
     }
 }

@@ -8,6 +8,7 @@ import soy.iko.opencode.data.model.Tokens
 /** Aggregated usage for one model across the scanned sessions. */
 @Immutable
 data class ModelUsage(
+    val provider: String,
     val model: String,
     val messages: Int,
     val cost: Double,
@@ -48,7 +49,7 @@ internal operator fun Tokens.plus(other: Tokens): Tokens = Tokens(
 /** Total tokens across all sub-counters, for a single "N tokens" headline. */
 internal val Tokens.total: Long get() = input + output + reasoning + cache.read + cache.write
 
-private class MutableAgg(val model: String) {
+private class MutableAgg(val provider: String, val model: String) {
     var messages = 0
     var cost = 0.0
     var tokens = Tokens()
@@ -83,10 +84,11 @@ fun aggregateUsage(sessions: List<Triple<String, String, List<MessageWithParts>>
             sessionCost += cost
             sessionTokens += tokens
             val model = info.modelID?.takeIf { it.isNotBlank() } ?: "unknown"
+            val provider = info.providerID?.takeIf { it.isNotBlank() } ?: "unknown"
             // Key by provider+model so the same model id served by different providers
             // stays two rows instead of collapsing into one ambiguous total.
-            val key = (info.providerID?.takeIf { it.isNotBlank() } ?: "unknown") + "/" + model
-            val agg = byModel.getOrPut(key) { MutableAgg(model) }
+            val key = "$provider/$model"
+            val agg = byModel.getOrPut(key) { MutableAgg(provider, model) }
             agg.messages++
             agg.cost += cost
             agg.tokens += tokens
@@ -102,7 +104,7 @@ fun aggregateUsage(sessions: List<Triple<String, String, List<MessageWithParts>>
         messageCount = messageCount,
         sessionCount = bySession.size,
         byModel = byModel.entries
-            .map { ModelUsage(it.value.model, it.value.messages, it.value.cost, it.value.tokens) }
+            .map { ModelUsage(it.value.provider, it.value.model, it.value.messages, it.value.cost, it.value.tokens) }
             .sortedByDescending { it.cost },
         bySession = bySession.sortedByDescending { it.cost },
     )

@@ -114,6 +114,12 @@ object NetworkConfig {
     /** Max number of attachments staged for one prompt, to bound memory and request size. */
     const val maxAttachments = 8
 
+    /** Max cumulative size of all attachments staged for one prompt. The per-file
+     *  [maxAttachmentBytes] cap alone allows [maxAttachments] max-size files (~80MB raw,
+     *  ~106MB as base64) to pile up in memory and be re-serialized on every add/remove and
+     *  again when the request body is built — a realistic OOM. This bounds the whole set. */
+    const val maxTotalAttachmentBytes = 25L * 1024 * 1024
+
     // --- StateFlow sharing (WhileSubscribed) ---
 
     /** Grace period before a cold StateFlow is stopped after its last subscriber leaves. */
@@ -149,6 +155,12 @@ object NetworkConfig {
     const val observerRetryDelayMs = 5_000L
     /** Max concurrent assistant runs to track for completion notifications. */
     const val activeRunsLimit = 200
+    /** Debounce before the run foreground-service is started/stopped in response to
+     *  run-activity changes. A run that starts and then fails/idles almost immediately
+     *  would otherwise dispatch startForegroundService() then stopService() back-to-back;
+     *  if the stop wins the race before startForeground() runs, Android raises the
+     *  "did not then call startForeground()" crash. Debouncing collapses that window. */
+    const val runForegroundDebounceMs = 500L
 
     // --- Markdown rendering (MarkdownText) ---
 

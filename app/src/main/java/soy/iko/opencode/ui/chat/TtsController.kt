@@ -63,8 +63,54 @@ class TtsController(context: Context) : RememberObserver {
     fun toggle(id: String, text: String) {
         if (_speakingId.value == id) { stop(); return }
         if (!ready || text.isBlank()) return
-        tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, id)
+        // TextToSpeech.speak() silently returns ERROR (enqueuing nothing, firing no callback)
+        // when a single input exceeds getMaxSpeechInputLength(), which would leave the Stop
+        // button stuck with no audio. Chunk long text and enqueue the parts back-to-back.
+        val chunks = chunkForTts(text)
+        if (chunks.isEmpty()) return
+        chunks.forEachIndexed { index, chunk ->
+            val queueMode = if (index == 0) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
+            // Only the final chunk carries the tracked [id]; intermediate chunks get a
+            // distinct id so their per-utterance onDone doesn't clear the Stop state early.
+            val utteranceId = if (index == chunks.lastIndex) id else "$id#$index"
+            val result = tts.speak(chunk, queueMode, null, utteranceId)
+            // If even the first chunk can't be enqueued, nothing plays and no callback fires;
+            // bail without marking this message as speaking so the button doesn't stick.
+            if (index == 0 && result != TextToSpeech.SUCCESS) { _speakingId.value = null; return }
+        }
         _speakingId.value = id
+    }
+
+    /**
+     * Split [text] into segments no longer than [TextToSpeech.getMaxSpeechInputLength] so
+     * every part can actually be enqueued. Prefers sentence/paragraph then whitespace
+     * boundaries, packing greedily, and hard-slices any single piece that still overflows.
+     */
+    private fun chunkForTts(text: String): List<String> {
+        val max = TextToSpeech.getMaxSpeechInputLength().coerceAtLeast(1)
+        if (text.length <= max) return listOf(text)
+        val chunks = ArrayList<String>()
+        val current = StringBuilder()
+        fun flush() {
+            if (current.isNotEmpty()) { chunks.add(current.toString()); current.setLength(0) }
+        }
+        for (piece in text.split(Regex("(?<=[.!?\\n])\\s+"))) {
+            var p = piece
+            // A single piece with no usable boundary can still exceed the limit: hard-slice it.
+            while (p.length > max) {
+                flush()
+                chunks.add(p.substring(0, max))
+                p = p.substring(max)
+            }
+            when {
+                p.isEmpty() -> Unit
+                current.isEmpty() -> current.append(p)
+                current.length + 1 + p.length <= max -> current.append(' ').append(p)
+                else -> { flush(); current.append(p) }
+            }
+        }
+        flush()
+        return chunks
     }
 
     fun stop() {

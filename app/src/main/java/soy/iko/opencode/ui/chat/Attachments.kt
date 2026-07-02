@@ -70,6 +70,25 @@ private fun java.io.InputStream.readAtMost(limit: Long): ByteArray {
     return out.toByteArray()
 }
 
+/** The raw (pre-base64) byte size encoded in a `data:<mime>;base64,<payload>` URL, derived from
+ *  the payload length (len / 4 * 3, less any '=' padding) without allocating or decoding the
+ *  payload — important since the payload can be many MB. Returns 0 when the URL has no base64
+ *  payload. Lets the cumulative attachment-size cap use the same raw-byte measure as the per-file
+ *  [NetworkConfig.maxAttachmentBytes] check above (which counts raw `bytes.size`). */
+internal fun base64DataUrlByteSize(dataUrl: String): Long {
+    val marker = "base64,"
+    val start = dataUrl.indexOf(marker)
+    if (start < 0) return 0L
+    val payloadLen = dataUrl.length - (start + marker.length)
+    if (payloadLen <= 0) return 0L
+    val padding = when {
+        dataUrl.endsWith("==") -> 2
+        dataUrl.endsWith("=") -> 1
+        else -> 0
+    }
+    return payloadLen.toLong() / 4 * 3 - padding
+}
+
 /** Resolve a human-readable display name for the content [uri], if the provider exposes one. */
 private fun Uri.displayName(context: Context): String? = runCatching {
     context.contentResolver.query(this, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->

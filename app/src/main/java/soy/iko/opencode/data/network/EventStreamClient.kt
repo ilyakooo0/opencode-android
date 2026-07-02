@@ -68,12 +68,16 @@ open class EventStreamClient(
     /** Conflated channel used to cut the reconnect backoff short when network returns. */
     private val reconnectSignal = Channel<Unit>(Channel.CONFLATED)
 
-    /** Returns true if the exception is an SSE auth failure (401/403) that should stop retrying.
+    /** Returns true if the exception is a non-retryable SSE failure that should stop the retry
+     *  loop and park until an explicit reconnect. This covers any 4xx except 408 (Request Timeout)
+     *  and 429 (Too Many Requests), which are transient — mirroring the REST layer's withRetry
+     *  classification (401/403 bad credentials, 404 renamed/removed endpoint, 400 bad request, ...
+     *  won't succeed on retry).
      *  ktor's SSE builder wraps establishment failures in [io.ktor.client.plugins.sse.SSEClientException]
      *  (an IllegalStateException, NOT a ClientRequestException), attaching the response and keeping any
      *  underlying ClientRequestException only as the cause — so we inspect the wrapper's response status
      *  and walk the whole cause chain rather than matching a single exception type. */
-    private fun isSseAuthFailure(e: Throwable): Boolean =
+    private fun isNonRetryableSseFailure(e: Throwable): Boolean =
         generateSequence(e as Throwable?) { it.cause.takeIf { c -> c !== it } }
             .take(16)
             .mapNotNull { t ->
@@ -83,7 +87,8 @@ open class EventStreamClient(
                     else -> null
                 }
             }
-            .any { it == 401 || it == 403 }
+            // Non-408/429 4xx = permanent; 408 and 429 stay in the transient retry path.
+            .any { it in 400..499 && it != 408 && it != 429 }
 
     /** Request an immediate reconnect, skipping any in-progress backoff. */
     open fun triggerReconnect() { reconnectSignal.trySend(Unit) }
@@ -106,8 +111,14 @@ open class EventStreamClient(
             val result: ChannelResult<ServerSentEvent>? = select {
                 events.onReceiveCatching { it }
                 onTimeout(idleTimeoutMs) { null }
+                // A triggerReconnect() issued while a read is active must interrupt it now:
+                // return the same null sentinel as the idle timeout so a half-open socket
+                // (no TCP RST) is dropped and reconnected promptly instead of waiting out
+                // idleTimeoutMs (~90s). Consuming the signal here also stops the backoff
+                // select below from re-triggering on the stale request.
+                reconnectSignal.onReceive { null }
             }
-            if (result == null) throw IOException("SSE idle timeout, reconnecting")
+            if (result == null) throw IOException("SSE read dropped (idle timeout or reconnect requested), reconnecting")
             val sse = result.getOrNull()
             if (sse == null) {
                 // The producer channel is closed. A non-null cause means `incoming`
@@ -228,11 +239,12 @@ open class EventStreamClient(
             } catch (e: Exception) {
                 // If the scope was cancelled (e.g. connection close), the closed-client
                 // exception is expected — don't log a spurious "stream error" warning.
-                if (isSseAuthFailure(e)) {
-                    // Credentials are wrong — retrying won't help. Log a scrubbed
-                    // summary (class + status) instead of the full exception, whose
+                if (isNonRetryableSseFailure(e)) {
+                    // The server rejected the request with a non-retryable 4xx (bad
+                    // credentials, missing endpoint, ...) — retrying won't help. Log a
+                    // scrubbed summary (class + status) instead of the full exception, whose
                     // message carries the request URL and may include auth or paths.
-                    Log.w("EventStream", "SSE auth failed (401/403), awaiting explicit reconnect: ${safeExceptionSummary(e)}")
+                    Log.w("EventStream", "SSE non-retryable 4xx, awaiting explicit reconnect: ${safeExceptionSummary(e)}")
                     _state.value = ConnectionState.Failed
                     if (!isActive) break
                     // Don't complete the flow: a subscriber may fix the profile and call

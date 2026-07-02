@@ -49,8 +49,33 @@ fun ServerProfile.toImageContext(): ImageLoadContext {
     } else {
         null
     }
-    return ImageLoadContext(baseUrl = baseUrl, basicAuthHeader = auth)
+    // Resolve image URLs against the HTTPS-upgraded base URL, not the raw stored one, so a
+    // requireHttps (or certificate-pinned) profile never fetches an image — with the Basic auth
+    // header attached — over cleartext http even when the stored URL is http://. This mirrors
+    // how HttpClientFactory computes the effective base URL for the REST/SSE channel.
+    return ImageLoadContext(baseUrl = effectiveImageBaseUrl(), basicAuthHeader = auth)
 }
+
+/**
+ * The base URL used to resolve image URLs, after applying the same http->https upgrade the
+ * REST/SSE client uses (see HttpClientFactory.effectiveBaseUrl, the source of truth — that
+ * helper and its pin parser are private there and this file may not edit HttpClientFactory, so
+ * the logic is replicated here and must be kept in sync). A pin is meaningless over cleartext, so
+ * a configured certificate pin forces HTTPS too, matching the REST channel.
+ */
+private fun ServerProfile.effectiveImageBaseUrl(): String {
+    val normalized = HttpClientFactory.normalizeBaseUrl(baseUrl)
+    val forceHttps = requireHttps || parseCertPins(certPin).isNotEmpty()
+    return if (forceHttps && normalized.lowercase().startsWith("http://")) {
+        "https://" + normalized.substring("http://".length)
+    } else {
+        normalized
+    }
+}
+
+/** Split a certificate-pin field into individual pins; mirrors HttpClientFactory.parsePins. */
+private fun parseCertPins(raw: String?): List<String> =
+    raw?.split(Regex("[\\s,]+"))?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList()
 
 /** True if the part references a raster/vector image we can render. */
 val FilePart.isImage: Boolean

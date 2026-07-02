@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import soy.iko.opencode.R
 import soy.iko.opencode.util.runCatchingCancellable
 import java.util.UUID
@@ -85,11 +86,15 @@ fun isValidCertPin(raw: String): Boolean {
     return entries.all { it.matches(pinRegex) }
 }
 
-fun isValidUrl(url: String): Boolean = try {
-    val u = java.net.URI(url.trim())
-    u.scheme != null && u.host != null && (u.scheme == "http" || u.scheme == "https")
-} catch (_: Exception) {
-    false
+fun isValidUrl(url: String): Boolean {
+    val trimmed = url.trim()
+    if (trimmed.isBlank()) return false
+    // Parse with OkHttp's own parser (like HttpClientFactory) — java.net.URI rejects hosts
+    // OkHttp accepts (e.g. underscores in "my_server.local") and demands an exact-lowercase
+    // scheme ("HTTP://" fails). toHttpUrlOrNull only accepts http/https, so a successful parse
+    // already implies a valid scheme; a bare host without a scheme returns null, keeping the
+    // "suggest http:// prefix" flow in suggestUrlScheme() intact.
+    return trimmed.toHttpUrlOrNull() != null
 }
 
 /**
