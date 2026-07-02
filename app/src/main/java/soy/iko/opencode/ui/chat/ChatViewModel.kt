@@ -75,6 +75,25 @@ data class PendingAttachment(
     val isImage: Boolean get() = mime.startsWith("image/")
 }
 
+/** Reduce a staged attachment to its persistable form (the self-contained data URL). */
+private fun PendingAttachment.toPersisted() =
+    soy.iko.opencode.data.repo.PersistedAttachment(id, name, mime, part.url, part.filename)
+
+/** Rebuild a staged attachment from persistence. The base64 data URL doubles as the Coil
+ *  preview model for images (the original content Uri didn't survive the process restart). */
+private fun soy.iko.opencode.data.repo.PersistedAttachment.toPending() = PendingAttachment(
+    id = id,
+    name = name,
+    mime = mime,
+    previewModel = if (mime.startsWith("image/")) url else null,
+    part = FilePromptPart(mime = mime, url = url, filename = filename),
+)
+
+// Large by design: this VM owns the whole chat surface (streaming, drafts, attachments,
+// catalogs, permissions, revert/edit, sharing, summarize/init/shell, TTS wiring). It's
+// already grandfathered for TooManyFunctions in the detekt baseline; the class-size rule is
+// suppressed for the same reason. A future split into sub-controllers is tracked separately.
+@Suppress("LargeClass")
 @OptIn(ExperimentalCoroutinesApi::class, kotlinx.coroutines.FlowPreview::class)
 class ChatViewModel(
     private val container: AppContainer,
@@ -264,9 +283,10 @@ class ChatViewModel(
     private val _draft = MutableStateFlow(container.draftStore.get(sessionId))
     val draft: StateFlow<String> = _draft.asStateFlow()
 
-    /** Attachments staged for the next prompt (images/files). In-memory only — a huge base64
-     *  payload isn't worth persisting across process death, and the source Uris wouldn't
-     *  survive anyway. Cleared on a successful send. */
+    /** Attachments staged for the next prompt (images/files). Persisted per-session (as their
+     *  self-contained base64 data URLs) via [AttachmentDraftStore] so an interrupted compose
+     *  survives process death — the source content Uris wouldn't survive, but the data URLs
+     *  do. Cleared on a successful send. */
     private val _attachments = MutableStateFlow<List<PendingAttachment>>(emptyList())
     val attachments: StateFlow<List<PendingAttachment>> = _attachments.asStateFlow()
 
@@ -337,6 +357,19 @@ class ChatViewModel(
                 if (storeValue != _draft.value && !suppressDraftPersist.get()) {
                     _draft.value = storeValue
                 }
+            }
+        }
+    }
+
+    init {
+        // Restore attachments staged before process death. They were persisted as
+        // self-contained data URLs, so they re-send and (for images) re-preview intact.
+        // Guarded on empty so it never clobbers attachments the user staged after opening.
+        viewModelScope.launch {
+            val restored = runCatchingCancellable { container.attachmentDraftStore.load(sessionId) }
+                .getOrDefault(emptyList())
+            if (restored.isNotEmpty() && _attachments.value.isEmpty()) {
+                _attachments.value = restored.map { it.toPending() }
             }
         }
     }
@@ -626,11 +659,16 @@ class ChatViewModel(
                 // Restore the staged attachments too, so a failed send doesn't lose them —
                 // but only if the user hasn't staged new ones in the meantime.
                 if (attachments.isNotEmpty() && _attachments.value.isEmpty()) _attachments.value = attachments
+                // Re-persist so the restored attachments survive process death after a failure.
+                persistAttachments()
                 // Retryable: this is the failed send whose prompt Retry re-submits.
                 _errorEvents.trySend(ChatError(container.friendlyError(it), retryable = true))
                 _running.value = false
             }.onSuccess {
                 suppressDraftPersist.set(false)
+                // Send succeeded — the attachments rode along, so clear their persisted copy
+                // (or keep any the user staged after the optimistic clear).
+                persistAttachments()
                 // Send succeeded — persist the cleared draft, but only if the user hasn't
                 // typed a new one while the send was in flight. Otherwise clearing the
                 // store echoes back through the draft observer and wipes the in-progress
@@ -746,14 +784,27 @@ class ChatViewModel(
 
     fun addAttachment(attachment: PendingAttachment) {
         _attachments.update { it + attachment }
+        persistAttachments()
     }
 
     fun removeAttachment(id: String) {
         _attachments.update { list -> list.filterNot { it.id == id } }
+        persistAttachments()
     }
 
     fun clearAttachments() {
         _attachments.value = emptyList()
+        persistAttachments()
+    }
+
+    /** Persist the current staged attachments so an interrupted compose survives process
+     *  death (mirrors draft persistence). Fire-and-forget on [viewModelScope]. */
+    private fun persistAttachments() {
+        val snapshot = _attachments.value
+        viewModelScope.launch {
+            runCatchingCancellable { container.attachmentDraftStore.save(sessionId, snapshot.map { it.toPersisted() }) }
+                .onFailure { Log.w("ChatViewModel", "Failed to persist attachments", it) }
+        }
     }
 
     /** Revert the conversation to just before [messageId], hiding everything after it. The
@@ -766,6 +817,16 @@ class ChatViewModel(
                 .onSuccess { _reverted.value = it.isReverted }
                 .onFailure { _errorEvents.trySend(ChatError(container.friendlyError(it))) }
         }
+    }
+
+    /** Load a previously-sent user prompt back into the composer to edit and re-send.
+     *  Reverts the conversation to just before [messageId] (hiding it and everything after)
+     *  and prefills the draft with [text]. The next Send continues from that checkpoint,
+     *  effectively replacing the edited message; the reverted banner's Undo restores it.
+     *  Overwrites the current draft — this is an explicit edit action on that message. */
+    fun editMessage(messageId: String, text: String) {
+        revertTo(messageId)
+        _draft.value = text
     }
 
     /** Undo the active revert checkpoint, restoring the hidden messages. */
@@ -887,6 +948,8 @@ class ChatViewModel(
             runCatchingCancellable { conn.repository.deleteSession(sessionId) }
                 .onSuccess {
                     container.draftStore.remove(sessionId)
+                    container.attachmentDraftStore.remove(sessionId)
+                    container.messageCacheStore.remove(sessionId)
                     _sessionDeleted.value = true
                 }
                 .onFailure { _errorEvents.trySend(ChatError(container.friendlyError(it))) }

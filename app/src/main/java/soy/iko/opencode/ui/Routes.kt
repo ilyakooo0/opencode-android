@@ -7,6 +7,7 @@ object Routes {
     const val SETTINGS = "settings"
     const val DIAGNOSTICS = "diagnostics"
     const val FILES = "files"
+    const val SEARCH = "search"
 
     const val SERVER_EDIT = "server_edit"
     fun serverEdit(id: String? = null) =

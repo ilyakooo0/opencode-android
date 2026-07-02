@@ -65,6 +65,12 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
+        <!-- Handles notification action buttons (permission responses, inline reply). Not
+             exported: only the app's own PendingIntents target it. -->
+        <receiver
+            android:name=".notification.NotificationActionReceiver"
+            android:exported="false" />
+
         <!-- Serves camera-capture temp files (cache/captures) to the system camera app. -->
         <provider
             android:name="androidx.core.content.FileProvider"

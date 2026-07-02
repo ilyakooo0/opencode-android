@@ -9,8 +9,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.HelpOutline
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Restore
+import androidx.compose.material.icons.filled.StopCircle
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -60,11 +63,14 @@ fun MessageBubble(
     modelLabel: String? = null,
     onOpenFile: ((String) -> Unit)? = null,
     onRevert: (() -> Unit)? = null,
+    onEdit: ((String) -> Unit)? = null,
+    onSpeak: ((String) -> Unit)? = null,
+    isSpeaking: Boolean = false,
 ) {
     when (message.info) {
-        is UserMessage -> UserBubble(message, imageContext, modifier, onOpenFile, onRevert)
+        is UserMessage -> UserBubble(message, imageContext, modifier, onOpenFile, onRevert, onEdit)
         is UnknownMessage -> UnknownMessageBlock(message, imageContext, modifier, onOpenFile)
-        else -> AssistantBlock(message, isRunning, imageContext, modifier, modelLabel, onOpenFile, onRevert)
+        else -> AssistantBlock(message, isRunning, imageContext, modifier, modelLabel, onOpenFile, onRevert, onSpeak, isSpeaking)
     }
 }
 
@@ -126,9 +132,11 @@ private fun UserBubble(
     modifier: Modifier,
     onOpenFile: ((String) -> Unit)? = null,
     onRevert: (() -> Unit)? = null,
+    onEdit: ((String) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val copyLabel = stringResource(R.string.copy)
+    val editLabel = stringResource(R.string.edit_message)
     // Collect text from all TextParts for copying, so a user can reuse/repost their
     // own prompt. Memoized so a scroll-induced recomposition doesn't re-scan the list.
     val textToCopy = remember(message.parts) {
@@ -154,6 +162,19 @@ private fun UserBubble(
             ) {
                 MessageTimestampText(message.info)
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    // Edit affordance: reload this prompt into the composer, reverting the
+                    // conversation to before it so a Send replaces it. Only when there's text
+                    // to edit (an image-only prompt has nothing to reload).
+                    if (onEdit != null && textToCopy != null) {
+                        IconButton(onClick = { onEdit(textToCopy) }) {
+                            Icon(
+                                Icons.Filled.Edit,
+                                contentDescription = editLabel,
+                                modifier = Modifier.size(18.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
                     onRevert?.let { RevertButton(it) }
                     // Copy affordance for user prompts, mirroring the assistant block.
                     // Without it, reusing a prior prompt requires discovering the
@@ -185,6 +206,8 @@ private fun AssistantBlock(
     modelLabel: String? = null,
     onOpenFile: ((String) -> Unit)? = null,
     onRevert: (() -> Unit)? = null,
+    onSpeak: ((String) -> Unit)? = null,
+    isSpeaking: Boolean = false,
 ) {
     Column(
         modifier = modifier.fillMaxWidth(),
@@ -242,9 +265,7 @@ private fun AssistantBlock(
                     }
                     MessageTimestampText(message.info)
                 }
-                val context = LocalContext.current
-                val copyLabel = stringResource(R.string.copy)
-                // Collect text from all TextParts for copying. Memoized so a
+                // Collect text from all TextParts for copy/read-aloud. Memoized so a
                 // scroll-induced recomposition doesn't re-scan the parts list.
                 val textToCopy = remember(message.parts) {
                     message.parts
@@ -252,24 +273,55 @@ private fun AssistantBlock(
                         .joinToString("\n\n") { it.text }
                         .takeIf { it.isNotBlank() }
                 }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    onRevert?.let { RevertButton(it) }
-                    if (textToCopy != null) {
-                        IconButton(
-                            onClick = { copyToClipboard(context, "message", textToCopy) },
-                        ) {
-                            Icon(
-                                Icons.Filled.ContentCopy,
-                                contentDescription = copyLabel,
-                                modifier = Modifier.size(18.dp),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-                }
+                AssistantActions(
+                    textToCopy = textToCopy,
+                    isSpeaking = isSpeaking,
+                    onSpeak = onSpeak,
+                    onRevert = onRevert,
+                )
             }
         } else {
             MessageTimestampText(message.info)
+        }
+    }
+}
+
+/** Trailing action buttons for an assistant message: read-aloud (TTS), revert, copy.
+ *  Extracted from [AssistantBlock] to keep that function under the complexity threshold. */
+@Composable
+private fun AssistantActions(
+    textToCopy: String?,
+    isSpeaking: Boolean,
+    onSpeak: ((String) -> Unit)?,
+    onRevert: (() -> Unit)?,
+) {
+    val context = LocalContext.current
+    val copyLabel = stringResource(R.string.copy)
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        // Read-aloud toggle: speaks the assistant text via TextToSpeech, showing a Stop
+        // icon while this message is the one being spoken.
+        if (onSpeak != null && textToCopy != null) {
+            val speakLabel = stringResource(if (isSpeaking) R.string.stop_reading else R.string.read_aloud)
+            IconButton(onClick = { onSpeak(textToCopy) }) {
+                Icon(
+                    if (isSpeaking) Icons.Filled.StopCircle else Icons.AutoMirrored.Filled.VolumeUp,
+                    contentDescription = speakLabel,
+                    modifier = Modifier.size(18.dp),
+                    tint = if (isSpeaking) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        onRevert?.let { RevertButton(it) }
+        if (textToCopy != null) {
+            IconButton(onClick = { copyToClipboard(context, "message", textToCopy) }) {
+                Icon(
+                    Icons.Filled.ContentCopy,
+                    contentDescription = copyLabel,
+                    modifier = Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 }

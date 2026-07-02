@@ -1,0 +1,362 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">opencode</string>
+    <!-- Non-numeric fallback so a PackageManager failure can\'t show a stale version number. -->
+    <string name="unknown_version">—</string>
+
+    <!-- Common -->
+    <string name="back">Atrás</string>
+    <string name="cancel">Cancelar</string>
+    <string name="save">Guardar</string>
+    <string name="delete">Eliminar</string>
+    <string name="edit">Editar</string>
+    <string name="remove">Quitar</string>
+    <string name="copy">Copiar</string>
+    <string name="copied">Copiado</string>
+    <string name="no_share_app">No hay ninguna app disponible para compartir</string>
+    <string name="retry">Reintentar</string>
+    <string name="refresh">Actualizar</string>
+    <string name="settings">Ajustes</string>
+    <string name="files">Archivos</string>
+    <string name="share">Compartir</string>
+    <string name="share_subject">Sesión de opencode</string>
+    <string name="send">Enviar</string>
+    <string name="stop">Detener</string>
+    <string name="rename">Renombrar</string>
+    <string name="disconnect">Desconectar</string>
+    <string name="loading">Cargando…</string>
+
+    <!-- Theme modes -->
+    <string name="theme_system">Sistema</string>
+    <string name="theme_light">Claro</string>
+    <string name="theme_dark">Oscuro</string>
+
+    <!-- Connection banner -->
+    <string name="connecting">Conectando…</string>
+    <string name="reconnecting">Reconectando…</string>
+    <string name="connection_failed">Error de conexión — comprueba las credenciales</string>
+    <string name="reconnect">Reconectar</string>
+    <string name="not_connected">Sin conexión.</string>
+    <string name="no_servers_to_reconnect">No hay ningún servidor guardado al que reconectar.</string>
+    <string name="retry_now">Reintentar ahora</string>
+
+    <!-- Server list -->
+    <string name="servers_title">Servidores de opencode</string>
+    <string name="add_server">Añadir servidor</string>
+    <string name="edit_server">Editar servidor</string>
+    <string name="connected">Conectado</string>
+    <string name="no_servers_yet">Aún no hay servidores</string>
+    <string name="no_servers_hint">Añade un endpoint de opencode serve para conectar.</string>
+    <string name="remove_server_title">¿Quitar servidor?</string>
+    <string name="remove_server_text">Se quitará «%1$s» de tus servidores guardados.</string>
+    <string name="remove_server_active_text">«%1$s» es tu servidor actual. Al quitarlo también te desconectarás.</string>
+    <string name="server_auth_short">  •  autenticación</string>
+    <string name="server_auth_basic">  •  autenticación básica</string>
+    <string name="server_removed">Servidor eliminado</string>
+
+    <!-- Server edit -->
+    <string name="label_optional">Etiqueta (opcional)</string>
+    <string name="base_url">URL base</string>
+    <string name="base_url_hint">http://192.168.1.10:4096</string>
+    <string name="invalid_url">Introduce una URL http:// o https:// válida.</string>
+    <string name="check_connectivity">Comprobar conectividad</string>
+    <string name="checking">Comprobando…</string>
+    <string name="auth_required">Este servidor requiere autenticación.</string>
+    <string name="auth_help">Toca "Comprobar conectividad" para probar el servidor. Los campos de autenticación aparecen automáticamente solo si el servidor los requiere.</string>
+    <string name="username_optional">Usuario (opcional)</string>
+    <string name="password_optional">Contraseña (opcional)</string>
+    <string name="save_and_connect">Guardar y conectar</string>
+    <string name="discard_title">¿Descartar cambios?</string>
+    <string name="discard_text">Se perderán tus cambios.</string>
+    <string name="discard">Descartar</string>
+    <string name="keep_editing">Seguir editando</string>
+    <string name="show_password">Mostrar contraseña</string>
+    <string name="hide_password">Ocultar contraseña</string>
+    <string name="test_credentials">Probar credenciales</string>
+    <string name="discover_on_network">Descubrir en la red</string>
+    <string name="searching_network">Buscando en la red local…</string>
+    <string name="testing_credentials">Probando…</string>
+    <string name="credentials_ok">Credenciales aceptadas.</string>
+    <string name="credentials_rejected">Credenciales rechazadas.</string>
+
+    <!-- Session list -->
+    <string name="new_session">Nueva sesión</string>
+    <string name="create">Crear</string>
+    <string name="directory_label">Directorio</string>
+    <string name="directory_server_default">Predeterminado del servidor</string>
+    <string name="directory_custom">Introduce una ruta…</string>
+    <string name="directory_custom_hint">/ruta/al/proyecto</string>
+    <string name="directory_loading">Cargando directorios…</string>
+    <string name="session_directory_desc">Directorio: %1$s</string>
+    <string name="unread">Sin leer</string>
+    <string name="unread_count">%1$d sin leer</string>
+    <string name="no_sessions_yet">Aún no hay sesiones</string>
+    <string name="no_sessions_hint">Inicia una conversación con opencode.</string>
+    <string name="search_sessions">Buscar sesiones…</string>
+    <string name="no_sessions_match">Ninguna sesión coincide con «%1$s».</string>
+    <string name="switch_server">Cambiar de servidor</string>
+    <string name="delete_session_title">¿Eliminar sesión?</string>
+    <string name="delete_session_text">«%1$s» se eliminará permanentemente. Esta acción no se puede deshacer.</string>
+    <string name="rename_session">Renombrar sesión</string>
+    <string name="session_title_hint">Título de la sesión</string>
+    <string name="undo">Deshacer</string>
+    <string name="session_deleted">Sesión eliminada</string>
+    <string name="disconnect_active_title">¿Desconectar?</string>
+    <string name="disconnect_active_text">Todavía hay una ejecución del agente activa. Al desconectar se detendrá.</string>
+
+    <!-- Chat -->
+    <string name="session">Sesión</string>
+    <string name="default_model">modelo predeterminado</string>
+    <string name="message_placeholder">Escribe a opencode…</string>
+    <string name="empty_chat_title">Inicia una conversación</string>
+    <string name="empty_chat_hint">Escribe un mensaje abajo para empezar.</string>
+    <string name="empty_chat_suggest_1">Explica qué hace este código</string>
+    <string name="empty_chat_suggest_2">Encuentra y corrige un error</string>
+    <string name="empty_chat_suggest_3">Añade una función</string>
+    <string name="draft_chars_remaining">%1$d / %2$d</string>
+    <string name="load_messages_failed">No se pudieron cargar los mensajes.</string>
+    <string name="empty_detail_pane">Selecciona una sesión para ver la conversación.</string>
+    <string name="working">trabajando…</string>
+    <string name="latest">Más reciente</string>
+    <string name="stop_and_exit_title">¿Detener y salir?</string>
+    <string name="stop_and_exit_text">El agente sigue trabajando. ¿Salir de todos modos?</string>
+    <string name="stop_and_exit">Detener y salir</string>
+    <string name="stay">Quedarse</string>
+    <string name="commands">Comandos</string>
+    <string name="choose_agent">Elegir agente</string>
+    <string name="choose_model">Elegir modelo</string>
+    <string name="change_model_agent">Cambiar modelo y agente</string>
+    <string name="share_conversation">Compartir conversación</string>
+    <string name="stop_run_title">¿Detener la ejecución?</string>
+    <string name="stop_run_text">El agente sigue trabajando. ¿Detenerlo ahora?</string>
+    <string name="session_deleted_msg">Esta sesión se eliminó en otro dispositivo.</string>
+    <string name="queued">En cola — se enviará cuando termine la ejecución</string>
+
+    <!-- Errors (view models) -->
+    <string name="error_generic">Algo salió mal.</string>
+    <string name="error_client_status">La solicitud falló (%1$d).</string>
+    <string name="error_agent_reported">El agente informó de un error.</string>
+    <string name="error_not_reachable">No se pudo contactar con %1$s</string>
+    <string name="error_timeout">La solicitud agotó el tiempo de espera. Comprueba la conexión e inténtalo de nuevo.</string>
+    <string name="error_server">El servidor informó de un error. Inténtalo más tarde.</string>
+    <string name="error_load_timeout">La carga tardó demasiado. Inténtalo de nuevo.</string>
+    <string name="error_switch_and_restore_failed">No se pudo conectar con el nuevo servidor (%1$s), y tampoco se pudo restaurar el servidor anterior (%2$s).</string>
+
+    <!-- Part renderer -->
+    <string name="thinking">Pensando…</string>
+    <string name="thoughts">Pensamientos</string>
+    <string name="show_more">Mostrar más</string>
+    <string name="show_less">Mostrar menos</string>
+    <string name="show_more_lines">Mostrar %1$d líneas más</string>
+    <string name="tool_completed">Completado</string>
+    <string name="tool_error">Error</string>
+    <string name="tool_running">En ejecución</string>
+    <string name="tool_unknown">Estado de herramienta desconocido</string>
+    <string name="state_expanded">Expandido</string>
+    <string name="state_collapsed">Contraído</string>
+
+    <!-- Permission dialog -->
+    <string name="permission_title">Permiso solicitado</string>
+    <string name="permission_text">¿Permitir que esta herramienta se ejecute?</string>
+    <string name="allow_once">Permitir una vez</string>
+    <string name="always_allow">Permitir siempre</string>
+    <string name="reject">Rechazar</string>
+
+    <!-- Pickers -->
+    <string name="model">Modelo</string>
+    <string name="no_models">El servidor no informó de ningún modelo.</string>
+    <string name="agent">Agente</string>
+    <string name="no_agents">El servidor no informó de ningún agente.</string>
+    <string name="default_agent">Predeterminado</string>
+    <string name="default_agent_desc">Agente predeterminado del servidor</string>
+    <string name="no_commands">El servidor no informó de ningún comando.</string>
+    <string name="no_commands_match">Ningún comando coincide con "%1$s".</string>
+    <string name="load_failed">Error al cargar. Toca reintentar.</string>
+    <string name="saving">Guardando…</string>
+    <string name="image_failed">Error al cargar la imagen</string>
+    <string name="search_models">Buscar modelos…</string>
+    <string name="search_agents">Buscar agentes…</string>
+    <string name="search_commands">Buscar comandos…</string>
+    <string name="no_models_match">Ningún modelo coincide con "%1$s".</string>
+    <string name="no_agents_match">Ningún agente coincide con "%1$s".</string>
+
+    <!-- File browser -->
+    <string name="search_files">Buscar archivos…</string>
+    <string name="root">Raíz</string>
+    <string name="no_matches">Sin coincidencias.</string>
+    <string name="git_added">Añadido</string>
+    <string name="git_modified">Modificado</string>
+    <string name="git_deleted">Eliminado</string>
+    <string name="binary_file">Archivo binario — vista previa no compatible.</string>
+    <string name="empty_folder">Esta carpeta está vacía</string>
+    <string name="empty_file">Este archivo está vacío</string>
+    <string name="parent_dir">Directorio superior</string>
+    <string name="folder">Carpeta: %1$s</string>
+    <string name="file_label">Archivo: %1$s</string>
+    <string name="file">Archivo</string>
+    <string name="show_diff">Mostrar diff</string>
+    <string name="show_raw">Mostrar sin formato</string>
+
+    <!-- Message metadata -->
+    <string name="image">imagen</string>
+    <string name="tokens_in_out">%1$s entrada · %2$s salida</string>
+    <string name="cost_format_short">$%1$.2f</string>
+    <string name="cost_format_long">$%1$.4f</string>
+
+    <!-- Settings -->
+    <string name="appearance">Apariencia</string>
+    <string name="dynamic_color">Color dinámico</string>
+    <string name="dynamic_color_desc">Usa los colores del fondo de pantalla de Material You (Android 12+)</string>
+    <string name="connection">Conexión</string>
+    <string name="manage_servers">Gestionar servidores</string>
+    <string name="about">Acerca de</string>
+    <string name="about_version">opencode-android %1$s</string>
+    <string name="about_desc">Un cliente nativo de Android para la API HTTP de opencode serve.</string>
+
+    <!-- Diagnostics -->
+    <string name="diagnostics">Diagnósticos</string>
+    <string name="diagnostics_desc">Los informes de fallos se guardan localmente en este dispositivo.</string>
+    <string name="crash_reports">Informes de fallos</string>
+    <string name="no_crash_reports">No hay fallos registrados.</string>
+    <string name="clear_all">Borrar todo</string>
+    <string name="clear_all_confirm">¿Eliminar todos los informes de fallos guardados? Esta acción no se puede deshacer.</string>
+    <string name="crash_report">Informe de fallos</string>
+    <string name="close">Cerrar</string>
+    <string name="delete_report_title">¿Eliminar informe de fallos?</string>
+    <string name="delete_report_text">Este informe se eliminará permanentemente.</string>
+    <string name="report_load_failed">Error al cargar el informe de fallos.</string>
+    <string name="crash_count_format">%1$d</string>
+    <string name="crash_count_overflow">99+</string>
+    <string name="report_deleted">Informe de fallos eliminado</string>
+    <string name="crash_report_share_subject">Informe de fallos de opencode</string>
+
+    <!-- Notifications -->
+    <string name="notif_channel_status">Actividad del agente</string>
+    <string name="notif_channel_status_desc">Se muestra mientras un agente de opencode está en ejecución.</string>
+    <string name="notif_channel_completed">Sesión completada</string>
+    <string name="notif_channel_completed_desc">Se muestra cuando una sesión en segundo plano termina una ejecución.</string>
+    <string name="notif_running_title">opencode</string>
+    <string name="notif_running_text">El agente está trabajando…</string>
+    <string name="notif_completed_title">Sesión lista</string>
+    <string name="notif_completed_text">opencode respondió en «%1$s».</string>
+    <string name="notif_channel_permission">Solicitudes de permiso</string>
+    <string name="notif_channel_permission_desc">Se muestra cuando un agente en ejecución necesita tu aprobación para continuar.</string>
+    <string name="notif_channel_error">Errores de sesión</string>
+    <string name="notif_channel_error_desc">Se muestra cuando falla la ejecución de una sesión en segundo plano.</string>
+    <string name="notif_permission_title">Se necesita aprobación en «%1$s»</string>
+    <string name="notif_permission_fallback">Una herramienta quiere ejecutarse.</string>
+    <string name="notif_error_title">La ejecución falló</string>
+    <string name="notif_error_text">opencode encontró un error en «%1$s».</string>
+    <string name="notif_action_allow_once">Permitir una vez</string>
+    <string name="notif_action_always">Siempre</string>
+    <string name="notif_action_reject">Rechazar</string>
+    <string name="notif_action_reply">Responder</string>
+    <string name="notif_reply_hint">Envía un seguimiento…</string>
+    <string name="notif_reply_sent">Enviado</string>
+
+    <!-- UX additions -->
+    <string name="tool_input">Entrada</string>
+    <string name="copy_path">Copiar ruta</string>
+    <string name="path_copied">Ruta copiada</string>
+    <string name="open_file">Abrir archivo</string>
+    <string name="unknown_message">Tipo de mensaje desconocido</string>
+    <string name="unknown_part">Contenido no compatible</string>
+    <string name="tool_preview">🔧 %1$s</string>
+    <string name="server_reachable">Servidor accesible ✓</string>
+    <string name="suggest_scheme">Añadir prefijo http://</string>
+    <string name="sort">Ordenar</string>
+    <string name="sort_recent">Actividad reciente</string>
+    <string name="sort_title">Título</string>
+    <string name="last_used_never">Sin usar aún</string>
+    <string name="last_used">Usado por última vez %1$s</string>
+    <string name="duplicate_server">Duplicar</string>
+    <string name="find_in_file">Buscar en el archivo</string>
+    <string name="find_previous">Buscar anterior</string>
+    <string name="find_next">Buscar siguiente</string>
+    <string name="find_hint">Buscar…</string>
+    <string name="no_matches_in_file">Sin coincidencias</string>
+    <string name="match_count">%1$d / %2$d</string>
+    <string name="wrap_lines">Ajustar líneas</string>
+    <string name="send_on_enter">Enviar con Intro</string>
+    <string name="send_on_enter_desc">Cuando está desactivado, Intro inserta un salto de línea; pulsa Ctrl+Intro para enviar.</string>
+    <string name="offline">Estás sin conexión</string>
+    <string name="run_command_title">¿Ejecutar /%1$s?</string>
+    <string name="run_command_text">¿Ejecutar el comando «%1$s»?</string>
+    <string name="run">Ejecutar</string>
+    <string name="command_busy">Espera a que termine la respuesta actual antes de ejecutar un comando.</string>
+
+    <!-- UX additions: chat overflow, date separators, settings retry -->
+    <string name="more">Más</string>
+    <string name="delete_session_chat">Eliminar sesión</string>
+    <string name="delete_session_chat_title">¿Eliminar esta sesión?</string>
+    <string name="delete_session_chat_text">«%1$s» se eliminará permanentemente. Esta acción no se puede deshacer.</string>
+    <string name="rename_session_chat">Renombrar sesión</string>
+    <string name="session_deleted_chat">Sesión eliminada</string>
+    <string name="today">Hoy</string>
+    <string name="yesterday">Ayer</string>
+
+    <!-- Search -->
+    <string name="clear_search">Borrar búsqueda</string>
+    <string name="search_in_files">Buscar en el contenido de archivos…</string>
+    <string name="search_symbols_label">Buscar símbolos…</string>
+    <string name="search_mode_files">Archivos</string>
+    <string name="search_mode_text">Contenido</string>
+    <string name="search_mode_symbols">Símbolos</string>
+
+    <!-- Attachments -->
+    <string name="add_attachment">Añadir adjunto</string>
+    <string name="attach_photo">Foto</string>
+    <string name="attach_camera">Cámara</string>
+    <string name="attach_file">Archivo</string>
+    <string name="attachment_too_large">El archivo es demasiado grande para adjuntarlo.</string>
+    <string name="attachment_failed">No se pudo adjuntar ese archivo.</string>
+    <string name="attachment_limit">Se alcanzó el límite de adjuntos.</string>
+    <string name="no_camera_app">No hay cámara disponible.</string>
+
+    <!-- Voice input -->
+    <string name="voice_input">Entrada de voz</string>
+    <string name="voice_prompt">Di tu mensaje</string>
+    <string name="no_voice_app">La entrada de voz no está disponible en este dispositivo.</string>
+
+    <!-- Revert -->
+    <string name="revert_to_here">Revertir hasta aquí</string>
+    <string name="reverted_banner">Revertido — los mensajes posteriores están ocultos.</string>
+
+    <!-- Sharing / summarize / init / shell -->
+    <string name="create_share_link">Crear enlace para compartir</string>
+    <string name="copy_share_link">Copiar enlace para compartir</string>
+    <string name="stop_sharing">Dejar de compartir</string>
+    <string name="link_copied">Enlace copiado</string>
+    <string name="summarize_conversation">Resumir conversación</string>
+    <string name="generate_agents_md">Generar AGENTS.md</string>
+    <string name="run_shell_command">Ejecutar comando de shell</string>
+    <string name="shell_command_label">Comando</string>
+    <string name="shell_command_hint">ls -la</string>
+    <string name="needs_model">Selecciona primero un modelo.</string>
+
+    <!-- App lock (biometric) -->
+    <string name="app_lock">Bloqueo de la app</string>
+    <string name="app_lock_desc">Requiere datos biométricos o credencial del dispositivo para abrir la app.</string>
+    <string name="app_lock_unavailable">No hay datos biométricos ni credencial del dispositivo configurados.</string>
+    <string name="app_lock_prompt_title">Desbloquear opencode</string>
+    <string name="app_lock_prompt_subtitle">Autentícate para acceder a tus servidores.</string>
+    <string name="app_locked">opencode está bloqueado</string>
+    <string name="app_unlock">Desbloquear</string>
+
+    <!-- Nuevas funciones -->
+    <string name="edit_message">Editar</string>
+    <string name="read_aloud">Leer en voz alta</string>
+    <string name="stop_reading">Dejar de leer</string>
+    <string name="session_pin">Fijar</string>
+    <string name="session_unpin">Desfijar</string>
+    <string name="session_archive">Archivar</string>
+    <string name="session_unarchive">Desarchivar</string>
+    <string name="session_pinned">Fijada</string>
+    <string name="show_archived">Mostrar archivadas</string>
+    <string name="hide_archived">Ocultar archivadas</string>
+    <string name="search_all">Buscar en todas las sesiones</string>
+    <string name="search_all_title">Buscar sesiones</string>
+    <string name="search_all_hint">Buscar en todas las conversaciones…</string>
+    <string name="search_no_matches">No hay mensajes coincidentes</string>
+    <string name="search_truncated">Mostrando resultados solo de las sesiones más recientes.</string>
+</resources>

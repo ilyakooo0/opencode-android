@@ -28,6 +28,7 @@ import soy.iko.opencode.ui.file.FileBrowserScreen
 import soy.iko.opencode.ui.file.FileViewScreen
 import soy.iko.opencode.ui.server.ServerEditScreen
 import soy.iko.opencode.ui.server.ServerListScreen
+import soy.iko.opencode.ui.search.GlobalSearchScreen
 import soy.iko.opencode.ui.session.SessionListScreen
 import soy.iko.opencode.ui.session.TwoPaneSessionChat
 import soy.iko.opencode.ui.settings.DiagnosticsScreen
@@ -164,6 +165,7 @@ fun OpencodeApp(container: AppContainer) {
                     onOpenFiles = { navController.navigate(Routes.FILES) },
                     onOpenFile = { path -> navController.navigate(Routes.fileView(path)) },
                     onOpenSettings = { navController.navigate(Routes.SETTINGS) },
+                    onOpenSearch = { navController.navigate(Routes.SEARCH) },
                     onDisconnect = {
                         scope.launch { runCatchingCancellable { container.disconnect() } }
                         navController.popBackStack(Routes.SERVERS, inclusive = false)
@@ -189,6 +191,7 @@ fun OpencodeApp(container: AppContainer) {
                     },
                     onOpenFiles = { navController.navigate(Routes.FILES) },
                     onOpenSettings = { navController.navigate(Routes.SETTINGS) },
+                    onOpenSearch = { navController.navigate(Routes.SEARCH) },
                     onAddServer = { navController.navigate(Routes.serverEdit()) },
                 )
             }
@@ -253,6 +256,14 @@ fun OpencodeApp(container: AppContainer) {
 
         composable(Routes.DIAGNOSTICS) {
             DiagnosticsScreen(onBack = { navController.popBackStack() })
+        }
+
+        composable(Routes.SEARCH) {
+            GlobalSearchScreen(
+                container = container,
+                onOpenSession = { id -> navController.navigate(Routes.chat(id)) },
+                onBack = { navController.popBackStack() },
+            )
         }
         }
     }

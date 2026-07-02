@@ -4,6 +4,7 @@ import soy.iko.opencode.data.model.ServerProfile
 import soy.iko.opencode.data.network.EventStreamClient
 import soy.iko.opencode.data.network.HttpClientFactory
 import soy.iko.opencode.data.network.OpencodeApiClient
+import soy.iko.opencode.data.repo.MessageCacheStore
 import soy.iko.opencode.data.repo.SessionRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -15,9 +16,14 @@ import kotlinx.coroutines.cancel
  * SSE event stream, and the reducing repository, all sharing a connection-scoped
  * coroutine scope that is cancelled on [close].
  */
-open class OpencodeConnection(val profile: ServerProfile) {
+open class OpencodeConnection(
+    val profile: ServerProfile,
+    // Optional on-disk message cache, supplied by AppContainer, so conversations render
+    // instantly and stay readable offline. Null in the test constructor.
+    private val messageCache: MessageCacheStore? = null,
+) {
 
-    protected constructor() : this(ServerProfile(id = "", label = "", baseUrl = "http://localhost"))
+    protected constructor() : this(ServerProfile(id = "", label = "", baseUrl = "http://localhost"), null)
 
     private val scopeJob = SupervisorJob()
     private val scope by lazy { CoroutineScope(scopeJob + Dispatchers.IO) }
@@ -25,7 +31,7 @@ open class OpencodeConnection(val profile: ServerProfile) {
 
     open val api: OpencodeApiClient by lazy { OpencodeApiClient(client) }
     open val events: EventStreamClient by lazy { EventStreamClient(client, scope) }
-    open val repository: SessionRepository by lazy { SessionRepository(api, events) }
+    open val repository: SessionRepository by lazy { SessionRepository(api, events, messageCache) }
 
     /**
      * Cancel the coroutine scope and wait for in-flight work (including the SSE reader)

@@ -1,3 +1,9 @@
+// Jetpack Security (androidx.security:security-crypto) was deprecated wholesale in 1.1.0 with
+// no first-party drop-in replacement; we intentionally keep using EncryptedSharedPreferences /
+// MasterKey for the encrypted password store (on-disk-compatible, still functional). Suppress
+// the expected deprecation warnings here so the build log stays clean until a future migration.
+@file:Suppress("DEPRECATION")
+
 package soy.iko.opencode.data.repo
 
 import android.content.Context

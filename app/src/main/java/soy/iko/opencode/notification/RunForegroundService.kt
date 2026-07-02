@@ -65,6 +65,11 @@ class RunForegroundService : Service() {
             .setContentText(getString(R.string.notif_running_text))
             .setContentIntent(pendingIntent)
             .setOngoing(true)
+            // Show a live elapsed timer so the user can see how long the current run has
+            // been going — no per-tick plumbing needed; the system renders the chronometer.
+            .setWhen(System.currentTimeMillis())
+            .setUsesChronometer(true)
+            .setShowWhen(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
             .build()

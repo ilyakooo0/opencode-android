@@ -38,6 +38,9 @@ import kotlinx.coroutines.sync.withLock
 open class SessionRepository(
     private val api: OpencodeApiClient,
     private val eventStream: EventStreamClient,
+    // Optional on-disk cache so a conversation renders instantly on open and stays readable
+    // offline. Null in tests (and any path that doesn't wire it), where caching is skipped.
+    private val messageCache: MessageCacheStore? = null,
 ) {
     open suspend fun listSessions() = api.listSessions()
     open suspend fun createSession(title: String? = null, directory: String? = null) =
@@ -95,6 +98,18 @@ open class SessionRepository(
         // initial load) clobbering a newer seed. Only mutated/read under [lock].
         var seedGeneration = 0
 
+        // Seed from the on-disk cache first so the conversation renders instantly — and stays
+        // readable offline — before the network responds. Guarded on generation 0 so a
+        // reconnect re-seed that somehow raced ahead isn't clobbered; the initial REST seed
+        // (also generation 0) then overrides this with authoritative data when it succeeds.
+        messageCache?.let { cache ->
+            val cached = cache.load(sessionId)
+            if (cached.isNotEmpty()) {
+                val changed = lock.withLock { if (seedGeneration == 0) store.seed(cached) else false }
+                if (changed) publish()
+            }
+        }
+
         // Re-seed from REST when the SSE stream reconnects after a drop. The REST fetch
         // is performed *outside* the lock so events arriving via SSE during the fetch are
         // not blocked. The seed itself is under the lock; a seed generation counter ensures
@@ -144,17 +159,18 @@ open class SessionRepository(
             }
         }
 
-        val initial = runCatchingCancellable { api.listMessages(sessionId) }
-            .onFailure { Log.w("SessionRepository", "Initial message load failed for $sessionId; relying on SSE: ${safeExceptionSummary(it)}") }
-            .getOrDefault(emptyList())
+        val initialResult = runCatchingCancellable { api.listMessages(sessionId) }
+            .onFailure { Log.w("SessionRepository", "Initial message load failed for $sessionId; relying on cache/SSE: ${safeExceptionSummary(it)}") }
         // Apply the initial seed only if no reconnect re-seed has run yet (generation still 0).
         // A re-seed is always a fresher full snapshot, so if the (possibly slow) initial fetch
         // returns after one has applied, seeding this older REST data would clobber the newer
         // state — reverting a completed run to "running", regressing cost/token/part state —
-        // until the next SSE event or reconnect healed it.
+        // until the next SSE event or reconnect healed it. Only seed on SUCCESS: on failure
+        // (e.g. offline) keep whatever's shown (the cache seed above) rather than clearing it.
         val seeded = lock.withLock {
-            if (seedGeneration == 0) {
-                store.seed(initial)
+            val list = initialResult.getOrNull()
+            if (seedGeneration == 0 && list != null) {
+                store.seed(list)
                 true
             } else false
         }
@@ -165,9 +181,20 @@ open class SessionRepository(
         // outside the lock so a slow downstream collector can't stall the drain. This
         // loop also keeps the flow alive until the collector cancels; the launched jobs
         // above are children of this scope and are torn down with it.
+        var lastCacheWrite = 0L
         dirty.consumeAsFlow().collect {
             val snapshot = lock.withLock { store.snapshot() }
             send(snapshot)
+            // Persist the snapshot to the on-disk cache, throttled so a fast token stream
+            // doesn't hammer the disk — the cache only needs to be "recent enough" for an
+            // instant/offline first paint; the network corrects it on the next open.
+            if (messageCache != null && snapshot.isNotEmpty()) {
+                val now = System.currentTimeMillis()
+                if (now - lastCacheWrite >= NetworkConfig.messageCacheWriteThrottleMs) {
+                    lastCacheWrite = now
+                    launch { messageCache.save(sessionId, snapshot) }
+                }
+            }
         }
         // Run the whole reducer pipeline — event reduction, list rebuilds, and the O(N)
         // snapshot copy — on Dispatchers.Default rather than the collector's context. The

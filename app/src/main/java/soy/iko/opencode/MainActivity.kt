@@ -90,6 +90,20 @@ class MainActivity : FragmentActivity() {
         handleIntent(intent)
     }
 
+    // Track real foreground state so background notifications (permission requests,
+    // completions, errors) still fire for a session the user "has open" but has walked
+    // away from — the chat screen isn't disposed when the phone is locked, so
+    // container.currentSession stays set and can't be used as a foreground signal.
+    override fun onStart() {
+        super.onStart()
+        (application as OpencodeApp).container.setForeground(true)
+    }
+
+    override fun onStop() {
+        super.onStop()
+        (application as OpencodeApp).container.setForeground(false)
+    }
+
     /** Capture text shared from another app so it can be prefilled into a session draft,
      *  and session ids from notification taps / deep links so we can open them. */
     private fun handleIntent(intent: Intent?) {

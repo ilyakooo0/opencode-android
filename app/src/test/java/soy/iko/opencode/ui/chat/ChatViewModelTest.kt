@@ -546,4 +546,53 @@ class ChatViewModelTest {
         testScope.testScheduler.advanceUntilIdle()
         assertNull(vm.sessionTitle.value)
     }
+
+    // --- editMessage ---
+
+    @Test
+    fun editMessage_prefillsDraftWithText() = testScope.runTest {
+        val container = makeContainer()
+        val vm = makeVm(container)
+        vm.editMessage("m1", "the original prompt")
+        testScheduler.advanceUntilIdle()
+        assertEquals("the original prompt", vm.draft.value)
+    }
+
+    // --- attachment persistence ---
+
+    private fun makeAttachment(id: String) = PendingAttachment(
+        id = id,
+        name = "$id.txt",
+        mime = "text/plain",
+        previewModel = null,
+        part = soy.iko.opencode.data.model.FilePromptPart(
+            mime = "text/plain",
+            url = "data:text/plain;base64,QUJD",
+            filename = "$id.txt",
+        ),
+    )
+
+    @Test
+    fun addAttachment_persistsToStore() = testScope.runTest {
+        val container = makeContainer()
+        val vm = makeVm(container)
+        vm.addAttachment(makeAttachment("a1"))
+        testScheduler.advanceUntilIdle()
+        assertEquals(1, container.fakeAttachmentDraftStore.load("session1").size)
+    }
+
+    @Test
+    fun attachments_restoredFromStoreOnInit() = testScope.runTest {
+        val container = makeContainer()
+        // Pre-populate the store as if a prior compose was interrupted by process death.
+        val att = makeAttachment("a1")
+        container.fakeAttachmentDraftStore.save(
+            "session1",
+            listOf(soy.iko.opencode.data.repo.PersistedAttachment(att.id, att.name, att.mime, att.part.url, att.part.filename)),
+        )
+        val vm = makeVm(container)
+        testScheduler.advanceUntilIdle()
+        assertEquals(1, vm.attachments.value.size)
+        assertEquals("a1", vm.attachments.value[0].id)
+    }
 }

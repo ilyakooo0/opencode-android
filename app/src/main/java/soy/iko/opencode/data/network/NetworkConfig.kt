@@ -62,6 +62,26 @@ object NetworkConfig {
      *  triggers a full list filter + sort + recomposition, causing scroll jank. */
     const val sessionUpdateDebounceMs = 300L
 
+    // --- Global search (GlobalSearchViewModel) ---
+
+    /** Max sessions whose message history is scanned in one global-search pass. Global
+     *  search downloads each session's messages, so this bounds the work; if there are more
+     *  sessions, the result set notes that the search was truncated. */
+    const val maxSearchSessions = 50
+    /** Debounce before a global search fires, so typing doesn't launch a fetch per keystroke. */
+    const val searchDebounceMs = 350L
+    /** Minimum query length before a global search runs (shorter queries match too much). */
+    const val minSearchQueryLength = 2
+    /** Characters of context to show around a global-search match. */
+    const val searchSnippetLength = 160
+
+    // --- Message cache (MessageCacheStore) ---
+
+    /** Minimum interval between on-disk writes of a session's message snapshot, so a fast
+     *  token stream doesn't hammer the disk. The cache only needs to be recent enough for an
+     *  instant/offline first paint; the network corrects it on the next open. */
+    const val messageCacheWriteThrottleMs = 2_000L
+
     /** Grace period before a deferred session delete actually fires, during which an
      *  Undo snackbar lets the user cancel it. */
     const val undoDeleteDelayMs = 5_000L

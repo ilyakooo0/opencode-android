@@ -9,8 +9,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -26,9 +24,6 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -39,7 +34,6 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Edit
@@ -110,7 +104,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import coil.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -801,6 +794,10 @@ fun ChatScreen(
                     modifier = Modifier.fillMaxSize(),
                 ) {
                 val lastMessageId = messages.lastOrNull()?.info?.id
+                // Text-to-speech for reading assistant replies aloud; shuts down when the
+                // message list leaves composition.
+                val tts = rememberTtsController()
+                val speakingMessageId by tts.speakingId
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize(),
@@ -830,6 +827,9 @@ fun ChatScreen(
                                     modelLabel = modelLabel,
                                     onOpenFile = onOpenFile,
                                     onRevert = { vm.revertTo(message.info.id) },
+                                    onEdit = { text -> vm.editMessage(message.info.id, text) },
+                                    onSpeak = { text -> tts.toggle(message.info.id, text) },
+                                    isSpeaking = message.info.id == speakingMessageId,
                                 )
                             }
                         }
@@ -1048,19 +1048,7 @@ private fun ChatInputBar(
                 }
             }
             // Staged attachments: horizontally-scrollable thumbnails/chips, each removable.
-            if (attachments.isNotEmpty()) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState())
-                        .padding(start = 8.dp, end = 8.dp, top = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    attachments.forEach { att ->
-                        AttachmentChip(att, onRemove = { onRemoveAttachment(att.id) })
-                    }
-                }
-            }
+            AttachmentStrip(attachments, onRemove = onRemoveAttachment)
             Row(
                 modifier = Modifier.fillMaxWidth().padding(8.dp),
                 verticalAlignment = Alignment.Bottom,
@@ -1269,49 +1257,6 @@ private fun EmptyConversation(
                 androidx.compose.material3.AssistChip(
                     onClick = { onSuggestion(text) },
                     label = { Text(text, style = MaterialTheme.typography.bodyMedium) },
-                )
-            }
-        }
-    }
-}
-
-/** A staged attachment: an image thumbnail (or a generic file icon) with its name and a
- *  remove button, shown in the composer above the input field. */
-@Composable
-private fun AttachmentChip(attachment: PendingAttachment, onRemove: () -> Unit) {
-    Surface(
-        shape = MaterialTheme.shapes.small,
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        tonalElevation = 1.dp,
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 6.dp)) {
-            if (attachment.previewModel != null) {
-                AsyncImage(
-                    model = attachment.previewModel,
-                    contentDescription = attachment.name,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.size(36.dp).clip(MaterialTheme.shapes.extraSmall),
-                )
-            } else {
-                Icon(
-                    Icons.Filled.Description,
-                    contentDescription = null,
-                    modifier = Modifier.size(24.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Text(
-                attachment.name,
-                style = MaterialTheme.typography.labelMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.widthIn(max = 120.dp).padding(horizontal = 6.dp),
-            )
-            IconButton(onClick = onRemove, modifier = Modifier.size(28.dp)) {
-                Icon(
-                    Icons.Filled.Close,
-                    contentDescription = stringResource(R.string.remove),
-                    modifier = Modifier.size(16.dp),
                 )
             }
         }

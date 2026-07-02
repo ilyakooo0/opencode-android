@@ -569,4 +569,66 @@ class SessionListViewModelTest {
         // is non-empty (the tool fallback fired) rather than asserting the emoji/name.
         assertTrue("preview should be non-empty: $preview", preview!!.isNotEmpty())
     }
+
+    // --- pin / archive / show-archived ---
+
+    @Test
+    fun togglePin_floatsSessionToTopOfFiltered() = testScope.runTest {
+        val repo = FakeSessionRepository(FakeOpencodeApiClient(), FakeEventStreamClient())
+        repo.sessions = listOf(
+            Session(id = "s1", title = "A", time = soy.iko.opencode.data.model.TimeInfo(created = 2L, updated = 2L)),
+            Session(id = "s2", title = "B", time = soy.iko.opencode.data.model.TimeInfo(created = 1L, updated = 1L)),
+        )
+        val container = makeContainer(repo = repo)
+        val vm = makeVm(container)
+        // s1 is newest so it's first by default.
+        assertEquals("s1", vm.state.value.filtered[0].id)
+
+        vm.togglePin(Session(id = "s2", title = "B"))
+        testScheduler.advanceUntilIdle()
+
+        assertTrue("s2 should be pinned", "s2" in vm.state.value.pinnedIds)
+        // Pinned s2 floats to the top even though it's older.
+        assertEquals("s2", vm.state.value.filtered[0].id)
+    }
+
+    @Test
+    fun toggleArchive_hidesSessionUntilShowArchived() = testScope.runTest {
+        val repo = FakeSessionRepository(FakeOpencodeApiClient(), FakeEventStreamClient())
+        repo.sessions = listOf(
+            Session(id = "s1", title = "A"),
+            Session(id = "s2", title = "B"),
+        )
+        val container = makeContainer(repo = repo)
+        val vm = makeVm(container)
+
+        vm.toggleArchive(Session(id = "s2", title = "B"))
+        testScheduler.advanceUntilIdle()
+
+        assertTrue("s2 should be archived", "s2" in vm.state.value.archivedIds)
+        // Archived session is hidden from the filtered list...
+        assertFalse("archived s2 should be hidden", vm.state.value.filtered.any { it.id == "s2" })
+        assertEquals(1, vm.state.value.hiddenArchivedCount)
+
+        // ...until the user opts to show archived.
+        vm.setShowArchived(true)
+        assertTrue("s2 should now be visible", vm.state.value.filtered.any { it.id == "s2" })
+        assertEquals(0, vm.state.value.hiddenArchivedCount)
+    }
+
+    @Test
+    fun togglePin_twiceUnpins() = testScope.runTest {
+        val repo = FakeSessionRepository(FakeOpencodeApiClient(), FakeEventStreamClient())
+        repo.sessions = listOf(Session(id = "s1", title = "A"))
+        val container = makeContainer(repo = repo)
+        val vm = makeVm(container)
+
+        vm.togglePin(Session(id = "s1", title = "A"))
+        testScheduler.advanceUntilIdle()
+        assertTrue("s1" in vm.state.value.pinnedIds)
+
+        vm.togglePin(Session(id = "s1", title = "A"))
+        testScheduler.advanceUntilIdle()
+        assertFalse("s1" in vm.state.value.pinnedIds)
+    }
 }

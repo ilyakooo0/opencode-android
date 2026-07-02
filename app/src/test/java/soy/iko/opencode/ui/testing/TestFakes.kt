@@ -26,8 +26,12 @@ import soy.iko.opencode.data.model.Session
 import soy.iko.opencode.data.network.EventStreamClient
 import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.data.network.OpencodeApiClient
+import soy.iko.opencode.data.repo.AttachmentDraftStore
 import soy.iko.opencode.data.repo.DraftStore
+import soy.iko.opencode.data.repo.MessageCacheStore
+import soy.iko.opencode.data.repo.PersistedAttachment
 import soy.iko.opencode.data.repo.ProfileStore
+import soy.iko.opencode.data.repo.SessionPrefsStore
 import soy.iko.opencode.data.repo.SessionRepository
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.di.OpencodeConnection
@@ -316,17 +320,76 @@ class FakeOpencodeConnection(
 }
 
 // ---------------------------------------------------------------------------
+// FakeSessionPrefsStore
+// ---------------------------------------------------------------------------
+
+class FakeSessionPrefsStore : SessionPrefsStore() {
+    private val _pinned = MutableStateFlow<Set<String>>(emptySet())
+    private val _archived = MutableStateFlow<Set<String>>(emptySet())
+
+    override val pinned: Flow<Set<String>> = _pinned.asStateFlow()
+    override val archived: Flow<Set<String>> = _archived.asStateFlow()
+
+    override suspend fun setPinned(sessionId: String, pinned: Boolean) {
+        _pinned.value = if (pinned) _pinned.value + sessionId else _pinned.value - sessionId
+    }
+
+    override suspend fun setArchived(sessionId: String, archived: Boolean) {
+        _archived.value = if (archived) _archived.value + sessionId else _archived.value - sessionId
+    }
+
+    override suspend fun forget(sessionId: String) {
+        _pinned.value = _pinned.value - sessionId
+        _archived.value = _archived.value - sessionId
+    }
+}
+
+// ---------------------------------------------------------------------------
+// FakeAttachmentDraftStore / FakeMessageCacheStore
+// ---------------------------------------------------------------------------
+
+class FakeAttachmentDraftStore : AttachmentDraftStore() {
+    private val store = mutableMapOf<String, List<PersistedAttachment>>()
+
+    override suspend fun load(sessionId: String): List<PersistedAttachment> = store[sessionId].orEmpty()
+
+    override suspend fun save(sessionId: String, attachments: List<PersistedAttachment>) {
+        if (attachments.isEmpty()) store.remove(sessionId) else store[sessionId] = attachments
+    }
+
+    override suspend fun remove(sessionId: String) { store.remove(sessionId) }
+}
+
+class FakeMessageCacheStore : MessageCacheStore() {
+    private val store = mutableMapOf<String, List<MessageWithParts>>()
+
+    override suspend fun load(sessionId: String): List<MessageWithParts> = store[sessionId].orEmpty()
+
+    override suspend fun save(sessionId: String, messages: List<MessageWithParts>) {
+        if (messages.isEmpty()) store.remove(sessionId) else store[sessionId] = messages
+    }
+
+    override suspend fun remove(sessionId: String) { store.remove(sessionId) }
+}
+
+// ---------------------------------------------------------------------------
 // FakeAppContainer
 // ---------------------------------------------------------------------------
 
 class FakeAppContainer : AppContainer() {
     val fakeDraftStore = FakeDraftStore()
     val fakeProfileStore = FakeProfileStore()
+    val fakeSessionPrefsStore = FakeSessionPrefsStore()
+    val fakeAttachmentDraftStore = FakeAttachmentDraftStore()
+    val fakeMessageCacheStore = FakeMessageCacheStore()
     val fakeUnread = MutableStateFlow<Map<String, Int>>(emptyMap())
     private val fakeActiveConnection = MutableStateFlow<OpencodeConnection?>(null)
 
     override val draftStore: DraftStore = fakeDraftStore
     override val profileStore: ProfileStore = fakeProfileStore
+    override val sessionPrefsStore: SessionPrefsStore = fakeSessionPrefsStore
+    override val attachmentDraftStore: AttachmentDraftStore = fakeAttachmentDraftStore
+    override val messageCacheStore: MessageCacheStore = fakeMessageCacheStore
     override val activeConnection: StateFlow<OpencodeConnection?> = fakeActiveConnection.asStateFlow()
     override val unread: StateFlow<Map<String, Int>> = fakeUnread.asStateFlow()
 

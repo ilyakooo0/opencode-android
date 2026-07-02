@@ -239,6 +239,20 @@
     <string name="notif_running_text">Agent is working…</string>
     <string name="notif_completed_title">Session ready</string>
     <string name="notif_completed_text">opencode replied in “%1$s”.</string>
+    <string name="notif_channel_permission">Permission requests</string>
+    <string name="notif_channel_permission_desc">Shown when a running agent needs your approval to continue.</string>
+    <string name="notif_channel_error">Session errors</string>
+    <string name="notif_channel_error_desc">Shown when a background session run fails.</string>
+    <string name="notif_permission_title">Approval needed in “%1$s”</string>
+    <string name="notif_permission_fallback">A tool wants to run.</string>
+    <string name="notif_error_title">Run failed</string>
+    <string name="notif_error_text">opencode hit an error in “%1$s”.</string>
+    <string name="notif_action_allow_once">Allow once</string>
+    <string name="notif_action_always">Always</string>
+    <string name="notif_action_reject">Reject</string>
+    <string name="notif_action_reply">Reply</string>
+    <string name="notif_reply_hint">Send a follow-up…</string>
+    <string name="notif_reply_sent">Sent</string>
 
     <!-- UX additions -->
     <string name="tool_input">Input</string>
@@ -304,9 +318,28 @@
     <string name="voice_prompt">Speak your message</string>
     <string name="no_voice_app">Voice input isn\'t available on this device.</string>
 
+    <!-- Session organization -->
+    <string name="session_pin">Pin</string>
+    <string name="session_unpin">Unpin</string>
+    <string name="session_archive">Archive</string>
+    <string name="session_unarchive">Unarchive</string>
+    <string name="session_pinned">Pinned</string>
+    <string name="show_archived">Show archived</string>
+    <string name="hide_archived">Hide archived</string>
+
     <!-- Revert -->
     <string name="revert_to_here">Revert to here</string>
     <string name="reverted_banner">Reverted — later messages are hidden.</string>
+    <string name="edit_message">Edit</string>
+    <string name="read_aloud">Read aloud</string>
+    <string name="stop_reading">Stop reading</string>
+
+    <!-- Global search -->
+    <string name="search_all">Search all sessions</string>
+    <string name="search_all_title">Search sessions</string>
+    <string name="search_all_hint">Search across all conversations…</string>
+    <string name="search_no_matches">No matching messages</string>
+    <string name="search_truncated">Showing results from the most recent sessions only.</string>
 
     <!-- Sharing / summarize / init / shell -->
     <string name="create_share_link">Create share link</string>

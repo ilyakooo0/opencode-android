@@ -62,17 +62,34 @@ data class SessionListState(
     val loading: Boolean = true,
     val error: String? = null,
     val sortMode: SessionSortMode = SessionSortMode.RECENT,
+    val pinnedIds: Set<String> = emptySet(),
+    val archivedIds: Set<String> = emptySet(),
+    val showArchived: Boolean = false,
 ) {
-    /** Sessions filtered by the current search query (title or preview text). */
+    /** Sessions to display: archived ones hidden (unless [showArchived]), filtered by the
+     *  search query (title or preview text), with pinned sessions floated to the top. */
     val filtered: List<Session>
         get() {
             val q = query.trim()
-            if (q.isEmpty()) return sessions
-            return sessions.filter { session ->
-                session.displayTitle.contains(q, ignoreCase = true) ||
+            // Fast path: nothing to filter or reorder — return the same instance so
+            // downstream can skip a recomposition.
+            val noArchivedHidden = showArchived || archivedIds.isEmpty()
+            if (q.isEmpty() && pinnedIds.isEmpty() && noArchivedHidden) return sessions
+            fun visible(session: Session): Boolean {
+                if (!showArchived && session.id in archivedIds) return false
+                if (q.isEmpty()) return true
+                return session.displayTitle.contains(q, ignoreCase = true) ||
                     (previews[session.id]?.contains(q, ignoreCase = true) == true)
             }
+            val base = sessions.filter(::visible)
+            // Float pinned to the top. sortedByDescending is stable, so the sort-mode order
+            // already applied to `sessions` is preserved within the pinned/unpinned groups.
+            return if (pinnedIds.isEmpty()) base else base.sortedByDescending { it.id in pinnedIds }
         }
+
+    /** Archived sessions currently hidden — drives the "show archived" toggle's visibility. */
+    val hiddenArchivedCount: Int
+        get() = if (showArchived) 0 else sessions.count { it.id in archivedIds }
 }
 
 /** Sort sessions by the given mode. RECENT sorts by last activity time desc; TITLE by
@@ -89,6 +106,11 @@ private fun Iterable<Session>.sortedByMode(mode: SessionSortMode): List<Session>
         )
 }
 
+// Feature-rich session-list VM: many small, cohesive actions (create/delete/undo/rename/
+// pin/archive/sort/search/switch-server). Splitting them apart would scatter tightly-related
+// state, so the function-count rule is suppressed here (peers like ChatViewModel/AppContainer
+// are grandfathered in the detekt baseline for the same reason).
+@Suppress("TooManyFunctions")
 class SessionListViewModel(private val container: AppContainer) : ViewModel() {
 
     /** Live SSE connection state, surfaced so the list can show a reconnect banner. */
@@ -179,7 +201,40 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
     private val activeProfileId: String?
         get() = container.activeConnection.value?.profile?.id
 
-    init { refresh(); observeSessionEvents() }
+    init { refresh(); observeSessionEvents(); observeSessionPrefs() }
+
+    /** Keep the pinned/archived id sets in sync with their persisted store. */
+    private fun observeSessionPrefs() {
+        viewModelScope.launch {
+            container.sessionPrefsStore.pinned.collect { ids -> _state.update { it.copy(pinnedIds = ids) } }
+        }
+        viewModelScope.launch {
+            container.sessionPrefsStore.archived.collect { ids -> _state.update { it.copy(archivedIds = ids) } }
+        }
+    }
+
+    /** Pin or unpin [session] (pinned sessions sort to the top of the list). */
+    fun togglePin(session: Session) {
+        val pin = session.id !in _state.value.pinnedIds
+        viewModelScope.launch {
+            runCatchingCancellable { container.sessionPrefsStore.setPinned(session.id, pin) }
+                .onFailure { _transientErrors.tryEmit(container.friendlyError(it)) }
+        }
+    }
+
+    /** Archive or unarchive [session] (archived sessions are hidden unless "show archived"). */
+    fun toggleArchive(session: Session) {
+        val archive = session.id !in _state.value.archivedIds
+        viewModelScope.launch {
+            runCatchingCancellable { container.sessionPrefsStore.setArchived(session.id, archive) }
+                .onFailure { _transientErrors.tryEmit(container.friendlyError(it)) }
+        }
+    }
+
+    /** Toggle whether archived sessions are shown in the list. */
+    fun setShowArchived(show: Boolean) {
+        _state.update { it.copy(showArchived = show) }
+    }
 
     /**
      * Keep the session list live by reacting to SSE session events. New/renamed
@@ -244,6 +299,11 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
                                     // trigger the failure-restore path that resurrects the row.
                                     pendingDeletes.remove(id)
                                     container.draftStore.remove(id)
+                                    // Also drop this session's other local artifacts so an
+                                    // externally-deleted session leaves nothing orphaned.
+                                    container.attachmentDraftStore.remove(id)
+                                    container.messageCacheStore.remove(id)
+                                    container.sessionPrefsStore.forget(id)
                                     _state.update { s ->
                                         s.copy(
                                             sessions = s.sessions.filterNot { it.id == id },

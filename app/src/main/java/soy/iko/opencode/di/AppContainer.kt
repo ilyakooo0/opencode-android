@@ -10,11 +10,19 @@ import soy.iko.opencode.data.model.AssistantMessage
 import soy.iko.opencode.data.model.BusEvent
 import soy.iko.opencode.data.model.MessagePartUpdated
 import soy.iko.opencode.data.model.MessageUpdated
+import soy.iko.opencode.data.model.Permission
+import soy.iko.opencode.data.model.PermissionReplied
+import soy.iko.opencode.data.model.PermissionResponse
+import soy.iko.opencode.data.model.PermissionUpdated
 import soy.iko.opencode.data.model.StepFinishPart
 import soy.iko.opencode.data.model.ServerProfile
+import soy.iko.opencode.data.model.SessionError
 import soy.iko.opencode.data.model.SessionIdle
+import soy.iko.opencode.data.repo.AttachmentDraftStore
 import soy.iko.opencode.data.repo.DraftStore
 import soy.iko.opencode.data.repo.ErrorKind
+import soy.iko.opencode.data.repo.MessageCacheStore
+import soy.iko.opencode.data.repo.SessionPrefsStore
 import soy.iko.opencode.data.repo.ProfileStore
 import soy.iko.opencode.data.repo.SettingsStore
 import soy.iko.opencode.data.repo.classifyError
@@ -79,6 +87,9 @@ open class AppContainer private constructor(
     open val profileStore: ProfileStore by lazy { ProfileStore(appContext!!) }
     open val settingsStore: SettingsStore by lazy { SettingsStore(appContext!!) }
     open val draftStore: DraftStore by lazy { DraftStore(appContext!!, appScope) }
+    open val attachmentDraftStore: AttachmentDraftStore by lazy { AttachmentDraftStore(appContext!!) }
+    open val sessionPrefsStore: SessionPrefsStore by lazy { SessionPrefsStore(appContext!!) }
+    open val messageCacheStore: MessageCacheStore by lazy { MessageCacheStore(appContext!!) }
 
     private val _activeConnection = MutableStateFlow<OpencodeConnection?>(null)
     open val activeConnection: StateFlow<OpencodeConnection?> = _activeConnection.asStateFlow()
@@ -155,12 +166,31 @@ open class AppContainer private constructor(
     private val _isOnline = MutableStateFlow(true)
     open val isOnline: StateFlow<Boolean> = _isOnline.asStateFlow()
 
+    /** Whether a foreground Activity is currently showing. Distinct from [currentSession],
+     *  which stays set while the app is merely backgrounded (the chat screen isn't disposed
+     *  when the user locks their phone). Permission/completion notifications need the real
+     *  foreground signal so they still fire for a session the user "has open" but has walked
+     *  away from — the core of the run-in-the-background use case. Set from MainActivity's
+     *  onStart/onStop. */
+    private val _isForeground = MutableStateFlow(false)
+    open val isForeground: StateFlow<Boolean> = _isForeground.asStateFlow()
+    open fun setForeground(foreground: Boolean) { _isForeground.value = foreground }
+
+    /** True when the user is actively looking at [sessionId] (app foregrounded AND that
+     *  session is the one on screen), so an in-app affordance (the permission dialog) is
+     *  handling it and a notification would be redundant. */
+    private fun isActivelyViewing(sessionId: String): Boolean =
+        _isForeground.value && sessionId == _currentSession.value
+
     open fun setCurrentSession(id: String?) {
         _currentSession.value = id
         if (id != null) {
             _unread.update { it - id }
             unreadMessageIds.remove(id)
-            appContext?.let { SessionNotifications.cancel(it, id) }
+            appContext?.let {
+                SessionNotifications.cancel(it, id)
+                SessionNotifications.cancelPermission(it, id)
+            }
         }
     }
 
@@ -260,6 +290,35 @@ open class AppContainer private constructor(
                     activeConnection
                         .flatMapLatest { conn -> conn?.events?.events ?: emptyFlow() }
                         .collect { event ->
+                    // A permission request needs the user's approval. Post a heads-up
+                    // notification (with Allow/Reject actions) unless the user is actively
+                    // viewing this session, where the in-app permission dialog handles it.
+                    if (event is PermissionUpdated) {
+                        val psid = event.properties.sessionID.takeIf { it.isNotBlank() } ?: return@collect
+                        if (!isActivelyViewing(psid)) appScope.launch { notifyPermission(event.properties) }
+                        return@collect
+                    }
+                    // The permission was answered (in-app, from the notification, or
+                    // auto-resolved): clear its heads-up notification.
+                    if (event is PermissionReplied) {
+                        val psid = event.properties.sessionID?.takeIf { it.isNotBlank() } ?: return@collect
+                        appContext?.let { SessionNotifications.cancelPermission(it, psid) }
+                        return@collect
+                    }
+                    // A run failed. Clear its active-run tracking (an error isn't always
+                    // followed by a SessionIdle) and notify unless it's being viewed.
+                    if (event is SessionError) {
+                        val esid = event.properties.sessionID ?: return@collect
+                        val wasRunning = synchronized(activeRuns) {
+                            activeRuns.remove(esid).also { removed ->
+                                if (removed) _anyRunActive.value = activeRuns.isNotEmpty()
+                            }
+                        }
+                        if (wasRunning && !isActivelyViewing(esid)) {
+                            appScope.launch { notifySessionError(esid) }
+                        }
+                        return@collect
+                    }
                     // SessionIdle is not "message activity" (don't badge as unread)
                     // but signals a run finished — fire a completion notification if the
                     // session isn't currently being viewed and was actively streaming.
@@ -275,7 +334,7 @@ open class AppContainer private constructor(
                                 if (removed) _anyRunActive.value = activeRuns.isNotEmpty()
                             }
                         }
-                        if (wasRunning && idleSid != _currentSession.value) {
+                        if (wasRunning && !isActivelyViewing(idleSid)) {
                             // Fire this off the collector's coroutine: notifySessionCompleted
                             // does a network listSessions() to resolve the title, and blocking
                             // the shared-event collector here would stall the SharedFlow,
@@ -370,13 +429,57 @@ open class AppContainer private constructor(
         const val LAST_USED_SAVE_THRESHOLD_MS = 60_000L
     }
 
+    /** Resolve the human-readable title for [sessionId] (best-effort), falling back to the id. */
+    private suspend fun resolveSessionTitle(sessionId: String): String =
+        runCatchingCancellable {
+            activeConnection.value?.repository?.listSessions()?.firstOrNull { it.id == sessionId }?.displayTitle
+        }.getOrNull() ?: sessionId
+
     /** Resolve the title for [sessionId] (best-effort) and post a completion notification. */
     private suspend fun notifySessionCompleted(sessionId: String) {
-        val conn = activeConnection.value ?: return
-        val title = runCatchingCancellable {
-            conn.repository.listSessions().firstOrNull { it.id == sessionId }?.displayTitle
-        }.getOrNull() ?: sessionId
+        val title = resolveSessionTitle(sessionId)
         appContext?.let { SessionNotifications.postCompleted(it, sessionId, title) }
+    }
+
+    /** Post a heads-up permission notification for [permission], resolving its session title. */
+    private suspend fun notifyPermission(permission: Permission) {
+        val sessionId = permission.sessionID.takeIf { it.isNotBlank() } ?: return
+        val title = resolveSessionTitle(sessionId)
+        appContext?.let { SessionNotifications.postPermission(it, permission, title) }
+    }
+
+    /** Post an error notification for a failed background run. */
+    private suspend fun notifySessionError(sessionId: String) {
+        val title = resolveSessionTitle(sessionId)
+        appContext?.let { SessionNotifications.postError(it, sessionId, title) }
+    }
+
+    /** Respond to a permission from a notification action (Allow once / Always / Reject),
+     *  off any UI. Runs on the process-lived app scope; [onDone] fires when the call resolves
+     *  so the receiver's goAsync() result can finish. No-ops if the connection is gone. */
+    open fun respondToPermissionFromNotification(
+        sessionId: String,
+        permissionId: String,
+        response: PermissionResponse,
+        onDone: () -> Unit,
+    ) {
+        appScope.launch {
+            runCatchingCancellable {
+                activeConnection.value?.api?.respondPermission(sessionId, permissionId, response)
+            }.onFailure { Log.w("AppContainer", "notif permission respond failed: ${safeExceptionSummary(it)}") }
+            onDone()
+        }
+    }
+
+    /** Send a follow-up prompt from a notification's inline reply, off any UI. Uses the
+     *  server's default model/agent. [onDone] fires when the send resolves. */
+    open fun sendPromptFromNotification(sessionId: String, text: String, onDone: () -> Unit) {
+        appScope.launch {
+            runCatchingCancellable {
+                activeConnection.value?.repository?.sendPrompt(sessionId, text, model = null)
+            }.onFailure { Log.w("AppContainer", "notif reply send failed: ${safeExceptionSummary(it)}") }
+            onDone()
+        }
     }
 
     /** Extract the session id an event pertains to, for message-activity events. */
@@ -443,7 +546,7 @@ open class AppContainer private constructor(
             val needsSave = (now - resolved.lastUsed) > LAST_USED_SAVE_THRESHOLD_MS
             val finalProfile = if (needsSave) resolved.copy(lastUsed = now) else resolved
             if (needsSave) profileStore.save(finalProfile)
-            OpencodeConnection(finalProfile).also { _activeConnection.value = it }
+            OpencodeConnection(finalProfile, messageCacheStore).also { _activeConnection.value = it }
         }
 
     open suspend fun disconnect() {
@@ -548,6 +651,9 @@ open class AppContainer private constructor(
                 runCatchingCancellable { conn.repository.deleteSession(id) }
                     .onSuccess {
                         draftStore.remove(id)
+                        attachmentDraftStore.remove(id)
+                        sessionPrefsStore.forget(id)
+                        messageCacheStore.remove(id)
                         onDeleted()
                     }
                     .onFailure { onError(it) }

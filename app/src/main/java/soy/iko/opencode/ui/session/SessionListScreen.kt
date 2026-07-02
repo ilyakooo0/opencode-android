@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -100,6 +101,7 @@ fun SessionListScreen(
     onOpenFiles: () -> Unit,
     onOpenSettings: () -> Unit,
     onAddServer: () -> Unit,
+    onOpenSearch: () -> Unit = {},
     selectedSessionId: String? = null,
 ) {
     val vm: SessionListViewModel = viewModel(factory = vmFactory { SessionListViewModel(container) })
@@ -201,6 +203,9 @@ fun SessionListScreen(
                     )
                 },
                 actions = {
+                    IconButton(onClick = onOpenSearch) {
+                        Icon(Icons.Filled.Search, contentDescription = stringResource(R.string.search_all))
+                    }
                     Box {
                         IconButton(onClick = { showSortMenu = true }) {
                             Icon(Icons.AutoMirrored.Filled.Sort, contentDescription = stringResource(R.string.sort))
@@ -214,6 +219,21 @@ fun SessionListScreen(
                                 text = { Text(stringResource(R.string.sort_title)) },
                                 onClick = { vm.setSortMode(SessionSortMode.TITLE); showSortMenu = false },
                             )
+                            // Toggle archived visibility. Only offered once at least one
+                            // session is archived, so the menu stays uncluttered otherwise.
+                            if (state.showArchived || state.hiddenArchivedCount > 0) {
+                                androidx.compose.material3.HorizontalDivider()
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            stringResource(
+                                                if (state.showArchived) R.string.hide_archived else R.string.show_archived,
+                                            ),
+                                        )
+                                    },
+                                    onClick = { vm.setShowArchived(!state.showArchived); showSortMenu = false },
+                                )
+                            }
                         }
                     }
                     IconButton(onClick = { vm.refresh() }) {
@@ -278,6 +298,8 @@ fun SessionListScreen(
                 onCreateSession = openNewSession,
                 onRename = { pendingRenameId = it },
                 onDelete = { pendingDeleteId = it },
+                onPin = { vm.togglePin(it) },
+                onArchive = { vm.toggleArchive(it) },
             )
         }
         }
@@ -369,6 +391,8 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
     onCreateSession: () -> Unit,
     onRename: (String) -> Unit,
     onDelete: (String) -> Unit,
+    onPin: (Session) -> Unit,
+    onArchive: (Session) -> Unit,
 ) {
     when {
         state.loading -> {
@@ -483,6 +507,10 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
                             val onCardClick = remember(session.id) { { onOpenSession(session.id) } }
                             val onCardRename = remember(session.id) { { onRename(session.id) } }
                             val onCardDelete = remember(session.id) { { onDelete(session.id) } }
+                            val onCardPin = remember(session.id) { { onPin(session) } }
+                            val onCardArchive = remember(session.id) { { onArchive(session) } }
+                            val isPinned = session.id in state.pinnedIds
+                            val isArchived = session.id in state.archivedIds
                             SwipeToDismissBox(
                                 state = swipeState,
                                 enableDismissFromStartToEnd = false,
@@ -513,9 +541,13 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
                                     preview = state.previews[session.id],
                                     unreadCount = unread[session.id] ?: 0,
                                     isSelected = session.id == selectedSessionId,
+                                    isPinned = isPinned,
+                                    isArchived = isArchived,
                                     onClick = onCardClick,
                                     onRename = onCardRename,
                                     onDelete = onCardDelete,
+                                    onPin = onCardPin,
+                                    onArchive = onCardArchive,
                                     modifier = Modifier.testTag("session_card"),
                                 )
                             }
@@ -601,8 +633,12 @@ private fun SessionCard(
     onClick: () -> Unit,
     onRename: () -> Unit,
     onDelete: () -> Unit,
+    onPin: () -> Unit,
+    onArchive: () -> Unit,
     modifier: Modifier = Modifier,
     isSelected: Boolean = false,
+    isPinned: Boolean = false,
+    isArchived: Boolean = false,
 ) {
     // In two-pane mode the selected row is highlighted (border + container tint) so
     // the user can tell which conversation is open in the detail pane at a glance —
@@ -657,6 +693,14 @@ private fun SessionCard(
                                 }
                             }
                         }
+                        if (isPinned) {
+                            Icon(
+                                Icons.Filled.PushPin,
+                                contentDescription = stringResource(R.string.session_pinned),
+                                modifier = Modifier.padding(end = 4.dp).size(14.dp),
+                                tint = MaterialTheme.colorScheme.primary,
+                            )
+                        }
                         Text(
                             session.displayTitle,
                             style = MaterialTheme.typography.titleMedium,
@@ -706,6 +750,8 @@ private fun SessionCard(
                 val renameLabel = stringResource(R.string.rename)
                 val deleteLabel = stringResource(R.string.delete)
                 val moreLabel = stringResource(R.string.more)
+                val pinLabel = stringResource(if (isPinned) R.string.session_unpin else R.string.session_pin)
+                val archiveLabel = stringResource(if (isArchived) R.string.session_unarchive else R.string.session_archive)
                 Box {
                     IconButton(onClick = { showRowMenu = true }) {
                         Icon(Icons.Filled.MoreVert, contentDescription = moreLabel)
@@ -714,6 +760,14 @@ private fun SessionCard(
                         expanded = showRowMenu,
                         onDismissRequest = { showRowMenu = false },
                     ) {
+                        DropdownMenuItem(
+                            text = { Text(pinLabel) },
+                            onClick = { showRowMenu = false; onPin() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text(archiveLabel) },
+                            onClick = { showRowMenu = false; onArchive() },
+                        )
                         DropdownMenuItem(
                             text = { Text(renameLabel) },
                             onClick = { showRowMenu = false; onRename() },
