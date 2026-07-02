@@ -748,8 +748,14 @@ open class AppContainer private constructor(
         connectionMutex.withLock {
             _activeConnection.value?.close()
             _activeConnection.value = null
-            activeRuns.clear()
-            _anyRunActive.value = false
+            // Mutate the run set and its derived flag together under activeRuns' monitor: the SSE
+            // event handler adds ids under the same lock, so an unlocked clear() here could
+            // interleave with an add()+flag=true and leave _anyRunActive pinned true with a torn-
+            // down connection and no SessionIdle to clear it — a stuck foreground service.
+            synchronized(activeRuns) {
+                activeRuns.clear()
+                _anyRunActive.value = false
+            }
             _unread.value = emptyMap()
             unreadMessageIds.clear()
             val now = System.currentTimeMillis()
@@ -786,8 +792,12 @@ open class AppContainer private constructor(
         // Reset run/unread state on disconnect too. With no SSE stream there's no
         // SessionIdle to drain activeRuns, so without this the working indicator
         // (anyRunActive) and unread badges would stay pinned until the next connect().
-        activeRuns.clear()
-        _anyRunActive.value = false
+        // Mutate under activeRuns' monitor (see connect()) so a concurrent SSE add() can't
+        // re-pin _anyRunActive after the clear.
+        synchronized(activeRuns) {
+            activeRuns.clear()
+            _anyRunActive.value = false
+        }
         _unread.value = emptyMap()
         unreadMessageIds.clear()
     }
@@ -974,7 +984,15 @@ open class AppContainer private constructor(
             observeMessageActivity()
             observeRunReconcileOnReconnect()
             observeRunForegroundService()
-            appScope.launch { runCatchingCancellable { outboxStore.load() } }
+            // Flush right after load() populates the queue. observeOutbox()'s combine is keyed
+            // on activeConnection/isOnline/_outboxFlushTrigger — NOT on outboxStore.messages — so
+            // if connect() sets activeConnection before load() finishes reading a (possibly
+            // multi-MB) outbox.json, the connect-triggered flush sees an empty queue and nothing
+            // re-triggers it. Nudging the flush here guarantees a loaded queue is sent.
+            appScope.launch {
+                runCatchingCancellable { outboxStore.load() }
+                flushOutbox()
+            }
             observeOutbox()
             appScope.launch { autoConnect() }
         }

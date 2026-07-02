@@ -3,6 +3,9 @@ package soy.iko.opencode.data.model
 import androidx.compose.runtime.Immutable
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 
 /**
  * A message part — a discriminated union on `type` (the global class discriminator).
@@ -65,8 +68,23 @@ data class FilePart(
     val mime: String? = null,
     val filename: String? = null,
     val url: String? = null,
-    val source: String? = null,
+    // opencode's message-v2 schema sends `source` as a structured FilePartSource OBJECT
+    // ({ type, path, text, ... }), not a string, for @-file mentions. Typing it as String
+    // threw a SerializationException on decode — which the SSE path silently swallows, so the
+    // whole part vanished. Keep it as a tolerant JsonElement (mirroring Permission.pattern) and
+    // read the path via [sourcePath]; a bare-string source is still tolerated.
+    val source: JsonElement? = null,
 ) : Part
+
+/** The file path referenced by a [FilePart.source]. opencode sends `source` as a FilePartSource
+ *  object whose `path` field holds the file path; older/other shapes may send a bare string.
+ *  Returns null when there's no usable path. */
+val FilePart.sourcePath: String?
+    get() = when (val s = source) {
+        is JsonPrimitive -> if (s.isString) s.content else null
+        is JsonObject -> (s["path"] as? JsonPrimitive)?.let { if (it.isString) it.content else null }
+        else -> null
+    }
 
 @Immutable
 @Serializable

@@ -2,6 +2,7 @@ package soy.iko.opencode
 
 import soy.iko.opencode.data.model.AssistantMessage
 import soy.iko.opencode.data.model.BusEvent
+import soy.iko.opencode.data.model.FilePart
 import soy.iko.opencode.data.model.MessagePartUpdated
 import soy.iko.opencode.data.model.MessageWithParts
 import soy.iko.opencode.data.model.Part
@@ -11,8 +12,10 @@ import soy.iko.opencode.data.model.ToolCompleted
 import soy.iko.opencode.data.model.ToolPart
 import soy.iko.opencode.data.model.UnknownEvent
 import soy.iko.opencode.data.model.UnknownPart
+import soy.iko.opencode.data.model.sourcePath
 import soy.iko.opencode.data.network.OpencodeJson
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -84,5 +87,36 @@ class OpencodeJsonTest {
     fun unknownPartTypeFallsBackInsteadOfThrowing() {
         val part = decode(Part.serializer(), """{"type":"future-part","id":"p9","foo":true}""")
         assertTrue(part is UnknownPart)
+    }
+
+    @Test
+    fun decodesFilePartWithObjectSource() {
+        // opencode sends `source` as a structured FilePartSource object, not a string. This must
+        // decode without throwing (a SerializationException here is silently swallowed on the SSE
+        // path, dropping the whole part), and sourcePath must extract the file path.
+        val json = """
+            { "type": "file", "id": "prt_f", "messageID": "msg_1", "mime": "text/plain",
+              "filename": "a.kt",
+              "source": { "type": "file", "path": "src/a.kt",
+                          "text": { "value": "x", "start": 0, "end": 1 } } }
+        """.trimIndent()
+        val part = decode(Part.serializer(), json) as FilePart
+        assertEquals("src/a.kt", part.sourcePath)
+    }
+
+    @Test
+    fun decodesFilePartWithStringSource() {
+        // A bare-string source is still tolerated for backward/other-shape compatibility.
+        val part = decode(
+            Part.serializer(),
+            """{ "type": "file", "id": "prt_f", "source": "/abs/path.txt" }""",
+        ) as FilePart
+        assertEquals("/abs/path.txt", part.sourcePath)
+    }
+
+    @Test
+    fun filePartWithoutSourceHasNullPath() {
+        val part = decode(Part.serializer(), """{ "type": "file", "id": "prt_f", "url": "/x.png" }""") as FilePart
+        assertNull(part.sourcePath)
     }
 }

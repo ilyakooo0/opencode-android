@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.BrokenImage
 import soy.iko.opencode.R
 import soy.iko.opencode.data.model.FilePart
 import soy.iko.opencode.data.model.ServerProfile
+import soy.iko.opencode.data.model.sourcePath
 import soy.iko.opencode.data.network.HttpClientFactory
 
 /**
@@ -93,7 +94,7 @@ private fun decodeDataUri(data: String): ByteArray? {
  * data URIs, an absolute URL string otherwise. Returns null when nothing loadable.
  */
 private fun FilePart.resolveModel(ctx: ImageLoadContext): Any? {
-    val src = source
+    val src = sourcePath
     if (!src.isNullOrBlank() && src.startsWith("data:")) return decodeDataUri(src)
     val url = url ?: return null
     // Attachments are persisted as a data URL in `part.url`, so a data URI can arrive here too.

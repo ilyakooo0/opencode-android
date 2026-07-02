@@ -25,7 +25,6 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -92,9 +91,13 @@ fun AppLockGate(enabled: Boolean, content: @Composable () -> Unit) {
         return
     }
 
-    // Survives config changes / process-death restore so a rotation doesn't re-prompt, but
-    // defaults to locked on a fresh start.
-    var unlocked by rememberSaveable { mutableStateOf(false) }
+    // Deliberately NOT rememberSaveable: the unlocked flag must never be persisted into the
+    // saved-instance-state Bundle. On API 26-27 onSaveInstanceState runs *before* onStop, so a
+    // saveable `true` would be written to the Bundle before ON_STOP resets it; after a background
+    // process-kill and restore the app would come back unlocked with no biometric prompt — an
+    // app-lock bypass. Rotation is handled by the activity's configChanges (no recreation), so a
+    // plain remember still avoids re-prompting on rotation while re-locking on real recreation.
+    var unlocked by remember { mutableStateOf(false) }
 
     val title = stringResource(R.string.app_lock_prompt_title)
     val subtitle = stringResource(R.string.app_lock_prompt_subtitle)

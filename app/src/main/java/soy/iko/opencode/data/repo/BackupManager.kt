@@ -88,13 +88,25 @@ class BackupManager(
     suspend fun import(text: String) {
         val data = json.decodeFromString<BackupData>(text)
         for (s in data.servers) {
+            val username = s.username?.takeIf { it.isNotBlank() }
+            val incomingPassword = s.password?.takeIf { it.isNotEmpty() }
+            // A backup exported *without* passwords carries null. This is an upsert, so don't let
+            // that null wipe a password already stored for this server id — preserve the existing
+            // secret when the backup didn't include one (only the backup explicitly carrying a
+            // password should overwrite it). Re-importing a password-less backup would otherwise
+            // silently break auth for every matching server.
+            val password = incomingPassword ?: username?.let {
+                profileStore.resolve(
+                    ServerProfile(id = s.id, label = s.label, baseUrl = s.baseUrl, username = it),
+                ).password
+            }
             profileStore.save(
                 ServerProfile(
                     id = s.id,
                     label = s.label,
                     baseUrl = s.baseUrl,
-                    username = s.username?.takeIf { it.isNotBlank() },
-                    password = s.password?.takeIf { it.isNotEmpty() },
+                    username = username,
+                    password = password,
                     lastUsed = 0,
                     requireHttps = s.requireHttps,
                     certPin = s.certPin?.takeIf { it.isNotBlank() },

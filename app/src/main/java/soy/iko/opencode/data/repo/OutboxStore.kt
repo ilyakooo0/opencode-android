@@ -57,32 +57,44 @@ open class OutboxStore private constructor(
     /** All queued messages across sessions/servers, in enqueue order. */
     open val messages: StateFlow<List<OutboxMessage>> = _messages.asStateFlow()
 
+    /** Set once the on-disk queue has been read into [_messages] (under [ioMutex]). Until this
+     *  is true, a [mutate] must read disk first — otherwise a mutation that beats [load] would
+     *  persist from an empty in-memory snapshot and overwrite (or, for a removal, delete) the
+     *  persisted queue, losing every message the user composed offline in a previous run. */
+    private var loaded = false
+
     private val file: File? by lazy {
         appContext?.let { File(it.filesDir, "outbox.json") }
     }
 
     /** Read the persisted queue into [messages]. Call once at startup. Idempotent. */
     open suspend fun load() {
+        ioMutex.withLock { loadLocked() }
+    }
+
+    /** Read the on-disk queue into memory. MUST be called while holding [ioMutex]. Idempotent
+     *  (guarded by [loaded]) so a [mutate] that arrives before [load] can call it to guarantee
+     *  disk is read before any write, then a later [load] is a no-op. */
+    private suspend fun loadLocked() {
+        if (loaded) return
+        loaded = true
         val f = file?.takeIf { it.exists() } ?: return
-        val loaded = withContext(Dispatchers.IO) {
+        val diskList = withContext(Dispatchers.IO) {
             runCatchingCancellable { json.decodeFromString<List<OutboxMessage>>(f.readText()) }
                 .getOrDefault(emptyList())
         }
         // Don't clobber items enqueued while the load was in flight: merge by id, keeping
         // the in-memory version on conflict (it's newer).
-        ioMutex.withLock {
-            if (_messages.value.isEmpty()) {
-                _messages.value = loaded.sortedBy { it.createdAt }
-            } else {
-                val known = _messages.value.mapTo(mutableSetOf()) { it.id }
-                val merged = (loaded.filter { it.id !in known } + _messages.value).sortedBy { it.createdAt }
-                _messages.value = merged
-                // FIX: the merge reconciled items enqueued while this load was in flight with
-                // the on-disk set, but previously updated only memory — so a raced enqueue's
-                // item could be dropped on the next process kill. Write the merged set back so
-                // disk reflects it. persist() doesn't take ioMutex, so this won't deadlock.
-                persist(merged)
-            }
+        if (_messages.value.isEmpty()) {
+            _messages.value = diskList.sortedBy { it.createdAt }
+        } else {
+            val known = _messages.value.mapTo(mutableSetOf()) { it.id }
+            val merged = (diskList.filter { it.id !in known } + _messages.value).sortedBy { it.createdAt }
+            _messages.value = merged
+            // The merge reconciled items enqueued while this load was in flight with the
+            // on-disk set; write the merged set back so a later process kill can't drop the
+            // raced enqueue. persist() doesn't take ioMutex, so this won't deadlock.
+            persist(merged)
         }
     }
 
@@ -104,6 +116,10 @@ open class OutboxStore private constructor(
         // overlapping writeText/delete calls could tear the file. The lock serializes both the
         // in-memory update and the write, guaranteeing on-disk order matches memory order.
         ioMutex.withLock {
+            // Ensure the persisted queue has been read into memory before mutating: a mutation
+            // that races ahead of load() would otherwise transform an empty in-memory snapshot
+            // and persist()/delete() the file, destroying messages queued in a previous run.
+            loadLocked()
             val updated = transform(_messages.value).sortedBy { it.createdAt }
             _messages.value = updated
             persist(updated)

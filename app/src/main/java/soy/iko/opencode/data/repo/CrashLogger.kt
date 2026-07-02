@@ -179,6 +179,18 @@ class CrashLogger private constructor(private val appContext: Context) {
         // in those messages, which may contain auth or internal paths. Scrubbing the
         // assembled text guarantees no URL survives anywhere in the stored report.
         file.writeText(scrubUrls(sw.toString()))
+        trimOldReports()
+    }
+
+    /** Keep only the [MAX_REPORTS] most recent crash reports, deleting older ones. Runs inside
+     *  the uncaught-exception handler (the whole call is wrapped in runCatching upstream), so it
+     *  must not throw; each delete is guarded. */
+    private fun trimOldReports() {
+        val files = crashDir.listFiles { f -> f.isFile && f.name.endsWith(".txt") } ?: return
+        if (files.size <= MAX_REPORTS) return
+        files.sortedByDescending { it.lastModified() }
+            .drop(MAX_REPORTS)
+            .forEach { runCatching { it.delete() } }
     }
 
     private fun appVersion(): String = runCatching {
@@ -195,6 +207,11 @@ class CrashLogger private constructor(private val appContext: Context) {
     }.getOrDefault("unknown")
 
     companion object {
+        /** Cap on retained crash report files. A deterministic crash-loop (e.g. a crash on
+         *  startup) writes one report per crash with no other bound, so without this the
+         *  crashes/ dir grows without limit until the user manually clears it. */
+        private const val MAX_REPORTS = 20
+
         /** Regex matching http(s) URLs, shared by report writing and [scrubUrls]. */
         internal val SCRUB_URL_REGEX = Regex("https?://[^\\s\"']+")
 

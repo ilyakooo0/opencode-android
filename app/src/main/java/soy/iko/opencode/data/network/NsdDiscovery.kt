@@ -10,6 +10,7 @@ import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.resume
 
 /** A server discovered on the local network via mDNS/DNS-SD. */
@@ -53,7 +54,11 @@ open class NsdDiscovery(context: Context?) {
 
         val resolver = launch {
             for (info in toResolve) {
-                val resolved = resolveService(nsd, info) ?: continue
+                // NsdManager.resolveService occasionally never invokes its listener. Without a
+                // timeout, one stuck resolve would hang this single serialized resolver forever,
+                // so every later-discovered service queued behind it is never processed and the
+                // emitted list silently stops updating. Abandon a stuck resolve and keep draining.
+                val resolved = withTimeoutOrNull(RESOLVE_TIMEOUT_MS) { resolveService(nsd, info) } ?: continue
                 val name = resolved.serviceName.orEmpty()
                 // Keep only opencode's own advertisements, not every _http._tcp service
                 // (printers, routers, other web servers) on the network.
@@ -110,5 +115,8 @@ open class NsdDiscovery(context: Context?) {
         const val TAG = "NsdDiscovery"
         // opencode advertises bonjour type "http" → DNS-SD "_http._tcp.".
         const val SERVICE_TYPE = "_http._tcp."
+        // Upper bound on a single mDNS resolve before it's abandoned so a stuck platform
+        // callback can't wedge the serialized resolver. Local-network resolves are sub-second.
+        const val RESOLVE_TIMEOUT_MS = 5_000L
     }
 }

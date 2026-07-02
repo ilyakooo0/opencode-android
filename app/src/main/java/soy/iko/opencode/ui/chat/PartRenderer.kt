@@ -63,6 +63,7 @@ import soy.iko.opencode.data.model.TODO_WRITE_TOOL
 import soy.iko.opencode.data.model.UnknownPart
 import soy.iko.opencode.data.model.inputElement
 import soy.iko.opencode.data.model.parseTodos
+import soy.iko.opencode.data.model.sourcePath
 import soy.iko.opencode.ui.components.DiffView
 import soy.iko.opencode.ui.components.ImageLoadContext
 import soy.iko.opencode.ui.components.MarkdownText
@@ -444,7 +445,7 @@ private fun ToolStatusIcon(state: ToolState) {
 @Composable
 private fun FileChip(part: FilePart, modifier: Modifier, onOpenFile: ((String) -> Unit)?) {
     val context = LocalContext.current
-    val path = part.source ?: part.url ?: part.filename
+    val path = part.sourcePath ?: part.url ?: part.filename
     val copyLabel = stringResource(R.string.copy_path)
     val openLabel = stringResource(R.string.open_file)
     // When a source path is available and a navigation callback is wired, tapping the
@@ -452,7 +453,7 @@ private fun FileChip(part: FilePart, modifier: Modifier, onOpenFile: ((String) -
     // most likely expects). Long-press still copies the path to the clipboard, so the
     // copy affordance is preserved without being the default tap action. When no
     // navigation is wired (e.g. tests), falls back to copy-path on tap.
-    val source = part.source
+    val source = part.sourcePath
     val opener = onOpenFile
     val openPath: String? = if (opener != null && !source.isNullOrBlank()) source else null
     val canOpen = openPath != null

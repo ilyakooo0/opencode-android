@@ -83,10 +83,16 @@ open class MessageCacheStore private constructor(
     }
 
     /** Remove a session's cached messages (call on deletion). */
-    open suspend fun remove(sessionId: String): Unit = lockFor(sessionId).withLock {
-        withContext(Dispatchers.IO) {
-            runCatchingCancellable { fileFor(sessionId)?.delete() }
-            Unit
+    open suspend fun remove(sessionId: String) {
+        lockFor(sessionId).withLock {
+            withContext(Dispatchers.IO) {
+                runCatchingCancellable { fileFor(sessionId)?.delete() }
+                Unit
+            }
         }
+        // Drop the per-session lock now the session is gone so the map doesn't accumulate one
+        // entry per deleted session over the install's lifetime. Safe because remove() is the
+        // terminal operation for a session id (no further save/load is expected after deletion).
+        locks.remove(sessionId)
     }
 }

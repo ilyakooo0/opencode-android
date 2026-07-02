@@ -24,9 +24,16 @@ class CertPinValidationTest {
     }
 
     @Test
+    fun acceptsSha1PinLikeOkHttp() {
+        assertTrue(isValidCertPin("sha1/AAAAAAAAAAAAAAAAAAAAAAAAAAA="))
+        assertTrue(isValidCertPin("sha256/AAAA= sha1/BBBB="))
+    }
+
+    @Test
     fun rejectsMalformed() {
         assertFalse(isValidCertPin("not-a-pin"))
         assertFalse(isValidCertPin("md5/AAAA="))
         assertFalse(isValidCertPin("sha256/"))
+        assertFalse(isValidCertPin("sha1/"))
     }
 }

@@ -75,14 +75,17 @@ data class InitialProfile(
 )
 
 /** True when the certificate-pin field is empty (feature off) or every whitespace/comma
- *  separated entry is a well-formed OkHttp "sha256/<base64>" pin. */
+ *  separated entry is a well-formed OkHttp "sha256/<base64>" (or legacy "sha1/<base64>") pin. */
 fun isValidCertPin(raw: String): Boolean {
     val entries = raw.split(Regex("[\\s,]+")).map { it.trim() }.filter { it.isNotEmpty() }
     if (entries.isEmpty()) return true
-    // FIX 21(c): require a well-formed sha256/<base64>= pin (at least one base64 char
-    // before the padding). This rejects obviously malformed entries like "sha256/=" or "sha256/===".
-    // A real SHA-256 pin is 43 base64 chars + '=', but we accept any length for demo/test pins.
-    val pinRegex = Regex("sha256/[A-Za-z0-9+/]+=")
+    // Require a well-formed sha256/ or sha1/ <base64>= pin (at least one base64 char before the
+    // padding). This rejects obviously malformed entries like "sha256/=" or "sha256/===" and
+    // unsupported algorithms like "md5/…". sha1 is accepted because OkHttp's CertificatePinner
+    // accepts it too — the validator must match what the runtime accepts, or a well-formed
+    // sha1 pin would be un-saveable. A real pin is 43 base64 chars + '=', but we accept any
+    // length for demo/test pins.
+    val pinRegex = Regex("(sha256|sha1)/[A-Za-z0-9+/]+=")
     return entries.all { it.matches(pinRegex) }
 }
 

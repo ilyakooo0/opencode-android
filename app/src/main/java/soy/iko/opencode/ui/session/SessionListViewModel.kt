@@ -396,7 +396,17 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         val conn = container.activeConnection.value
         if (conn == null) {
             if (_state.value.sessions.isEmpty()) {
-                _state.value = SessionListState(loading = false, error = container.string(R.string.not_connected))
+                // copy() rather than a fresh SessionListState so pinned/archived ids, sort mode,
+                // query and showArchived (all fed by once-in-init collectors of cold DataStore
+                // flows) survive this error path instead of being silently reset to defaults.
+                _state.update {
+                    it.copy(
+                        sessions = emptyList(),
+                        previews = emptyMap(),
+                        loading = false,
+                        error = container.string(R.string.not_connected),
+                    )
+                }
             } else {
                 _state.update { it.copy(loading = false) }
                 _transientErrors.tryEmit(container.string(R.string.not_connected))
@@ -425,12 +435,22 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
                         _state.update { it.copy(sessions = sorted, loading = false, error = null) }
                         loadPreviews(sorted)
                     }
-                    .onFailure {
+                    .onFailure { err ->
                         if (_state.value.sessions.isNotEmpty()) {
                             _state.update { it.copy(loading = false) }
-                            _transientErrors.tryEmit(container.friendlyError(it))
+                            _transientErrors.tryEmit(container.friendlyError(err))
                         } else {
-                            _state.value = SessionListState(loading = false, error = container.friendlyError(it))
+                            // Preserve pinned/archived/sort/query via copy() (see refresh()'s
+                            // disconnected path) instead of resetting them on a failed load.
+                            val msg = container.friendlyError(err)
+                            _state.update {
+                                it.copy(
+                                    sessions = emptyList(),
+                                    previews = emptyMap(),
+                                    loading = false,
+                                    error = msg,
+                                )
+                            }
                         }
                     }
             } finally {
@@ -579,19 +599,29 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         container.scheduleSessionDelete(
             id = session.id,
             delayMs = NetworkConfig.undoDeleteDelayMs,
+            // scheduleSessionDelete runs these callbacks on the container's IO scope. Marshal the
+            // VM work back onto viewModelScope (Main.immediate) so the non-@Volatile refreshJob/
+            // previewJob fields and the _refreshing flag aren't read-modified-written from an IO
+            // thread concurrently with a Main-thread refresh() — which could leak an uncancelled
+            // load or strand the pull-to-refresh spinner. If the VM was cleared during the undo
+            // window the launch is a no-op, which is fine (nothing left to refresh).
             onDeleted = {
-                pendingDeletes.remove(session.id)
-                refresh()
-            },
-            onError = {
-                // Restore the session since the delete failed (or there was no connection to
-                // delete on). Guard against a concurrent refresh having already re-added it so
-                // we never produce two rows with the same id.
-                pendingDeletes.remove(session.id)
-                _state.update { s ->
-                    s.copy(sessions = (s.sessions.filterNot { it.id == session.id } + session).sortedByMode(s.sortMode))
+                viewModelScope.launch {
+                    pendingDeletes.remove(session.id)
+                    refresh()
                 }
-                _transientErrors.tryEmit(container.friendlyError(it))
+            },
+            onError = { err ->
+                viewModelScope.launch {
+                    // Restore the session since the delete failed (or there was no connection to
+                    // delete on). Guard against a concurrent refresh having already re-added it so
+                    // we never produce two rows with the same id.
+                    pendingDeletes.remove(session.id)
+                    _state.update { s ->
+                        s.copy(sessions = (s.sessions.filterNot { it.id == session.id } + session).sortedByMode(s.sortMode))
+                    }
+                    _transientErrors.tryEmit(container.friendlyError(err))
+                }
             },
         )
     }
@@ -681,14 +711,28 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
                             // both servers. Surface both failures so the user understands
                             // why they're looking at an empty list.
                             val restoreMsg = container.friendlyError(restored.exceptionOrNull() ?: error)
-                            _state.value = SessionListState(
-                                loading = false,
-                                error = container.string(R.string.error_switch_and_restore_failed,
-                                    container.friendlyError(error), restoreMsg),
-                            )
+                            val switchMsg = container.string(R.string.error_switch_and_restore_failed,
+                                container.friendlyError(error), restoreMsg)
+                            _state.update {
+                                it.copy(
+                                    sessions = emptyList(),
+                                    previews = emptyMap(),
+                                    loading = false,
+                                    error = switchMsg,
+                                )
+                            }
                         }
                     } else {
-                        _state.value = SessionListState(loading = false, error = container.friendlyError(error))
+                        // Preserve pinned/archived/sort/query via copy() rather than a fresh state.
+                        val msg = container.friendlyError(error)
+                        _state.update {
+                            it.copy(
+                                sessions = emptyList(),
+                                previews = emptyMap(),
+                                loading = false,
+                                error = msg,
+                            )
+                        }
                     }
                 }
         }

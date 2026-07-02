@@ -45,12 +45,14 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.retryWhen
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -217,6 +219,11 @@ class ChatViewModel(
      *  emission that doesn't change the plan doesn't recompose the bar. */
     val todoPlan: StateFlow<List<TodoItem>> = messages
         .map { currentTodoPlan(it) }
+        // Run currentTodoPlan off the main thread: it's an O(messages×parts) scan (worst case
+        // when the conversation has no todowrite) and runs on every conflated messages emission.
+        // distinctUntilChanged is downstream so it dedupes the result but doesn't prevent the
+        // scan — without flowOn this scans on Main.immediate per streamed token → jank.
+        .flowOn(Dispatchers.Default)
         .distinctUntilChanged()
         .stateIn(
             scope = viewModelScope,
@@ -226,6 +233,14 @@ class ChatViewModel(
 
     private val _running = MutableStateFlow(false)
     val running: StateFlow<Boolean> = _running.asStateFlow()
+
+    /** True once the current run ended via SessionIdle/SessionError, until the next run starts
+     *  (a send) or an SSE reconnect. Gates the run-indicator re-light below: isRunActivity
+     *  returns true for ANY message.part.updated, so without this a trailing/replayed part
+     *  arriving after a legitimate SessionIdle would re-light the "working" indicator with no
+     *  further idle to clear it — a stuck spinner + foreground service. Cleared on reconnect so
+     *  genuine reconnect-recovery re-lighting (its actual purpose) still works. */
+    @Volatile private var runEndedByIdle = false
 
     /** True while an abort REST call is in flight, so the Stop button can show a
      *  spinner and prevent double-taps from firing a second abort. */
@@ -545,6 +560,10 @@ class ChatViewModel(
                     return@collectLatest
                 }
                 _running.value = false
+                // Allow the re-light below to recover a still-running run after this (re)connect;
+                // a run that actually finished during the outage emits no live parts, so this
+                // won't spuriously re-light.
+                runEndedByIdle = false
                 clearPermissions()
                 _failedDraft.value = null
                 // NOTE: deliberately not clearing _queuedFollowUp here. It's session-scoped
@@ -557,6 +576,7 @@ class ChatViewModel(
                     conn.events.events.collect { event ->
                         if (SessionRepository.isIdle(event, sessionId)) {
                             _running.value = false
+                            runEndedByIdle = true
                             // Auto-send a queued follow-up once the previous run finishes,
                             // so the user's drafted-while-running message isn't lost.
                             val queued = _queuedFollowUp.value
@@ -567,6 +587,7 @@ class ChatViewModel(
                         }
                         if (SessionRepository.isError(event, sessionId)) {
                             _running.value = false
+                            runEndedByIdle = true
                             // The run errored, so the queued follow-up won't auto-send.
                             // Restore it to the input (if free) so the user's typed text
                             // isn't silently lost; otherwise just clear the queue.
@@ -580,7 +601,7 @@ class ChatViewModel(
                         // Restore the run indicator if a live streaming event arrives while it's
                         // cleared — e.g. an SSE reconnect mid-run reset _running to false, but the
                         // agent is still working. Don't revive it once the user has hit Stop.
-                        if (SessionRepository.isRunActivity(event, sessionId) && !_aborting.value && !_running.value) {
+                        if (SessionRepository.isRunActivity(event, sessionId) && !_aborting.value && !_running.value && !runEndedByIdle) {
                             _running.value = true
                         }
                         when (event) {
@@ -712,6 +733,9 @@ class ChatViewModel(
             return enqueueOffline(trimmed, attachments)
         }
         if (!_running.compareAndSet(false, true)) return false
+        // A new run is starting: reopen the re-light gate so this run's streamed parts keep the
+        // indicator lit (and a later SessionIdle re-closes it).
+        runEndedByIdle = false
         _failedDraft.value = null
         // Stable idempotency key for THIS online attempt: a brand-new message gets a fresh key,
         // while retryFailed() re-submits with the key it stashed on the original failure — so a

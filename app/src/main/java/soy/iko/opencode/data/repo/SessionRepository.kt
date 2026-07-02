@@ -224,6 +224,14 @@ open class SessionRepository(
         // makes a duplicate write of identical data harmless) — never data loss.
         var latestSnapshot: List<MessageWithParts>? = null
         var savedSnapshot: List<MessageWithParts>? = null
+        // Guarantee at least one emission even when nothing seeds the store: with no on-disk
+        // cache, a failing initial REST load (swallowed above), and a quiet SSE stream, none of
+        // the seed paths publish, so the flow would emit nothing at all. The sole collector
+        // (ChatViewModel) only clears its loading spinner on an emission, so without this a
+        // first-open of an erroring/empty session spins forever with no way to reach the
+        // "Failed to load / Retry" affordance. CONFLATED dirty coalesces this with any seed
+        // publish into a single send.
+        publish()
         try {
             dirty.consumeAsFlow().collect {
                 val snapshot = lock.withLock { store.snapshot() }
