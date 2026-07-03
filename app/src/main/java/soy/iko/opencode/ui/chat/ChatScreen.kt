@@ -1224,8 +1224,16 @@ private fun ChatInputBar(
                         capitalization = KeyboardCapitalization.Sentences,
                     ),
                     keyboardActions = KeyboardActions(onSend = {
-                        if (enabled && hasContent) {
-                            if (running) onQueueFollowUp(value) else onSend()
+                        if (enabled) {
+                            // During a run the Send IME action queues a follow-up, but only when
+                            // there's typed text — queuing "" would cancel an existing queued
+                            // follow-up (see the Queue button gate). When not running, an
+                            // attachment-only send is valid, so gate that path on hasContent.
+                            if (running) {
+                                if (value.isNotBlank()) onQueueFollowUp(value)
+                            } else if (hasContent) {
+                                onSend()
+                            }
                         }
                     }),
                 )
@@ -1233,6 +1241,7 @@ private fun ChatInputBar(
                     running = running,
                     aborting = aborting,
                     canSend = enabled && hasContent,
+                    canQueue = enabled && value.isNotBlank(),
                     onSend = onSend,
                     onAbort = onAbort,
                     onQueue = { onQueueFollowUp(value) },
@@ -1264,6 +1273,7 @@ private fun ComposerTrailingButton(
     running: Boolean,
     aborting: Boolean,
     canSend: Boolean,
+    canQueue: Boolean,
     onSend: () -> Unit,
     onAbort: () -> Unit,
     onQueue: () -> Unit,
@@ -1274,9 +1284,12 @@ private fun ComposerTrailingButton(
             // the keyboard's IME action — which is a plain newline when "Send on Enter" is off.
             // That leaves a touch-only user with the setting off no way to queue a follow-up
             // (Ctrl+Enter needs a hardware keyboard). Surface an explicit Queue button whenever
-            // there's typed content so queuing is always reachable, without changing the user's
-            // Enter-inserts-a-newline preference.
-            if (canSend) {
+            // there's typed TEXT so queuing is always reachable, without changing the user's
+            // Enter-inserts-a-newline preference. Gate on typed text — not the send-oriented
+            // canSend, which is also true for an attachment-only composer — because queuing "" just
+            // calls setQueuedFollowUp(null), silently cancelling any already-queued follow-up and
+            // dropping the staged attachment (queued follow-ups don't carry attachments anyway).
+            if (canQueue) {
                 IconButton(
                     onClick = onQueue,
                     modifier = Modifier.testTag("queue_button"),
@@ -1593,13 +1606,20 @@ private fun buildMessageListItems(
     var lastDayKey: String? = null
     var sepOrdinal = 0
     var emptyIdOrdinal = 0
+    var first = true
     for (message in messages) {
         val ts = message.info.time?.created ?: message.info.time?.updated ?: message.info.time?.completed
         val dayKey = ts?.let { dayKey(it) } ?: ""
-        if (dayKey != lastDayKey) {
+        // Emit a separator before the very first message (so a leading un-timestamped message
+        // still gets the first divider, empty label and all), and thereafter only when crossing
+        // into a new NON-empty calendar day. An un-timestamped message mid-list (empty key)
+        // neither emits its own separator nor resets the day — otherwise a following same-day
+        // message would see a "" -> "<today>" transition and emit a duplicate "Today" header.
+        if (first || (dayKey.isNotEmpty() && dayKey != lastDayKey)) {
             result.add(MessageListItem.Separator(dayLabel(dayKey, ts ?: 0L, today, todayLabel, yesterdayLabel, dateFmt), sepOrdinal++))
-            lastDayKey = dayKey
         }
+        if (dayKey.isNotEmpty()) lastDayKey = dayKey
+        first = false
         // Most messages have a unique non-empty id. An unrecognized-role message can carry an
         // empty id — and the reducer intentionally keeps several such messages as distinct
         // holders — so give each a stable synthetic key and defensively de-collide any remaining

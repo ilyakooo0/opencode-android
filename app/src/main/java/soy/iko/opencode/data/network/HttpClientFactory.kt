@@ -103,6 +103,23 @@ object HttpClientFactory {
                         }
                     }
                 }
+                // Defense in depth mirroring the HTTP branch below: sendWithoutRequest only gates
+                // *eager* attachment on the outgoing request — it neither strips an Authorization
+                // header that HttpRedirect copies from the original (configured-host) request onto
+                // a cross-origin redirect target, nor stops the reactive Basic provider answering a
+                // 401 from such a target. followRedirects is enabled by default, so re-check the
+                // host on every physical send and remove the header whenever it isn't the pinned
+                // host, guaranteeing credentials never leave the configured origin.
+                install(
+                    createClientPlugin("HttpsBasicAuthHostScoped") {
+                        on(Send) { request ->
+                            if (pinHost == null || !request.url.host.equals(pinHost, ignoreCase = true)) {
+                                request.headers.remove(HttpHeaders.Authorization)
+                            }
+                            proceed(request)
+                        }
+                    },
+                )
             } else if (pinHost != null) {
                 // For HTTP profiles with auth, attach the Basic header proactively (the reactive
                 // Auth plugin is skipped for non-HTTPS so a 401 can't silently re-send credentials

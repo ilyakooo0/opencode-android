@@ -70,9 +70,15 @@ class NotificationActionReceiver : BroadcastReceiver() {
                 watchdog(finishOnce)
                 container.sendPromptFromNotification(sessionId, text, profileId) { enqueued ->
                     // The reply is durably queued (and flushed now if online); clear the
-                    // "session ready" notification. If the enqueue failed, leave it up so the
-                    // reply isn't silently lost and the user can retry.
-                    if (enqueued) SessionNotifications.cancel(context, sessionId)
+                    // "session ready" notification. If the enqueue failed, cancel it anyway and
+                    // post a "reply not sent" error: leaving the completion notification up strands
+                    // SystemUI's RemoteInput field in a permanent "sending…" spinner that can't be
+                    // resubmitted, so "leave it up to retry" doesn't actually let the user retry.
+                    if (enqueued) {
+                        SessionNotifications.cancel(context, sessionId)
+                    } else {
+                        SessionNotifications.postReplyFailed(context, sessionId)
+                    }
                     finishOnce()
                 }
             }

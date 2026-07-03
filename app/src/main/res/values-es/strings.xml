@@ -254,6 +254,8 @@
     <string name="notif_action_reply">Responder</string>
     <string name="notif_reply_hint">Envía un seguimiento…</string>
     <string name="notif_reply_sent">Enviado</string>
+    <string name="notif_reply_failed_title">Respuesta no enviada</string>
+    <string name="notif_reply_failed_text">No se pudo poner en cola tu seguimiento. Toca para abrir la sesión e inténtalo de nuevo.</string>
 
     <!-- UX additions -->
     <string name="tool_input">Entrada</string>

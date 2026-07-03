@@ -261,8 +261,10 @@ internal fun extractFenceLanguage(raw: String, isFenced: Boolean): String? {
     // ````kotlin), not a fixed 3 chars, before reading the info string.
     val info = first.trimStart('`', '~').trim()
     // A fence info string can carry more than the language (e.g. "```ts title=foo"); the
-    // first whitespace-delimited token is the language.
-    return info.substringBefore(' ').takeIf { it.isNotBlank() }
+    // first whitespace-delimited token is the language. Split on ANY whitespace (CommonMark
+    // ends the language at the first whitespace char), not just a space, so a tab-delimited
+    // info string ("```ts\ttitle=foo") still yields "ts" rather than the whole run.
+    return info.takeWhile { !it.isWhitespace() }.takeIf { it.isNotBlank() }
 }
 
 /**
@@ -280,7 +282,12 @@ internal fun extractCodeText(raw: String, isFenced: Boolean): String {
     // body.last() (which would miss the fence in that case and leak the closing ```/~~~ into the
     // displayed/copied code).
     val lastNonBlank = body.indexOfLast { it.isNotBlank() }
-    if (lastNonBlank >= 0 && (body[lastNonBlank].startsWith("```") || body[lastNonBlank].startsWith("~~~"))) {
+    // CommonMark allows the closing fence to be indented up to 3 spaces, and a fence nested inside
+    // a list item keeps that indentation in the node's raw text — so trim leading whitespace before
+    // the marker check. Without it, an indented closing ```/~~~ fails startsWith and leaks into the
+    // displayed/copied code (the same leak a prior fix closed for the trailing-newline case).
+    val closer = if (lastNonBlank >= 0) body[lastNonBlank].trimStart() else ""
+    if (lastNonBlank >= 0 && (closer.startsWith("```") || closer.startsWith("~~~"))) {
         while (body.size > lastNonBlank) body.removeAt(body.lastIndex)
     }
     return body.joinToString("\n").trimEnd()

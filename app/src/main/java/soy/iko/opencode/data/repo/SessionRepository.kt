@@ -427,8 +427,18 @@ internal class MessageStore {
                 val ordered = m.parts.map { p ->
                     if (p.id in streamedSincePivot) streamedById[p.id] ?: p else p
                 }.toMutableList()
+                // Append only parts that streamed in *since the pivot* and are absent from the
+                // snapshot — i.e. genuinely newer than this REST fetch. A part in memory from
+                // before the pivot that the snapshot omits was removed server-side (its
+                // MessagePartRemoved missed during a disconnect gap, or it was deleted while the
+                // app was closed and only survives from the cache seed); the authoritative REST
+                // snapshot must be allowed to drop it, else it reappears as a ghost — and, once
+                // the drain loop persists this merge, gets baked into the on-disk cache forever
+                // (the message still exists, so pruneStaleCacheSeeded never removes it). This
+                // mirrors the overlapping-part branch above and the info branch below, which both
+                // already gate on the pivot.
                 for (p in existing.parts.values) {
-                    if (p.id !in snapshotIds) ordered.add(p)
+                    if (p.id !in snapshotIds && p.id in streamedSincePivot) ordered.add(p)
                 }
                 // Adopt the authoritative REST info unless the in-memory info was itself
                 // updated live since the pivot (i.e. during this fetch), in which case it's
@@ -532,13 +542,15 @@ internal class MessageStore {
         val info = event.properties.info
         if (info.sessionID != sessionId) return false
         // An UnknownMessage with an empty id (e.g. from an unrecognized server role with no id
-        // field) would collide with other such messages in the map. Derive a synthetic key from
-        // the message's own content (it carries no id, only sessionID/time) so each distinct
-        // unknown message gets its own entry, while a byte-identical re-send (a redundant event or
-        // a post-reconnect re-seed) coalesces via the existing==info guard below instead of piling
-        // up duplicate holders — which a fresh per-event counter caused (existing was always null).
+        // field) would collide with other such messages in the map. It carries no id, only
+        // sessionID/time, so derive a synthetic key. Prefer the immutable creation timestamp: it's
+        // stable across updates, so a later update to the SAME unknown message (whose `time.updated`
+        // or `time.completed` changes) coalesces onto its holder via the existing==info guard below
+        // instead of forking a duplicate — the failure mode a full-content hash has, since any
+        // content change moves the hash. Distinct unknown messages still separate by their distinct
+        // creation times; only when even `created` is absent do we fall back to the content hash.
         val key = if (info.id.isEmpty() && info is UnknownMessage) {
-            "unknown-${info.hashCode()}"
+            info.time?.created?.let { "unknown-c$it" } ?: "unknown-h${info.hashCode()}"
         } else {
             info.id
         }

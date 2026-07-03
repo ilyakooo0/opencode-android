@@ -54,10 +54,12 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * A user-facing error to surface as a snackbar. [retryable] is true only for a failed
@@ -1035,7 +1037,13 @@ class ChatViewModel(
         if (!_aborting.compareAndSet(false, true)) return
         viewModelScope.launch {
             try {
-                runCatchingCancellable { conn.repository.abort(sessionId) }
+                // Run the abort POST under NonCancellable so it survives this scope being
+                // cancelled. The "Stop and exit" path calls abort() then navigates back
+                // immediately, which pops this ViewModel's back-stack entry → onCleared() →
+                // viewModelScope.cancel(); without this the in-flight abort is cancelled (often
+                // before the request even reaches the server) and the run keeps burning tokens
+                // server-side despite the user explicitly stopping it.
+                runCatchingCancellable { withContext(NonCancellable) { conn.repository.abort(sessionId) } }
                     .onSuccess { _running.value = false }
                     .onFailure { _errorEvents.trySend(ChatError(container.friendlyError(it))) }
             } finally {

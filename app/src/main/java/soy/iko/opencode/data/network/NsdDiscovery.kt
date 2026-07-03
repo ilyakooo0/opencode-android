@@ -52,16 +52,21 @@ open class NsdDiscovery(context: Context?) {
         }
         // Thread-safe: mutated by the resolver coroutine and the (main-thread) lost callback.
         val found = java.util.concurrent.ConcurrentHashMap<String, DiscoveredServer>()
-        // Names reported lost before the serialized resolver reached them. Without this, a
-        // service that disappears between onServiceFound and the resolver dequeuing it would
-        // be re-inserted into `found` after onServiceLost already fired (and returned null),
-        // leaving a phantom entry that lingers until discovery stops — the lost callback never
-        // fires twice for the same name. The resolver consults this set and skips the insert.
-        val lostPending = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<String, Boolean>())
-        val toResolve = Channel<NsdServiceInfo>(Channel.UNLIMITED)
+        // Per-name epoch, bumped on every onServiceLost. Each queued resolve is stamped with the
+        // epoch that was current when it was enqueued; the resolver discards its result if the
+        // epoch has advanced since. This makes loss ordering authoritative: a resolve queued
+        // BEFORE a loss — a stale duplicate onServiceFound (stock NsdManager can emit these on
+        // multi-homed devices), or a resolve still in flight when the service departs — is
+        // dropped, while a resolve queued AFTER a loss (a genuine re-announcement of a restarted
+        // server) still inserts. It fixes the phantom a plain "lost-pending" flag missed:
+        // onServiceLost removing an already-resolved entry couldn't tell a second, still-queued
+        // duplicate resolve to skip re-inserting the departed service — yet it also avoids that
+        // flag's converse hazard of leaking a marker that suppresses a later legitimate re-appearance.
+        val epoch = java.util.concurrent.ConcurrentHashMap<String, Int>()
+        val toResolve = Channel<Pair<NsdServiceInfo, Int>>(Channel.UNLIMITED)
 
         val resolver = launch {
-            for (info in toResolve) {
+            for ((info, stampedEpoch) in toResolve) {
                 // Key the map by the name from discovery: onServiceFound/onServiceLost both use
                 // NsdServiceInfo.serviceName, whereas the resolved info's serviceName can differ —
                 // keying by the resolved name would leave a departed server that onServiceLost
@@ -72,13 +77,9 @@ open class NsdDiscovery(context: Context?) {
                 // so every later-discovered service queued behind it is never processed and the
                 // emitted list silently stops updating. Abandon a stuck resolve and keep draining.
                 val resolved = withTimeoutOrNull(RESOLVE_TIMEOUT_MS) { resolveService(nsd, info) }
-                // Consume any "lost while queued" marker for this name REGARDLESS of the resolve
-                // outcome, and skip resurrecting a service reported lost. If the resolve failed or
-                // timed out (e.g. the service really is gone), an early `?: continue` on the line
-                // above would skip this and leak the marker — which would then wrongly suppress the
-                // SAME name's next successful resolution when the server restarts and re-announces
-                // (onServiceLost won't fire again to clear it). Also drop a null resolve outright.
-                if (lostPending.remove(discoveredName) || resolved == null) continue
+                // Drop the result if the service was reported lost since this resolve was queued
+                // (its epoch advanced), or if the resolve failed/timed out (the service is gone).
+                if ((epoch[discoveredName] ?: 0) != stampedEpoch || resolved == null) continue
                 val name = resolved.serviceName.orEmpty()
                 // Keep only opencode's own advertisements, not every _http._tcp service
                 // (printers, routers, other web servers) on the network.
@@ -86,11 +87,11 @@ open class NsdDiscovery(context: Context?) {
                 @Suppress("DEPRECATION")
                 val host = resolved.host?.hostAddress ?: continue
                 found[discoveredName] = DiscoveredServer(name = name, host = host, port = resolved.port)
-                // Close the check-then-insert race: an onServiceLost that fired in the non-suspending
-                // window since the marker check above couldn't remove this name from `found` (nothing
-                // was inserted yet), so it set a lostPending marker instead. Re-check and evict now,
-                // else the just-departed service lingers as a phantom onServiceLost won't clear.
-                if (lostPending.remove(discoveredName)) found.remove(discoveredName)
+                // Close the check-then-insert race: an onServiceLost firing in the non-suspending
+                // window since the check above bumped the epoch but couldn't remove this name from
+                // `found` (nothing was inserted yet). Re-check and evict now — the epoch is
+                // monotonic, so any loss that raced the insert is still visible here.
+                if ((epoch[discoveredName] ?: 0) != stampedEpoch) found.remove(discoveredName)
                 trySend(found.values.sortedBy { it.name })
             }
         }
@@ -98,20 +99,19 @@ open class NsdDiscovery(context: Context?) {
         val listener = object : NsdManager.DiscoveryListener {
             override fun onDiscoveryStarted(serviceType: String?) {}
             override fun onServiceFound(serviceInfo: NsdServiceInfo) {
-                toResolve.trySend(serviceInfo)
+                // Stamp the resolve with the name's current epoch so a loss after this point (but
+                // before the serialized resolver reaches it) invalidates the result.
+                val name = serviceInfo.serviceName.orEmpty()
+                toResolve.trySend(serviceInfo to (epoch[name] ?: 0))
             }
             override fun onServiceLost(serviceInfo: NsdServiceInfo) {
                 val name = serviceInfo.serviceName ?: return
-                // If it was already resolved and in `found`, remove and emit now — and do NOT set a
-                // lostPending marker: the resolver already processed this name, so the marker would
-                // never be consumed and would instead suppress the service's NEXT re-appearance (a
-                // restarted server re-discovered later would hit `lostPending.remove` and be
-                // dropped). Only mark names lost *before* the serialized resolver reached them —
-                // those aren't in `found` yet, and the marker tells the resolver to skip the insert.
+                // Advance the epoch so any resolve queued before now (including a duplicate
+                // onServiceFound whose result hasn't landed yet) is discarded and can't resurrect
+                // this service, then drop it from the emitted list if it was already resolved.
+                epoch.merge(name, 1) { old, _ -> old + 1 }
                 if (found.remove(name) != null) {
                     trySend(found.values.sortedBy { it.name })
-                } else {
-                    lostPending.add(name)
                 }
             }
             override fun onDiscoveryStopped(serviceType: String?) {}

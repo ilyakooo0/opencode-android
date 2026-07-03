@@ -254,6 +254,8 @@
     <string name="notif_action_reply">Reply</string>
     <string name="notif_reply_hint">Send a follow-up…</string>
     <string name="notif_reply_sent">Sent</string>
+    <string name="notif_reply_failed_title">Reply not sent</string>
+    <string name="notif_reply_failed_text">Your follow-up couldn\'t be queued. Tap to open the session and try again.</string>
 
     <!-- UX additions -->
     <string name="tool_input">Input</string>

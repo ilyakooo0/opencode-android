@@ -205,6 +205,28 @@ object SessionNotifications {
             .onFailure { Log.w(TAG, "Failed to post error notification", it) }
     }
 
+    /** An inline reply couldn't be durably enqueued (no resolvable profile, or the outbox write
+     *  threw). Cancel the completion notification so SystemUI's RemoteInput field doesn't stay
+     *  stuck in the "sending…" spinner — a stuck field can't be resubmitted — and post an error
+     *  notification so the reply isn't silently lost and the user can reopen the session to retry. */
+    @SuppressLint("MissingPermission")
+    fun postReplyFailed(context: Context, sessionId: String) {
+        NotificationManagerCompat.from(context).cancel(notifId(NS_COMPLETED, sessionId))
+        if (!canPost(context)) return
+        val notifId = notifId(NS_ERROR, sessionId)
+        val notification = NotificationCompat.Builder(context, NotificationChannels.ERROR)
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setContentTitle(context.getString(R.string.notif_reply_failed_title))
+            .setContentText(context.getString(R.string.notif_reply_failed_text))
+            .setAutoCancel(true)
+            .setContentIntent(openSessionIntent(context, sessionId, notifId))
+            .setCategory(NotificationCompat.CATEGORY_ERROR)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .build()
+        runCatching { NotificationManagerCompat.from(context).notify(notifId, notification) }
+            .onFailure { Log.w(TAG, "Failed to post reply-failed notification", it) }
+    }
+
     /** FLAG_MUTABLE where required (Android 12+) so RemoteInput results can be injected. */
     private fun mutableFlag(): Int =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_MUTABLE else 0
