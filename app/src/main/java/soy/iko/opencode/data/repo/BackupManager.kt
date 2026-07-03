@@ -22,12 +22,17 @@ data class BackupServer(
 /** App preferences in a backup. */
 @Serializable
 data class BackupSettings(
-    val themeMode: String,
-    val dynamicColor: Boolean,
-    val sendOnEnter: Boolean,
-    val appLock: Boolean,
-    val chatTextScale: Float,
-    val codeWrap: Boolean,
+    // Every field is defaulted (to SettingsStore's own defaults) so a backup written by an older
+    // app version — one whose settings block predates a field added later — still decodes. Without
+    // defaults a missing field throws MissingFieldException in import() BEFORE the server-restore
+    // loop, aborting the ENTIRE restore (servers/pins/archives included) despite the best-effort
+    // contract. ignoreUnknownKeys only tolerates EXTRA keys, not missing required ones.
+    val themeMode: String = ThemeMode.SYSTEM.name,
+    val dynamicColor: Boolean = true,
+    val sendOnEnter: Boolean = true,
+    val appLock: Boolean = false,
+    val chatTextScale: Float = SettingsStore.DEFAULT_CHAT_TEXT_SCALE,
+    val codeWrap: Boolean = false,
 )
 
 /** The full backup document. [version] guards against future format changes. */

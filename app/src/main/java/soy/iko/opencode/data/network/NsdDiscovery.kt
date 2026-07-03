@@ -71,10 +71,14 @@ open class NsdDiscovery(context: Context?) {
                 // timeout, one stuck resolve would hang this single serialized resolver forever,
                 // so every later-discovered service queued behind it is never processed and the
                 // emitted list silently stops updating. Abandon a stuck resolve and keep draining.
-                val resolved = withTimeoutOrNull(RESOLVE_TIMEOUT_MS) { resolveService(nsd, info) } ?: continue
-                // The service was reported lost while queued behind other resolves: don't
-                // resurrect it. Clear the marker so the name is free for a future re-appearance.
-                if (lostPending.remove(discoveredName)) continue
+                val resolved = withTimeoutOrNull(RESOLVE_TIMEOUT_MS) { resolveService(nsd, info) }
+                // Consume any "lost while queued" marker for this name REGARDLESS of the resolve
+                // outcome, and skip resurrecting a service reported lost. If the resolve failed or
+                // timed out (e.g. the service really is gone), an early `?: continue` on the line
+                // above would skip this and leak the marker — which would then wrongly suppress the
+                // SAME name's next successful resolution when the server restarts and re-announces
+                // (onServiceLost won't fire again to clear it). Also drop a null resolve outright.
+                if (lostPending.remove(discoveredName) || resolved == null) continue
                 val name = resolved.serviceName.orEmpty()
                 // Keep only opencode's own advertisements, not every _http._tcp service
                 // (printers, routers, other web servers) on the network.
@@ -82,6 +86,11 @@ open class NsdDiscovery(context: Context?) {
                 @Suppress("DEPRECATION")
                 val host = resolved.host?.hostAddress ?: continue
                 found[discoveredName] = DiscoveredServer(name = name, host = host, port = resolved.port)
+                // Close the check-then-insert race: an onServiceLost that fired in the non-suspending
+                // window since the marker check above couldn't remove this name from `found` (nothing
+                // was inserted yet), so it set a lostPending marker instead. Re-check and evict now,
+                // else the just-departed service lingers as a phantom onServiceLost won't clear.
+                if (lostPending.remove(discoveredName)) found.remove(discoveredName)
                 trySend(found.values.sortedBy { it.name })
             }
         }

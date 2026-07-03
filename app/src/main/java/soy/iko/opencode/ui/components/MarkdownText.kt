@@ -274,10 +274,14 @@ internal fun extractFenceLanguage(raw: String, isFenced: Boolean): String? {
  */
 internal fun extractCodeText(raw: String, isFenced: Boolean): String {
     if (!isFenced) return raw.trimIndent()
-    val lines = raw.lines()
-    val body = lines.drop(1).toMutableList()
-    if (body.isNotEmpty() && (body.last().startsWith("```") || body.last().startsWith("~~~"))) {
-        body.removeAt(body.lastIndex)
+    val body = raw.lines().drop(1).toMutableList()
+    // Strip the closing fence. getTextInNode can include a trailing newline, making the true last
+    // line "" — so locate the last NON-blank line and drop from there, rather than only checking
+    // body.last() (which would miss the fence in that case and leak the closing ```/~~~ into the
+    // displayed/copied code).
+    val lastNonBlank = body.indexOfLast { it.isNotBlank() }
+    if (lastNonBlank >= 0 && (body[lastNonBlank].startsWith("```") || body[lastNonBlank].startsWith("~~~"))) {
+        while (body.size > lastNonBlank) body.removeAt(body.lastIndex)
     }
     return body.joinToString("\n").trimEnd()
 }

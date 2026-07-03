@@ -775,11 +775,21 @@ class ChatViewModel(
         // A new run is starting: reopen the re-light gate so this run's streamed parts keep the
         // indicator lit (and a later SessionIdle re-closes it).
         runEndedByIdle = false
+        // A plain manual Send of the auto-restored failed draft must reuse the stashed key too
+        // (retryFailed passes it explicitly; the composer's Send does not), so a lost-response
+        // re-send stays deduplicated server-side instead of starting a duplicate agent run.
+        // Capture the match BEFORE clearing _failedDraft just below.
+        val reuseKey = if (idempotencyKey == null && trimmed == _failedDraft.value?.trim()) {
+            failedIdempotencyKey
+        } else {
+            null
+        }
         _failedDraft.value = null
         // Stable idempotency key for THIS online attempt: a brand-new message gets a fresh key,
-        // while retryFailed() re-submits with the key it stashed on the original failure — so a
-        // retry after a lost response is deduplicated server-side (no duplicate agent run).
-        val key = idempotencyKey ?: java.util.UUID.randomUUID().toString()
+        // while retryFailed() (or a manual re-send of the restored failed draft) re-submits with the
+        // key it stashed on the original failure — so a retry after a lost response is deduplicated
+        // server-side (no duplicate agent run).
+        val key = idempotencyKey ?: reuseKey ?: java.util.UUID.randomUUID().toString()
         // Clear the staged attachments optimistically so the composer empties immediately;
         // restore them if the send fails (mirrors the draft handling below).
         if (attachments.isNotEmpty()) _attachments.value = emptyList()
@@ -822,6 +832,9 @@ class ChatViewModel(
                 _running.value = false
             }.onSuccess {
                 suppressDraftPersist.set(false)
+                // This attempt reached the server, so the stashed retry key is spent — drop it so a
+                // later unrelated send can't reuse it (retryFailed clears it on success too).
+                failedIdempotencyKey = null
                 // Send succeeded — the attachments rode along, so clear their persisted copy
                 // (or keep any the user staged after the optimistic clear).
                 persistAttachments()
@@ -946,7 +959,17 @@ class ChatViewModel(
         // The text now lives in the queued chip, so clear the input field just as a
         // normal send would. No-op for the cancel case (blank text), which must leave
         // whatever the user has since typed untouched.
-        if (trimmed.isNotEmpty()) _draft.value = ""
+        if (trimmed.isNotEmpty()) {
+            _draft.value = ""
+            // Persist the cleared draft IMMEDIATELY, not just in memory: the follow-up was already
+            // persisted synchronously above, so if the process is killed before the debounced
+            // draft-persist fires, the same text would remain under BOTH the draft and follow-up
+            // keys — and cold-start recovery would restore it to the composer AND re-queue it (a
+            // duplicate). Mirror send()'s lastPersistedDraft update so the drafts observer treats
+            // this store change as our own echo and doesn't write the cleared value back.
+            lastPersistedDraft = ""
+            container.draftStore.flushDraft(sessionId, "")
+        }
     }
 
     /** Set or clear the queued follow-up and mirror it to persistence, so a follow-up

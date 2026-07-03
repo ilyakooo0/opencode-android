@@ -147,7 +147,11 @@ class FileBrowserViewModel(private val container: AppContainer) : ViewModel() {
             textResults = emptyList(),
             symbolResults = emptyList(),
             searching = false,
-            loading = true,
+            // Keep the current listing visible during a same-directory refresh (pull-to-refresh)
+            // instead of blanking it behind a full-screen spinner; only show the spinner when
+            // there's nothing to display yet or we're navigating to a DIFFERENT path (where the
+            // existing entries belong to the old directory and shouldn't linger).
+            loading = it.entries.isEmpty() || it.path != path,
             error = null,
         ) }
         openJob?.cancel()

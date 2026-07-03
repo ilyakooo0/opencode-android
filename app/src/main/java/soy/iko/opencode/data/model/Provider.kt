@@ -73,7 +73,11 @@ fun ProvidersResponse.toOptions(): List<ModelOption> =
 
 /** The default option to preselect: the server's default for some provider, else the first model. */
 fun ProvidersResponse.defaultOption(options: List<ModelOption> = toOptions()): ModelOption? {
-    default.entries.firstOrNull()?.let { (providerID, modelID) ->
+    // Try each configured provider default in turn and take the first whose model actually
+    // survives in `options` (the list may be filtered). Checking only the first `default` entry
+    // would mispreselect an arbitrary first option whenever that one provider's default model
+    // isn't present, ignoring the other configured defaults.
+    for ((providerID, modelID) in default) {
         options.firstOrNull { it.providerID == providerID && it.modelID == modelID }?.let { return it }
     }
     return options.firstOrNull()

@@ -387,9 +387,6 @@ internal class MessageStore {
         messageInfoUpdatedSincePivot.clear()
     }
 
-    /** Monotonic counter for synthetic UnknownMessage keys, avoiding nanoTime collisions. */
-    private val unknownCounter = java.util.concurrent.atomic.AtomicLong(0)
-
     /** Maximum number of messages to keep in memory; oldest are evicted when exceeded. */
     internal val maxMessages = NetworkConfig.maxInMemoryMessages
 
@@ -535,10 +532,13 @@ internal class MessageStore {
         val info = event.properties.info
         if (info.sessionID != sessionId) return false
         // An UnknownMessage with an empty id (e.g. from an unrecognized server role with no id
-        // field) would collide with other such messages in the map. Generate a unique synthetic
-        // key so each unknown message gets its own entry instead of overwriting others.
+        // field) would collide with other such messages in the map. Derive a synthetic key from
+        // the message's own content (it carries no id, only sessionID/time) so each distinct
+        // unknown message gets its own entry, while a byte-identical re-send (a redundant event or
+        // a post-reconnect re-seed) coalesces via the existing==info guard below instead of piling
+        // up duplicate holders — which a fresh per-event counter caused (existing was always null).
         val key = if (info.id.isEmpty() && info is UnknownMessage) {
-            "unknown-${unknownCounter.incrementAndGet()}"
+            "unknown-${info.hashCode()}"
         } else {
             info.id
         }
