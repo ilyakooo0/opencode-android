@@ -131,6 +131,7 @@
     <string name="stop_run_text">The agent is still working. Stop it now?</string>
     <string name="session_deleted_msg">This session was deleted on another device.</string>
     <string name="queued">Queued — will send when the run finishes</string>
+    <string name="queue_followup">Queue follow-up</string>
 
     <!-- Errors (view models) -->
     <string name="error_generic">Something went wrong.</string>

@@ -118,20 +118,30 @@ fun AppLockGate(enabled: Boolean, content: @Composable () -> Unit) {
     // Track an in-flight prompt so a recomposition (or the retry button) can't stack two
     // BiometricPrompts, which throws.
     var authInFlight by remember { mutableStateOf(false) }
+    // Monotonic id for the current prompt. The system dismisses an in-flight BiometricPrompt when
+    // the app backgrounds and posts its onAuthenticationError asynchronously; without this, that
+    // stale error could land after ON_START already started a NEW prompt and clear authInFlight
+    // mid-prompt — letting a recomposition or the "Unlock" button (enabled = !authInFlight) stack
+    // a second prompt. Each prompt captures its id and only mutates state while it's still current.
+    val promptId = remember { intArrayOf(0) }
 
     fun authenticate() {
         if (authInFlight || unlocked) return
         authInFlight = true
+        val myPrompt = ++promptId[0]
         val executor = ContextCompat.getMainExecutor(activity)
         val callback = object : BiometricPrompt.AuthenticationCallback() {
             override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                if (myPrompt != promptId[0]) return
                 authInFlight = false
                 unlocked = true
             }
 
             override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
                 // User cancelled / lockout / hardware error: stay locked and let them retry
-                // via the button rather than looping the system prompt.
+                // via the button rather than looping the system prompt. Ignore a stale error
+                // from a prompt already superseded by a newer one (see promptId above).
+                if (myPrompt != promptId[0]) return
                 authInFlight = false
             }
 
@@ -145,7 +155,7 @@ fun AppLockGate(enabled: Boolean, content: @Composable () -> Unit) {
             .setAllowedAuthenticators(lockAuthenticators)
             .build()
         runCatching { BiometricPrompt(activity, executor, callback).authenticate(info) }
-            .onFailure { authInFlight = false }
+            .onFailure { if (myPrompt == promptId[0]) authInFlight = false }
     }
 
     // Re-lock when the app is backgrounded, and re-prompt when it returns to the foreground.

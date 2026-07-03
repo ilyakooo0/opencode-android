@@ -40,6 +40,14 @@ object NetworkConfig {
     /** Buffer capacity for the SSE events SharedFlow; prevents a slow subscriber stalling the read loop. */
     const val sseEventBufferCapacity = 64
 
+    // --- Connectivity monitor (AppContainer) ---
+
+    /** Grace period after a network is lost before reporting offline. Absorbs the transient
+     *  window during a Wi-Fi→cellular handoff where onLost(WiFi) fires before the replacement
+     *  network becomes active (cm.activeNetwork is briefly null), so a handoff doesn't flash
+     *  offline while a genuine loss (no active network after the grace) is still caught. */
+    const val networkOfflineGraceMs = 2_000L
+
     // --- Catalog cache (OpencodeApiClient) ---
 
     /** How long cached catalog responses (providers/agents/commands) are considered fresh. */

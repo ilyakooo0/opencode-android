@@ -3,7 +3,7 @@ package soy.iko.opencode.data.model
 import androidx.compose.runtime.Immutable
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonClassDiscriminator
 
 /**
@@ -39,7 +39,11 @@ data class AssistantMessage(
     val modelID: String? = null,
     val cost: Double? = null,
     val tokens: Tokens? = null,
-    val error: JsonObject? = null,
+    // JsonElement (not JsonObject) so a server that sends `error` as a bare string/array — or any
+    // non-object shape — decodes instead of throwing mid-AssistantMessage (the MessageInfo
+    // polymorphic fallback can't catch that, since `role` already matched). Mirrors
+    // SessionError.error. Not currently read by the UI, but kept tolerant for forward-compat.
+    val error: JsonElement? = null,
     override val time: TimeInfo? = null,
 ) : MessageInfo {
     /** A run is complete once the server stamps a completion time. */

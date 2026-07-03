@@ -132,7 +132,11 @@ class ServerListViewModel(private val container: AppContainer) : ViewModel() {
 
     /** Cancel a pending delete (Undo snackbar action) and re-show the hidden row. */
     fun undoDelete(profileId: String) {
-        container.cancelProfileDelete(profileId)
+        // If the deferred delete already fired (cancel returns false), the delete is
+        // committing/committed — don't re-show the row, or we'd briefly resurrect a profile
+        // that's on its way out (the onDeleted/onError callbacks un-hide it once the store
+        // settles). Mirrors SessionListViewModel.undoDelete.
+        if (!container.cancelProfileDelete(profileId)) return
         _hiddenIds.update { it - profileId }
     }
 }

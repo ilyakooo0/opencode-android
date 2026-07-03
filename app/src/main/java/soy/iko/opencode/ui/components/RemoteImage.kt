@@ -150,9 +150,20 @@ private fun effectivePort(uri: java.net.URI): Int {
 @Composable
 fun RemoteImage(part: FilePart, ctx: ImageLoadContext, modifier: Modifier = Modifier) {
     val context = LocalContext.current
-    val model = produceState<Any?>(initialValue = null, part.source, part.url, ctx.baseUrl) {
+    // Distinguish "still resolving off-thread" from "resolved to nothing loadable": produceState
+    // seeds a sentinel so the first (pre-resolve) frame renders nothing (as before), but once
+    // resolveModel returns null — a cross-origin URL (blocked so the server's Basic auth can't
+    // leak off-origin), a malformed data URI, or a source with no path — we show the broken-image
+    // fallback instead of an empty gap (PartView already committed to RemoteImage, so there's no
+    // FileChip to fall through to).
+    val model = produceState<Any?>(initialValue = ImageResolving, part.source, part.url, ctx.baseUrl) {
         value = withContext(Dispatchers.Default) { part.resolveModel(ctx) }
-    }.value ?: return
+    }.value
+    if (model === ImageResolving) return
+    if (model == null) {
+        ImageStatusBox { BrokenImageIcon() }
+        return
+    }
     val request = remember(part.source, part.url, ctx.baseUrl, ctx.basicAuthHeader, model) {
         ImageRequest.Builder(context)
             .data(model)
@@ -183,17 +194,29 @@ fun RemoteImage(part: FilePart, ctx: ImageLoadContext, modifier: Modifier = Modi
                 )
             }
         },
-        error = {
-            Box(
-                modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    Icons.Filled.BrokenImage,
-                    contentDescription = stringResource(R.string.image_failed),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        },
+        error = { ImageStatusBox { BrokenImageIcon() } },
+    )
+}
+
+/** Sentinel for [RemoteImage]'s produceState while resolveModel runs off-thread, so the initial
+ *  (still-resolving) frame is distinguishable from a resolved-to-null (unloadable) result. */
+private val ImageResolving = Any()
+
+/** A centered, fixed-min-height box matching the loading/error slots so an image placeholder
+ *  reserves the same space whether it's loading, failed, or unresolvable. */
+@Composable
+private fun ImageStatusBox(content: @Composable () -> Unit) {
+    Box(
+        modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp),
+        contentAlignment = Alignment.Center,
+    ) { content() }
+}
+
+@Composable
+private fun BrokenImageIcon() {
+    Icon(
+        Icons.Filled.BrokenImage,
+        contentDescription = stringResource(R.string.image_failed),
+        tint = MaterialTheme.colorScheme.onSurfaceVariant,
     )
 }

@@ -74,22 +74,25 @@ open class OutboxStore private constructor(
 
     /** Read the on-disk queue into memory. MUST be called while holding [ioMutex]. Idempotent
      *  (guarded by [loaded]) so a [mutate] that arrives before [load] can call it to guarantee
-     *  disk is read before any write, then a later [load] is a no-op. */
-    private suspend fun loadLocked() {
-        if (loaded) return
+     *  disk is read before any write, then a later [load] is a no-op. Returns true once the queue
+     *  is in memory (or the file is genuinely absent), false if an existing file couldn't be
+     *  read — the caller MUST NOT persist on false or it would overwrite the still-valid queue. */
+    private suspend fun loadLocked(): Boolean {
+        if (loaded) return true
         val f = file?.takeIf { it.exists() }
         if (f == null) {
             // A genuinely absent file is a normal empty queue: mark loaded so mutations proceed.
             loaded = true
-            return
+            return true
         }
         // Only mark [loaded] AFTER a successful read. A transient read/decode failure (or a
         // cancelled read) of an *existing* file must not clobber the still-valid on-disk queue:
-        // leave loaded=false and return so a later mutate/load retries the read before any write,
-        // instead of persisting an empty snapshot over the user's offline-composed messages.
+        // leave loaded=false and report failure so the caller skips its write and a later
+        // mutate/load retries the read, instead of persisting an empty snapshot over the user's
+        // offline-composed messages.
         val diskList = withContext(Dispatchers.IO) {
             runCatchingCancellable { json.decodeFromString<List<OutboxMessage>>(f.readText()) }
-        }.getOrElse { return }
+        }.getOrElse { return false }
         // Don't clobber items enqueued while the load was in flight: merge by id, keeping
         // the in-memory version on conflict (it's newer).
         if (_messages.value.isEmpty()) {
@@ -104,6 +107,7 @@ open class OutboxStore private constructor(
             persist(merged)
         }
         loaded = true
+        return true
     }
 
     open suspend fun enqueue(message: OutboxMessage) = mutate { current ->
@@ -127,10 +131,16 @@ open class OutboxStore private constructor(
             // Ensure the persisted queue has been read into memory before mutating: a mutation
             // that races ahead of load() would otherwise transform an empty in-memory snapshot
             // and persist()/delete() the file, destroying messages queued in a previous run.
-            loadLocked()
+            val loadedOk = loadLocked()
             val updated = transform(_messages.value).sortedBy { it.createdAt }
             _messages.value = updated
-            persist(updated)
+            // Only write when the existing on-disk queue was actually read. If the read of an
+            // existing file failed (loadedOk == false), _messages is missing whatever it held, so
+            // persisting `updated` would overwrite the still-valid file with an incomplete
+            // snapshot — losing the user's prior offline-composed messages. Keep the transform in
+            // memory (so the UI reflects the new item) but leave disk untouched; loaded stays
+            // false, so the next mutate/load retries the read and then merges + persists.
+            if (loadedOk) persist(updated)
         }
     }
 

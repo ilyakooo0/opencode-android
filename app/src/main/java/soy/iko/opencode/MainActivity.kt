@@ -211,9 +211,21 @@ class MainActivity : FragmentActivity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
-        outState.putBoolean(KEY_SHARE_HANDLED, shareIntentHandled)
-        outState.putBoolean(KEY_OPEN_SESSION_HANDLED, openSessionHandled)
-        outState.putBoolean(KEY_NEW_SESSION_HANDLED, newSessionHandled)
+        val container = (application as OpencodeApp).container
+        // Persist each intent-handled flag as "consumed", not merely "dispatched". The pending
+        // signals live only in the in-memory AppContainer, which is recreated EMPTY on process
+        // death. Persisting a plain "dispatched = true" would, after a kill *before* the UI
+        // consumed the signal, restore the flag as true so the fresh container never receives it —
+        // the deep-linked / new / shared session would silently never open. So AND each flag with
+        // "the container no longer holds the signal": still-pending at save time → persist false so
+        // the re-delivered intent re-dispatches it into the new container on restore; already
+        // consumed → persist true so we don't re-open it unexpectedly on every later restore.
+        val openConsumed = container.pendingOpenSession.value == null
+        val newConsumed = !container.pendingNewSession.value
+        val shareConsumed = container.pendingShare.value == null && container.pendingSharedMedia.value.isEmpty()
+        outState.putBoolean(KEY_SHARE_HANDLED, shareIntentHandled && shareConsumed)
+        outState.putBoolean(KEY_OPEN_SESSION_HANDLED, openSessionHandled && openConsumed)
+        outState.putBoolean(KEY_NEW_SESSION_HANDLED, newSessionHandled && newConsumed)
         outState.putBoolean(KEY_NOTIF_PERM_REQUESTED, notificationPermissionRequested)
     }
 

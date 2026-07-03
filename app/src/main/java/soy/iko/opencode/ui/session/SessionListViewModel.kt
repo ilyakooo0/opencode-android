@@ -22,7 +22,9 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -288,56 +290,71 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
                 // initial load (which may have run before auto-reconnect finished and
                 // found no connection) doesn't leave a stale "not connected" error.
                 refresh()
-                try {
-                    conn.events.events.collect { event ->
-                        when (event) {
-                            is SessionUpdated -> {
-                                val session = event.properties.info
-                                // Ignore updates for a session the user just deleted (still
-                                // within its undo window): the server hasn't deleted it yet
-                                // and can legitimately emit updates, but buffering them here
-                                // would resurrect the optimistically-hidden row mid-undo.
-                                if (pendingDeletes.containsKey(session.id)) return@collect
-                                pendingSessionUpdates[session.id] = session
-                                if (sessionUpdateJob?.isActive != true) {
-                                    sessionUpdateJob = viewModelScope.launch {
-                                        delay(NetworkConfig.sessionUpdateDebounceMs)
-                                        flushPendingSessionUpdates()
+                // Loop the inner collect so a transient non-cancellation exception doesn't
+                // terminate the collector for this connection. Without the loop, the catch returns
+                // the collectLatest lambda normally, so collectLatest considers this connection's
+                // block complete and never re-runs it — live session-list updates (new/renamed/
+                // deleted sessions) would go permanently silent until a server switch. (Same
+                // pattern as ChatViewModel's event collectors.)
+                while (currentCoroutineContext().isActive) {
+                    try {
+                        conn.events.events.collect { event ->
+                            when (event) {
+                                is SessionUpdated -> {
+                                    val session = event.properties.info
+                                    // Ignore updates for a session the user just deleted (still
+                                    // within its undo window): the server hasn't deleted it yet
+                                    // and can legitimately emit updates, but buffering them here
+                                    // would resurrect the optimistically-hidden row mid-undo.
+                                    if (pendingDeletes.containsKey(session.id)) return@collect
+                                    pendingSessionUpdates[session.id] = session
+                                    if (sessionUpdateJob?.isActive != true) {
+                                        sessionUpdateJob = viewModelScope.launch {
+                                            delay(NetworkConfig.sessionUpdateDebounceMs)
+                                            flushPendingSessionUpdates()
+                                        }
                                     }
                                 }
-                            }
-                            is SessionDeleted -> {
-                                val id = event.properties.info?.id ?: event.properties.sessionID
-                                if (id != null) {
-                                    synchronized(previewLock) { livePreviewJobs.remove(id)?.cancel() }
-                                    // Drop any buffered update for this id so a pending flush
-                                    // can't re-add the just-deleted session to the list.
-                                    pendingSessionUpdates.remove(id)
-                                    // The session is gone server-side; cancel any pending local
-                                    // delete so its deferred REST call doesn't later 404 and
-                                    // trigger the failure-restore path that resurrects the row.
-                                    pendingDeletes.remove(id)
-                                    container.draftStore.remove(id)
-                                    // Also drop this session's other local artifacts so an
-                                    // externally-deleted session leaves nothing orphaned.
-                                    container.attachmentDraftStore.remove(id)
-                                    container.messageCacheStore.remove(id)
-                                    container.sessionPrefsStore.forget(id)
-                                    _state.update { s ->
-                                        s.copy(
-                                            sessions = s.sessions.filterNot { it.id == id },
-                                            previews = s.previews - id,
-                                        )
+                                is SessionDeleted -> {
+                                    val id = event.properties.info?.id ?: event.properties.sessionID
+                                    if (id != null) {
+                                        synchronized(previewLock) { livePreviewJobs.remove(id)?.cancel() }
+                                        // Drop any buffered update for this id so a pending flush
+                                        // can't re-add the just-deleted session to the list.
+                                        pendingSessionUpdates.remove(id)
+                                        // The session is gone server-side; cancel the pending local
+                                        // delete via the CONTAINER, which owns the deferred timer —
+                                        // removing only from our local tracking map (as this once
+                                        // did) leaves the timer scheduled to fire a redundant DELETE
+                                        // (and, on a non-404 failure at fire time, resurrect the row
+                                        // via onError). Mirrors the reconnect sweep above / undoDelete.
+                                        container.cancelSessionDelete(id)
+                                        pendingDeletes.remove(id)
+                                        // Also drop this session's other local artifacts so an
+                                        // externally-deleted session leaves nothing orphaned. Guard
+                                        // each disk op: an unguarded IOException here would propagate
+                                        // out of collect (restarting the loop needlessly, or — before
+                                        // the loop existed — killing live updates for good).
+                                        runCatchingCancellable { container.draftStore.remove(id) }
+                                        runCatchingCancellable { container.attachmentDraftStore.remove(id) }
+                                        runCatchingCancellable { container.messageCacheStore.remove(id) }
+                                        runCatchingCancellable { container.sessionPrefsStore.forget(id) }
+                                        _state.update { s ->
+                                            s.copy(
+                                                sessions = s.sessions.filterNot { it.id == id },
+                                                previews = s.previews - id,
+                                            )
+                                        }
                                     }
                                 }
+                                else -> {}
                             }
-                            else -> {}
                         }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Log.w("SessionListVM", "SSE event collector error, restarting", e)
                     }
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    Log.w("SessionListVM", "SSE event collector error", e)
                 }
             }
         }

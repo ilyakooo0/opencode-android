@@ -55,12 +55,20 @@ class NotificationActionReceiver : BroadcastReceiver() {
             ACTION_REPLY -> {
                 val text = RemoteInput.getResultsFromIntent(intent)
                     ?.getCharSequence(KEY_REPLY_TEXT)?.toString()?.trim()
-                    ?.takeIf { it.isNotEmpty() } ?: return
+                    ?.takeIf { it.isNotEmpty() }
+                if (text == null) {
+                    // The RemoteInput fired but the reply was empty/whitespace. SystemUI locks the
+                    // inline field in a "sending…" state until the notification is updated or
+                    // cancelled — cancel it so the field doesn't stay stuck with nothing to send.
+                    SessionNotifications.cancel(context, sessionId)
+                    return
+                }
+                val profileId = intent.getStringExtra(EXTRA_PROFILE_ID)?.takeIf { it.isNotBlank() }
                 val pending = goAsync()
                 val finished = AtomicBoolean(false)
                 val finishOnce = { if (finished.compareAndSet(false, true)) pending.finish() }
                 watchdog(finishOnce)
-                container.sendPromptFromNotification(sessionId, text) { enqueued ->
+                container.sendPromptFromNotification(sessionId, text, profileId) { enqueued ->
                     // The reply is durably queued (and flushed now if online); clear the
                     // "session ready" notification. If the enqueue failed, leave it up so the
                     // reply isn't silently lost and the user can retry.

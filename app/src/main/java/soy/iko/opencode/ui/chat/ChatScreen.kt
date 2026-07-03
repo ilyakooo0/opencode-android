@@ -365,8 +365,11 @@ fun ChatScreen(
     }
 
     // Navigate to a session freshly branched from a message (branchFrom), once it's created.
+    // Keyed on Unit (like the sibling one-shot collectors above): keying on the onOpenSession
+    // lambda would cancel/restart this collector whenever the lambda's identity changes, risking
+    // a dropped branch-navigation event in the gap.
     val branchedMsg = stringResource(R.string.branch_created)
-    LaunchedEffect(onOpenSession) {
+    LaunchedEffect(Unit) {
         vm.branchEvents.collect { newId ->
             showToast(shareContext, branchedMsg)
             onOpenSession?.invoke(newId)
@@ -1232,6 +1235,7 @@ private fun ChatInputBar(
                     canSend = enabled && hasContent,
                     onSend = onSend,
                     onAbort = onAbort,
+                    onQueue = { onQueueFollowUp(value) },
                 )
             }
         }
@@ -1252,8 +1256,9 @@ private fun enterShouldSend(
     else -> ctrl
 }
 
-/** The composer's trailing button: a Stop (with in-flight spinner) while a run is active,
- *  otherwise Send. Extracted so [ChatInputBar] stays under the complexity threshold. */
+/** The composer's trailing button: while a run is active a Stop (with in-flight spinner),
+ *  preceded by a Queue button when the user has typed a follow-up; otherwise Send. Extracted so
+ *  [ChatInputBar] stays under the complexity threshold. */
 @Composable
 private fun ComposerTrailingButton(
     running: Boolean,
@@ -1261,23 +1266,43 @@ private fun ComposerTrailingButton(
     canSend: Boolean,
     onSend: () -> Unit,
     onAbort: () -> Unit,
+    onQueue: () -> Unit,
 ) {
     if (running) {
-        // Show a spinner while the abort REST call is in flight so the user sees the stop
-        // was sent, and disable to prevent a double-tap.
-        IconButton(
-            onClick = onAbort,
-            enabled = !aborting,
-            modifier = Modifier.padding(start = 4.dp).testTag("stop_button"),
-        ) {
-            if (aborting) {
-                val stopLabel = stringResource(R.string.stop)
-                CircularProgressIndicator(
-                    Modifier.size(18.dp).semantics { contentDescription = stopLabel },
-                    strokeWidth = 2.dp,
-                )
-            } else {
-                Icon(Icons.Filled.Stop, contentDescription = stringResource(R.string.stop))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            // While a run is active the trailing action is Stop, so the only send affordance is
+            // the keyboard's IME action — which is a plain newline when "Send on Enter" is off.
+            // That leaves a touch-only user with the setting off no way to queue a follow-up
+            // (Ctrl+Enter needs a hardware keyboard). Surface an explicit Queue button whenever
+            // there's typed content so queuing is always reachable, without changing the user's
+            // Enter-inserts-a-newline preference.
+            if (canSend) {
+                IconButton(
+                    onClick = onQueue,
+                    modifier = Modifier.testTag("queue_button"),
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.Send,
+                        contentDescription = stringResource(R.string.queue_followup),
+                    )
+                }
+            }
+            // Show a spinner while the abort REST call is in flight so the user sees the stop
+            // was sent, and disable to prevent a double-tap.
+            IconButton(
+                onClick = onAbort,
+                enabled = !aborting,
+                modifier = Modifier.padding(start = 4.dp).testTag("stop_button"),
+            ) {
+                if (aborting) {
+                    val stopLabel = stringResource(R.string.stop)
+                    CircularProgressIndicator(
+                        Modifier.size(18.dp).semantics { contentDescription = stopLabel },
+                        strokeWidth = 2.dp,
+                    )
+                } else {
+                    Icon(Icons.Filled.Stop, contentDescription = stringResource(R.string.stop))
+                }
             }
         }
     } else {

@@ -25,6 +25,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -168,8 +169,14 @@ private fun UnknownMessageBlock(
                 modifier = Modifier.padding(start = 6.dp),
             )
         }
-        for (part in message.parts) {
-            PartView(part, imageContext = imageContext, onOpenFile = onOpenFile)
+        // key() per part so each PartView gets a distinct saveable registry slot: rememberSaveable
+        // inside PartView keys its RESET on part.id but its registry key is the positional
+        // compositeKeyHash, which collides for sibling parts in a keyless loop — mis-restoring
+        // expand/collapse state across parts after process death. (index disambiguates blank ids.)
+        message.parts.forEachIndexed { index, part ->
+            key(part.id, index) {
+                PartView(part, imageContext = imageContext, onOpenFile = onOpenFile)
+            }
         }
         MessageTimestampText(message.info)
     }
@@ -206,7 +213,10 @@ private fun UserBubble(
                 .padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            for (part in message.parts) PartView(part, imageContext = imageContext, onOpenFile = onOpenFile)
+            // key() per part so each PartView gets its own saveable registry slot (see AssistantBlock).
+            message.parts.forEachIndexed { index, part ->
+                key(part.id, index) { PartView(part, imageContext = imageContext, onOpenFile = onOpenFile) }
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -288,7 +298,12 @@ private fun AssistantBlock(
             // isRunning to all of them would keep a completed reasoning block showing the
             // "Thinking…" spinner until the whole message finishes.
             val partStreaming = isRunning && index == message.parts.lastIndex
-            PartView(part, isRunning = partStreaming, modifier = Modifier.fillMaxWidth(), imageContext = imageContext, onOpenFile = onOpenFile)
+            // key() per part so each PartView gets a distinct saveable registry slot: without it,
+            // rememberSaveable expand/collapse state (keyed only positionally) is shared across
+            // sibling parts and mis-restored after process death. (index disambiguates blank ids.)
+            key(part.id, index) {
+                PartView(part, isRunning = partStreaming, modifier = Modifier.fillMaxWidth(), imageContext = imageContext, onOpenFile = onOpenFile)
+            }
         }
         if (info is AssistantMessage) {
             val cost = info.cost

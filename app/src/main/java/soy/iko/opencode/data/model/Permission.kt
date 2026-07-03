@@ -3,7 +3,6 @@ package soy.iko.opencode.data.model
 import androidx.compose.runtime.Immutable
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
 
@@ -15,14 +14,16 @@ import kotlinx.serialization.json.JsonPrimitive
 @Immutable
 @Serializable
 data class Permission(
-    val id: String,
+    val id: String = "",
     val sessionID: String = "",
     val type: String? = null,
     val pattern: JsonElement? = null,
     val messageID: String? = null,
     val callID: String? = null,
     val title: String? = null,
-    val metadata: JsonObject? = null,
+    // JsonElement (not JsonObject) so a non-object `metadata` shape decodes instead of throwing,
+    // matching [pattern]. Not read by the UI today, but kept tolerant for forward-compat.
+    val metadata: JsonElement? = null,
     val time: TimeInfo? = null,
 ) {
     val patternText: String?

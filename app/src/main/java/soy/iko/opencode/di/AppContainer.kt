@@ -513,7 +513,7 @@ open class AppContainer private constructor(
                             // the shared-event collector here would stall the SharedFlow,
                             // overflowing its DROP_OLDEST buffer and silently dropping live
                             // parts/updates for every other subscriber (e.g. the message reducer).
-                            appScope.launch { notifySessionCompleted(idleSid, conn.repository) }
+                            appScope.launch { notifySessionCompleted(idleSid, conn.repository, conn.profile.id) }
                         }
                         return@collect
                     }
@@ -617,8 +617,11 @@ open class AppContainer private constructor(
             originRepo.listSessions()?.firstOrNull { it.id == sessionId }?.displayTitle
         }.getOrNull() ?: sessionId
 
-    /** Resolve the title for [sessionId] (best-effort) and post a completion notification. */
-    private suspend fun notifySessionCompleted(sessionId: String, originRepo: SessionRepository) {
+    /** Resolve the title for [sessionId] (best-effort) and post a completion notification.
+     *  [originProfileId] is the id of the server that ran the session; it's embedded in the
+     *  inline-reply action so a follow-up routes back to THIS server even after the user switches
+     *  connections (mirrors [notifyPermission]). */
+    private suspend fun notifySessionCompleted(sessionId: String, originRepo: SessionRepository, originProfileId: String) {
         val title = resolveSessionTitle(sessionId, originRepo)
         // Re-check viewing right before posting: the call site checks !isActivelyViewing(sid)
         // at event time, but resolveSessionTitle() suspends on a listSessions() round-trip.
@@ -626,7 +629,7 @@ open class AppContainer private constructor(
         // prior notification — posting a fresh one here would leave a "session ready" heads-up
         // lingering while they're already looking at the finished run.
         if (isActivelyViewing(sessionId)) return
-        appContext?.let { SessionNotifications.postCompleted(it, sessionId, title) }
+        appContext?.let { SessionNotifications.postCompleted(it, sessionId, title, originProfileId) }
     }
 
     /** Post a heads-up permission notification for [permission], resolving its session title.
@@ -701,15 +704,19 @@ open class AppContainer private constructor(
      *  immediate send when a connection is live, so an online reply still goes out now. [onDone]
      *  reports whether the reply was durably enqueued so the receiver only dismisses the
      *  notification on success. */
-    open fun sendPromptFromNotification(sessionId: String, text: String, onDone: (Boolean) -> Unit) {
+    open fun sendPromptFromNotification(sessionId: String, text: String, originProfileId: String?, onDone: (Boolean) -> Unit) {
         appScope.launch {
             // Guarantee onDone (so the BroadcastReceiver's goAsync() finishes) even if the
             // scope is cancelled mid-call — see respondToPermissionFromNotification above.
             var enqueued = false
             try {
-                // Attribute to the active (or most-recent) profile so a reconnect to a different
-                // server doesn't misfire this against a session id that only exists elsewhere.
-                val profileId = activeConnection.value?.profile?.id
+                // Attribute to the profile that POSTED the notification (embedded in the reply
+                // intent) so the follow-up is always enqueued against the server that owns
+                // [sessionId] — never whichever server happens to be active now, which would POST
+                // A's session id to B, 404, and silently drop the reply. Fall back to the active/
+                // most-recent profile only for a legacy intent that predates the embedded id.
+                val profileId = originProfileId
+                    ?: activeConnection.value?.profile?.id
                     ?: runCatchingCancellable { profileStore.profiles.first().firstOrNull()?.id }.getOrNull()
                 enqueued = if (profileId == null) {
                     false
@@ -748,28 +755,24 @@ open class AppContainer private constructor(
             .getOrDefault(emptyList())
             .firstOrNull() ?: return
         // The profile read above suspends on DataStore. A manual connect() to a different
-        // server during that window establishes a connection the user explicitly chose; we
-        // must not clobber it by connecting to `recent` on top. connect() unconditionally
-        // closes the active connection, so guard here: if anything is already active, the
-        // user (or another connector) already took the cold-start slot — abort autoConnect.
-        // (disconnectIf below similarly guards the failed-ping teardown by identity.)
-        if (_activeConnection.value != null) return
+        // server during that window establishes a connection the user explicitly chose; we must
+        // not clobber it by connecting to `recent` on top. connectIfIdle() checks "is anything
+        // active?" and connects atomically under connectionMutex, returning null if the cold-start
+        // slot was already taken — closing the TOCTOU window an unlocked null-check plus connect()'s
+        // unconditional close would leave. (disconnectIf below similarly guards the failed-ping
+        // teardown by identity.)
         _reconnecting.value = true
         var conn: OpencodeConnection? = null
         val ok = runCatchingCancellable {
-            conn = connect(recent)
+            conn = connectIfIdle(recent) ?: return@runCatchingCancellable false
             conn!!.api.ping()
-        }.isSuccess
+            true
+        }.getOrDefault(false)
         _reconnecting.value = false
-        if (ok) {
-            _autoConnectDone.value = true
-        } else {
-            val created = conn
-            // Only tear down the connection we created: a manual connect to a different server
-            // during the ping window may have already replaced it, and disconnect() closes
-            // whatever is currently active — which would silently drop that new connection.
-            // disconnectIf re-checks identity under the mutex to close the check-then-close race.
-            if (created != null) disconnectIf(created)
+        when {
+            conn == null -> Unit // slot already taken by a manual connect — leave it be
+            ok -> _autoConnectDone.value = true
+            else -> disconnectIf(conn!!)
         }
     }
 
@@ -788,12 +791,21 @@ open class AppContainer private constructor(
         _isOnline.value = runCatching { cm.activeNetwork != null }.getOrDefault(true)
         val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) { _isOnline.value = true; activeConnection.value?.events?.triggerReconnect() }
-            // Don't flip offline on onLost: during a Wi-Fi→cellular handoff, onLost(WiFi) fires
-            // before onAvailable(cellular), and cm.activeNetwork is transiently null in that
-            // window — eagerly marking offline would skip outbox flushing and flash an offline
-            // indicator. onUnavailable (no networks left at all) is the reliable offline signal.
-            override fun onLost(network: Network) { /* handled by onUnavailable */ }
-            override fun onUnavailable() { _isOnline.value = false }
+            // A matched (internet-capable) network was lost. Don't eagerly flip offline: during a
+            // Wi-Fi→cellular handoff onLost(WiFi) fires before onAvailable(cellular) and
+            // cm.activeNetwork is transiently null in that window — flashing offline there would
+            // skip outbox flushing and blink the indicator. Instead re-check activeNetwork after a
+            // short grace period and only report offline if there's still no active network.
+            //
+            // This MUST live in onLost, not onUnavailable: onUnavailable is delivered only for
+            // requestNetwork() with a timeout, never for registerNetworkCallback() — relying on it
+            // (as this once did) meant offline was never detected after the first onAvailable.
+            override fun onLost(network: Network) {
+                appScope.launch {
+                    delay(NetworkConfig.networkOfflineGraceMs)
+                    _isOnline.value = runCatching { cm.activeNetwork != null }.getOrDefault(true)
+                }
+            }
         }
         // Only match networks that actually provide internet — a capability-less request
         // fires onAvailable for transports that can't reach the server (and would trigger
@@ -810,26 +822,39 @@ open class AppContainer private constructor(
      *  Only persists the updated `lastUsed` timestamp if it's stale (older than a
      *  minute), so rapid reconnect storms don't each trigger a DataStore write. */
     open suspend fun connect(profile: ServerProfile): OpencodeConnection =
+        connectionMutex.withLock { connectLocked(profile) }
+
+    /** Connect to [profile] only if nothing is currently active, checking-and-connecting
+     *  atomically under [connectionMutex]. Returns null (touching nothing) when a connection is
+     *  already active, so autoConnect() can't clobber a manual connect() the user made during its
+     *  suspending profile read — closing the TOCTOU window an unlocked null-check would leave. */
+    private suspend fun connectIfIdle(profile: ServerProfile): OpencodeConnection? =
         connectionMutex.withLock {
-            _activeConnection.value?.close()
-            _activeConnection.value = null
-            // Mutate the run set and its derived flag together under activeRuns' monitor: the SSE
-            // event handler adds ids under the same lock, so an unlocked clear() here could
-            // interleave with an add()+flag=true and leave _anyRunActive pinned true with a torn-
-            // down connection and no SessionIdle to clear it — a stuck foreground service.
-            synchronized(activeRuns) {
-                activeRuns.clear()
-                _anyRunActive.value = false
-            }
-            _unread.value = emptyMap()
-            unreadMessageIds.clear()
-            val now = System.currentTimeMillis()
-            val resolved = profileStore.resolve(profile)
-            val needsSave = (now - resolved.lastUsed) > LAST_USED_SAVE_THRESHOLD_MS
-            val finalProfile = if (needsSave) resolved.copy(lastUsed = now) else resolved
-            if (needsSave) profileStore.save(finalProfile)
-            OpencodeConnection(finalProfile, messageCacheStore).also { _activeConnection.value = it }
+            if (_activeConnection.value != null) null else connectLocked(profile)
         }
+
+    /** Build and install a connection to [profile], replacing any current one. Caller MUST hold
+     *  [connectionMutex]. */
+    private suspend fun connectLocked(profile: ServerProfile): OpencodeConnection {
+        _activeConnection.value?.close()
+        _activeConnection.value = null
+        // Mutate the run set and its derived flag together under activeRuns' monitor: the SSE
+        // event handler adds ids under the same lock, so an unlocked clear() here could
+        // interleave with an add()+flag=true and leave _anyRunActive pinned true with a torn-
+        // down connection and no SessionIdle to clear it — a stuck foreground service.
+        synchronized(activeRuns) {
+            activeRuns.clear()
+            _anyRunActive.value = false
+        }
+        _unread.value = emptyMap()
+        unreadMessageIds.clear()
+        val now = System.currentTimeMillis()
+        val resolved = profileStore.resolve(profile)
+        val needsSave = (now - resolved.lastUsed) > LAST_USED_SAVE_THRESHOLD_MS
+        val finalProfile = if (needsSave) resolved.copy(lastUsed = now) else resolved
+        if (needsSave) profileStore.save(finalProfile)
+        return OpencodeConnection(finalProfile, messageCacheStore).also { _activeConnection.value = it }
+    }
 
     open suspend fun disconnect() {
         // Acquire the connection mutex so disconnect is serialized with connect().

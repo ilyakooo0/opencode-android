@@ -27,15 +27,14 @@ import kotlinx.coroutines.delay
 import java.util.concurrent.TimeUnit
 
 /**
- * Formats an epoch-millis timestamp as a short relative string (e.g. "3m", "2h", "5d").
+ * Formats an epoch-millis timestamp as a short, compact relative string (e.g. "3m", "2h",
+ * "5d", "2w", "3mo", "1y").
  *
- * For coarse units (minutes/hours/days) prefers Android's locale-aware
- * [DateUtils.getRelativeTimeSpanString] so the abbreviations match the device locale
- * instead of hardcoded English. Falls back to a compact numeric form (e.g. "5m",
- * "3h", "2d") when [DateUtils] returns null (e.g. under JVM unit tests where
- * `isReturnDefaultValues = true` stubs the framework call to null). For
- * weeks/months/years — which [DateUtils] doesn't provide short abbreviations for —
- * uses the compact numeric form with a locale-stable unit suffix. Always returns a
+ * The compact single-letter form is deliberate: these labels sit in dense action rows and list
+ * rows next to other controls, so they must stay narrow. (An earlier version used
+ * [DateUtils.getRelativeTimeSpanString] with `FORMAT_ABBREV_RELATIVE` for minutes/hours/days,
+ * but that returns a full phrase like "5 min. ago" / "2 hr. ago" — not the compact form the
+ * examples and the numeric fallback imply — which wraps or crowds those rows.) Always returns a
  * non-empty string for a valid timestamp.
  */
 fun relativeTime(epochMillis: Long?): String {
@@ -45,26 +44,11 @@ fun relativeTime(epochMillis: Long?): String {
     if (diff < 0) return "now"
     val minutes = TimeUnit.MILLISECONDS.toMinutes(diff)
     if (minutes < 1) return "now"
-    if (minutes < 60) {
-        val locale = DateUtils.getRelativeTimeSpanString(
-            epochMillis, now, DateUtils.MINUTE_IN_MILLIS, DateUtils.FORMAT_ABBREV_RELATIVE,
-        )?.toString()
-        return locale?.takeIf { it.isNotBlank() } ?: "${minutes}m"
-    }
+    if (minutes < 60) return "${minutes}m"
     val hours = TimeUnit.MILLISECONDS.toHours(diff)
-    if (hours < 24) {
-        val locale = DateUtils.getRelativeTimeSpanString(
-            epochMillis, now, DateUtils.HOUR_IN_MILLIS, DateUtils.FORMAT_ABBREV_RELATIVE,
-        )?.toString()
-        return locale?.takeIf { it.isNotBlank() } ?: "${hours}h"
-    }
+    if (hours < 24) return "${hours}h"
     val days = TimeUnit.MILLISECONDS.toDays(diff)
-    if (days < 7) {
-        val locale = DateUtils.getRelativeTimeSpanString(
-            epochMillis, now, DateUtils.DAY_IN_MILLIS, DateUtils.FORMAT_ABBREV_RELATIVE,
-        )?.toString()
-        return locale?.takeIf { it.isNotBlank() } ?: "${days}d"
-    }
+    if (days < 7) return "${days}d"
     // DateUtils doesn't offer a short week/month/year abbreviation; use a compact
     // numeric form. The suffix is locale-stable (English letter) but these are
     // rare timestamps (older than a week) and the numeric value is the primary signal.

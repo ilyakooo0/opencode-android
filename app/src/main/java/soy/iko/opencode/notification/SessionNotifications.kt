@@ -92,19 +92,22 @@ object SessionNotifications {
     // canPost() checks POST_NOTIFICATIONS before every notify(); lint can't follow the
     // check through the helper, so suppress its MissingPermission flag on these posts.
     @SuppressLint("MissingPermission")
-    fun postCompleted(context: Context, sessionId: String, title: String) {
+    fun postCompleted(context: Context, sessionId: String, title: String, profileId: String?) {
         if (!canPost(context)) return
         val notifId = notifId(NS_COMPLETED, sessionId)
 
         // Inline reply: a RemoteInput-backed action that broadcasts the typed follow-up to
         // NotificationActionReceiver. The PendingIntent MUST be mutable so the system can
-        // fill in the RemoteInput results before delivering it.
+        // fill in the RemoteInput results before delivering it. [profileId] is embedded so the
+        // receiver enqueues the reply against the server that ran the session, not whichever
+        // server is active when the user taps (mirrors postPermission).
         val remoteInput = RemoteInput.Builder(NotificationActionReceiver.KEY_REPLY_TEXT)
             .setLabel(context.getString(R.string.notif_reply_hint))
             .build()
         val replyIntent = Intent(context, NotificationActionReceiver::class.java).apply {
             action = NotificationActionReceiver.ACTION_REPLY
             putExtra(NotificationActionReceiver.EXTRA_SESSION_ID, sessionId)
+            profileId?.let { putExtra(NotificationActionReceiver.EXTRA_PROFILE_ID, it) }
         }
         val replyPending = PendingIntent.getBroadcast(
             context, notifId, replyIntent,

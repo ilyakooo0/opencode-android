@@ -7,7 +7,10 @@ import kotlinx.serialization.Serializable
 @Immutable
 @Serializable
 data class Agent(
-    val name: String,
+    // Defaulted so one name-less element in GET /agent doesn't fail the whole list decode
+    // (emptying the agent picker) — matches the resilient-decoding philosophy. A blank name is
+    // degraded but recoverable; a thrown decode is not.
+    val name: String = "",
     val description: String? = null,
     val mode: String? = null,
     val builtIn: Boolean = false,
@@ -21,7 +24,9 @@ data class Agent(
 @Immutable
 @Serializable
 data class Command(
-    val name: String,
+    // Defaulted so one name-less element in GET /command doesn't fail the whole list decode
+    // (emptying the command picker) — matches the resilient-decoding philosophy.
+    val name: String = "",
     val description: String? = null,
     val agent: String? = null,
     val model: String? = null,

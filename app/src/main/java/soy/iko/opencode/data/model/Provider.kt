@@ -14,7 +14,10 @@ data class ProvidersResponse(
 @Immutable
 @Serializable
 data class Provider(
-    val id: String,
+    // Defaulted so one id-less element in GET /config/providers doesn't fail the whole list decode
+    // (emptying the model picker) — matches MessageInfo's defaulted id and the resilient-decoding
+    // philosophy. A blank id is degraded but recoverable; a thrown decode is not.
+    val id: String = "",
     val name: String? = null,
     val models: Map<String, ModelInfo> = emptyMap(),
 ) {

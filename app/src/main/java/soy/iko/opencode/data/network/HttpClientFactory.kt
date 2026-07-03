@@ -4,13 +4,15 @@ import soy.iko.opencode.data.model.ServerProfile
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.HttpTimeout
+import io.ktor.client.plugins.api.Send
+import io.ktor.client.plugins.api.createClientPlugin
 import io.ktor.client.plugins.auth.Auth
 import io.ktor.client.plugins.auth.providers.BasicAuthCredentials
 import io.ktor.client.plugins.auth.providers.basic
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.defaultRequest
 import io.ktor.client.plugins.sse.SSE
-import io.ktor.client.request.header
+import io.ktor.http.HttpHeaders
 import io.ktor.http.URLBuilder
 import io.ktor.http.takeFrom
 import io.ktor.serialization.kotlinx.json.json
@@ -101,27 +103,34 @@ object HttpClientFactory {
                         }
                     }
                 }
-            } else {
-                // For HTTP profiles with auth, send credentials proactively in the
-                // Authorization header via defaultRequest (below) so the user's intent
-                // to connect over cleartext is honored, but we never install the Auth
-                // plugin's reactive challenge-response which would silently re-send
-                // credentials on any 401 without checking the protocol.
+            } else if (pinHost != null) {
+                // For HTTP profiles with auth, attach the Basic header proactively (the reactive
+                // Auth plugin is skipped for non-HTTPS so a 401 can't silently re-send credentials
+                // in cleartext), but scope it to the configured host and re-check on EVERY physical
+                // send. Redirects matter: Ktor builds the redirect request by copying the original
+                // headers, so an unconditional header would carry the cleartext credentials to a
+                // cross-host redirect target. Setting it here (and stripping it off-host) mirrors
+                // the HTTPS path's sendWithoutRequest host guard so credentials never go off-origin.
+                val credentials = java.util.Base64.getEncoder().encodeToString(
+                    "${profile.username.orEmpty()}:${profile.password.orEmpty()}".toByteArray(),
+                )
+                install(
+                    createClientPlugin("HttpBasicAuthHostScoped") {
+                        on(Send) { request ->
+                            if (request.url.host.equals(pinHost, ignoreCase = true)) {
+                                request.headers[HttpHeaders.Authorization] = "Basic $credentials"
+                            } else {
+                                request.headers.remove(HttpHeaders.Authorization)
+                            }
+                            proceed(request)
+                        }
+                    },
+                )
             }
         }
 
         defaultRequest {
             url.takeFrom(URLBuilder().takeFrom(normalizedUrl))
-            // For HTTP profiles with auth, attach the Basic auth header proactively on
-            // every request (the Auth plugin is skipped for non-HTTPS). The user chose
-            // cleartext explicitly, so we honor that — but without the reactive challenge
-            // logic that could re-send credentials silently.
-            if (profile.hasAuth && !isHttps) {
-                val credentials = java.util.Base64.getEncoder().encodeToString(
-                    "${profile.username.orEmpty()}:${profile.password.orEmpty()}".toByteArray(),
-                )
-                header("Authorization", "Basic $credentials")
-            }
         }
         }
     }

@@ -93,10 +93,17 @@ open class NsdDiscovery(context: Context?) {
             }
             override fun onServiceLost(serviceInfo: NsdServiceInfo) {
                 val name = serviceInfo.serviceName ?: return
-                // Mark the name lost so the resolver skips it if it hasn't been processed yet.
-                // If it's already in `found` (resolved before the lost), remove and emit now.
-                lostPending.add(name)
-                if (found.remove(name) != null) trySend(found.values.sortedBy { it.name })
+                // If it was already resolved and in `found`, remove and emit now — and do NOT set a
+                // lostPending marker: the resolver already processed this name, so the marker would
+                // never be consumed and would instead suppress the service's NEXT re-appearance (a
+                // restarted server re-discovered later would hit `lostPending.remove` and be
+                // dropped). Only mark names lost *before* the serialized resolver reached them —
+                // those aren't in `found` yet, and the marker tells the resolver to skip the insert.
+                if (found.remove(name) != null) {
+                    trySend(found.values.sortedBy { it.name })
+                } else {
+                    lostPending.add(name)
+                }
             }
             override fun onDiscoveryStopped(serviceType: String?) {}
             override fun onStartDiscoveryFailed(serviceType: String?, errorCode: Int) {

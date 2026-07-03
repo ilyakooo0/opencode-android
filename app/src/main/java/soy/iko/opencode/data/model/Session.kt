@@ -7,7 +7,10 @@ import kotlinx.serialization.Serializable
 @Immutable
 @Serializable
 data class Session(
-    val id: String,
+    // Defaulted so one id-less element in GET /session doesn't fail the whole list decode
+    // (emptying the session list) — matches MessageInfo's defaulted id and the resilient-decoding
+    // philosophy. A blank id is degraded but recoverable; a thrown decode is not.
+    val id: String = "",
     val parentID: String? = null,
     val title: String? = null,
     val version: String? = null,

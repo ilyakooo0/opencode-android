@@ -116,25 +116,26 @@ private fun MarkdownBody(
     if (streaming) {
         // Bridge the markdown parameter into snapshot state so snapshotFlow can observe it.
         val markdownState = rememberUpdatedState(markdown)
-        // Keyed to a content-prefix so switching to a different message resets
-        // immediately instead of showing the old message for one frame.
-        val prefix = markdown.take(32)
-        var renderedContent by remember(prefix) { mutableStateOf(markdown) }
-        // conflate() coalesces a burst of token updates into a single emission so the
-        // collector sees only the latest value after the previous delay completes. Plain
-        // collect (not collectLatest) is critical: collectLatest would cancel the delay
-        // on every new value, reintroducing the same starvation the keyed effect had.
-        LaunchedEffect(prefix) {
+        var renderedContent by remember { mutableStateOf(markdown) }
+        // A SINGLE long-lived effect (keyed on Unit), per this file's design. Keying on the
+        // content — even a prefix like markdown.take(32) — cancels and restarts the effect as the
+        // first characters stream in (the prefix changes on nearly every early token), so the
+        // in-flight delay never completes and the throttle is defeated at the start of every
+        // response. A streaming MarkdownBody instance only ever grows its content (a different
+        // message is a fresh composition with its own remember), so no reset key is needed.
+        // conflate() coalesces a burst of token updates into a single emission so the collector
+        // sees only the latest value after the previous delay completes. Plain collect (not
+        // collectLatest) is critical: collectLatest would cancel the delay on every new value,
+        // reintroducing the same starvation a keyed effect has.
+        LaunchedEffect(Unit) {
             snapshotFlow { markdownState.value }
                 .conflate()
                 .collect { md ->
-                    // Only throttle when the content is growing incrementally (streaming):
-                    // a content switch or initial render proceeds immediately. Checking
-                    // length is O(1) vs. startsWith which is O(n) in the rendered content
-                    // length — during a long streaming response this runs every throttle
-                    // cycle. The keyed LaunchedEffect(markdown.take(32)) already handles
-                    // content switches; within one keyed cycle, growing length means
-                    // appending (streaming), not a rewrite.
+                    // Only throttle when the content is growing incrementally (streaming): a
+                    // shorter switch or initial render proceeds immediately. Checking length is
+                    // O(1) vs. startsWith which is O(n) in the rendered content length — during a
+                    // long streaming response this runs every throttle cycle. Within one streaming
+                    // composition, growing length means appending (streaming), not a rewrite.
                     if (renderedContent.isNotEmpty() &&
                         md.length > renderedContent.length
                     ) {

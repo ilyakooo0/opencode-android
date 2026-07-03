@@ -131,6 +131,7 @@
     <string name="stop_run_text">El agente sigue trabajando. ¿Detenerlo ahora?</string>
     <string name="session_deleted_msg">Esta sesión se eliminó en otro dispositivo.</string>
     <string name="queued">En cola — se enviará cuando termine la ejecución</string>
+    <string name="queue_followup">Poner seguimiento en cola</string>
 
     <!-- Errors (view models) -->
     <string name="error_generic">Algo salió mal.</string>
