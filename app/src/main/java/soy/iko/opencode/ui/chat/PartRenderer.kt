@@ -4,6 +4,8 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.defaultMinSize
@@ -36,7 +38,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -155,7 +159,12 @@ private fun ReasoningBlock(text: String, streaming: Boolean, keyId: String, modi
     // call site already disambiguates sibling parts positionally, so a constant per
     // block type won't collide.
     val saveableKey = keyId.ifBlank { "reasoning" }
-    var expanded by rememberSaveable(saveableKey) { mutableStateOf(false) }
+    val haptics = LocalHapticFeedback.current
+    // While the reasoning is still streaming, default to expanded so live "Thinking…" is
+    // visible; once complete it collapses. A non-null override records an explicit user
+    // toggle and wins over the streaming default, so we don't fight a user who collapsed it.
+    var userOverride by rememberSaveable(saveableKey) { mutableStateOf<Boolean?>(null) }
+    val expanded = userOverride ?: streaming
     val expandedState = stringResource(R.string.state_expanded)
     val collapsedState = stringResource(R.string.state_collapsed)
     val thinkingLabel = stringResource(R.string.thinking)
@@ -165,7 +174,7 @@ private fun ReasoningBlock(text: String, streaming: Boolean, keyId: String, modi
             modifier = Modifier
                 .fillMaxWidth()
                 .defaultMinSize(minHeight = 48.dp)
-                .clickable(role = Role.Button) { expanded = !expanded }
+                .clickable(role = Role.Button) { userOverride = !expanded }
                 .padding(vertical = 4.dp)
                 .semantics {
                     stateDescription = if (expanded) expandedState else collapsedState
@@ -206,7 +215,10 @@ private fun ReasoningBlock(text: String, streaming: Boolean, keyId: String, modi
                     )
                 }
                 TextButton(
-                    onClick = { copyToClipboard(context, "reasoning", text) },
+                    onClick = {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        copyToClipboard(context, "reasoning", text)
+                    },
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp),
                     modifier = Modifier.semantics(mergeDescendants = true) {},
                 ) {
@@ -222,6 +234,7 @@ private fun ReasoningBlock(text: String, streaming: Boolean, keyId: String, modi
 @Composable
 private fun ToolCallView(part: ToolPart, modifier: Modifier) {
     val context = LocalContext.current
+    val haptics = LocalHapticFeedback.current
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -311,7 +324,10 @@ private fun ToolCallView(part: ToolPart, modifier: Modifier) {
                 moreLines = moreLines,
                 expandedState = expandedState,
                 collapsedState = collapsedState,
-                onCopy = { copyToClipboard(context, "output", detail) },
+                onCopy = {
+                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    copyToClipboard(context, "output", detail)
+                },
                 diffSaveKey = part.id,
             )
         }
@@ -369,11 +385,15 @@ private fun CollapsibleDetail(
         } else {
             // SelectionContainer so the user can select a portion of the output (e.g.
             // a single line of stdout) instead of only copy-all via the button below.
+            // Horizontal scroll + softWrap=false so wide stdout / tables scroll instead of
+            // soft-wrapping into an unreadable ragged block (mirrors the file viewer).
             SelectionContainer {
                 Text(
                     detail,
                     style = MaterialTheme.typography.bodySmall,
                     fontFamily = FontFamily.Monospace,
+                    softWrap = false,
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
                 )
             }
         }
@@ -449,6 +469,7 @@ private fun ToolStatusIcon(state: ToolState) {
 @Composable
 private fun FileChip(part: FilePart, modifier: Modifier, onOpenFile: ((String) -> Unit)?) {
     val context = LocalContext.current
+    val haptics = LocalHapticFeedback.current
     val path = part.sourcePath ?: part.url ?: part.filename
     val copyLabel = stringResource(R.string.copy_path)
     val openLabel = stringResource(R.string.open_file)
@@ -473,12 +494,14 @@ private fun FileChip(part: FilePart, modifier: Modifier, onOpenFile: ((String) -
                     if (toOpen != null) {
                         opener?.invoke(toOpen)
                     } else if (!path.isNullOrBlank()) {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         copyToClipboard(context, "path", path)
                         showToast(context, context.getString(R.string.path_copied))
                     }
                 },
                 onLongClick = {
                     if (!path.isNullOrBlank()) {
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                         copyToClipboard(context, "path", path)
                         showToast(context, context.getString(R.string.path_copied))
                     }

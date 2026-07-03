@@ -1,18 +1,13 @@
 package soy.iko.opencode.ui.session
 
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -21,16 +16,17 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import soy.iko.opencode.R
+import soy.iko.opencode.data.model.Session
 import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.ui.chat.ChatScreen
+import soy.iko.opencode.ui.components.EmptyState
 import soy.iko.opencode.ui.vmFactory
 
 /**
@@ -87,38 +83,30 @@ fun TwoPaneSessionChat(
         lastProfileId = currentId
     }
 
-    // Clear the selection only when the open session is *deleted* — i.e. it was present
-    // in the list and then dropped out. A freshly created session sets `selected` to the
-    // new id before the async refresh lands, so the id is legitimately absent from the
-    // (still-stale) list for a moment; a naive "not in list" check would wrongly clear it
-    // and blank the detail pane. The `hasAppeared` latch (reset whenever `selected`
-    // changes, via remember keyed to it) distinguishes "never appeared yet" (keep) from
-    // "appeared, then removed" (a real deletion → clear).
-    var hasAppeared by remember(selected) { mutableStateOf(false) }
-    LaunchedEffect(selected, sessionListState.sessions) {
-        val target = selected ?: return@LaunchedEffect
-        if (sessionListState.sessions.any { it.id == target }) {
-            hasAppeared = true
-        } else if (hasAppeared) {
-            selected = null
-        }
-    }
+    StaleSelectionCleanup(
+        loading = sessionListState.loading,
+        error = sessionListState.error,
+        sessions = sessionListState.sessions,
+        selected = selected,
+        onClear = { selected = null },
+    )
 
-    // The hasAppeared latch above can't survive process death (plain remember), so a
-    // `selected` restored across process death whose session was deleted server-side while
-    // dead never "appears" and is kept forever — the detail pane then renders ChatScreen for
-    // a nonexistent session (permanent load error). Once the first list load completes
-    // successfully without the restored target, clear it. Guarded to run once (non-saveable
-    // flag, so it re-arms after process death) and only on a successful, completed load — not
-    // during the initial load, and not for a freshly-created session whose refresh keeps
-    // `loading` false while its row is still pending.
-    var initialSelectionValidated by remember { mutableStateOf(false) }
-    LaunchedEffect(sessionListState.loading, sessionListState.error, sessionListState.sessions) {
-        if (initialSelectionValidated) return@LaunchedEffect
-        if (sessionListState.loading || sessionListState.error != null) return@LaunchedEffect
-        initialSelectionValidated = true
-        val target = selected ?: return@LaunchedEffect
-        if (sessionListState.sessions.none { it.id == target }) selected = null
+    // Auto-select the most-recent session into the detail pane so a wide screen doesn't
+    // open on a blank right pane. Runs at most once per composition (the `autoSelected`
+    // latch, non-saveable so it re-arms after process death), and only once the first list
+    // load has completed. It defers to any explicit selection already present — a restored
+    // `selected`, a deep-link/notification (pendingOpenSession), or a user pick — and, since
+    // the latch is set the moment any of those wins, it never re-selects after a user clears
+    // the pane (BackHandler) or a server switch nulls `selected`.
+    var autoSelected by remember { mutableStateOf(false) }
+    LaunchedEffect(sessionListState.loading, sessionListState.sessions, pendingOpenSession, selected) {
+        if (autoSelected || sessionListState.loading) return@LaunchedEffect
+        // A pending deep-link or an existing selection takes precedence; yield the pane to it.
+        if (pendingOpenSession != null || selected != null) { autoSelected = true; return@LaunchedEffect }
+        // Pick by recency regardless of the list's current sort mode.
+        val id = mostRecentSessionId(sessionListState.sessions) ?: return@LaunchedEffect
+        selected = id
+        autoSelected = true
     }
 
     // Inject a pending share into the currently selected session's draft (if any).
@@ -157,7 +145,11 @@ fun TwoPaneSessionChat(
         Box(modifier = Modifier.weight(NetworkConfig.twoPaneRightWeight).fillMaxSize()) {
             val sessionId = selected
             if (sessionId == null) {
-                EmptyDetail()
+                // Reuse the same VM create path the session-list FAB uses; open the new
+                // session straight into the detail pane.
+                EmptyDetail(onNewSession = {
+                    sessionListVm.createSession(directory = null) { id -> selected = id }
+                })
             } else {
                 BackHandler { selected = null }
                 // key() on the session id so switching conversations in two-pane mode
@@ -181,23 +173,60 @@ fun TwoPaneSessionChat(
     }
 }
 
+/** Id of the most recently updated (or created) session, or null when the list is empty. */
+private fun mostRecentSessionId(sessions: List<Session>): String? =
+    sessions.maxByOrNull { it.time?.updated ?: it.time?.created ?: 0L }?.id
+
+/** Whether a session with [id] is present in [sessions]. */
+private fun containsSession(sessions: List<Session>, id: String): Boolean =
+    sessions.any { it.id == id }
+
+/**
+ * Clears a stale detail-pane selection. Two guards:
+ *
+ *  - Clear only when the open session is *deleted* — present in the list, then dropped out.
+ *    A freshly created session sets `selected` before its async refresh lands, so the id is
+ *    legitimately absent for a moment; the `hasAppeared` latch (reset when `selected` changes)
+ *    distinguishes "never appeared yet" (keep) from "appeared, then removed" (clear).
+ *  - The `hasAppeared` latch can't survive process death, so a `selected` restored across a
+ *    kill whose session was deleted server-side while dead never "appears" and would be kept
+ *    forever (permanent load error). Once the first list load completes without the restored
+ *    target, clear it. Runs once (non-saveable flag, re-arms after death) and only on a
+ *    successful, completed load — not mid-load, and not for a freshly-created pending row.
+ */
 @Composable
-private fun EmptyDetail() {
-    Column(
-        modifier = Modifier.fillMaxSize().padding(32.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Icon(
-            Icons.AutoMirrored.Filled.Chat,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.outline,
-        )
-        Text(
-            stringResource(R.string.empty_detail_pane),
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(top = 12.dp),
-        )
+private fun StaleSelectionCleanup(
+    loading: Boolean,
+    error: String?,
+    sessions: List<Session>,
+    selected: String?,
+    onClear: () -> Unit,
+) {
+    var hasAppeared by remember(selected) { mutableStateOf(false) }
+    LaunchedEffect(selected, sessions) {
+        val target = selected ?: return@LaunchedEffect
+        if (containsSession(sessions, target)) hasAppeared = true
+        else if (hasAppeared) onClear()
     }
+    var initialSelectionValidated by remember { mutableStateOf(false) }
+    LaunchedEffect(loading, error, sessions) {
+        if (initialSelectionValidated) return@LaunchedEffect
+        if (loading || error != null) return@LaunchedEffect
+        initialSelectionValidated = true
+        val target = selected ?: return@LaunchedEffect
+        if (!containsSession(sessions, target)) onClear()
+    }
+}
+
+@Composable
+private fun EmptyDetail(onNewSession: () -> Unit) {
+    EmptyState(
+        icon = Icons.AutoMirrored.Filled.Chat,
+        title = stringResource(R.string.empty_detail_title),
+        description = stringResource(R.string.empty_detail_pane),
+        actionIcon = Icons.Filled.Add,
+        actionLabel = stringResource(R.string.new_session),
+        onAction = onNewSession,
+        modifier = Modifier.fillMaxSize(),
+    )
 }

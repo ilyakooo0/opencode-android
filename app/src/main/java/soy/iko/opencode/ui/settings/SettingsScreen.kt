@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.QueryStats
 import androidx.compose.material.icons.filled.Upload
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
@@ -151,6 +152,11 @@ fun SettingsScreen(
     // Backup/restore via the Storage Access Framework. Export writes the JSON the user names;
     // import reads a chosen file and applies it. Feedback is a toast (this screen has no snackbar).
     var includePasswords by rememberSaveable { mutableStateOf(false) }
+    // Import overwrites all profiles/settings with no undo, so a picked file is staged here
+    // and only applied once the user confirms the replace dialog below. Export with passwords
+    // included warns first (plaintext credentials leave the app).
+    var pendingImportUri by remember { mutableStateOf<android.net.Uri?>(null) }
+    var showExportPasswordWarning by rememberSaveable { mutableStateOf(false) }
     val exportedMsg = stringResource(R.string.backup_exported)
     val exportFailedMsg = stringResource(R.string.backup_export_failed)
     val importedMsg = stringResource(R.string.backup_imported)
@@ -172,14 +178,8 @@ fun SettingsScreen(
         ActivityResultContracts.OpenDocument(),
     ) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
-        scope.launch {
-            val ok = runCatchingCancellable {
-                val text = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
-                    ?: error("no input stream")
-                container.backupManager.import(text)
-            }.isSuccess
-            showToast(context, if (ok) importedMsg else importFailedMsg)
-        }
+        // Stage the file; the actual destructive import waits on the confirm dialog.
+        pendingImportUri = uri
     }
 
     Scaffold(
@@ -464,7 +464,12 @@ fun SettingsScreen(
                 icon = Icons.Filled.Upload,
                 label = stringResource(R.string.export_backup),
                 enabled = true,
-                onClick = { runCatching { exportLauncher.launch("opencode-backup.json") } },
+                // Warn before writing plaintext credentials out of the app; confirm then launches
+                // the file picker. Without passwords, export straight away.
+                onClick = {
+                    if (includePasswords) showExportPasswordWarning = true
+                    else runCatching { exportLauncher.launch("opencode-backup.json") }
+                },
             )
             NavRow(
                 icon = Icons.Filled.Download,
@@ -517,6 +522,49 @@ fun SettingsScreen(
                 Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
+    }
+
+    // Destructive-import confirmation: applies the staged file only on Replace.
+    pendingImportUri?.let { uri ->
+        AlertDialog(
+            onDismissRequest = { pendingImportUri = null },
+            title = { Text(stringResource(R.string.import_confirm_title)) },
+            text = { Text(stringResource(R.string.import_confirm_text)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingImportUri = null
+                    scope.launch {
+                        val ok = runCatchingCancellable {
+                            val text = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                                ?: error("no input stream")
+                            container.backupManager.import(text)
+                        }.isSuccess
+                        showToast(context, if (ok) importedMsg else importFailedMsg)
+                    }
+                }) { Text(stringResource(R.string.import_confirm_replace), color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingImportUri = null }) { Text(stringResource(R.string.cancel)) }
+            },
+        )
+    }
+
+    // Plaintext-password export warning: only launches the file picker on confirm.
+    if (showExportPasswordWarning) {
+        AlertDialog(
+            onDismissRequest = { showExportPasswordWarning = false },
+            title = { Text(stringResource(R.string.export_passwords_title)) },
+            text = { Text(stringResource(R.string.export_passwords_warning)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    showExportPasswordWarning = false
+                    runCatching { exportLauncher.launch("opencode-backup.json") }
+                }) { Text(stringResource(R.string.export_backup), color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showExportPasswordWarning = false }) { Text(stringResource(R.string.cancel)) }
+            },
+        )
     }
 }
 

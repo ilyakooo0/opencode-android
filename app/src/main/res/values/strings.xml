@@ -471,4 +471,29 @@
     <string name="cert_pin_hint">sha256/AAAA… (optional)</string>
     <string name="cert_pin_desc">Pin the server\'s TLS certificate (SHA-256)</string>
     <string name="cert_pin_invalid">Pin must look like sha256/&lt;base64&gt;</string>
+
+    <!-- Chat -->
+    <string name="attachment_staging">Attaching…</string>
+    <string name="new_messages">New messages</string>
+
+    <!-- Session list -->
+    <string name="session_archived">Session archived</string>
+    <string name="session_unarchived">Session unarchived</string>
+    <string name="session_pinned_msg">Session pinned</string>
+    <string name="session_unpinned_msg">Session unpinned</string>
+    <string name="session_archived_badge">Archived</string>
+    <string name="sort_active">Active sort</string>
+    <string name="sort_descending">Descending</string>
+    <string name="sort_ascending">Ascending</string>
+    <string name="empty_detail_title">No conversation open</string>
+
+    <!-- File view -->
+    <string name="switch_to_raw_to_search">Switch to Raw to search</string>
+
+    <!-- Settings backup/restore -->
+    <string name="import_confirm_title">Replace all data?</string>
+    <string name="import_confirm_text">This will replace your servers and settings with the contents of this backup. This can\'t be undone.</string>
+    <string name="import_confirm_replace">Replace</string>
+    <string name="export_passwords_title">Export plaintext passwords?</string>
+    <string name="export_passwords_warning">This backup will contain your server passwords in plain text. Anyone who can read the file can read them.</string>
 </resources>

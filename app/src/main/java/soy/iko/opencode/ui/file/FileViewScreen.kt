@@ -76,6 +76,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
 import soy.iko.opencode.ui.components.DiffView
+import soy.iko.opencode.ui.components.LocalCodeWrap
 import soy.iko.opencode.ui.components.copyToClipboard
 import soy.iko.opencode.ui.components.highlightLine
 import soy.iko.opencode.ui.components.syntaxFor
@@ -114,7 +115,10 @@ fun FileViewScreen(
     var findActive by rememberSaveable(path) { mutableStateOf(false) }
     var findQuery by rememberSaveable(path) { mutableStateOf("") }
     var matchPos by rememberSaveable(path) { mutableIntStateOf(0) }
-    var wrap by rememberSaveable(path) { mutableStateOf(false) }
+    // Seed the per-file wrap toggle from the user's global code-wrap preference so the viewer
+    // respects it by default; they can still flip it per-file (persisted across rotation).
+    val codeWrap = LocalCodeWrap.current
+    var wrap by rememberSaveable(path) { mutableStateOf(codeWrap) }
     val listState = rememberLazyListState()
     val rawText = state.content?.content.orEmpty()
     val lines = remember(rawText) { rawText.split("\n") }
@@ -161,10 +165,19 @@ fun FileViewScreen(
                 loading = state.loading,
                 content = rawText,
                 wrap = wrap,
-                inDiffMode = showToggle && showDiff,
                 onBack = onBack,
                 onReload = { vm.reload() },
-                onToggleFind = { findActive = !findActive; if (!findActive) findQuery = "" },
+                // Find searches the raw line list, which isn't on screen under a diff. Rather
+                // than silently greying the icon out, keep it tappable and explain where find
+                // lives when the user is in diff mode.
+                onToggleFind = {
+                    if (showToggle && showDiff) {
+                        showToast(context, context.getString(R.string.switch_to_raw_to_search))
+                    } else {
+                        findActive = !findActive
+                        if (!findActive) findQuery = ""
+                    }
+                },
                 onToggleWrap = { wrap = !wrap },
                 onCopy = { copyToClipboard(context, filename, rawText) },
                 onShare = {
@@ -231,7 +244,6 @@ private fun FileViewTopBar(
     loading: Boolean,
     content: String,
     wrap: Boolean,
-    inDiffMode: Boolean,
     onBack: () -> Unit,
     onReload: () -> Unit,
     onToggleFind: () -> Unit,
@@ -253,12 +265,11 @@ private fun FileViewTopBar(
                 Icon(Icons.Filled.Refresh, contentDescription = stringResource(R.string.refresh))
             }
             if (content.isNotEmpty()) {
-                // Find-in-file: toggles a search bar over the raw content. Disabled only when
-                // the DiffView is actually on screen ([inDiffMode]) — the find bar searches the
-                // raw text and scrolls the line LazyColumn, neither of which is visible under a
-                // diff, so find would silently no-op there. A plain file with no diff (the common
-                // case) shows raw text, so find must stay enabled. The user can switch to Raw to find.
-                IconButton(onClick = onToggleFind, enabled = !inDiffMode) {
+                // Find-in-file: toggles a search bar over the raw content. Stays enabled even in
+                // diff mode — the find bar searches the raw text and scrolls the line LazyColumn,
+                // neither of which is visible under a diff, so tapping it there surfaces a hint to
+                // switch to Raw rather than silently no-opping behind a greyed-out icon.
+                IconButton(onClick = onToggleFind) {
                     Icon(Icons.Filled.Search, contentDescription = stringResource(R.string.find_in_file))
                 }
                 // Wrap long lines instead of horizontal-scrolling, useful for prose.

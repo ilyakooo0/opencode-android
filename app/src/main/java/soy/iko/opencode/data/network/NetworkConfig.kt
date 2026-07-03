@@ -200,8 +200,30 @@ object NetworkConfig {
     const val twoPaneWidthThresholdDp = 840
     /** Maximum width fraction a user message bubble can occupy (keeps it readable). */
     const val userBubbleWidthFraction = 0.85f
+    /** Extra bottom content padding (dp) for the chat message list, reserving room for the
+     *  jump-to-latest FAB so it never floats over the last message. */
+    const val chatListFabInsetDp = 80
     /** Left pane weight in the two-pane layout (session list). */
     const val twoPaneLeftWeight = 0.38f
     /** Right pane weight in the two-pane layout (chat detail). */
     const val twoPaneRightWeight = 0.62f
+
+    /** Minimum window width (dp) at which a NavigationRail is shown alongside the
+     *  two-pane layout for top-level destination discoverability on large screens. */
+    const val navigationRailThresholdDp = 840
+
+    // --- Motion tokens (shared across screens) ---
+
+    /** Duration (ms) for horizontal slide push/pop nav transitions. */
+    const val motionSlideDurationMs = 220
+    /** Duration (ms) for fade in/out nav and content transitions. */
+    const val motionFadeDurationMs = 180
+
+    // --- Font scaling ---
+
+    /** Upper bound on the *combined* app×OS font scale. The chat text-size preference
+     *  multiplies on top of the system font scale, so a user at a large system size and
+     *  a large app size can reach ~2× and break tight layouts. The provided app scale is
+     *  clamped so the product with the OS fontScale never exceeds this. */
+    const val maxCombinedFontScale = 1.8f
 }

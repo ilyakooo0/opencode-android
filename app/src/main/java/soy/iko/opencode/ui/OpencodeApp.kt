@@ -14,6 +14,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -116,8 +117,23 @@ fun OpencodeApp(container: AppContainer) {
         navController.navigate(Routes.chat(session.id)) { launchSingleTop = true }
     }
 
+    // The chat text-size preference multiplies on top of the OS font scale (sp already
+    // honors the system setting), so a large system size × large app size can reach ~2×
+    // and break tight layouts. Clamp the provided app scale so the product with the OS
+    // fontScale never exceeds NetworkConfig.maxCombinedFontScale, while never scaling
+    // below the user's chosen value's intent (floor of 1× app scale is preserved when the
+    // system size alone already exceeds the cap).
+    val systemFontScale = LocalDensity.current.fontScale
+    val clampedChatTextScale = if (systemFontScale <= 0f) {
+        chatTextScale
+    } else {
+        chatTextScale.coerceAtMost(
+            (NetworkConfig.maxCombinedFontScale / systemFontScale).coerceAtLeast(1f)
+        )
+    }
+
     CompositionLocalProvider(
-        LocalChatTextScale provides chatTextScale,
+        LocalChatTextScale provides clampedChatTextScale,
         LocalCodeWrap provides codeWrap,
     ) {
     // Adaptive: on wide screens (tablets / unfolded foldables) show the session list and
@@ -165,10 +181,16 @@ fun OpencodeApp(container: AppContainer) {
             startDestination = Routes.SERVERS,
             // Slide horizontally for forward/back navigation to feel native; fade for
             // the root so the first frame doesn't slide in from off-screen.
-            enterTransition = { slideInHorizontally(animationSpec = tween(220)) { it } + fadeIn(tween(180)) },
-            exitTransition = { fadeOut(tween(180)) },
-            popEnterTransition = { fadeIn(tween(180)) },
-            popExitTransition = { slideOutHorizontally(animationSpec = tween(220)) { it } + fadeOut(tween(180)) },
+            enterTransition = {
+                slideInHorizontally(animationSpec = tween(NetworkConfig.motionSlideDurationMs)) { it } +
+                    fadeIn(tween(NetworkConfig.motionFadeDurationMs))
+            },
+            exitTransition = { fadeOut(tween(NetworkConfig.motionFadeDurationMs)) },
+            popEnterTransition = { fadeIn(tween(NetworkConfig.motionFadeDurationMs)) },
+            popExitTransition = {
+                slideOutHorizontally(animationSpec = tween(NetworkConfig.motionSlideDurationMs)) { it } +
+                    fadeOut(tween(NetworkConfig.motionFadeDurationMs))
+            },
         ) {
 
         composable(Routes.SERVERS) {

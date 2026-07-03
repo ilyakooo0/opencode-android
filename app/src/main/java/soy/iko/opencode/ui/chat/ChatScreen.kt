@@ -46,6 +46,8 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -281,21 +283,30 @@ fun ChatScreen(
     val voicePrompt = stringResource(R.string.voice_prompt)
     val linkCopiedMsg = stringResource(R.string.link_copied)
 
+    // Count of picks currently being read + base64-encoded off the main thread, so the
+    // composer can show a staging placeholder immediately (chips only materialize once done).
+    var stagingCount by remember { mutableStateOf(0) }
+
     // Convert each picked Uri to a base64 attachment off the main thread, honoring the
     // per-prompt count cap and surfacing per-file errors without aborting the batch.
     fun stageUris(uris: List<Uri>) {
         if (uris.isEmpty()) return
         scope.launch {
-            for (uri in uris) {
-                if (vm.attachments.value.size >= NetworkConfig.maxAttachments) {
-                    snackbar.showSnackbar(attachLimitMsg)
-                    break
+            stagingCount++
+            try {
+                for (uri in uris) {
+                    if (vm.attachments.value.size >= NetworkConfig.maxAttachments) {
+                        snackbar.showSnackbar(attachLimitMsg)
+                        break
+                    }
+                    when (val result = uri.toAttachmentResult(appContext)) {
+                        is AttachmentResult.Ok -> vm.addAttachment(result.attachment)
+                        AttachmentResult.TooLarge -> snackbar.showSnackbar(attachTooLargeMsg)
+                        AttachmentResult.Failed -> snackbar.showSnackbar(attachFailedMsg)
+                    }
                 }
-                when (val result = uri.toAttachmentResult(appContext)) {
-                    is AttachmentResult.Ok -> vm.addAttachment(result.attachment)
-                    AttachmentResult.TooLarge -> snackbar.showSnackbar(attachTooLargeMsg)
-                    AttachmentResult.Failed -> snackbar.showSnackbar(attachFailedMsg)
-                }
+            } finally {
+                stagingCount--
             }
         }
     }
@@ -659,6 +670,7 @@ fun ChatScreen(
                     onCancelQueue = { vm.queueFollowUp("") },
                     focusRequester = inputFocusRequester,
                     attachments = attachments,
+                    staging = stagingCount > 0,
                     onRemoveAttachment = vm::removeAttachment,
                     onPickPhoto = {
                         photoPicker.launch(
@@ -699,6 +711,10 @@ fun ChatScreen(
         // jump-to-latest FAB. rememberUpdatedState hands those lambdas a stable State
         // whose value tracks the latest list.
         val currentListItems by rememberUpdatedState(listItems)
+
+        // New-content signal for the jump-to-latest FAB: set when content grows while the user
+        // is scrolled away from the bottom, cleared once they return (see the collector below).
+        var hasNewContent by remember { mutableStateOf(false) }
 
         val isPinnedToBottom by remember {
             derivedStateOf {
@@ -746,6 +762,8 @@ fun ChatScreen(
         }
 
         LaunchedEffect(Unit) {
+            var prevSize = 0
+            var prevLen = 0
             snapshotFlow {
                 // Track list size + the streaming length of the last part so we auto-scroll
                 // as content arrives, plus the pinned flag. A small data class with primitive
@@ -757,14 +775,23 @@ fun ChatScreen(
                 val lastLen = streamingContentLength(messages.lastOrNull()?.parts?.lastOrNull())
                 AutoScrollSignal(currentListItems.size, lastLen, isPinnedToBottom)
             }.collect { signal ->
-                if (signal.size > 0 && signal.pinned) {
-                    // Scroll to the effective last index, including the trailing
-                    // "__typing" row when a run is active so the working indicator
-                    // is brought into view (not just the last message).
-                    val items = currentListItems
-                    val target = if (running) items.size else items.lastIndex
-                    listState.scrollToItem(target)
+                if (signal.pinned) {
+                    // Back at the bottom: clear the new-content badge.
+                    hasNewContent = false
+                    if (signal.size > 0) {
+                        // Scroll to the effective last index, including the trailing
+                        // "__typing" row when a run is active so the working indicator
+                        // is brought into view (not just the last message).
+                        val items = currentListItems
+                        val target = if (running) items.size else items.lastIndex
+                        listState.scrollToItem(target)
+                    }
+                } else if (signal.size > prevSize || signal.lastTextLength > prevLen) {
+                    // Content arrived while scrolled up — badge the jump-to-latest FAB.
+                    hasNewContent = true
                 }
+                prevSize = signal.size
+                prevLen = signal.lastTextLength
             }
         }
 
@@ -875,7 +902,14 @@ fun ChatScreen(
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(16.dp),
+                    // Extra bottom padding reserves room for the jump-to-latest FAB so it
+                    // never floats over the last message.
+                    contentPadding = PaddingValues(
+                        start = 16.dp,
+                        top = 16.dp,
+                        end = 16.dp,
+                        bottom = 16.dp + NetworkConfig.chatListFabInsetDp.dp,
+                    ),
                     verticalArrangement = Arrangement.spacedBy(16.dp),
                 ) {
                     items(
@@ -901,7 +935,20 @@ fun ChatScreen(
                                     modelLabel = modelLabel,
                                     onOpenFile = onOpenFile,
                                     onRevert = { vm.revertTo(message.info.id) },
-                                    onEdit = { text -> vm.editMessage(message.info.id, text) },
+                                    onEdit = { text ->
+                                        // editMessage reverts to before this message (hiding it and
+                                        // everything after); the revert banner surfaces the rewind
+                                        // with an Undo. Focus + scroll the composer into view like the
+                                        // Quote action so the prefilled draft isn't off-screen.
+                                        haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                                        vm.editMessage(message.info.id, text)
+                                        runCatching { inputFocusRequester.requestFocus() }
+                                        contentScope.launch {
+                                            runCatchingCancellable {
+                                                listState.animateScrollToItem(listItems.lastIndex.coerceAtLeast(0))
+                                            }
+                                        }
+                                    },
                                     onSpeak = { text -> tts.toggle(message.info.id, text) },
                                     isSpeaking = message.info.id == speakingMessageId,
                                     onQuote = { text ->
@@ -934,19 +981,31 @@ fun ChatScreen(
                     visible = !isPinnedToBottom && listItems.isNotEmpty(),
                     modifier = Modifier.align(Alignment.BottomEnd),
                 ) {
-                    ExtendedFloatingActionButton(
-                        onClick = {
-                            if (listItems.isNotEmpty()) {
-                                // Scroll to the effective last index, including the
-                                // trailing "__typing" row when a run is active.
-                                val target = if (running) listItems.size else listItems.lastIndex
-                                contentScope.launch { runCatchingCancellable { listState.animateScrollToItem(target) } }
+                    // Badge the FAB when new content arrived while the user was scrolled up, so
+                    // they know there's something new to jump to (cleared once back at bottom).
+                    BadgedBox(
+                        badge = {
+                            if (hasNewContent) {
+                                val newContentLabel = stringResource(R.string.new_messages)
+                                Badge(modifier = Modifier.semantics { contentDescription = newContentLabel })
                             }
                         },
-                        icon = { Icon(Icons.Filled.KeyboardArrowDown, contentDescription = stringResource(R.string.latest)) },
-                        text = { Text(stringResource(R.string.latest)) },
                         modifier = Modifier.padding(end = 16.dp, bottom = 16.dp),
-                    )
+                    ) {
+                        ExtendedFloatingActionButton(
+                            onClick = {
+                                hasNewContent = false
+                                if (listItems.isNotEmpty()) {
+                                    // Scroll to the effective last index, including the
+                                    // trailing "__typing" row when a run is active.
+                                    val target = if (running) listItems.size else listItems.lastIndex
+                                    contentScope.launch { runCatchingCancellable { listState.animateScrollToItem(target) } }
+                                }
+                            },
+                            icon = { Icon(Icons.Filled.KeyboardArrowDown, contentDescription = stringResource(R.string.latest)) },
+                            text = { Text(stringResource(R.string.latest)) },
+                        )
+                    }
                 }
                 }
             }
@@ -1092,6 +1151,7 @@ private fun ChatInputBar(
     onCancelQueue: () -> Unit,
     focusRequester: androidx.compose.ui.focus.FocusRequester,
     attachments: List<PendingAttachment>,
+    staging: Boolean,
     onRemoveAttachment: (String) -> Unit,
     onPickPhoto: () -> Unit,
     onPickFile: () -> Unit,
@@ -1131,7 +1191,7 @@ private fun ChatInputBar(
                 }
             }
             // Staged attachments: horizontally-scrollable thumbnails/chips, each removable.
-            AttachmentStrip(attachments, onRemove = onRemoveAttachment)
+            AttachmentStrip(attachments, onRemove = onRemoveAttachment, staging = staging)
             Row(
                 modifier = Modifier.fillMaxWidth().padding(8.dp),
                 verticalAlignment = Alignment.Bottom,

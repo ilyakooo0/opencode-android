@@ -32,7 +32,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import soy.iko.opencode.R
@@ -97,6 +99,7 @@ private fun MessageOverflow(
     if (onQuote == null && onBranch == null) return
     var expanded by remember { mutableStateOf(false) }
     val moreLabel = stringResource(R.string.message_actions)
+    val haptics = LocalHapticFeedback.current
     androidx.compose.foundation.layout.Box {
         IconButton(onClick = { expanded = true }) {
             Icon(
@@ -111,14 +114,22 @@ private fun MessageOverflow(
                 DropdownMenuItem(
                     leadingIcon = { Icon(Icons.Filled.FormatQuote, contentDescription = null) },
                     text = { Text(stringResource(R.string.quote_reply)) },
-                    onClick = { expanded = false; quote(text) },
+                    onClick = {
+                        expanded = false
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        quote(text)
+                    },
                 )
             }
             onBranch?.let { branch ->
                 DropdownMenuItem(
                     leadingIcon = { Icon(Icons.Filled.CallSplit, contentDescription = null) },
                     text = { Text(stringResource(R.string.branch_session)) },
-                    onClick = { expanded = false; branch(text) },
+                    onClick = {
+                        expanded = false
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        branch(text)
+                    },
                 )
             }
         }
@@ -131,7 +142,11 @@ private fun MessageOverflow(
 @Composable
 private fun RevertButton(onRevert: () -> Unit) {
     val label = stringResource(R.string.revert_to_here)
-    IconButton(onClick = onRevert) {
+    val haptics = LocalHapticFeedback.current
+    IconButton(onClick = {
+        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+        onRevert()
+    }) {
         Icon(
             Icons.Filled.Restore,
             contentDescription = label,
@@ -194,6 +209,7 @@ private fun UserBubble(
     onBranch: ((String) -> Unit)? = null,
 ) {
     val context = LocalContext.current
+    val haptics = LocalHapticFeedback.current
     val copyLabel = stringResource(R.string.copy)
     val editLabel = stringResource(R.string.edit_message)
     // Collect text from all TextParts for copying, so a user can reuse/repost their
@@ -243,7 +259,10 @@ private fun UserBubble(
                     // long-press on the markdown text (and only TextParts support that).
                     if (textToCopy != null) {
                         IconButton(
-                            onClick = { copyToClipboard(context, "message", textToCopy) },
+                            onClick = {
+                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                copyToClipboard(context, "message", textToCopy)
+                            },
                         ) {
                             Icon(
                                 Icons.Filled.ContentCopy,
@@ -371,13 +390,17 @@ private fun AssistantActions(
     onQuote: ((String) -> Unit)? = null,
 ) {
     val context = LocalContext.current
+    val haptics = LocalHapticFeedback.current
     val copyLabel = stringResource(R.string.copy)
     Row(verticalAlignment = Alignment.CenterVertically) {
         // Read-aloud toggle: speaks the assistant text via TextToSpeech, showing a Stop
         // icon while this message is the one being spoken.
         if (onSpeak != null && textToCopy != null) {
             val speakLabel = stringResource(if (isSpeaking) R.string.stop_reading else R.string.read_aloud)
-            IconButton(onClick = { onSpeak(textToCopy) }) {
+            IconButton(onClick = {
+                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onSpeak(textToCopy)
+            }) {
                 Icon(
                     if (isSpeaking) Icons.Filled.StopCircle else Icons.AutoMirrored.Filled.VolumeUp,
                     contentDescription = speakLabel,
@@ -389,7 +412,10 @@ private fun AssistantActions(
         }
         onRevert?.let { RevertButton(it) }
         if (textToCopy != null) {
-            IconButton(onClick = { copyToClipboard(context, "message", textToCopy) }) {
+            IconButton(onClick = {
+                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                copyToClipboard(context, "message", textToCopy)
+            }) {
                 Icon(
                     Icons.Filled.ContentCopy,
                     contentDescription = copyLabel,

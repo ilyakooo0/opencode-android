@@ -21,8 +21,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Archive
+import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.ChatBubbleOutline
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
@@ -64,6 +68,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -200,6 +205,8 @@ fun SessionListScreen(
         }
     }
 
+    SessionActionUndoEffect(vm, snackbar)
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -226,36 +233,18 @@ fun SessionListScreen(
                     IconButton(onClick = onOpenSearch) {
                         Icon(Icons.Filled.Search, contentDescription = stringResource(R.string.search_all))
                     }
-                    Box {
-                        IconButton(onClick = { showSortMenu = true }) {
-                            Icon(Icons.AutoMirrored.Filled.Sort, contentDescription = stringResource(R.string.sort))
-                        }
-                        DropdownMenu(expanded = showSortMenu, onDismissRequest = { showSortMenu = false }) {
-                            DropdownMenuItem(
-                                text = { Text(stringResource(R.string.sort_recent)) },
-                                onClick = { vm.setSortMode(SessionSortMode.RECENT); showSortMenu = false },
-                            )
-                            DropdownMenuItem(
-                                text = { Text(stringResource(R.string.sort_title)) },
-                                onClick = { vm.setSortMode(SessionSortMode.TITLE); showSortMenu = false },
-                            )
-                            // Toggle archived visibility. Only offered once at least one
-                            // session is archived, so the menu stays uncluttered otherwise.
-                            if (state.showArchived || state.hiddenArchivedCount > 0) {
-                                androidx.compose.material3.HorizontalDivider()
-                                DropdownMenuItem(
-                                    text = {
-                                        Text(
-                                            stringResource(
-                                                if (state.showArchived) R.string.hide_archived else R.string.show_archived,
-                                            ),
-                                        )
-                                    },
-                                    onClick = { vm.setShowArchived(!state.showArchived); showSortMenu = false },
-                                )
-                            }
-                        }
-                    }
+                    SortMenu(
+                        sortMode = state.sortMode,
+                        sortDescending = state.sortDescending,
+                        showArchived = state.showArchived,
+                        hiddenArchivedCount = state.hiddenArchivedCount,
+                        expanded = showSortMenu,
+                        onExpand = { showSortMenu = true },
+                        onDismiss = { showSortMenu = false },
+                        onSetSortMode = { vm.setSortMode(it) },
+                        onToggleDirection = { vm.toggleSortDirection() },
+                        onSetShowArchived = { vm.setShowArchived(it) },
+                    )
                     IconButton(onClick = { vm.refresh() }) {
                         Icon(Icons.Filled.Refresh, contentDescription = stringResource(R.string.refresh))
                     }
@@ -694,6 +683,9 @@ private fun SessionCard(
     Card(
         modifier = modifier
             .fillMaxWidth()
+            // Mute an archived row (unless it's the open one) so it reads as backgrounded
+            // when "show archived" surfaces it alongside active sessions.
+            .then(if (isArchived && !isSelected) Modifier.alpha(0.6f) else Modifier)
             .clickable { onClick() },
         colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = containerColor),
         border = androidx.compose.foundation.BorderStroke(1.dp, borderColor),
@@ -743,6 +735,14 @@ private fun SessionCard(
                                 contentDescription = stringResource(R.string.session_pinned),
                                 modifier = Modifier.padding(end = 4.dp).size(14.dp),
                                 tint = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                        if (isArchived) {
+                            Icon(
+                                Icons.Filled.Archive,
+                                contentDescription = stringResource(R.string.session_archived_badge),
+                                modifier = Modifier.padding(end = 4.dp).size(14.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                         Text(
@@ -831,6 +831,98 @@ private fun SessionCard(
                     color = if (unreadCount > 0) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
+// Confirmation + Undo for pin/archive toggles. Archiving hides the row from the default
+// view, so without this the user gets no feedback and no way back. collectLatest so a rapid
+// re-toggle supersedes the prior snackbar instead of queuing behind it.
+@Composable
+private fun SessionActionUndoEffect(vm: SessionListViewModel, snackbar: SnackbarHostState) {
+    val undoLabel = stringResource(R.string.undo)
+    val archived = stringResource(R.string.session_archived)
+    val unarchived = stringResource(R.string.session_unarchived)
+    val pinned = stringResource(R.string.session_pinned_msg)
+    val unpinned = stringResource(R.string.session_unpinned_msg)
+    LaunchedEffect(Unit) {
+        vm.sessionActionEvents.collectLatest { event ->
+            val message = when (event.kind) {
+                SessionActionKind.ARCHIVED -> archived
+                SessionActionKind.UNARCHIVED -> unarchived
+                SessionActionKind.PINNED -> pinned
+                SessionActionKind.UNPINNED -> unpinned
+            }
+            val result = snackbar.showSnackbar(
+                message = message,
+                actionLabel = undoLabel,
+                duration = androidx.compose.material3.SnackbarDuration.Short,
+            )
+            if (result == androidx.compose.material3.SnackbarResult.ActionPerformed) {
+                vm.undoSessionAction(event)
+            }
+        }
+    }
+}
+
+@Composable
+private fun SortMenu(
+    sortMode: SessionSortMode,
+    sortDescending: Boolean,
+    showArchived: Boolean,
+    hiddenArchivedCount: Int,
+    expanded: Boolean,
+    onExpand: () -> Unit,
+    onDismiss: () -> Unit,
+    onSetSortMode: (SessionSortMode) -> Unit,
+    onToggleDirection: () -> Unit,
+    onSetShowArchived: (Boolean) -> Unit,
+) {
+    Box {
+        IconButton(onClick = onExpand) {
+            Icon(Icons.AutoMirrored.Filled.Sort, contentDescription = stringResource(R.string.sort))
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.sort_recent)) },
+                trailingIcon = if (sortMode == SessionSortMode.RECENT) {
+                    { Icon(Icons.Filled.Check, contentDescription = stringResource(R.string.sort_active)) }
+                } else null,
+                onClick = { onSetSortMode(SessionSortMode.RECENT); onDismiss() },
+            )
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.sort_title)) },
+                trailingIcon = if (sortMode == SessionSortMode.TITLE) {
+                    { Icon(Icons.Filled.Check, contentDescription = stringResource(R.string.sort_active)) }
+                } else null,
+                onClick = { onSetSortMode(SessionSortMode.TITLE); onDismiss() },
+            )
+            androidx.compose.material3.HorizontalDivider()
+            // Direction toggle: the label shows the current direction and the arrow its
+            // sense; tapping flips it and re-sorts the list in place.
+            DropdownMenuItem(
+                text = {
+                    Text(stringResource(if (sortDescending) R.string.sort_descending else R.string.sort_ascending))
+                },
+                leadingIcon = {
+                    Icon(
+                        if (sortDescending) Icons.Filled.ArrowDownward else Icons.Filled.ArrowUpward,
+                        contentDescription = null,
+                    )
+                },
+                onClick = onToggleDirection,
+            )
+            // Toggle archived visibility. Only offered once at least one session is
+            // archived, so the menu stays uncluttered otherwise.
+            if (showArchived || hiddenArchivedCount > 0) {
+                androidx.compose.material3.HorizontalDivider()
+                DropdownMenuItem(
+                    text = {
+                        Text(stringResource(if (showArchived) R.string.hide_archived else R.string.show_archived))
+                    },
+                    onClick = { onSetShowArchived(!showArchived); onDismiss() },
                 )
             }
         }

@@ -45,6 +45,12 @@ import kotlinx.coroutines.sync.withPermit
 /** Sort order for the session list. */
 enum class SessionSortMode { RECENT, TITLE }
 
+/** A pin/archive action the user just took, surfaced so the UI can confirm it with an
+ *  Undo snackbar. [undoable] via [SessionListViewModel.undoSessionAction]. */
+enum class SessionActionKind { PINNED, UNPINNED, ARCHIVED, UNARCHIVED }
+
+data class SessionActionEvent(val sessionId: String, val kind: SessionActionKind)
+
 /** Directory options for the new-session picker: worktree paths the server knows about
  *  ([projects]) and the server's default working directory ([serverDefault], its cwd).
  *  [loaded] distinguishes "not fetched yet" from "fetched, none found". */
@@ -64,6 +70,10 @@ data class SessionListState(
     val loading: Boolean = true,
     val error: String? = null,
     val sortMode: SessionSortMode = SessionSortMode.RECENT,
+    // Primary-key sort direction. RECENT's natural order is descending (newest first),
+    // TITLE's is ascending (A→Z); this defaults to RECENT's and is reset to each mode's
+    // natural direction on a mode switch, then flipped by the direction toggle.
+    val sortDescending: Boolean = true,
     val pinnedIds: Set<String> = emptySet(),
     val archivedIds: Set<String> = emptySet(),
     val showArchived: Boolean = false,
@@ -94,18 +104,24 @@ data class SessionListState(
         get() = if (showArchived) 0 else sessions.count { it.id in archivedIds }
 }
 
-/** Sort sessions by the given mode. RECENT sorts by last activity time desc; TITLE by
- *  display title asc (case-insensitive), falling back to recency for ties. */
-private fun Iterable<Session>.sortedByMode(mode: SessionSortMode): List<Session> = when (mode) {
-    SessionSortMode.RECENT ->
-        sortedByDescending { it.time?.updated ?: it.time?.created ?: 0L }
-    SessionSortMode.TITLE ->
-        // CASE_INSENSITIVE_ORDER avoids allocating a lowercased title per comparison; this
-        // sort re-runs on every debounced list flush during streaming.
-        sortedWith(
-            compareBy<Session, String>(String.CASE_INSENSITIVE_ORDER) { it.displayTitle }
-                .thenByDescending { it.time?.updated ?: it.time?.created ?: 0L },
-        )
+/** Sort sessions by the given mode and direction. In each mode's *natural* direction,
+ *  RECENT sorts by last activity time desc; TITLE by display title asc (case-insensitive),
+ *  falling back to recency for ties. When [descending] differs from the mode's natural
+ *  direction (RECENT natural = desc, TITLE natural = asc) the whole order is reversed. */
+private fun Iterable<Session>.sortedByMode(mode: SessionSortMode, descending: Boolean): List<Session> {
+    val natural = when (mode) {
+        SessionSortMode.RECENT ->
+            sortedByDescending { it.time?.updated ?: it.time?.created ?: 0L }
+        SessionSortMode.TITLE ->
+            // CASE_INSENSITIVE_ORDER avoids allocating a lowercased title per comparison; this
+            // sort re-runs on every debounced list flush during streaming.
+            sortedWith(
+                compareBy<Session, String>(String.CASE_INSENSITIVE_ORDER) { it.displayTitle }
+                    .thenByDescending { it.time?.updated ?: it.time?.created ?: 0L },
+            )
+    }
+    val naturalDescending = mode == SessionSortMode.RECENT
+    return if (descending == naturalDescending) natural else natural.reversed()
 }
 
 // Feature-rich session-list VM: many small, cohesive actions (create/delete/undo/rename/
@@ -175,6 +191,15 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
     )
     val undoEvents: SharedFlow<String> = _undoEvents.asSharedFlow()
 
+    /** One-shot events carrying a pin/archive action the user just took, so the UI can show
+     *  a confirmation + Undo. Archiving hides the row from the default view, so undo is the
+     *  only feedback that the action can be reversed. */
+    private val _sessionActionEvents = MutableSharedFlow<SessionActionEvent>(
+        extraBufferCapacity = NetworkConfig.snackbarEventBufferCapacity,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+    val sessionActionEvents: SharedFlow<SessionActionEvent> = _sessionActionEvents.asSharedFlow()
+
     /** Session awaiting the undo window to expire before its REST delete fires. Holds the
      *  Session so Undo can restore it. */
     // Keyed by session id, not a single field: the undo window lets several deletes be
@@ -233,22 +258,47 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
     /** Pin or unpin [session] (pinned sessions sort to the top of the list). */
     fun togglePin(session: Session) {
         val pin = session.id !in _state.value.pinnedIds
-        // Optimistically update the displayed state so rapid taps toggle correctly instead
-        // of both reading the same stale set (pre-observer-round-trip) and double-pinning.
-        _state.update { it.copy(pinnedIds = if (pin) it.pinnedIds + session.id else it.pinnedIds - session.id) }
-        viewModelScope.launch {
-            runCatchingCancellable { container.sessionPrefsStore.setPinned(session.id, pin) }
-                .onFailure { _transientErrors.tryEmit(container.friendlyError(it)) }
-        }
+        applyPin(session.id, pin)
+        _sessionActionEvents.tryEmit(
+            SessionActionEvent(session.id, if (pin) SessionActionKind.PINNED else SessionActionKind.UNPINNED),
+        )
     }
 
     /** Archive or unarchive [session] (archived sessions are hidden unless "show archived"). */
     fun toggleArchive(session: Session) {
         val archive = session.id !in _state.value.archivedIds
-        _state.update { it.copy(archivedIds = if (archive) it.archivedIds + session.id else it.archivedIds - session.id) }
+        applyArchive(session.id, archive)
+        _sessionActionEvents.tryEmit(
+            SessionActionEvent(session.id, if (archive) SessionActionKind.ARCHIVED else SessionActionKind.UNARCHIVED),
+        )
+    }
+
+    // Optimistically update the displayed state so rapid taps toggle correctly instead of
+    // both reading the same stale set (pre-observer-round-trip) and double-toggling, then
+    // persist. Shared by the toggle actions and their undo.
+    private fun applyPin(sessionId: String, pin: Boolean) {
+        _state.update { it.copy(pinnedIds = if (pin) it.pinnedIds + sessionId else it.pinnedIds - sessionId) }
         viewModelScope.launch {
-            runCatchingCancellable { container.sessionPrefsStore.setArchived(session.id, archive) }
+            runCatchingCancellable { container.sessionPrefsStore.setPinned(sessionId, pin) }
                 .onFailure { _transientErrors.tryEmit(container.friendlyError(it)) }
+        }
+    }
+
+    private fun applyArchive(sessionId: String, archive: Boolean) {
+        _state.update { it.copy(archivedIds = if (archive) it.archivedIds + sessionId else it.archivedIds - sessionId) }
+        viewModelScope.launch {
+            runCatchingCancellable { container.sessionPrefsStore.setArchived(sessionId, archive) }
+                .onFailure { _transientErrors.tryEmit(container.friendlyError(it)) }
+        }
+    }
+
+    /** Reverse a pin/archive action surfaced via [sessionActionEvents] (Undo snackbar). */
+    fun undoSessionAction(event: SessionActionEvent) {
+        when (event.kind) {
+            SessionActionKind.PINNED -> applyPin(event.sessionId, false)
+            SessionActionKind.UNPINNED -> applyPin(event.sessionId, true)
+            SessionActionKind.ARCHIVED -> applyArchive(event.sessionId, false)
+            SessionActionKind.UNARCHIVED -> applyArchive(event.sessionId, true)
         }
     }
 
@@ -391,7 +441,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
             // new state (and trigger recomposition) when the batch held no real changes
             // (e.g. a duplicate SessionUpdated for an unchanged session).
             if (changedIds.isEmpty()) return@update s
-            val sorted = byId.values.sortedByMode(s.sortMode)
+            val sorted = byId.values.sortedByMode(s.sortMode, s.sortDescending)
             // If the new ordering matches the existing one (e.g. only the already-newest
             // session updated its timestamp), reuse the same list instance so downstream
             // skips a recomposition for an identical reference.
@@ -453,7 +503,8 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
                         // REST delete hasn't fired yet — the server still returns them, and
                         // re-adding them here would resurrect a just-hidden row (and later
                         // collide on the LazyColumn id key when undo/restore re-appends it).
-                        val sorted = list.filterNot { pendingDeletes.containsKey(it.id) }.sortedByMode(_state.value.sortMode)
+                        val sorted = list.filterNot { pendingDeletes.containsKey(it.id) }
+                            .sortedByMode(_state.value.sortMode, _state.value.sortDescending)
                         _state.update { it.copy(sessions = sorted, loading = false, error = null) }
                         loadPreviews(sorted)
                     }
@@ -640,7 +691,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
                     // we never produce two rows with the same id.
                     pendingDeletes.remove(session.id)
                     _state.update { s ->
-                        s.copy(sessions = (s.sessions.filterNot { it.id == session.id } + session).sortedByMode(s.sortMode))
+                        s.copy(sessions = (s.sessions.filterNot { it.id == session.id } + session).sortedByMode(s.sortMode, s.sortDescending))
                     }
                     _transientErrors.tryEmit(container.friendlyError(err))
                 }
@@ -660,13 +711,26 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         val pending = pendingDeletes.remove(sessionId) ?: return
         _state.update { s ->
             // Dedup by id in case a refresh during the undo window already re-added it.
-            s.copy(sessions = (s.sessions.filterNot { it.id == pending.id } + pending).sortedByMode(s.sortMode))
+            s.copy(sessions = (s.sessions.filterNot { it.id == pending.id } + pending).sortedByMode(s.sortMode, s.sortDescending))
         }
     }
 
     fun setSortMode(mode: SessionSortMode) {
         if (mode == _state.value.sortMode) return
-        _state.update { s -> s.copy(sortMode = mode, sessions = s.sessions.sortedByMode(mode)) }
+        // Reset to the new mode's natural direction (RECENT=desc, TITLE=asc) so switching
+        // modes doesn't inherit a surprising reversed order from the previous mode.
+        val descending = mode == SessionSortMode.RECENT
+        _state.update { s ->
+            s.copy(sortMode = mode, sortDescending = descending, sessions = s.sessions.sortedByMode(mode, descending))
+        }
+    }
+
+    /** Flip the ascending/descending direction of the current sort mode. */
+    fun toggleSortDirection() {
+        _state.update { s ->
+            val descending = !s.sortDescending
+            s.copy(sortDescending = descending, sessions = s.sessions.sortedByMode(s.sortMode, descending))
+        }
     }
 
     fun renameSession(session: Session, newTitle: String) {

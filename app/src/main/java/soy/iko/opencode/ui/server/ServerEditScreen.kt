@@ -157,6 +157,9 @@ private fun ServerEditForm(
     // half-typed URL). Memoize on baseUrl so it runs once per edit instead of being
     // re-parsed at each of the enabled= call sites on every keystroke's recomposition.
     val canSave = remember(state.baseUrl, state.certPin) { state.canSave }
+    // isValidUrl parses with OkHttp too; memoize on baseUrl so it runs once per edit instead
+    // of re-parsing at each isError/supportingText call site on every keystroke's recomposition.
+    val urlValid = remember(state.baseUrl) { isValidUrl(state.baseUrl) }
     Column(
         modifier = Modifier
             .padding(padding)
@@ -173,9 +176,9 @@ private fun ServerEditForm(
             label = { Text(stringResource(R.string.base_url)) },
             placeholder = { Text(stringResource(R.string.base_url_hint)) },
             singleLine = true,
-            isError = state.baseUrl.isNotBlank() && !isValidUrl(state.baseUrl),
+            isError = state.baseUrl.isNotBlank() && !urlValid,
             supportingText = {
-                if (state.baseUrl.isNotBlank() && !isValidUrl(state.baseUrl)) {
+                if (state.baseUrl.isNotBlank() && !urlValid) {
                     // Offer a one-tap "http://" fix for bare host:port input instead of a
                     // generic error, so the user doesn't have to know the URL needs a scheme.
                     val suggestion = suggestUrlScheme(state.baseUrl)
@@ -234,6 +237,16 @@ private fun ServerEditForm(
                 Text(stringResource(R.string.connect))
             }
         }
+        // Keep the error directly under the primary action so it's in view where the user is
+        // looking when a Connect/Save fails — not buried further down the form.
+        state.error?.let { message ->
+            Text(
+                message,
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
         // Secondary, low-emphasis: persist without connecting (offline setup).
         TextButton(
             onClick = {
@@ -244,14 +257,6 @@ private fun ServerEditForm(
             modifier = Modifier.fillMaxWidth().testTag("server_save"),
         ) {
             Text(stringResource(R.string.save_without_connecting))
-        }
-        state.error?.let { message ->
-            Text(
-                message,
-                color = MaterialTheme.colorScheme.error,
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.fillMaxWidth(),
-            )
         }
         // De-emphasized optional label at the bottom: displayLabel already falls back to the
         // URL, so most servers don't need one.

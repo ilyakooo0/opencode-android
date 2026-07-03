@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -25,6 +26,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -32,6 +34,10 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -44,6 +50,28 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.Box
 import soy.iko.opencode.data.model.Agent
 import soy.iko.opencode.R
+
+/**
+ * Flat LazyColumn index of the selected agent, offset by the leading "Default" row when it's
+ * shown. A null selection targets that Default row (index 0). -1 when the selection isn't in
+ * the current list.
+ */
+/** Whether the synthetic "Default" agent row matches the current search query. */
+private fun defaultAgentMatches(query: String, label: String, desc: String): Boolean =
+    query.isEmpty() ||
+        label.contains(query, ignoreCase = true) ||
+        desc.contains(query, ignoreCase = true)
+
+private fun selectedAgentIndex(
+    distinctAgents: List<Agent>,
+    selected: String?,
+    defaultMatches: Boolean,
+): Int {
+    if (selected == null) return if (defaultMatches) 0 else -1
+    val base = if (defaultMatches) 1 else 0
+    val pos = distinctAgents.indexOfFirst { it.name == selected }
+    return if (pos >= 0) base + pos else -1
+}
 
 /** Bottom sheet that lists every agent and lets the user pick one. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -93,10 +121,14 @@ fun AgentPickerSheet(
         } else {
             var query by rememberSaveable { mutableStateOf("") }
             val keyboardController = LocalSoftwareKeyboardController.current
+            val haptics = LocalHapticFeedback.current
+            // Auto-focus the search field (and raise the keyboard) when the sheet opens.
+            val searchFocus = remember { FocusRequester() }
+            LaunchedEffect(Unit) { runCatching { searchFocus.requestFocus() } }
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 8.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 8.dp).focusRequester(searchFocus),
                 placeholder = { Text(stringResource(R.string.search_agents)) },
                 leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                 trailingIcon = if (query.isNotEmpty()) {
@@ -125,9 +157,7 @@ fun AgentPickerSheet(
             val defaultLabel = stringResource(R.string.default_agent)
             val defaultDesc = stringResource(R.string.default_agent_desc)
             val q = query.trim()
-            val defaultMatches = q.isEmpty() ||
-                defaultLabel.contains(q, ignoreCase = true) ||
-                defaultDesc.contains(q, ignoreCase = true)
+            val defaultMatches = defaultAgentMatches(q, defaultLabel, defaultDesc)
             if (filtered.isEmpty() && !defaultMatches) {
                 Text(
                     stringResource(R.string.no_agents_match, query.trim()),
@@ -136,7 +166,18 @@ fun AgentPickerSheet(
                     modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp),
                 )
             } else {
-                LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
+                val listState = rememberLazyListState()
+                val distinctAgents = remember(filtered) { filtered.distinctBy { it.name } }
+                // Flat index of the selected agent, offset by the leading "Default" row when
+                // it's shown. selected == null targets that Default row (index 0). -1 when the
+                // selection isn't in the current list.
+                val selectedIndex = remember(distinctAgents, selected, defaultMatches) {
+                    selectedAgentIndex(distinctAgents, selected, defaultMatches)
+                }
+                LaunchedEffect(Unit) {
+                    if (selectedIndex >= 0) listState.scrollToItem(selectedIndex)
+                }
+                LazyColumn(state = listState, modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
                 if (defaultMatches) {
                 item(key = "__default") {
                     Column(
@@ -145,7 +186,10 @@ fun AgentPickerSheet(
                             .semantics(mergeDescendants = true) {
                                 if (selected == null) this.selected = true
                             }
-                            .clickable(role = Role.RadioButton) { onSelect(null); onDismiss() }
+                            .clickable(role = Role.RadioButton) {
+                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                onSelect(null); onDismiss()
+                            }
                             .padding(horizontal = 24.dp, vertical = 12.dp),
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -178,7 +222,7 @@ fun AgentPickerSheet(
                 // Namespace the agent keys so an agent literally named "__default" can't
                 // collide with the sentinel key of the default item above (a duplicate key
                 // crashes LazyColumn).
-                items(filtered.distinctBy { it.name }, key = { "agent_" + it.name }) { agent ->
+                items(distinctAgents, key = { "agent_" + it.name }) { agent ->
                     val isSelected = agent.name == selected
                     Column(
                         modifier = Modifier
@@ -186,7 +230,10 @@ fun AgentPickerSheet(
                             .semantics(mergeDescendants = true) {
                                 if (isSelected) this.selected = true
                             }
-                            .clickable(role = Role.RadioButton) { onSelect(agent); onDismiss() }
+                            .clickable(role = Role.RadioButton) {
+                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                onSelect(agent); onDismiss()
+                            }
                             .padding(horizontal = 24.dp, vertical = 12.dp),
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {

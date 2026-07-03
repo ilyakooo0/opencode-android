@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -25,6 +26,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -32,6 +34,10 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -44,6 +50,29 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.Box
 import soy.iko.opencode.data.model.ModelOption
 import soy.iko.opencode.R
+
+/**
+ * Flat LazyColumn index of the selected model within the provider-grouped list (each group
+ * preceded by a header row), so the sheet can scroll it into view on open. -1 when nothing
+ * is selected or the selection isn't in the current list.
+ */
+private fun selectedModelIndex(
+    grouped: Map<String, List<ModelOption>>,
+    selected: ModelOption?,
+): Int {
+    if (selected == null) return -1
+    var idx = 0
+    for ((_, opts) in grouped) {
+        idx++ // provider header
+        val distinct = opts.distinctBy { it.providerID to it.modelID }
+        val pos = distinct.indexOfFirst {
+            it.providerID == selected.providerID && it.modelID == selected.modelID
+        }
+        if (pos >= 0) return idx + pos
+        idx += distinct.size
+    }
+    return -1
+}
 
 /** Bottom sheet that lists every provider/model and lets the user pick one. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -93,10 +122,15 @@ fun ModelPickerSheet(
         } else {
             var query by rememberSaveable { mutableStateOf("") }
             val keyboardController = LocalSoftwareKeyboardController.current
+            val haptics = LocalHapticFeedback.current
+            // Auto-focus the search field (and raise the keyboard) when the sheet opens so the
+            // user can start typing to filter a long catalog without an extra tap.
+            val searchFocus = remember { FocusRequester() }
+            LaunchedEffect(Unit) { runCatching { searchFocus.requestFocus() } }
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 8.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 8.dp).focusRequester(searchFocus),
                 placeholder = { Text(stringResource(R.string.search_models)) },
                 leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                 trailingIcon = if (query.isNotEmpty()) {
@@ -129,7 +163,15 @@ fun ModelPickerSheet(
                 // Group by provider so a long catalog is scannable: a provider header
                 // followed by its models, instead of a flat list mixing providers.
                 val grouped = remember(filtered) { filtered.groupBy { it.providerID } }
-                LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
+                val listState = rememberLazyListState()
+                // Flat LazyColumn index of the selected model (accounting for the provider
+                // header rows), so we can scroll it into view when the sheet opens. -1 when
+                // nothing is selected or the selection isn't in the current list.
+                val selectedIndex = remember(grouped, selected) { selectedModelIndex(grouped, selected) }
+                LaunchedEffect(Unit) {
+                    if (selectedIndex >= 0) listState.scrollToItem(selectedIndex)
+                }
+                LazyColumn(state = listState, modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
                     grouped.forEach { (providerID, opts) ->
                         item(key = "header_$providerID") {
                             Text(
@@ -151,6 +193,7 @@ fun ModelPickerSheet(
                                 if (isSelected) this.selected = true
                             }
                             .clickable(role = Role.RadioButton) {
+                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 onSelect(option)
                                 onDismiss()
                             }
