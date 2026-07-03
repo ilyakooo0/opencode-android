@@ -60,7 +60,8 @@ fun ConnectionBanner(
         when (state) {
             EventStreamClient.ConnectionState.Connecting -> stringResource(R.string.connecting)
             EventStreamClient.ConnectionState.Disconnected -> stringResource(R.string.reconnecting)
-            EventStreamClient.ConnectionState.Failed -> stringResource(R.string.connection_failed)
+            EventStreamClient.ConnectionState.Failed -> stringResource(R.string.connection_failed_endpoint)
+            EventStreamClient.ConnectionState.AuthFailed -> stringResource(R.string.connection_failed)
             EventStreamClient.ConnectionState.Connected -> null
         }
     }
@@ -79,7 +80,13 @@ fun ConnectionBanner(
         // Distinguish a hard failure (e.g. bad credentials) and an offline device from
         // transient connecting/reconnecting states by switching to the error palette,
         // so the banner conveys urgency without relying on text alone.
-        val isFailed = isOffline || state == EventStreamClient.ConnectionState.Failed
+        val isFailed = isOffline || state == EventStreamClient.ConnectionState.Failed ||
+            state == EventStreamClient.ConnectionState.AuthFailed
+        // Server-side failure (auth or endpoint) — distinct from offline. Used to gate the
+        // inline Retry button, which only makes sense when the device is online and the server
+        // rejected the connection (not when the device itself is offline).
+        val isServerFailure = state == EventStreamClient.ConnectionState.Failed ||
+            state == EventStreamClient.ConnectionState.AuthFailed
         val container = if (isFailed) MaterialTheme.colorScheme.errorContainer
             else MaterialTheme.colorScheme.tertiaryContainer
         val onContainer = if (isFailed) MaterialTheme.colorScheme.onErrorContainer
@@ -121,7 +128,7 @@ fun ConnectionBanner(
                 // leaving the screen. Hidden during transient states (the system is
                 // already reconnecting), when offline (retry can't help), and when no
                 // callback is wired (callers that don't have a reconnect path).
-                if (state == EventStreamClient.ConnectionState.Failed && !isOffline && onRetry != null) {
+                if (isServerFailure && !isOffline && onRetry != null) {
                     TextButton(onClick = onRetry, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp)) {
                         Text(stringResource(R.string.retry_now), color = onContainer)
                     }

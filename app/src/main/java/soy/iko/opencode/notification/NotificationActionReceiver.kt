@@ -31,8 +31,34 @@ class NotificationActionReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
         val container = (context.applicationContext as? OpencodeApp)?.container ?: return
+        if (intent.action == ACTION_STOP_RUN) {
+            // Stop action from the foreground-service notification. The session id may be
+            // absent if multiple runs were active (generic notification); in that case we
+            // can't target a specific run — just let it ride.
+            val sessionId = intent.getStringExtra(EXTRA_SESSION_ID)?.takeIf { it.isNotBlank() } ?: return
+            val profileId = intent.getStringExtra(EXTRA_PROFILE_ID)?.takeIf { it.isNotBlank() }
+            val pending = goAsync()
+            val finished = AtomicBoolean(false)
+            var watchdogThread: Thread? = null
+            val finishOnce = {
+                if (finished.compareAndSet(false, true)) {
+                    watchdogThread?.interrupt()
+                    pending.finish()
+                }
+            }
+            watchdogThread = watchdog(finishOnce)
+            container.abortRunFromNotification(sessionId, profileId) { _ -> finishOnce() }
+            return
+        }
         val sessionId = intent.getStringExtra(EXTRA_SESSION_ID)?.takeIf { it.isNotBlank() } ?: return
         when (intent.action) {
+            ACTION_MARK_READ -> {
+                // "Mark read" from a completion notification — clear the unread badge and
+                // dismiss the notification without opening the session.
+                container.markSessionRead(sessionId)
+                SessionNotifications.cancel(context, sessionId)
+                return
+            }
             ACTION_PERMISSION -> {
                 val permissionId = intent.getStringExtra(EXTRA_PERMISSION_ID)?.takeIf { it.isNotBlank() } ?: return
                 val profileId = intent.getStringExtra(EXTRA_PROFILE_ID)?.takeIf { it.isNotBlank() }
@@ -81,13 +107,15 @@ class NotificationActionReceiver : BroadcastReceiver() {
                 }
                 watchdogThread = watchdog(finishOnce)
                 container.sendPromptFromNotification(sessionId, text, profileId) { enqueued ->
-                    // The reply is durably queued (and flushed now if online); clear the
-                    // "session ready" notification. If the enqueue failed, cancel it anyway and
-                    // post a "reply not sent" error: leaving the completion notification up strands
-                    // SystemUI's RemoteInput field in a permanent "sending…" spinner that can't be
-                    // resubmitted, so "leave it up to retry" doesn't actually let the user retry.
+                    // The reply is durably queued (and flushed now if online). Show a brief
+                    // "Sent" confirmation by updating the completion notification's text, then
+                    // let it auto-cancel on tap — instead of vanishing silently. If the enqueue
+                    // failed, post a "reply not sent" error: leaving the completion notification
+                    // up strands SystemUI's RemoteInput field in a permanent "sending…" spinner
+                    // that can't be resubmitted, so "leave it up to retry" doesn't actually let
+                    // the user retry.
                     if (enqueued) {
-                        SessionNotifications.cancel(context, sessionId)
+                        SessionNotifications.postReplySent(context, sessionId)
                     } else {
                         SessionNotifications.postReplyFailed(context, sessionId, profileId)
                     }
@@ -115,6 +143,8 @@ class NotificationActionReceiver : BroadcastReceiver() {
     companion object {
         const val ACTION_PERMISSION = "soy.iko.opencode.action.PERMISSION"
         const val ACTION_REPLY = "soy.iko.opencode.action.REPLY"
+        const val ACTION_STOP_RUN = "soy.iko.opencode.action.STOP_RUN"
+        const val ACTION_MARK_READ = "soy.iko.opencode.action.MARK_READ"
         const val EXTRA_SESSION_ID = "soy.iko.opencode.extra.SESSION_ID"
         const val EXTRA_PERMISSION_ID = "soy.iko.opencode.extra.PERMISSION_ID"
         const val EXTRA_PROFILE_ID = "soy.iko.opencode.extra.PROFILE_ID"

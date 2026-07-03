@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Psychology
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -80,7 +81,7 @@ import soy.iko.opencode.ui.components.looksLikeDiff
 import soy.iko.opencode.ui.components.showCopyToast
 import soy.iko.opencode.R
 
-private const val COLLAPSED_LIMIT = 600
+private const val COLLAPSED_LIMIT = 4000
 
 // Pretty-printer for tool inputs. Separate from OpencodeJson (which is tuned for
 // resilient decoding) so this stays human-readable; constructed lazily and memoized.
@@ -454,7 +455,18 @@ private fun CollapsibleDetail(
 @Composable
 private fun ToolStatusIcon(state: ToolState) {
     when (state) {
-        is ToolPending, is ToolRunning -> {
+        is ToolPending -> {
+            // Queued, not yet executing: a static clock icon distinguishes it from an
+            // actively-running tool (spinner) so the user can tell what's waiting.
+            val label = stringResource(R.string.tool_queued)
+            Icon(
+                Icons.Filled.Schedule,
+                contentDescription = label,
+                modifier = Modifier.size(16.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        is ToolRunning -> {
             val label = stringResource(R.string.tool_running)
             CircularProgressIndicator(
                 modifier = Modifier.size(16.dp).semantics { contentDescription = label },

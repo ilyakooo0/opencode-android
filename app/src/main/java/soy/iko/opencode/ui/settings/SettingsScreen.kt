@@ -372,7 +372,8 @@ fun SettingsScreen(
                 val stateText = when (connectionState) {
                     EventStreamClient.ConnectionState.Connecting -> stringResource(R.string.connecting)
                     EventStreamClient.ConnectionState.Disconnected -> stringResource(R.string.reconnecting)
-                    EventStreamClient.ConnectionState.Failed -> stringResource(R.string.connection_failed)
+                    EventStreamClient.ConnectionState.Failed -> stringResource(R.string.connection_failed_endpoint)
+                    EventStreamClient.ConnectionState.AuthFailed -> stringResource(R.string.connection_failed)
                     EventStreamClient.ConnectionState.Connected -> null
                 }
                 stateText?.let {
@@ -380,14 +381,16 @@ fun SettingsScreen(
                         modifier = Modifier.padding(top = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
+                        val isHardFailure = connectionState == EventStreamClient.ConnectionState.Failed ||
+                            connectionState == EventStreamClient.ConnectionState.AuthFailed
                         Text(
                             it,
                             style = MaterialTheme.typography.bodySmall,
-                            color = if (connectionState == EventStreamClient.ConnectionState.Failed)
+                            color = if (isHardFailure)
                                 MaterialTheme.colorScheme.error
                             else MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                        if (connectionState == EventStreamClient.ConnectionState.Failed) {
+                        if (isHardFailure) {
                             TextButton(
                                 onClick = { container.activeConnection.value?.events?.triggerReconnect() },
                                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp),

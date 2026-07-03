@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- A darker splash background at night so the cold-start flash isn't a bright rectangle. -->
+    <color name="splash_background">#1A1B26</color>
+    <color name="ic_launcher_background">#34548A</color>
+</resources>

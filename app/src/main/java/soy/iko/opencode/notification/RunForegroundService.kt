@@ -9,7 +9,9 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
+import android.annotation.SuppressLint
 import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.ServiceCompat
 import soy.iko.opencode.MainActivity
 import soy.iko.opencode.R
@@ -30,7 +32,9 @@ class RunForegroundService : Service() {
         // the notification can identify which session is running, instead of a generic
         // "Agent is working…". Null/blank falls back to the generic title.
         val sessionTitle = intent?.getStringExtra(EXTRA_SESSION_TITLE)?.takeIf { it.isNotBlank() }
-        val notification = buildNotification(sessionTitle)
+        val sessionId = intent?.getStringExtra(EXTRA_SESSION_ID)?.takeIf { it.isNotBlank() }
+        val progress = intent?.getStringExtra(EXTRA_PROGRESS)?.takeIf { it.isNotBlank() }
+        val notification = buildNotification(sessionTitle, sessionId, progress)
         // startForeground can throw ForegroundServiceStartNotAllowedException on
         // Android 12+ if the app is in the background when the service starts. Wrap
         // it so a backgrounded start (e.g. the user navigates away at the wrong
@@ -54,7 +58,7 @@ class RunForegroundService : Service() {
         return START_NOT_STICKY
     }
 
-    private fun buildNotification(sessionTitle: String?): Notification {
+    private fun buildNotification(sessionTitle: String?, sessionId: String?, progress: String? = null): Notification {
         // Tapping the notification opens the app so the user can see the running session.
         val openIntent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -63,8 +67,8 @@ class RunForegroundService : Service() {
             this, 0, openIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        val contentText = sessionTitle ?: getString(R.string.notif_running_text)
-        return NotificationCompat.Builder(this, NotificationChannels.STATUS)
+        val contentText = progress ?: sessionTitle ?: getString(R.string.notif_running_text)
+        val builder = NotificationCompat.Builder(this, NotificationChannels.STATUS)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle(getString(R.string.notif_running_title))
             .setContentText(contentText)
@@ -77,22 +81,59 @@ class RunForegroundService : Service() {
             .setShowWhen(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
-            .build()
+        // Add a Stop action so the user can cancel the run without opening the app — the
+        // core of the "kick it off and walk away" flow. Only when a specific session is
+        // known (multiple concurrent runs can't be targeted individually).
+        if (sessionId != null) {
+            val stopIntent = Intent(this, NotificationActionReceiver::class.java).apply {
+                action = NotificationActionReceiver.ACTION_STOP_RUN
+                putExtra(NotificationActionReceiver.EXTRA_SESSION_ID, sessionId)
+            }
+            val stopPending = PendingIntent.getBroadcast(
+                this, sessionId.hashCode(), stopIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+            builder.addAction(
+                R.drawable.ic_launcher_foreground,
+                getString(R.string.notif_action_stop),
+                stopPending,
+            )
+        }
+        return builder.build()
     }
 
     // Android 14+ can time out a foreground service (notably the ~6h/day cumulative cap on
     // dataSync in Android 15) and calls onTimeout expecting a prompt stop; not stopping risks
     // the system force-stopping/ANR-ing the app. Stop cleanly — a still-active run just
-    // continues without foreground priority. Both overloads are covered (the 2-arg form is
-    // API 35+).
+    // continues without foreground priority. Post a low-priority notification so the user
+    // knows their long-running task may be paused in the background, rather than silently
+    // losing foreground priority. Both overloads are covered (the 2-arg form is API 35+).
     override fun onTimeout(startId: Int) {
         Log.w(TAG, "Foreground service timed out; stopping")
+        postTimeoutNotification()
         stopSelf()
     }
 
     override fun onTimeout(startId: Int, fgsType: Int) {
         Log.w(TAG, "Foreground service timed out (type=$fgsType); stopping")
+        postTimeoutNotification()
         stopSelf()
+    }
+
+    /** Post a low-priority notification informing the user that the foreground service was
+     *  timed out by the system — the run continues but may be killed by Doze without warning. */
+    @SuppressLint("MissingPermission")
+    private fun postTimeoutNotification() {
+        runCatching {
+            val notification = NotificationCompat.Builder(this, NotificationChannels.STATUS)
+                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setContentTitle(getString(R.string.notif_running_title))
+                .setContentText(getString(R.string.notif_fg_timeout_text))
+                .setAutoCancel(true)
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .build()
+            NotificationManagerCompat.from(this).notify(NOTIF_TIMEOUT_ID, notification)
+        }
     }
 
     override fun onDestroy() {
@@ -107,15 +148,20 @@ class RunForegroundService : Service() {
     companion object {
         private const val TAG = "RunForegroundService"
         private const val NOTIF_ID = 1
+        private const val NOTIF_TIMEOUT_ID = 2
         const val EXTRA_SESSION_TITLE = "soy.iko.opencode.extra.SESSION_TITLE"
+        const val EXTRA_SESSION_ID = "soy.iko.opencode.extra.SESSION_ID"
+        const val EXTRA_PROGRESS = "soy.iko.opencode.extra.PROGRESS"
 
-        fun start(context: Context, sessionTitle: String? = null) {
+        fun start(context: Context, sessionTitle: String? = null, sessionId: String? = null, progress: String? = null) {
             // startForegroundService can throw ForegroundServiceStartNotAllowedException
             // on Android 12+ if the app is in the background. Wrap it so a backgrounded
             // start (e.g. the user navigates away at the wrong moment) doesn't crash.
             runCatching {
                 val intent = Intent(context, RunForegroundService::class.java)
                 sessionTitle?.let { intent.putExtra(EXTRA_SESSION_TITLE, it) }
+                sessionId?.let { intent.putExtra(EXTRA_SESSION_ID, it) }
+                progress?.let { intent.putExtra(EXTRA_PROGRESS, it) }
                 context.startForegroundService(intent)
             }.onFailure {
                 Log.w(TAG, "startForegroundService failed; running without foreground priority", it)

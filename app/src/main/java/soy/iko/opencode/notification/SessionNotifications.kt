@@ -125,6 +125,22 @@ object SessionNotifications {
             replyPending,
         ).addRemoteInput(remoteInput).setAllowGeneratedReplies(true).build()
 
+        // "Mark read" action so the user can triage a completion without opening the session.
+        val markReadIntent = Intent(context, NotificationActionReceiver::class.java).apply {
+            action = NotificationActionReceiver.ACTION_MARK_READ
+            putExtra(NotificationActionReceiver.EXTRA_SESSION_ID, sessionId)
+            profileId?.let { putExtra(NotificationActionReceiver.EXTRA_PROFILE_ID, it) }
+        }
+        val markReadPending = PendingIntent.getBroadcast(
+            context, notifId + 100, markReadIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val markReadAction = NotificationCompat.Action.Builder(
+            R.drawable.ic_launcher_foreground,
+            context.getString(R.string.notif_action_mark_read),
+            markReadPending,
+        ).build()
+
         val notification = NotificationCompat.Builder(context, NotificationChannels.COMPLETED)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle(context.getString(R.string.notif_completed_title))
@@ -135,6 +151,7 @@ object SessionNotifications {
             .setAutoCancel(true)
             .setContentIntent(openSessionIntent(context, sessionId, notifId, profileId))
             .addAction(replyAction)
+            .addAction(markReadAction)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             // Group notifications from the same server so multiple completions collapse into
@@ -192,6 +209,7 @@ object SessionNotifications {
             .setContentIntent(openSessionIntent(context, sessionId, notifId, profileId))
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setGroup(GROUP_PERMISSION)
 
         // One action per response. Each PendingIntent needs a distinct request code or
         // FLAG_UPDATE_CURRENT would collapse them into one (the last extras win).
@@ -216,6 +234,10 @@ object SessionNotifications {
 
         runCatching { NotificationManagerCompat.from(context).notify(notifId, builder.build()) }
             .onFailure { Log.w(TAG, "Failed to post permission notification", it) }
+        // Group permission notifications so a multi-session burst collapses into a stackable
+        // group instead of filling the shade — mirroring the completed-sessions grouping.
+        runCatching { postGroupSummary(context, NotificationChannels.PERMISSION, GROUP_PERMISSION, SUMMARY_PERMISSION_ID) }
+            .onFailure { Log.w(TAG, "Failed to post permission summary notification", it) }
     }
 
     /** Post a notification when a background run fails. */
@@ -231,9 +253,34 @@ object SessionNotifications {
             .setContentIntent(openSessionIntent(context, sessionId, notifId, profileId))
             .setCategory(NotificationCompat.CATEGORY_ERROR)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            // Group error notifications so a burst of failures collapses into a stackable group.
+            .setGroup(GROUP_ERROR)
             .build()
         runCatching { NotificationManagerCompat.from(context).notify(notifId, notification) }
             .onFailure { Log.w(TAG, "Failed to post error notification", it) }
+        runCatching { postGroupSummary(context, NotificationChannels.ERROR, GROUP_ERROR, SUMMARY_ERROR_ID) }
+            .onFailure { Log.w(TAG, "Failed to post error summary notification", it) }
+    }
+
+    /** Update the completion notification to show a brief "Sent" confirmation after a
+     *  successful inline reply, replacing the completion notification's content. Auto-cancels
+     *  on tap so it doesn't linger. */
+    @SuppressLint("MissingPermission")
+    fun postReplySent(context: Context, sessionId: String) {
+        if (!canPost(context)) {
+            cancel(context, sessionId)
+            return
+        }
+        val notifId = notifId(NS_COMPLETED, sessionId)
+        val notification = NotificationCompat.Builder(context, NotificationChannels.COMPLETED)
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setContentTitle(context.getString(R.string.notif_reply_sent))
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setGroup(GROUP_COMPLETED)
+            .build()
+        runCatching { NotificationManagerCompat.from(context).notify(notifId, notification) }
+            .onFailure { Log.w(TAG, "Failed to post reply-sent notification", it) }
     }
 
     /** An inline reply couldn't be durably enqueued (no resolvable profile, or the outbox write
@@ -280,5 +327,26 @@ object SessionNotifications {
     }
 
     private const val GROUP_COMPLETED = "soy.iko.opencode.COMPLETED"
+    private const val GROUP_PERMISSION = "soy.iko.opencode.PERMISSION"
+    private const val GROUP_ERROR = "soy.iko.opencode.ERROR"
     private const val SUMMARY_COMPLETED_ID = -1
+    private const val SUMMARY_PERMISSION_ID = -2
+    private const val SUMMARY_ERROR_ID = -3
+
+    /** Post a summary notification for a group so multiple entries collapse into one stackable
+     *  entry in the shade instead of filling it. */
+    @SuppressLint("MissingPermission")
+    private fun postGroupSummary(context: Context, channelId: String, group: String, summaryId: Int) {
+        if (!canPost(context)) return
+        val summary = NotificationCompat.Builder(context, channelId)
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setContentTitle(context.getString(R.string.app_name))
+            .setAutoCancel(true)
+            .setGroup(group)
+            .setGroupSummary(true)
+            .build()
+        runCatching {
+            NotificationManagerCompat.from(context).notify(summaryId, summary)
+        }.onFailure { Log.w(TAG, "Failed to post group summary notification", it) }
+    }
 }

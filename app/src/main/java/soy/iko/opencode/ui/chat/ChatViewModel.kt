@@ -7,6 +7,7 @@ import soy.iko.opencode.data.model.Command
 import soy.iko.opencode.data.model.FilePromptPart
 import soy.iko.opencode.data.model.MessageWithParts
 import soy.iko.opencode.data.model.ModelOption
+import soy.iko.opencode.data.model.UserMessage
 import soy.iko.opencode.data.model.Permission
 import soy.iko.opencode.data.model.PermissionReplied
 import soy.iko.opencode.data.model.PermissionResponse
@@ -38,6 +39,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
@@ -166,7 +168,15 @@ class ChatViewModel(
     private val _agentsReload = MutableStateFlow(0)
     private val _commandsReload = MutableStateFlow(0)
 
-    val messages: StateFlow<List<MessageWithParts>> =
+    /** An optimistically-injected user message shown immediately on send, before the server
+     *  echoes the real message back via SSE. Removed once a matching UserMessage arrives. */
+    data class OptimisticEntry(val tempId: String, val text: String, val timestamp: Long, val failed: Boolean)
+
+    private val _optimisticMessages = MutableStateFlow<List<OptimisticEntry>>(emptyList())
+
+    /** SSE-driven message stream with retry/backoff and loading/error side effects. Combined
+     *  with [_optimisticMessages] by [messages] so the user sees their outgoing prompt instantly. */
+    private val sseMessages: Flow<List<MessageWithParts>> =
         container.activeConnection
             .flatMapLatest { conn ->
                 conn?.repository?.observeMessages(sessionId) ?: flowOf(emptyList())
@@ -185,6 +195,10 @@ class ChatViewModel(
                 if (it.isNotEmpty()) {
                     hasShownMessages = true
                 }
+                // Reconcile optimistic messages: drop any whose text now matches a real SSE
+                // UserMessage (the server echoed the prompt back). Matching by trimmed text,
+                // removing the oldest match first so duplicate texts are handled in order.
+                reconcileOptimistic(it)
             }
             .retryWhen { cause, attempt ->
                 _loading.value = false
@@ -209,11 +223,15 @@ class ChatViewModel(
                 delay(backoffMs)
                 true
             }
-            .stateIn(
-                scope = viewModelScope,
-                started = SharingStarted.WhileSubscribed(NetworkConfig.stateFlowSubscriptionTimeoutMs),
-                initialValue = emptyList(),
-            )
+
+    val messages: StateFlow<List<MessageWithParts>> =
+        combine(sseMessages, _optimisticMessages) { sse, optimistic ->
+            mergeOptimistic(sse, optimistic)
+        }.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(NetworkConfig.stateFlowSubscriptionTimeoutMs),
+            initialValue = emptyList(),
+        )
 
     /** Whether the conversation has any messages. Derived separately so the top bar
      *  (share button enabled state) can observe this cheap boolean instead of the
@@ -226,6 +244,67 @@ class ChatViewModel(
             started = SharingStarted.WhileSubscribed(NetworkConfig.stateFlowSubscriptionTimeoutMs),
             initialValue = false,
         )
+
+    /** Map of optimistic message tempId → failed flag, so the UI can render a "Sending…"
+     *  or "Failed to send" indicator on the corresponding message bubble. */
+    val optimisticStatuses: StateFlow<Map<String, Boolean>> = _optimisticMessages
+        .map { entries -> entries.associate { it.tempId to it.failed } }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(NetworkConfig.stateFlowSubscriptionTimeoutMs),
+            initialValue = emptyMap(),
+        )
+
+    /** Merge SSE-driven messages with optimistic entries. An optimistic entry whose trimmed
+     *  text matches a real [UserMessage] in [sse] is dropped (the server echoed it back).
+     *  Remaining entries are appended as synthetic [UserMessage]s at the end. Failed entries
+     *  are kept so the user sees the failed indicator until they retry or dismiss. */
+    private fun mergeOptimistic(
+        sse: List<MessageWithParts>,
+        optimistic: List<OptimisticEntry>,
+    ): List<MessageWithParts> {
+        if (optimistic.isEmpty()) return sse
+        // Collect the text of real user messages so optimistic entries can be matched.
+        val realUserTexts = mutableSetOf<String>()
+        for (msg in sse) {
+            if (msg.info !is UserMessage) continue
+            val text = msg.parts.filterIsInstance<TextPart>()
+                .joinToString("\n\n") { it.text }
+                .trim()
+            if (text.isNotEmpty()) realUserTexts.add(text)
+        }
+        val surviving = optimistic.filter { it.text.trim() !in realUserTexts }
+        if (surviving.isEmpty()) return sse
+        return sse + surviving.map { it.toMessageWithParts() }
+    }
+
+    /** Remove optimistic entries whose text now matches a real user message delivered by SSE.
+     *  Called from the SSE flow's onEach so stale optimistic entries are cleaned up promptly. */
+    private fun reconcileOptimistic(sse: List<MessageWithParts>) {
+        if (_optimisticMessages.value.isEmpty()) return
+        val realUserTexts = mutableSetOf<String>()
+        for (msg in sse) {
+            if (msg.info !is UserMessage) continue
+            val text = msg.parts.filterIsInstance<TextPart>()
+                .joinToString("\n\n") { it.text }
+                .trim()
+            if (text.isNotEmpty()) realUserTexts.add(text)
+        }
+        if (realUserTexts.isEmpty()) return
+        _optimisticMessages.update { entries ->
+            entries.filterNot { it.text.trim() in realUserTexts }
+        }
+    }
+
+    /** Convert an optimistic entry to a [MessageWithParts] for display. */
+    private fun OptimisticEntry.toMessageWithParts(): MessageWithParts = MessageWithParts(
+        info = UserMessage(
+            id = tempId,
+            sessionID = sessionId,
+            time = soy.iko.opencode.data.model.TimeInfo(created = timestamp),
+        ),
+        parts = listOf(TextPart(id = "$tempId-text", text = text)),
+    )
 
     /** The agent's current task plan (the latest `todowrite`), surfaced so the chat can pin a
      *  live progress checklist above the composer. distinctUntilChanged so a per-token messages
@@ -786,8 +865,10 @@ class ChatViewModel(
                     while (currentCoroutineContext().isActive) {
                         try {
                             conn.events.state.collect { state ->
-                                if ((state == EventStreamClient.ConnectionState.Disconnected ||
-                                     state == EventStreamClient.ConnectionState.Failed) && _running.value) {
+                                val isDown = state == EventStreamClient.ConnectionState.Disconnected ||
+                                    state == EventStreamClient.ConnectionState.Failed ||
+                                    state == EventStreamClient.ConnectionState.AuthFailed
+                                if (isDown && _running.value) {
                                     _running.value = false
                                 }
                             }
@@ -863,6 +944,16 @@ class ChatViewModel(
             suppressDraftPersist.set(true)
             _draft.value = ""
         }
+        // Inject an optimistic user message so the outgoing prompt is visible immediately,
+        // before the server echoes it back via SSE. Removed by reconcileOptimistic once the
+        // real UserMessage arrives. Only for text-bearing prompts (an image-only prompt has
+        // no text to show).
+        val optimisticId = if (trimmed.isNotEmpty()) "__optimistic_${System.nanoTime()}" else null
+        if (optimisticId != null) {
+            // Clear any prior failed optimistic entry with the same text (a retry re-sends).
+            _optimisticMessages.update { entries -> entries.filterNot { it.failed && it.text.trim() == trimmed } }
+            _optimisticMessages.update { it + OptimisticEntry(optimisticId, trimmed, System.currentTimeMillis(), failed = false) }
+        }
         viewModelScope.launch {
             runCatchingCancellable {
                 conn.repository.sendPrompt(
@@ -874,6 +965,13 @@ class ChatViewModel(
                     idempotencyKey = key,
                 )
             }.onFailure {
+                // Mark the optimistic message as failed so the user sees a failure indicator
+                // instead of a perpetual "sending" state.
+                if (optimisticId != null) {
+                    _optimisticMessages.update { entries ->
+                        entries.map { if (it.tempId == optimisticId) it.copy(failed = true) else it }
+                    }
+                }
                 suppressDraftPersist.set(false)
                 _failedDraft.value = trimmed
                 failedIdempotencyKey = key
@@ -1326,18 +1424,19 @@ class ChatViewModel(
      *  already viewing the session, so a confirmation dialog guards the action instead. */
     fun deleteSession() {
         val conn = connection ?: return
-        viewModelScope.launch {
-            runCatchingCancellable { conn.repository.deleteSession(sessionId) }
-                .onSuccess {
-                    container.draftStore.remove(sessionId)
-                    container.attachmentDraftStore.remove(sessionId)
-                    container.messageCacheStore.remove(conn.profile.id, sessionId)
-                    container.outboxStore.removeForSession(sessionId)
-                    container.clearUnread(sessionId)
-                    _sessionDeleted.value = true
-                }
-                .onFailure { _errorEvents.trySend(ChatError(container.friendlyError(it))) }
-        }
+        // Schedule a deferred delete with an undo window (matching SessionListViewModel's
+        // pattern), so the user can undo from the session list after navigating back. The
+        // actual REST delete runs after undoDeleteDelayMs; cancel via cancelSessionDelete.
+        container.scheduleSessionDelete(
+            id = sessionId,
+            delayMs = NetworkConfig.undoDeleteDelayMs,
+            onDeleted = { /* cleanup handled by container.scheduleSessionDelete */ },
+            onError = { _errorEvents.trySend(ChatError(container.friendlyError(it))) },
+        )
+        // Let the SessionListScreen show the undo snackbar for this externally-initiated delete.
+        container.emitExternalSessionUndo(sessionId)
+        // Navigate back immediately so the user lands on the session list where the Undo shows.
+        _sessionDeleted.value = true
     }
 
     /** Reconnect to the most recently used server profile (used when the connection is gone). */

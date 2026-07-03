@@ -38,6 +38,7 @@
     <string name="connecting">Conectando…</string>
     <string name="reconnecting">Reconectando…</string>
     <string name="connection_failed">Error de conexión — comprueba las credenciales</string>
+    <string name="connection_failed_endpoint">Error de conexión — comprueba la URL y versión del servidor</string>
     <string name="reconnect">Reconectar</string>
     <string name="not_connected">Sin conexión.</string>
     <string name="no_servers_to_reconnect">No hay ningún servidor guardado al que reconectar.</string>
@@ -159,6 +160,7 @@
     <string name="tool_completed">Completado</string>
     <string name="tool_error">Error</string>
     <string name="tool_running">En ejecución</string>
+    <string name="tool_queued">En cola</string>
     <string name="tool_unknown">Estado de herramienta desconocido</string>
     <string name="state_expanded">Expandido</string>
     <string name="state_collapsed">Contraído</string>
@@ -260,8 +262,16 @@
     <string name="notif_action_always">Siempre</string>
     <string name="notif_action_reject">Rechazar</string>
     <string name="notif_action_reply">Responder</string>
+    <string name="notif_action_stop">Detener</string>
+    <string name="notif_action_mark_read">Marcar leído</string>
     <string name="notif_reply_hint">Envía un seguimiento…</string>
     <string name="notif_reply_sent">Enviado</string>
+    <string name="notif_running_progress">Paso %1$d de %2$d</string>
+    <string name="notif_fg_timeout_text">La tarea larga podría pausarse en segundo plano</string>
+    <string name="notif_rationale_title">¿Activar notificaciones?</string>
+    <string name="notif_rationale_text">opencode usa notificaciones para avisarte cuando termina una ejecución, cuando un agente necesita aprobación, o cuando ocurre un error. Puedes ajustarlo luego en Ajustes.</string>
+    <string name="notif_rationale_allow">Permitir</string>
+    <string name="notif_rationale_skip">Omitir</string>
     <string name="notif_reply_failed_title">Respuesta no enviada</string>
     <string name="notif_reply_failed_text">No se pudo poner en cola tu seguimiento. Toca para abrir la sesión e inténtalo de nuevo.</string>
 
@@ -543,4 +553,15 @@
         <item quantity="one">%1$d resultado</item>
         <item quantity="other">%1$d resultados</item>
     </plurals>
+
+    <!-- UI/UX batch 2: message status, crash prompt, server connection -->
+    <string name="message_sending">Enviando…</string>
+    <string name="message_send_failed">Error al enviar</string>
+    <string name="message_edited">editado</string>
+    <string name="crash_last_run_title">opencode se cerró la última vez</string>
+    <string name="crash_last_run_text">Ocurrió un error inesperado durante la sesión anterior.</string>
+    <string name="crash_last_run_view">Ver informe</string>
+    <string name="crash_last_run_dismiss">Descartar</string>
+    <string name="connecting_to">Conectando a %1$s…</string>
+    <string name="scroll_to_top">Ir arriba</string>
 </resources>

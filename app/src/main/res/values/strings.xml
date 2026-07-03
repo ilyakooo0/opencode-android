@@ -38,6 +38,7 @@
     <string name="connecting">Connecting…</string>
     <string name="reconnecting">Reconnecting…</string>
     <string name="connection_failed">Connection failed — check credentials</string>
+    <string name="connection_failed_endpoint">Connection failed — check the server URL and version</string>
     <string name="reconnect">Reconnect</string>
     <string name="not_connected">Not connected.</string>
     <string name="no_servers_to_reconnect">No saved server to reconnect to.</string>
@@ -159,6 +160,7 @@
     <string name="tool_completed">Completed</string>
     <string name="tool_error">Error</string>
     <string name="tool_running">Running</string>
+    <string name="tool_queued">Queued</string>
     <string name="tool_unknown">Unknown tool state</string>
     <string name="state_expanded">Expanded</string>
     <string name="state_collapsed">Collapsed</string>
@@ -260,8 +262,16 @@
     <string name="notif_action_always">Always</string>
     <string name="notif_action_reject">Reject</string>
     <string name="notif_action_reply">Reply</string>
+    <string name="notif_action_stop">Stop</string>
+    <string name="notif_action_mark_read">Mark read</string>
     <string name="notif_reply_hint">Send a follow-up…</string>
     <string name="notif_reply_sent">Sent</string>
+    <string name="notif_running_progress">Step %1$d of %2$d</string>
+    <string name="notif_fg_timeout_text">Long-running task may be paused in the background</string>
+    <string name="notif_rationale_title">Enable notifications?</string>
+    <string name="notif_rationale_text">opencode uses notifications to alert you when a run finishes, when an agent needs approval, or when a run fails. You can adjust this later in Settings.</string>
+    <string name="notif_rationale_allow">Allow</string>
+    <string name="notif_rationale_skip">Skip</string>
     <string name="notif_reply_failed_title">Reply not sent</string>
     <string name="notif_reply_failed_text">Your follow-up couldn\'t be queued. Tap to open the session and try again.</string>
 
@@ -545,4 +555,15 @@
         <item quantity="one">%1$d result</item>
         <item quantity="other">%1$d results</item>
     </plurals>
+
+    <!-- UI/UX batch 2: message status, crash prompt, server connection -->
+    <string name="message_sending">Sending…</string>
+    <string name="message_send_failed">Failed to send</string>
+    <string name="message_edited">edited</string>
+    <string name="crash_last_run_title">opencode crashed last time</string>
+    <string name="crash_last_run_text">An unexpected error occurred during the previous session.</string>
+    <string name="crash_last_run_view">View report</string>
+    <string name="crash_last_run_dismiss">Dismiss</string>
+    <string name="connecting_to">Connecting to %1$s…</string>
+    <string name="scroll_to_top">Scroll to top</string>
 </resources>

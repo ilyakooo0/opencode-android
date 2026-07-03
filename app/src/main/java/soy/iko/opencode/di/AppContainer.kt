@@ -19,6 +19,12 @@ import soy.iko.opencode.data.model.StepFinishPart
 import soy.iko.opencode.data.model.ServerProfile
 import soy.iko.opencode.data.model.SessionError
 import soy.iko.opencode.data.model.SessionIdle
+import soy.iko.opencode.data.model.ToolPart
+import soy.iko.opencode.data.model.TODO_WRITE_TOOL
+import soy.iko.opencode.data.model.parseTodos
+import soy.iko.opencode.data.model.statusEnum
+import soy.iko.opencode.data.model.TodoStatus
+import soy.iko.opencode.data.model.inputElement
 import soy.iko.opencode.data.repo.AttachmentDraftStore
 import soy.iko.opencode.data.repo.BackupManager
 import soy.iko.opencode.data.repo.DraftStore
@@ -48,13 +54,17 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.Job
@@ -170,6 +180,13 @@ open class AppContainer private constructor(
         }
     }
 
+    /** A one-shot signal to navigate to the Diagnostics screen (e.g. from the crash-relaunch
+     *  prompt). Consumed by OpencodeApp's NavHost. */
+    private val _pendingDiagnostics = MutableStateFlow(false)
+    open val pendingDiagnostics: StateFlow<Boolean> = _pendingDiagnostics.asStateFlow()
+    open fun requestDiagnostics() { _pendingDiagnostics.value = true }
+    open fun consumePendingDiagnostics(): Boolean = _pendingDiagnostics.compareAndSet(true, false)
+
     /**
      * A session id to open from an external trigger (a notification tap or a deep link),
      * paired with the originating server's profile id (if known) so a tap after the user
@@ -207,6 +224,12 @@ open class AppContainer private constructor(
      *  disconnect confirmation on the session list (disconnecting mid-run kills it). */
     private val _anyRunActive = MutableStateFlow(false)
     open val anyRunActive: StateFlow<Boolean> = _anyRunActive.asStateFlow()
+
+    /** Latest task-plan progress text for the active run (e.g. "Step 2 of 5"), surfaced in
+     *  the foreground-service notification so the user can see what the agent is working on
+     *  without opening the app. Null when no plan is available or no run is active. */
+    private val _runProgressText = MutableStateFlow<String?>(null)
+    open val runProgressText: StateFlow<String?> = _runProgressText.asStateFlow()
 
     /** Whether the device currently has network connectivity. Distinct from the SSE
      *  connection state so the UI can tell "you're offline" (device) from "server
@@ -249,6 +272,9 @@ open class AppContainer private constructor(
         _unread.update { it - id }
         unreadMessageIds.remove(id)
     }
+
+    /** Mark a session as read (clear its unread badge) — the "Mark read" notification action. */
+    open fun markSessionRead(id: String) = clearUnread(id)
 
     /** Restore a session's unread badge after a failed server switch reconnects.
      *  Preserves the prior [count] so a session badged with "5 unread" before the
@@ -317,20 +343,42 @@ open class AppContainer private constructor(
                 .distinctUntilChanged()
                 .collect { active ->
                     if (active) {
-                        // When exactly one run is active, resolve its title so the notification
-                        // identifies which session is running. Multiple concurrent runs fall back
-                        // to the generic title (naming one would be misleading).
-                        val title = synchronized(activeRuns) {
+                        // When exactly one run is active, resolve its title (and id, for the
+                        // Stop action) so the notification identifies which session is running
+                        // and can be aborted from the notification. Multiple concurrent runs
+                        // fall back to the generic title (naming one would be misleading).
+                        val activeId = synchronized(activeRuns) {
                             activeRuns.toList().singleOrNull()
-                        }?.let { sid ->
+                        }
+                        val title = activeId?.let { sid ->
                             runCatchingCancellable {
                                 activeConnection.value?.repository?.listSessions()
                                     ?.firstOrNull { it.id == sid }?.displayTitle
                             }.getOrNull()
                         }
-                        RunForegroundService.start(ctx, title)
+                        RunForegroundService.start(ctx, title, activeId, _runProgressText.value)
                     } else {
                         RunForegroundService.stop(ctx)
+                    }
+                }
+        }
+        // Separate collector: update the FGS notification's progress text ("Step 2 of 5")
+        // as the agent works through its task plan. Re-sends the service intent with the
+        // updated progress, which the service uses to rebuild the notification.
+        appScope.launch {
+            _runProgressText
+                .drop(1) // skip initial value — the anyRunActive collector handles the first start
+                .distinctUntilChanged()
+                .collect { progress ->
+                    if (_anyRunActive.value) {
+                        val activeId = synchronized(activeRuns) { activeRuns.toList().singleOrNull() }
+                        val title = activeId?.let { sid ->
+                            runCatchingCancellable {
+                                activeConnection.value?.repository?.listSessions()
+                                    ?.firstOrNull { it.id == sid }?.displayTitle
+                            }.getOrNull()
+                        }
+                        RunForegroundService.start(ctx, title, activeId, progress)
                     }
                 }
         }
@@ -544,6 +592,8 @@ open class AppContainer private constructor(
                                 if (removed) _anyRunActive.value = activeRuns.isNotEmpty()
                             }
                         }
+                        // Clear the progress text when the run finishes.
+                        _runProgressText.value = null
                         if (wasRunning && !isActivelyViewing(idleSid)) {
                             // Fire this off the collector's coroutine: notifySessionCompleted
                             // does a network listSessions() to resolve the title, and blocking
@@ -553,6 +603,24 @@ open class AppContainer private constructor(
                             appScope.launch { notifySessionCompleted(idleSid, conn.repository, conn.profile.id) }
                         }
                         return@collect
+                    }
+                    // Track the agent's task-plan progress (from todowrite tool calls) so the
+                    // foreground-service notification can show "Step 2 of 5" instead of just a
+                    // chronometer. The todowrite tool sends the full plan on every call, so the
+                    // latest call's input is a complete snapshot.
+                    if (event is MessagePartUpdated) {
+                        val part = event.properties.part
+                        if (part is ToolPart && part.tool.equals(TODO_WRITE_TOOL, ignoreCase = true)) {
+                            val todos = parseTodos(part.state.inputElement())
+                            if (todos.isNotEmpty()) {
+                                val completed = todos.count { it.statusEnum() == TodoStatus.COMPLETED }
+                                _runProgressText.value = appContext?.getString(
+                                    soy.iko.opencode.R.string.notif_running_progress,
+                                    completed + 1,
+                                    todos.size,
+                                )
+                            }
+                        }
                     }
                     val sid = sessionOf(event) ?: return@collect
                     // Re-read currentSession here, right before mutating the badge state:
@@ -782,8 +850,27 @@ open class AppContainer private constructor(
                     }.isSuccess
                 }
                 if (enqueued) flushOutbox()
-            } finally {
+            }             finally {
                 onDone(enqueued)
+            }
+        }
+    }
+
+    /** Abort the active run for [sessionId] from a notification Stop action. Routes to the
+     *  originating profile (or the active connection) so the abort reaches the server that
+     *  owns the session. Runs on the app scope so it survives the BroadcastReceiver's lifetime. */
+    open fun abortRunFromNotification(sessionId: String, originProfileId: String?, onDone: (Boolean) -> Unit) {
+        appScope.launch {
+            var success = false
+            try {
+                val conn = activeConnection.value?.takeIf {
+                    originProfileId == null || it.profile.id == originProfileId
+                } ?: activeConnection.value
+                if (conn != null) {
+                    success = runCatchingCancellable { conn.repository.abort(sessionId) }.isSuccess
+                }
+            } finally {
+                onDone(success)
             }
         }
     }
@@ -895,6 +982,10 @@ open class AppContainer private constructor(
     /** Build and install a connection to [profile], replacing any current one. Caller MUST hold
      *  [connectionMutex]. */
     private suspend fun connectLocked(profile: ServerProfile): OpencodeConnection {
+        // Capture the previous profile id before closing, so we can preserve unread badges
+        // when reconnecting to the same server — a brief network blip or manual reconnect
+        // shouldn't erase "5 unread". Only a genuine server switch clears them.
+        val previousProfileId = _activeConnection.value?.profile?.id
         _activeConnection.value?.close()
         _activeConnection.value = null
         // Mutate the run set and its derived flag together under activeRuns' monitor: the SSE
@@ -905,8 +996,10 @@ open class AppContainer private constructor(
             activeRuns.clear()
             _anyRunActive.value = false
         }
-        _unread.value = emptyMap()
-        unreadMessageIds.clear()
+        if (previousProfileId != profile.id) {
+            _unread.value = emptyMap()
+            unreadMessageIds.clear()
+        }
         val now = System.currentTimeMillis()
         val resolved = profileStore.resolve(profile)
         val needsSave = (now - resolved.lastUsed) > LAST_USED_SAVE_THRESHOLD_MS
@@ -998,6 +1091,21 @@ open class AppContainer private constructor(
      *  instead of silently cancelling it (which would leave the session deleted-in-UI but
      *  alive on the server, reappearing on the next refresh). */
     private val pendingSessionDeletes = java.util.concurrent.ConcurrentHashMap<String, Job>()
+
+    /** One-shot events carrying the id of a session scheduled for deferred deletion from
+     *  outside the session list (e.g. from the chat screen's Delete). The SessionListScreen
+     *  collects these to show an Undo snackbar, mirroring its own VM-level undo events. */
+    private val _externalSessionUndoEvents = MutableSharedFlow<String>(
+        extraBufferCapacity = NetworkConfig.snackbarEventBufferCapacity,
+        onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST,
+    )
+    val externalSessionUndoEvents: SharedFlow<String> = _externalSessionUndoEvents.asSharedFlow()
+
+    /** Emit an undo event for a session delete initiated outside the session list (e.g.
+     *  from the chat screen). The SessionListScreen collects these to show an Undo snackbar. */
+    fun emitExternalSessionUndo(sessionId: String) {
+        _externalSessionUndoEvents.tryEmit(sessionId)
+    }
 
     /**
      * Schedule session [id] for deletion after [delayMs], cancellable via [cancelSessionDelete]

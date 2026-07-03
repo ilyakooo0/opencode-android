@@ -9,6 +9,7 @@
     <!-- Shown by core-splashscreen on cold start, then swapped for the theme above. -->
     <style name="Theme.OpencodeAndroid.Splash" parent="Theme.SplashScreen">
         <item name="windowSplashScreenBackground">@color/splash_background</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
         <item name="postSplashScreenTheme">@style/Theme.OpencodeAndroid</item>
     </style>
 </resources>

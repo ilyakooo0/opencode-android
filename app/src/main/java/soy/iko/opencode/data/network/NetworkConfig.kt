@@ -233,6 +233,12 @@ object NetworkConfig {
      *  two-pane layout for top-level destination discoverability on large screens. */
     const val navigationRailThresholdDp = 840
 
+    /** Maximum width (dp) for the chat message list on large screens. On a tablet or
+     *  unfolded foldable, full-width message bubbles stretch edge-to-edge, hurting
+     *  readability — capping and centering the list (like Gmail/Telegram on tablets)
+     *  keeps line lengths comfortable. Applied only above [twoPaneWidthThresholdDp]. */
+    const val chatContentMaxWidthDp = 800
+
     // --- Motion tokens (shared across screens) ---
 
     /** Duration (ms) for horizontal slide push/pop nav transitions. */

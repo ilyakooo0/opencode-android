@@ -43,6 +43,7 @@ class CrashLogger private constructor(private val appContext: Context) {
 
     private val crashDir = File(appContext.filesDir, "crashes").apply { mkdirs() }
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val crashPrefs = appContext.getSharedPreferences("crash_logger", android.content.Context.MODE_PRIVATE)
 
     private val _reports = MutableStateFlow<List<CrashReport>>(emptyList())
     val reports: StateFlow<List<CrashReport>> = _reports.asStateFlow()
@@ -96,6 +97,21 @@ class CrashLogger private constructor(private val appContext: Context) {
             }
             refresh()
         }
+    }
+
+    /** Whether any crash report is newer than the last-acknowledged timestamp — i.e. a
+     *  crash happened in a previous run that the user hasn't been prompted about yet.
+     *  Called on cold start to surface a "crashed last time" dialog. */
+    fun hasUnacknowledgedCrash(): Boolean {
+        val acknowledgedAt = crashPrefs.getLong(KEY_ACKNOWLEDGED_AT, 0L)
+        return crashDir.listFiles { f -> f.isFile && f.name.endsWith(".txt") }
+            ?.any { it.lastModified() > acknowledgedAt } == true
+    }
+
+    /** Mark all current crash reports as acknowledged so the cold-start prompt doesn't
+     *  re-fire on the next launch. */
+    fun acknowledgeCrashes() {
+        crashPrefs.edit().putLong(KEY_ACKNOWLEDGED_AT, System.currentTimeMillis()).apply()
     }
 
     /** Deferred deletions keyed by file name, so an Undo can cancel one before it fires. */
@@ -234,6 +250,8 @@ class CrashLogger private constructor(private val appContext: Context) {
          *  startup) writes one report per crash with no other bound, so without this the
          *  crashes/ dir grows without limit until the user manually clears it. */
         private const val MAX_REPORTS = 20
+
+        private const val KEY_ACKNOWLEDGED_AT = "acknowledged_at"
 
         /** Regex matching http(s) URLs, shared by report writing and [scrubUrls]. */
         internal val SCRUB_URL_REGEX = Regex("https?://[^\\s\"']+")

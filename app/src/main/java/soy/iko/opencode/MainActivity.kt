@@ -104,6 +104,25 @@ class MainActivity : FragmentActivity() {
                 }
             }
         }
+        // Surface a "crashed last time" prompt if a crash report from a previous run
+        // hasn't been acknowledged. Acknowledges immediately so it doesn't re-fire on
+        // every rotation/resume; the user can always find reports in Settings → Diagnostics.
+        maybeShowCrashPrompt()
+    }
+
+    private fun maybeShowCrashPrompt() {
+        val crashLogger = soy.iko.opencode.data.repo.CrashLogger.get(this)
+        if (!crashLogger.hasUnacknowledgedCrash()) return
+        crashLogger.acknowledgeCrashes()
+        android.app.AlertDialog.Builder(this)
+            .setTitle(R.string.crash_last_run_title)
+            .setMessage(R.string.crash_last_run_text)
+            .setPositiveButton(R.string.crash_last_run_view) { _, _ ->
+                (application as OpencodeApp).container.requestDiagnostics()
+            }
+            .setNegativeButton(R.string.crash_last_run_dismiss, null)
+            .setCancelable(true)
+            .show()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -235,7 +254,9 @@ class MainActivity : FragmentActivity() {
     }
 
     /** Ask for POST_NOTIFICATIONS on Android 13+ so run/completion notifications show.
-     *  Idempotent per Activity instance via [notificationPermissionRequested]. */
+     *  Idempotent per Activity instance via [notificationPermissionRequested].
+     *  Shows a rationale dialog first (explaining what the user gains) before the system
+     *  permission prompt, so a user who denies understands what they're missing. */
     private fun maybeRequestNotificationPermission() {
         if (notificationPermissionRequested) return
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
@@ -243,7 +264,20 @@ class MainActivity : FragmentActivity() {
             PackageManager.PERMISSION_GRANTED
         if (!granted) {
             notificationPermissionRequested = true
-            requestNotificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+            showNotificationRationaleDialog()
         }
+    }
+
+    private fun showNotificationRationaleDialog() {
+        val ctx = this
+        android.app.AlertDialog.Builder(ctx)
+            .setTitle(R.string.notif_rationale_title)
+            .setMessage(R.string.notif_rationale_text)
+            .setPositiveButton(R.string.notif_rationale_allow) { _, _ ->
+                runCatching { requestNotificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS) }
+            }
+            .setNegativeButton(R.string.notif_rationale_skip, null)
+            .setCancelable(false)
+            .show()
     }
 }

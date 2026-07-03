@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** A transient error surfaced as a snackbar, optionally paired with the profile that
  *  failed to connect so the snackbar can offer a Retry action. */
@@ -66,9 +67,14 @@ class ServerListViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             try {
                 var conn: OpencodeConnection? = null
+                // Wrap the connect + ping in a timeout so a hung/unresponsive server
+                // doesn't leave the per-row spinner spinning indefinitely. The ping itself
+                // also has a REST-level timeout, but the connection establishment path
+                // (HttpClientFactory.create) can hang on DNS/TCP before any timeout applies.
                 val result = runCatchingCancellable {
                     conn = container.connect(profile)
-                    conn!!.api.ping()
+                    withTimeoutOrNull(NetworkConfig.testCredentialsTimeoutMs) { conn!!.api.ping() }
+                        ?: throw java.net.SocketTimeoutException("Connect timed out")
                 }
                 result.onSuccess { onConnected() }
                     .onFailure {
@@ -86,10 +92,13 @@ class ServerListViewModel(private val container: AppContainer) : ViewModel() {
 
     /** Retry connecting to the most recently used profile — the pull-to-refresh action on
      *  the server list. Gives the user a familiar gesture to retry a failed auto-connect
-     *  instead of having to tap a server card. */
+     *  instead of having to tap a server card. Targets the profile with the highest
+     *  lastUsed timestamp (the most natural "retry the one I was just on"), falling back
+     *  to the first profile if none has been used yet. */
     fun refresh(onConnected: () -> Unit) {
         if (_connecting.value != null || container.reconnecting.value) return
-        val target = profiles.value.firstOrNull() ?: return
+        val target = profiles.value.maxByOrNull { it.lastUsed }
+            ?: profiles.value.firstOrNull() ?: return
         connect(target, onConnected)
     }
 

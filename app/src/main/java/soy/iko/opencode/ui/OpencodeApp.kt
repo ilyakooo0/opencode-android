@@ -1,5 +1,7 @@
 package soy.iko.opencode.ui
 
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -33,6 +35,7 @@ import soy.iko.opencode.ui.server.ServerListScreen
 import soy.iko.opencode.ui.search.GlobalSearchScreen
 import soy.iko.opencode.ui.components.LocalChatTextScale
 import soy.iko.opencode.ui.components.LocalCodeWrap
+import soy.iko.opencode.ui.components.isReducedMotion
 import soy.iko.opencode.ui.session.SessionListScreen
 import soy.iko.opencode.ui.session.TwoPaneSessionChat
 import soy.iko.opencode.ui.settings.DiagnosticsScreen
@@ -49,6 +52,7 @@ fun OpencodeApp(container: AppContainer) {
     val pendingSharedMedia by container.pendingSharedMedia.collectAsStateWithLifecycle()
     val pendingOpenSession by container.pendingOpenSession.collectAsStateWithLifecycle()
     val pendingNewSession by container.pendingNewSession.collectAsStateWithLifecycle()
+    val pendingDiagnostics by container.pendingDiagnostics.collectAsStateWithLifecycle()
     val connection by container.activeConnection.collectAsStateWithLifecycle()
     // Chat presentation preferences, provided to the whole nav graph so the markdown/code
     // renderers honor the user's text-size and code-wrap choices everywhere.
@@ -100,6 +104,14 @@ fun OpencodeApp(container: AppContainer) {
         }
     }
 
+    // Crash-relaunch prompt: navigate to the Diagnostics screen when the user taps
+    // "View report" on the cold-start crash dialog. Doesn't require a connection.
+    LaunchedEffect(pendingDiagnostics) {
+        if (!pendingDiagnostics) return@LaunchedEffect
+        container.consumePendingDiagnostics()
+        navController.navigate(Routes.DIAGNOSTICS) { launchSingleTop = true }
+    }
+
     // "New session" from a launcher shortcut / QS tile: once connected, create a fresh
     // session and open it. The pending counter is consumed only *after* createSession
     // succeeds, so a transient failure leaves the request pending to retry (on the next
@@ -136,6 +148,9 @@ fun OpencodeApp(container: AppContainer) {
         LocalChatTextScale provides clampedChatTextScale,
         LocalCodeWrap provides codeWrap,
     ) {
+    // Capture the reduced-motion preference once (in the composable scope) so the
+    // non-composable NavHost transition lambdas can use it to skip animations.
+    val reducedMotion = isReducedMotion()
     // Adaptive: on wide screens (tablets / unfolded foldables) show the session list and
     // the open conversation side by side instead of a single-pane back stack.
     BoxWithConstraints {
@@ -179,17 +194,43 @@ fun OpencodeApp(container: AppContainer) {
         NavHost(
             navController = navController,
             startDestination = Routes.SERVERS,
-            // Slide horizontally for forward/back navigation to feel native; fade for
-            // the root so the first frame doesn't slide in from off-screen.
+            // Motion-aware transitions: respect the user's reduced-motion setting
+            // (Developer Options → animator scale 0) by skipping animations entirely.
+            // Per-destination tuning: a chat→chat navigation (switching peer conversations
+            // within the same surface) crossfades instead of sliding, so it reads as a peer
+            // switch rather than drilling into a new section. Top-level destinations and
+            // detail pushes keep the horizontal slide.
             enterTransition = {
-                slideInHorizontally(animationSpec = tween(NetworkConfig.motionSlideDurationMs)) { it } +
+                if (reducedMotion) {
+                    EnterTransition.None
+                } else if (targetState.destination.route?.startsWith("${Routes.CHAT}/") == true) {
                     fadeIn(tween(NetworkConfig.motionFadeDurationMs))
+                } else {
+                    slideInHorizontally(animationSpec = tween(NetworkConfig.motionSlideDurationMs)) { it } +
+                        fadeIn(tween(NetworkConfig.motionFadeDurationMs))
+                }
             },
-            exitTransition = { fadeOut(tween(NetworkConfig.motionFadeDurationMs)) },
-            popEnterTransition = { fadeIn(tween(NetworkConfig.motionFadeDurationMs)) },
-            popExitTransition = {
-                slideOutHorizontally(animationSpec = tween(NetworkConfig.motionSlideDurationMs)) { it } +
+            exitTransition = {
+                if (reducedMotion) {
+                    ExitTransition.None
+                } else {
                     fadeOut(tween(NetworkConfig.motionFadeDurationMs))
+                }
+            },
+            popEnterTransition = {
+                if (reducedMotion) {
+                    EnterTransition.None
+                } else {
+                    fadeIn(tween(NetworkConfig.motionFadeDurationMs))
+                }
+            },
+            popExitTransition = {
+                if (reducedMotion) {
+                    ExitTransition.None
+                } else {
+                    slideOutHorizontally(animationSpec = tween(NetworkConfig.motionSlideDurationMs)) { it } +
+                        fadeOut(tween(NetworkConfig.motionFadeDurationMs))
+                }
             },
         ) {
 

@@ -91,6 +91,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import soy.iko.opencode.data.model.ServerProfile
@@ -205,7 +206,7 @@ fun SessionListScreen(
         // it via undoDelete cancels the timer and restores the row (no-op if it already
         // fired), so no session is silently deleted without a chance to undo.
         var pending: String? = null
-        vm.undoEvents.collectLatest { sessionId ->
+        merge(vm.undoEvents, container.externalSessionUndoEvents).collectLatest { sessionId ->
             pending?.let { vm.undoDelete(it) }
             pending = sessionId
             coroutineScope {

@@ -1,7 +1,7 @@
 package soy.iko.opencode.ui.chat
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -17,6 +17,7 @@ import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.CallSplit
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.FormatQuote
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Restore
@@ -24,6 +25,7 @@ import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.StopCircle
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -38,10 +40,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import soy.iko.opencode.R
 import soy.iko.opencode.data.model.AssistantMessage
@@ -72,6 +74,9 @@ fun resolveModelLabel(info: AssistantMessage, models: List<ModelOption>): String
         ?: id
 }
 
+/** Status of an outgoing message, shown as a small indicator on the user bubble. */
+enum class MessageSendStatus { SENDING, FAILED }
+
 /** A single message: user prompts right-aligned in a bubble, assistant output full-width. */
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
@@ -88,11 +93,13 @@ fun MessageBubble(
     isSpeaking: Boolean = false,
     onQuote: ((String) -> Unit)? = null,
     onBranch: ((String) -> Unit)? = null,
+    sendStatus: MessageSendStatus? = null,
+    isEdited: Boolean = false,
 ) {
     when (message.info) {
-        is UserMessage -> UserBubble(message, imageContext, modifier, onOpenFile, onRevert, onEdit, onQuote, onBranch)
+        is UserMessage -> UserBubble(message, imageContext, modifier, onOpenFile, onRevert, onEdit, onQuote, onBranch, sendStatus, isEdited)
         is UnknownMessage -> UnknownMessageBlock(message, imageContext, modifier, onOpenFile)
-        else -> AssistantBlock(message, isRunning, imageContext, modifier, modelLabel, onOpenFile, onRevert, onSpeak, isSpeaking, onQuote)
+        else -> AssistantBlock(message, isRunning, imageContext, modifier, modelLabel, onOpenFile, onRevert, onSpeak, isSpeaking, onQuote, onBranch, isEdited)
     }
 }
 
@@ -265,14 +272,19 @@ private fun UserBubble(
     onEdit: ((String) -> Unit)? = null,
     onQuote: ((String) -> Unit)? = null,
     onBranch: ((String) -> Unit)? = null,
+    sendStatus: MessageSendStatus? = null,
+    isEdited: Boolean = false,
 ) {
     val context = LocalContext.current
     val haptics = LocalHapticFeedback.current
+    val density = androidx.compose.ui.platform.LocalDensity.current
     val copyLabel = stringResource(R.string.copy)
     val editLabel = stringResource(R.string.edit_message)
     // Long-press context menu state: consolidates copy/quote/branch/revert into a standard
     // Android long-press menu so the actions are discoverable without spotting the 18dp icons.
+    // The menu anchors at the actual touch point rather than a fixed corner.
     var longPressMenu by remember { mutableStateOf(false) }
+    var longPressOffset by remember { mutableStateOf(androidx.compose.ui.unit.DpOffset(0.dp, 0.dp)) }
     // Collect text from all TextParts for copying, so a user can reuse/repost their
     // own prompt. Memoized so a scroll-induced recomposition doesn't re-scan the list.
     val textToCopy = remember(message.parts) {
@@ -305,21 +317,65 @@ private fun UserBubble(
             }
             // Footer row with timestamp + inline actions. Long-press opens a context menu
             // consolidating copy/quote/branch/revert — the conventional Android pattern — so
-            // the actions are discoverable without spotting the 18dp inline icons.
+            // the actions are discoverable without spotting the 18dp inline icons. Uses
+            // pointerInput/detectTapGestures (not combinedClickable) so no misleading "Button"
+            // semantics are announced to TalkBack for an area whose tap does nothing, and the
+            // menu anchors at the actual long-press position instead of a fixed corner.
             Box {
             Row(
-                modifier = Modifier.fillMaxWidth().combinedClickable(
-                    role = Role.Button,
-                    onClick = {},
-                    onLongClick = {
-                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                        longPressMenu = true
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .pointerInput(Unit) {
+                        detectTapGestures(onLongPress = { offset ->
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            longPressOffset = androidx.compose.ui.unit.DpOffset(
+                                with(density) { offset.x.toDp() },
+                                with(density) { offset.y.toDp() },
+                            )
+                            longPressMenu = true
+                        })
                     },
-                ),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                MessageTimestampText(message.info)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    when (sendStatus) {
+                        MessageSendStatus.SENDING -> {
+                            CircularProgressIndicator(
+                                Modifier.size(12.dp),
+                                strokeWidth = 1.5.dp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Text(
+                                stringResource(R.string.message_sending),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        MessageSendStatus.FAILED -> {
+                            Icon(
+                                Icons.Filled.Error,
+                                contentDescription = stringResource(R.string.message_send_failed),
+                                modifier = Modifier.size(12.dp),
+                                tint = MaterialTheme.colorScheme.error,
+                            )
+                            Text(
+                                stringResource(R.string.message_send_failed),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                        null -> {}
+                    }
+                    if (isEdited && sendStatus == null) {
+                        Text(
+                            stringResource(R.string.message_edited),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    MessageTimestampText(message.info)
+                }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     // Edit affordance: reload this prompt into the composer, reverting the
                     // conversation to before it so a Send replaces it. Only when there's text
@@ -371,7 +427,7 @@ private fun UserBubble(
             MessageLongPressMenu(
                 expanded = longPressMenu,
                 onDismiss = { longPressMenu = false },
-                offset = androidx.compose.ui.unit.DpOffset(0.dp, 0.dp),
+                offset = longPressOffset,
                 text = textToCopy,
                 onCopy = onCopy,
                 onQuote = onQuote,
@@ -396,6 +452,8 @@ private fun AssistantBlock(
     onSpeak: ((String) -> Unit)? = null,
     isSpeaking: Boolean = false,
     onQuote: ((String) -> Unit)? = null,
+    onBranch: ((String) -> Unit)? = null,
+    isEdited: Boolean = false,
 ) {
     Column(
         modifier = modifier.fillMaxWidth(),
@@ -465,6 +523,7 @@ private fun AssistantBlock(
             }
             // Long-press context menu state (see UserBubble for rationale).
             var longPressMenu by remember { mutableStateOf(false) }
+            var longPressOffset by remember { mutableStateOf(androidx.compose.ui.unit.DpOffset(0.dp, 0.dp)) }
             // Collect text from all TextParts for copy/read-aloud. Memoized so a
             // scroll-induced recomposition doesn't re-scan the parts list.
             val textToCopy = remember(message.parts) {
@@ -475,6 +534,7 @@ private fun AssistantBlock(
             }
             val assistantHaptics = LocalHapticFeedback.current
             val assistantContext = LocalContext.current
+            val assistantDensity = androidx.compose.ui.platform.LocalDensity.current
             val onCopy: (() -> Unit)? = textToCopy?.let { text ->
                 {
                     assistantHaptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -483,14 +543,18 @@ private fun AssistantBlock(
             }
             Box {
             Row(
-                modifier = Modifier.fillMaxWidth().combinedClickable(
-                    role = Role.Button,
-                    onClick = {},
-                    onLongClick = {
-                        assistantHaptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                        longPressMenu = true
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .pointerInput(Unit) {
+                        detectTapGestures(onLongPress = { offset ->
+                            assistantHaptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            longPressOffset = androidx.compose.ui.unit.DpOffset(
+                                with(assistantDensity) { offset.x.toDp() },
+                                with(assistantDensity) { offset.y.toDp() },
+                            )
+                            longPressMenu = true
+                        })
                     },
-                ),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -498,6 +562,13 @@ private fun AssistantBlock(
                     costSummary?.let {
                         Text(
                             it,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    if (isEdited) {
+                        Text(
+                            stringResource(R.string.message_edited),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -510,16 +581,17 @@ private fun AssistantBlock(
                     onSpeak = onSpeak,
                     onRevert = onRevert,
                     onQuote = onQuote,
+                    onBranch = onBranch,
                 )
             }
             MessageLongPressMenu(
                 expanded = longPressMenu,
                 onDismiss = { longPressMenu = false },
-                offset = androidx.compose.ui.unit.DpOffset(0.dp, 0.dp),
+                offset = longPressOffset,
                 text = textToCopy,
                 onCopy = onCopy,
                 onQuote = onQuote,
-                onBranch = null,
+                onBranch = onBranch,
                 onRevert = onRevert,
             )
             }
@@ -538,6 +610,7 @@ private fun AssistantActions(
     onSpeak: ((String) -> Unit)?,
     onRevert: (() -> Unit)?,
     onQuote: ((String) -> Unit)? = null,
+    onBranch: ((String) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val haptics = LocalHapticFeedback.current
@@ -574,10 +647,9 @@ private fun AssistantActions(
                 )
             }
         }
-        // Assistant replies can be quoted into the composer (branching is offered only on
-        // user prompts, where seeding a new session with the prompt makes sense).
-        if (textToCopy != null && onQuote != null) {
-            MessageOverflow(text = textToCopy, onQuote = onQuote, onBranch = null)
+        // Assistant replies can be quoted into the composer or branched into a new session.
+        if (textToCopy != null && (onQuote != null || onBranch != null)) {
+            MessageOverflow(text = textToCopy, onQuote = onQuote, onBranch = onBranch)
         }
     }
 }

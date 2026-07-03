@@ -50,7 +50,7 @@ open class EventStreamClient(
         HttpClient(io.ktor.client.engine.okhttp.OkHttp) {},
         CoroutineScope(EmptyCoroutineContext),
     )
-    enum class ConnectionState { Disconnected, Connecting, Connected, Failed }
+    enum class ConnectionState { Disconnected, Connecting, Connected, Failed, AuthFailed }
 
     private val _state = MutableStateFlow(ConnectionState.Disconnected)
     open val state: StateFlow<ConnectionState> = _state.asStateFlow()
@@ -68,16 +68,12 @@ open class EventStreamClient(
     /** Conflated channel used to cut the reconnect backoff short when network returns. */
     private val reconnectSignal = Channel<Unit>(Channel.CONFLATED)
 
-    /** Returns true if the exception is a non-retryable SSE failure that should stop the retry
-     *  loop and park until an explicit reconnect. This covers any 4xx except 408 (Request Timeout)
-     *  and 429 (Too Many Requests), which are transient — mirroring the REST layer's withRetry
-     *  classification (401/403 bad credentials, 404 renamed/removed endpoint, 400 bad request, ...
-     *  won't succeed on retry).
-     *  ktor's SSE builder wraps establishment failures in [io.ktor.client.plugins.sse.SSEClientException]
-     *  (an IllegalStateException, NOT a ClientRequestException), attaching the response and keeping any
-     *  underlying ClientRequestException only as the cause — so we inspect the wrapper's response status
-     *  and walk the whole cause chain rather than matching a single exception type. */
-    private fun isNonRetryableSseFailure(e: Throwable): Boolean =
+    /** Classifies a non-retryable SSE failure so the UI can show the right recovery hint:
+     *  an auth failure (401/403) reads "check credentials", while other 4xx (400/404/405…)
+     *  reads "check the server URL and version". Returns null for transient/retryable errors. */
+    private enum class SseFailureKind { Auth, Other }
+
+    private fun classifyNonRetryableSseFailure(e: Throwable): SseFailureKind? =
         generateSequence(e as Throwable?) { it.cause.takeIf { c -> c !== it } }
             .take(16)
             .mapNotNull { t ->
@@ -88,7 +84,12 @@ open class EventStreamClient(
                 }
             }
             // Non-408/429 4xx = permanent; 408 and 429 stay in the transient retry path.
-            .any { it in 400..499 && it != 408 && it != 429 }
+            .map { code -> when {
+                code in 400..499 && code != 408 && code != 429 ->
+                    if (code == 401 || code == 403) SseFailureKind.Auth else SseFailureKind.Other
+                else -> null
+            } }
+            .firstOrNull { it != null }
 
     /** Request an immediate reconnect, skipping any in-progress backoff. */
     open fun triggerReconnect() { reconnectSignal.trySend(Unit) }
@@ -254,13 +255,14 @@ open class EventStreamClient(
             } catch (e: Exception) {
                 // If the scope was cancelled (e.g. connection close), the closed-client
                 // exception is expected — don't log a spurious "stream error" warning.
-                if (isNonRetryableSseFailure(e)) {
+                val failureKind = classifyNonRetryableSseFailure(e)
+                if (failureKind != null) {
                     // The server rejected the request with a non-retryable 4xx (bad
                     // credentials, missing endpoint, ...) — retrying won't help. Log a
                     // scrubbed summary (class + status) instead of the full exception, whose
                     // message carries the request URL and may include auth or paths.
-                    Log.w("EventStream", "SSE non-retryable 4xx, awaiting explicit reconnect: ${safeExceptionSummary(e)}")
-                    _state.value = ConnectionState.Failed
+                    Log.w("EventStream", "SSE non-retryable 4xx (${if (failureKind == SseFailureKind.Auth) "auth" else "endpoint"}), awaiting explicit reconnect: ${safeExceptionSummary(e)}")
+                    _state.value = if (failureKind == SseFailureKind.Auth) ConnectionState.AuthFailed else ConnectionState.Failed
                     if (!isActive) {
                         // Final teardown (last subscriber left) while a 4xx surfaced: end in
                         // Disconnected like every other loop-exit path. Failed must stay

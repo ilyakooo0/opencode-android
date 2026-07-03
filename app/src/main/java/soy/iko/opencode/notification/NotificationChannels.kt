@@ -42,7 +42,9 @@ object NotificationChannels {
             },
         )
         nm.createNotificationChannel(
-            NotificationChannel(ERROR, context.getString(R.string.notif_channel_error), NotificationManager.IMPORTANCE_DEFAULT).apply {
+            // HIGH importance so a failed run stands out from a completed one by
+            // sound/vibration — both are actionable, but a failure is time-sensitive.
+            NotificationChannel(ERROR, context.getString(R.string.notif_channel_error), NotificationManager.IMPORTANCE_HIGH).apply {
                 description = context.getString(R.string.notif_channel_error_desc)
             },
         )

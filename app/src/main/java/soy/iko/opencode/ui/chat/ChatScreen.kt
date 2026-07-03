@@ -27,7 +27,9 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -41,6 +43,7 @@ import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Expand
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PhotoCamera
@@ -55,6 +58,7 @@ import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -713,6 +717,7 @@ fun ChatScreen(
         // recompose only this subtree, not the top bar / input bar / 20+ other
         // state reads in the ChatScreen body.
         val messages by vm.messages.collectAsStateWithLifecycle()
+        val optimisticStatuses by vm.optimisticStatuses.collectAsStateWithLifecycle()
         val listState = rememberLazyListState()
         val contentScope = rememberCoroutineScope()
         val timeTick = rememberRelativeTimeTick()
@@ -860,20 +865,36 @@ fun ChatScreen(
                     // separate "Not connected" state below).
                     onRetry = { vm.refreshMessages() },
                 )
+                // Pull-to-refresh wraps ALL content states (loading, error, empty, list) so
+                // recovery is a swipe away everywhere — not just when the message list is
+                // populated. Previously PTR was only around the populated list, leaving the
+                // error/loading states reachable only via a button tap.
+                PullToRefreshBox(
+                    isRefreshing = refreshing,
+                    onRefresh = { vm.refreshMessages() },
+                    // Cap width and center on large screens for readability — full-width
+                    // bubbles stretch edge-to-edge on tablets, hurting line-length comfort.
+                    modifier = Modifier.fillMaxSize().wrapContentWidth(Alignment.CenterHorizontally)
+                        .widthIn(max = NetworkConfig.chatContentMaxWidthDp.dp),
+                ) {
+                // Reserve top space when the banner is visible so it doesn't overlap the
+                // first message / state content.
+                val bannerVisible = !isOnline || connectionState != EventStreamClient.ConnectionState.Connected
+                val topPad = if (bannerVisible) 44.dp else 16.dp
                 if (loading && messages.isEmpty()) {
                     val loadingLabel = stringResource(R.string.loading)
                     CircularProgressIndicator(
-                        Modifier
-                            .align(Alignment.Center)
-                            .semantics { contentDescription = loadingLabel },
+                        Modifier.align(Alignment.Center).padding(top = topPad),
+                        strokeWidth = 2.dp,
                     )
+                    Box(modifier = Modifier.semantics { contentDescription = loadingLabel })
                 } else if (loadError && messages.isEmpty()) {
                     // A failed load with nothing to show. Distinct from the empty
                     // conversation state below — the conversation isn't empty, it
                     // failed to load, and offering "Start a conversation" here is
                     // misleading. Offer a Retry instead, mirroring SessionListScreen.
                     Column(
-                        modifier = Modifier.align(Alignment.Center).padding(24.dp),
+                        modifier = Modifier.align(Alignment.Center).padding(top = topPad).padding(24.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
                         Text(
@@ -891,7 +912,7 @@ fun ChatScreen(
                     // surface a clear starting state until the first part streams in.
                     val workingText = stringResource(R.string.working)
                     Column(
-                        modifier = Modifier.align(Alignment.Center).padding(24.dp),
+                        modifier = Modifier.align(Alignment.Center).padding(top = topPad).padding(24.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
                         CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 3.dp)
@@ -906,19 +927,9 @@ fun ChatScreen(
                             // sending, instead of having to manually tap the field.
                             runCatching { inputFocusRequester.requestFocus() }
                         },
-                        modifier = Modifier.align(Alignment.Center),
+                        modifier = Modifier.align(Alignment.Center).padding(top = topPad),
                     )
                 } else {
-                // Pull-to-refresh wraps the message list so the user can force an SSE
-                // reconnect + re-seed with the same gesture they use on the session and
-                // file lists, instead of hunting for the top-bar refresh icon. The empty
-                // / loading / error states above stay outside the PTR box since there's
-                // no list content to pull against.
-                PullToRefreshBox(
-                    isRefreshing = refreshing,
-                    onRefresh = { vm.refreshMessages() },
-                    modifier = Modifier.fillMaxSize(),
-                ) {
                 val lastMessageId = messages.lastOrNull()?.info?.id
                 // Text-to-speech for reading assistant replies aloud; shuts down when the
                 // message list leaves composition.
@@ -928,10 +939,11 @@ fun ChatScreen(
                     state = listState,
                     modifier = Modifier.fillMaxSize(),
                     // Extra bottom padding reserves room for the jump-to-latest FAB so it
-                    // never floats over the last message.
+                    // never floats over the last message. Top padding grows when the
+                    // connection banner is visible so it doesn't overlap the first message.
                     contentPadding = PaddingValues(
                         start = 16.dp,
-                        top = 16.dp,
+                        top = topPad,
                         end = 16.dp,
                         bottom = 16.dp + NetworkConfig.chatListFabInsetDp.dp,
                     ),
@@ -985,6 +997,11 @@ fun ChatScreen(
                                         runCatching { inputFocusRequester.requestFocus() }
                                     },
                                     onBranch = { text -> vm.branchFrom(text) },
+                                    sendStatus = optimisticStatuses[message.info.id]?.let { failed ->
+                                        if (failed) soy.iko.opencode.ui.chat.MessageSendStatus.FAILED
+                                        else soy.iko.opencode.ui.chat.MessageSendStatus.SENDING
+                                    },
+                                    isEdited = message.info.time?.let { it.updated != null && it.updated != it.created } == true,
                                 )
                             }
                         }
@@ -1004,6 +1021,7 @@ fun ChatScreen(
                             }
                         }
                     }
+                }
                 }
                 }
                 // Jump-to-latest affordance when the user has scrolled away during a stream.
@@ -1039,6 +1057,27 @@ fun ChatScreen(
                         )
                     }
                 }
+                // Scroll-to-top affordance: a small FAB at the start edge, visible when the
+                // user has scrolled down past the first few messages. Symmetric to the
+                // jump-to-latest FAB, for long conversations where manual fling back is tedious.
+                val scrolledDown by remember {
+                    derivedStateOf { listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 200 }
+                }
+                AnimatedVisibility(
+                    visible = scrolledDown && listItems.size > 4,
+                    modifier = Modifier.align(Alignment.BottomStart),
+                ) {
+                    SmallFloatingActionButton(
+                        onClick = {
+                            contentScope.launch { runCatchingCancellable { listState.animateScrollToItem(0) } }
+                        },
+                        modifier = Modifier.padding(start = 16.dp, bottom = 16.dp),
+                    ) {
+                        Icon(
+                            Icons.Filled.KeyboardArrowUp,
+                            contentDescription = stringResource(R.string.scroll_to_top),
+                        )
+                    }
                 }
             }
         }
@@ -1354,14 +1393,17 @@ private fun ChatInputBar(
                         }
                     },
                     keyboardOptions = KeyboardOptions(
-                        // Always expose the platform default (newline) IME action so a soft-
-                        // keyboard user can insert a newline even when "Send on Enter" is on —
-                        // soft keyboards have no Shift key, so the hardware Shift+Enter escape
-                        // hatch doesn't apply. The trailing Send button and the hardware Enter
-                        // (onPreviewKeyEvent above) are the send affordances; the soft IME
-                        // action is the newline affordance.
-                        imeAction = ImeAction.Default,
+                        // When "Send on Enter" is on, expose ImeAction.Send so the soft
+                        // keyboard shows a send key — matching the setting's intent and
+                        // giving touch-only users a keyboard send affordance. When off,
+                        // ImeAction.Default keeps the enter/newline key for multi-line input.
+                        imeAction = if (sendOnEnter) ImeAction.Send else ImeAction.Default,
                         capitalization = KeyboardCapitalization.Sentences,
+                    ),
+                    keyboardActions = KeyboardActions(
+                        onSend = {
+                            if (enabled && hasContent) onSend()
+                        },
                     ),
                 )
                 ComposerTrailingButton(
