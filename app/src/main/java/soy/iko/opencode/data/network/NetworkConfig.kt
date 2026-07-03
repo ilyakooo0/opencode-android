@@ -221,6 +221,18 @@ object NetworkConfig {
      *  field auto-focuses and raises the keyboard on open. A tiny catalog is faster to scan by
      *  eye, so popping the keyboard for it is just friction. */
     const val pickerSearchAutofocusThreshold = 8
+
+    /** Minimum number of saved server profiles before the server list shows its search/filter
+     *  field. A typical user has one or two servers, where scanning by eye beats typing; power
+     *  users juggling many profiles get the filter once it earns its space. */
+    const val serverListSearchThreshold = 5
+
+    /** Minimum number of crash reports before the diagnostics list shows its search field. */
+    const val diagnosticsSearchThreshold = 8
+
+    /** Minimum number of sessions in the usage report before the per-session list shows its
+     *  filter field. A short history is faster to scan than type into. */
+    const val usageSessionSearchThreshold = 8
     /** Extra bottom content padding (dp) for the chat message list, reserving room for the
      *  jump-to-latest FAB so it never floats over the last message. */
     const val chatListFabInsetDp = 80

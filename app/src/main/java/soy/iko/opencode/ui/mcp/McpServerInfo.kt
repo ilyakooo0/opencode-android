@@ -11,6 +11,9 @@ import kotlinx.serialization.json.contentOrNull
  * A configured MCP (Model Context Protocol) server, as read from the server's `config.mcp`
  * map. [type] is "local" (spawns a command) or "remote" (connects to a URL); [target] is the
  * command line or URL, whichever applies. Best-effort — fields the server omits are null.
+ *
+ * The live [connected]/[error]/[toolCount] fields come from `GET /mcp` status (merged in by the
+ * ViewModel) and are null when status wasn't available, so the card degrades to a static view.
  */
 @Immutable
 data class McpServerInfo(
@@ -18,6 +21,9 @@ data class McpServerInfo(
     val type: String?,
     val enabled: Boolean,
     val target: String?,
+    val connected: Boolean? = null,
+    val error: String? = null,
+    val toolCount: Int? = null,
 )
 
 /**
@@ -42,4 +48,21 @@ fun parseMcpServers(config: JsonObject): List<McpServerInfo> {
             McpServerInfo(name = name, type = type, enabled = enabled, target = url ?: command)
         }
     }.sortedBy { it.name.lowercase() }
+}
+
+/**
+ * Merge live status from `GET /mcp` into the configured-server list. The status object maps
+ * server name → status object with (best-effort) `connected`, `error`, and a `tools` array.
+ * Servers present in config but missing from status keep null fields (e.g. while they're still
+ * connecting, or on a server build that doesn't expose `/mcp`). Pure for testability.
+ */
+fun mergeMcpStatus(servers: List<McpServerInfo>, status: JsonObject?): List<McpServerInfo> {
+    if (status == null) return servers
+    return servers.map { server ->
+        val st = status[server.name] as? JsonObject ?: return@map server
+        val connected = (st["connected"] as? JsonPrimitive)?.booleanOrNull
+        val error = (st["error"] as? JsonPrimitive)?.contentOrNull
+        val tools = (st["tools"] as? JsonArray)?.size
+        server.copy(connected = connected, error = error, toolCount = tools)
+    }
 }

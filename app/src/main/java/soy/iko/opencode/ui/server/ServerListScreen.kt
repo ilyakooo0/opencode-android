@@ -16,11 +16,13 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.QrCodeScanner
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -31,6 +33,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -77,6 +80,7 @@ import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.util.runCatchingCancellable
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
+import soy.iko.opencode.ui.components.EmptyState
 import soy.iko.opencode.ui.components.rememberRelativeTime
 import soy.iko.opencode.ui.vmFactory
 
@@ -105,6 +109,10 @@ fun ServerListScreen(
     val undoLabel = stringResource(R.string.undo)
     val serverRemovedLabel = stringResource(R.string.server_removed)
     var pendingDeleteId by rememberSaveable { mutableStateOf<String?>(null) }
+    // Optional name/URL filter. Only surfaced once the user has enough profiles that scanning
+    // by eye is slower than typing (a handful of servers is faster to just tap), matching the
+    // threshold logic the file/session pickers use for their search fields.
+    var serverQuery by rememberSaveable { mutableStateOf("") }
     val connectedId = activeConnection?.profile?.id
     // Profile being shown as a scannable QR (Share as QR overflow action), and a decoded QR
     // payload awaiting the user's confirm before it's saved (Import from image action).
@@ -224,6 +232,7 @@ fun ServerListScreen(
                     modifier = Modifier.fillMaxSize(),
                 )
             } else {
+                val filtered = remember(profiles, serverQuery) { filterServerProfiles(profiles, serverQuery) }
                 PullToRefreshBox(
                     isRefreshing = connectingId != null,
                     onRefresh = { vm.refresh(onConnected) },
@@ -237,7 +246,26 @@ fun ServerListScreen(
                         ),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        items(profiles, key = { it.id }) { profile ->
+                        // Show the filter field only past a small threshold so a typical
+                        // 1–2 server setup isn't cluttered with a search bar.
+                        if (profiles.size >= NetworkConfig.serverListSearchThreshold) {
+                            item(key = "__search") {
+                                ServerListSearchField(
+                                    query = serverQuery,
+                                    onQueryChange = { serverQuery = it },
+                                )
+                            }
+                        }
+                        if (filtered.isEmpty()) {
+                            item(key = "__no_match") {
+                                EmptyState(
+                                    icon = Icons.Filled.Search,
+                                    title = stringResource(R.string.no_server_matches),
+                                    modifier = Modifier.fillMaxWidth().padding(24.dp),
+                                )
+                            }
+                        }
+                        items(filtered, key = { it.id }) { profile ->
                             val isActive = profile.id == connectedId
                             if (isActive) {
                                 // The active server can't be swipe-deleted (deleting it also
@@ -509,30 +537,14 @@ private fun LastUsedText(lastUsed: Long) {
 @Composable
 private fun EmptyServers(onAdd: () -> Unit, modifier: Modifier = Modifier) {
     Box(modifier = modifier, contentAlignment = Alignment.Center) {
-        Column(
-            modifier = Modifier.padding(32.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Icon(
-                Icons.Filled.Dns,
-                contentDescription = null,
-                modifier = Modifier.size(56.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.size(16.dp))
-            Text(stringResource(R.string.no_servers_yet), style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.size(8.dp))
-            Text(
-                stringResource(R.string.no_servers_hint),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.size(20.dp))
-            Button(onClick = onAdd) {
-                Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                Text(stringResource(R.string.add_server), modifier = Modifier.padding(start = 8.dp))
-            }
-        }
+        EmptyState(
+            icon = Icons.Filled.Dns,
+            title = stringResource(R.string.no_servers_yet),
+            description = stringResource(R.string.no_servers_hint),
+            actionIcon = Icons.Filled.Add,
+            actionLabel = stringResource(R.string.add_server),
+            onAction = onAdd,
+        )
     }
 }
 
@@ -597,4 +609,35 @@ private fun ServerQrImportHandler(
         )
     }
     return launcher
+}
+
+/** Filter server profiles by label/base URL. Extracted from [ServerListScreen] to keep its
+ *  cyclomatic complexity under the detekt threshold. Empty query returns all profiles. */
+private fun filterServerProfiles(profiles: List<ServerProfile>, query: String): List<ServerProfile> {
+    val q = query.trim()
+    if (q.isEmpty()) return profiles
+    return profiles.filter {
+        it.label.contains(q, ignoreCase = true) || it.baseUrl.contains(q, ignoreCase = true)
+    }
+}
+
+/** The server-list filter field with a clear button. Extracted from [ServerListScreen] to keep
+ *  its cyclomatic complexity under the detekt threshold. */
+@Composable
+private fun ServerListSearchField(query: String, onQueryChange: (String) -> Unit) {
+    OutlinedTextField(
+        value = query,
+        onValueChange = onQueryChange,
+        modifier = Modifier.fillMaxWidth(),
+        placeholder = { Text(stringResource(R.string.search_servers)) },
+        singleLine = true,
+        leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+        trailingIcon = {
+            if (query.isNotEmpty()) {
+                IconButton(onClick = { onQueryChange("") }) {
+                    Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.clear_search))
+                }
+            }
+        },
+    )
 }

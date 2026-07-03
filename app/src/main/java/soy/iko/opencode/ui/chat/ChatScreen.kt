@@ -51,6 +51,7 @@ import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
+import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AlertDialog
@@ -69,8 +70,13 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
+import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -116,6 +122,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -290,6 +298,30 @@ fun ChatScreen(
         }
     }
 
+    // In-place Undo for a user-initiated session delete. The delete is deferred for an undo
+    // window on the container; show the snackbar over the conversation the user is viewing so
+    // they can cancel without being navigated to the session list first. If the window expires
+    // the scheduled delete sets `sessionDeleted` and the effect below navigates away.
+    val undoLabel = stringResource(R.string.undo)
+    val sessionDeletedLabel = stringResource(R.string.session_deleted_chat)
+    LaunchedEffect(Unit) {
+        vm.deleteUndoEvents.collect {
+            coroutineScope {
+                val dismisser = launch {
+                    delay(NetworkConfig.undoDeleteDelayMs)
+                    snackbar.currentSnackbarData?.dismiss()
+                }
+                val result = snackbar.showSnackbar(
+                    message = sessionDeletedLabel,
+                    actionLabel = undoLabel,
+                    duration = SnackbarDuration.Indefinite,
+                )
+                dismisser.cancel()
+                if (result == SnackbarResult.ActionPerformed) vm.cancelSessionDelete()
+            }
+        }
+    }
+
     // --- Attachments, voice, and share-link plumbing ---
     val attachTooLargeMsg = stringResource(R.string.attachment_too_large)
     val attachFailedMsg = stringResource(R.string.attachment_failed)
@@ -457,7 +489,6 @@ fun ChatScreen(
                             // Texts and announced only "Change model and agent".
                             modifier = Modifier
                                 .clickable(
-                                    enabled = models.isNotEmpty(),
                                     role = Role.Button,
                                     onClickLabel = changeLabel,
                                 ) { showTitleMenu = true }
@@ -480,17 +511,17 @@ fun ChatScreen(
                                     overflow = TextOverflow.Ellipsis,
                                 )
                             }
-                            // Visual affordance that the title is tappable; without it the
-                            // title is indistinguishable from plain text and the pickers are
-                            // effectively undiscoverable.
-                            if (models.isNotEmpty()) {
-                                Icon(
-                                    Icons.Filled.KeyboardArrowDown,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(20.dp),
-                                )
-                            }
+                            // Always show the affordance so the title reads as tappable even when
+                            // the model catalog failed to load (models empty). Without it the title
+                            // is indistinguishable from plain text and the pickers are effectively
+                            // undiscoverable — and the dropdown items already disable themselves
+                            // while a catalog is loading or unavailable.
+                            Icon(
+                                Icons.Filled.KeyboardArrowDown,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(20.dp),
+                            )
                         }
                         DropdownMenu(expanded = showTitleMenu, onDismissRequest = { showTitleMenu = false }) {
                             DropdownMenuItem(
@@ -991,6 +1022,46 @@ fun ChatScreen(
                                     (message.info as? soy.iko.opencode.data.model.AssistantMessage)
                                         ?.let { resolveModelLabel(it, models) }
                                 }
+                                // Text used to drive swipe-to-reply (and pre-fill the quote). Empty for
+                                // image/code-only messages, which then opt out of the swipe gesture.
+                                val quoteText = remember(message.parts) {
+                                    message.parts
+                                        .filterIsInstance<TextPart>()
+                                        .joinToString("\n\n") { it.text }
+                                        .trim()
+                                        .takeIf { it.isNotEmpty() }
+                                }
+                                // Swipe-start-to-end reveals a reply affordance and triggers quote-reply,
+                                // snapping back (the message isn't dismissed — the quote fills the composer).
+                                // Only enabled when there's text to quote, so non-text messages don't
+                                // capture horizontal drags (e.g. inside a horizontally-scrollable code block).
+                                val swipeState = rememberSwipeToDismissBoxState(
+                                    confirmValueChange = { value ->
+                                        if (value == SwipeToDismissBoxValue.StartToEnd && quoteText != null) {
+                                            haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                                            vm.quoteReply(quoteText)
+                                            runCatching { inputFocusRequester.requestFocus() }
+                                        }
+                                        false
+                                    },
+                                )
+                                SwipeToDismissBox(
+                                    state = swipeState,
+                                    enableDismissFromEndToStart = false,
+                                    enableDismissFromStartToEnd = quoteText != null,
+                                    backgroundContent = {
+                                        Box(
+                                            Modifier.fillMaxSize().padding(horizontal = 16.dp),
+                                            contentAlignment = Alignment.CenterStart,
+                                        ) {
+                                            Icon(
+                                                Icons.AutoMirrored.Filled.Reply,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            )
+                                        }
+                                    },
+                                ) {
                                 MessageBubble(
                                     message,
                                     isRunning = running && message.info.id == lastMessageId,
@@ -1039,6 +1110,7 @@ fun ChatScreen(
                                         }
                                     },
                                 )
+                                }
                             }
                         }
                         }

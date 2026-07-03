@@ -40,6 +40,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -58,6 +60,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -80,8 +83,8 @@ import soy.iko.opencode.data.repo.SettingsStore
 import soy.iko.opencode.data.repo.ThemeMode
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
+import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.ui.canAuthenticateForAppLock
-import soy.iko.opencode.ui.components.showToast
 import soy.iko.opencode.ui.theme.LightPaletteSwatches
 import soy.iko.opencode.ui.theme.DarkPaletteSwatches
 import soy.iko.opencode.util.runCatchingCancellable
@@ -98,6 +101,7 @@ fun SettingsScreen(
     onOpenMcp: () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
+    val snackbar = remember { SnackbarHostState() }
     // Combine the three settings into a single nullable state so the appearance section
     // renders only after the persisted values have loaded, avoiding a brief flash of
     // hardcoded defaults (SYSTEM/light/dynamic-on) on cold start.
@@ -166,7 +170,8 @@ fun SettingsScreen(
     }
 
     // Backup/restore via the Storage Access Framework. Export writes the JSON the user names;
-    // import reads a chosen file and applies it. Feedback is a toast (this screen has no snackbar).
+    // import reads a chosen file and applies it. Feedback goes through the snackbar host so it's
+    // accessible to TalkBack and consistent with the rest of the app (Toast isn't).
     var includePasswords by rememberSaveable { mutableStateOf(false) }
     // Import overwrites all profiles/settings with no undo, so a picked file is staged here
     // and only applied once the user confirms the replace dialog below. Export with passwords
@@ -187,7 +192,7 @@ fun SettingsScreen(
                 context.contentResolver.openOutputStream(uri)?.use { it.write(text.toByteArray()) }
                     ?: error("no output stream")
             }.isSuccess
-            showToast(context, if (ok) exportedMsg else exportFailedMsg)
+            snackbar.showSnackbar(if (ok) exportedMsg else exportFailedMsg)
         }
     }
     val importLauncher = rememberLauncherForActivityResult(
@@ -216,6 +221,7 @@ fun SettingsScreen(
                 },
             )
         },
+        snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
         Column(modifier = Modifier.padding(padding).widthIn(max = 600.dp).verticalScroll(rememberScrollState()).padding(16.dp)) {
             val s = settings
@@ -576,7 +582,7 @@ fun SettingsScreen(
                                 ?: error("no input stream")
                             container.backupManager.import(text)
                         }.isSuccess
-                        showToast(context, if (ok) importedMsg else importFailedMsg)
+                        snackbar.showSnackbar(if (ok) importedMsg else importFailedMsg)
                     }
                 }) { Text(stringResource(R.string.import_confirm_replace), color = MaterialTheme.colorScheme.error) }
             },
@@ -680,6 +686,22 @@ private fun ChatTextSizeControl(scale: Float, onScaleChange: (Float) -> Unit) {
         },
         contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp),
     ) { Text(stringResource(R.string.reset)) }
+    // The app text scale multiplies on top of the OS font scale, and the effective size is
+    // clamped so the product can't exceed the combined cap (see OpencodeApp). When the user's
+    // system font is already large, the value they pick here would be silently reduced — so
+    // surface that the effective size is capped rather than letting the slider appear broken.
+    val systemFontScale = LocalDensity.current.fontScale
+    if (systemFontScale > 0f) {
+        val effective = (NetworkConfig.maxCombinedFontScale / systemFontScale).coerceAtLeast(1f)
+        if (effective < sliderValue) {
+            Text(
+                stringResource(R.string.text_size_capped, (effective * 100).roundToInt()),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
+    }
 }
 
 @Composable

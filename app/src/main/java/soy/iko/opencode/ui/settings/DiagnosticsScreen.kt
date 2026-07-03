@@ -21,7 +21,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -30,6 +32,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
@@ -91,6 +94,9 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
     var viewing by rememberSaveable { mutableStateOf<String?>(null) }
     var showClearAll by rememberSaveable { mutableStateOf(false) }
     var pendingReportDelete by rememberSaveable { mutableStateOf<String?>(null) }
+    // Optional text filter over the crash report previews/file names. Only surfaced once there
+    // are enough reports that scrolling is slower than typing.
+    var crashQuery by rememberSaveable { mutableStateOf("") }
     val shareScope = rememberCoroutineScope()
     val haptics = LocalHapticFeedback.current
     val snackbar = remember { SnackbarHostState() }
@@ -207,8 +213,12 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                     modifier = Modifier.fillMaxWidth().padding(24.dp),
                 )
             } else {
+                val filtered = remember(reports, crashQuery) { filterCrashReports(reports, crashQuery) }
                 LazyColumn(modifier = Modifier.fillMaxSize()) {
-                    items(reports, key = { it.fileName }) { report ->
+                    crashSearchHeader(reports = reports, filtered = filtered, crashQuery = crashQuery) {
+                        crashQuery = it
+                    }
+                    items(filtered, key = { it.fileName }) { report ->
                         // Swipe end-to-start reveals a delete affordance. The delete is
                         // deferred for an undo window (matching the session/server lists);
                         // confirmValueChange snaps back so the row remains while the undo
@@ -426,5 +436,63 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                 TextButton(onClick = { showClearAll = false }) { Text(stringResource(R.string.cancel)) }
             },
         )
+    }
+}
+
+/** Filter crash reports by preview/file name. Extracted from [DiagnosticsScreen] to keep its
+ *  cyclomatic complexity under the detekt threshold. Empty query returns all reports. */
+private fun filterCrashReports(
+    reports: List<CrashLogger.CrashReport>,
+    query: String,
+): List<CrashLogger.CrashReport> {
+    val q = query.trim()
+    if (q.isEmpty()) return reports
+    return reports.filter {
+        it.preview.contains(q, ignoreCase = true) || it.fileName.contains(q, ignoreCase = true)
+    }
+}
+
+/** The diagnostics filter field with a clear button. Extracted from [DiagnosticsScreen] to keep
+ *  its cyclomatic complexity under the detekt threshold. */
+@Composable
+private fun CrashQueryField(query: String, onQueryChange: (String) -> Unit) {
+    OutlinedTextField(
+        value = query,
+        onValueChange = onQueryChange,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+        placeholder = { Text(stringResource(R.string.search_crash_reports)) },
+        singleLine = true,
+        leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+        trailingIcon = {
+            if (query.isNotEmpty()) {
+                IconButton(onClick = { onQueryChange("") }) {
+                    Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.clear_search))
+                }
+            }
+        },
+    )
+}
+
+/** Conditionally emits the search field and the no-match placeholder into the crash list.
+ *  Extracted from [DiagnosticsScreen] to keep its cyclomatic complexity under the threshold. */
+private fun androidx.compose.foundation.lazy.LazyListScope.crashSearchHeader(
+    reports: List<CrashLogger.CrashReport>,
+    filtered: List<CrashLogger.CrashReport>,
+    crashQuery: String,
+    onQueryChange: (String) -> Unit,
+) {
+    if (reports.size >= NetworkConfig.diagnosticsSearchThreshold) {
+        item(key = "__search") {
+            CrashQueryField(query = crashQuery, onQueryChange = onQueryChange)
+        }
+    }
+    if (crashQuery.isNotBlank() && filtered.isEmpty()) {
+        item(key = "__no_match") {
+            EmptyState(
+                icon = Icons.Filled.Search,
+                title = stringResource(R.string.no_crash_matches),
+                modifier = Modifier.fillMaxWidth().padding(24.dp),
+            )
+        }
     }
 }

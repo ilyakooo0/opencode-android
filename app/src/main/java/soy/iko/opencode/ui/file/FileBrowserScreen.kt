@@ -57,6 +57,7 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.SpanStyle
@@ -337,7 +338,9 @@ private fun TextResults(results: List<FindMatch>, emptyMessage: String?, onOpen:
                 pluralStringResource(R.plurals.file_search_results, results.size, results.size),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+                modifier = Modifier.fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 6.dp)
+                    .semantics { heading() },
             )
         }
         itemsIndexed(results, key = { i, m -> "${m.filePath}:${m.lineNumber}:$i" }) { _, match ->
@@ -408,7 +411,9 @@ private fun SymbolResults(results: List<SymbolResult>, emptyMessage: String?, on
                 pluralStringResource(R.plurals.file_search_results, results.size, results.size),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+                modifier = Modifier.fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 6.dp)
+                    .semantics { heading() },
             )
         }
         itemsIndexed(results, key = { i, s -> "${s.filePath}:${s.name}:$i" }) { _, symbol ->

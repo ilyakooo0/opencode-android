@@ -46,11 +46,14 @@
 
     <!-- Server list -->
     <string name="servers_title">Servidores de opencode</string>
+    <string name="sessions_title">Sesiones</string>
     <string name="add_server">Añadir servidor</string>
     <string name="edit_server">Editar servidor</string>
     <string name="connected">Conectado</string>
     <string name="no_servers_yet">Aún no hay servidores</string>
     <string name="no_servers_hint">Añade un endpoint de opencode serve para conectar.</string>
+    <string name="search_servers">Filtrar servidores</string>
+    <string name="no_server_matches">Ningún servidor coincide</string>
     <string name="remove_server_title">¿Quitar servidor?</string>
     <string name="remove_server_text">Se quitará «%1$s» de tus servidores guardados.</string>
     <string name="remove_server_active_text">«%1$s» es tu servidor actual. Al quitarlo también te desconectarás.</string>
@@ -228,6 +231,8 @@
     <string name="diagnostics_desc">Los informes de fallos se guardan localmente en este dispositivo.</string>
     <string name="crash_reports">Informes de fallos</string>
     <string name="no_crash_reports">No hay fallos registrados.</string>
+    <string name="search_crash_reports">Filtrar informes de fallos</string>
+    <string name="no_crash_matches">Ningún informe coincide</string>
     <string name="clear_all">Borrar todo</string>
     <string name="clear_all_confirm">¿Eliminar todos los informes de fallos guardados?</string>
     <string name="reports_cleared">Informes de fallos eliminados</string>
@@ -363,6 +368,7 @@
     <string name="app_lock_prompt_subtitle">Autentícate para acceder a tus servidores.</string>
     <string name="app_locked">opencode está bloqueado</string>
     <string name="app_unlock">Desbloquear</string>
+    <string name="app_locked_hint">Autentícate para continuar</string>
 
     <!-- Nuevas funciones -->
     <string name="edit_message">Editar</string>
@@ -409,6 +415,7 @@
     <string name="reset">Restablecer</string>
     <string name="text_size_sample">El veloz murciélago hindú comía feliz cardillo.</string>
     <string name="text_scale_value">%1$d%%</string>
+    <string name="text_size_capped">Limitado al %1$d%% por el tamaño de fuente del sistema para mantener la legibilidad.</string>
 
     <!-- Message actions -->
     <string name="message_actions">Acciones del mensaje</string>
@@ -438,6 +445,8 @@
     <string name="usage_by_model">Por modelo</string>
     <string name="usage_this_session">Esta sesión</string>
     <string name="usage_all_sessions">Todas las sesiones</string>
+    <string name="usage_filter_sessions">Filtrar sesiones</string>
+    <string name="usage_no_sessions">Ninguna sesión coincide</string>
     <string name="usage_empty">Aún no hay uso registrado</string>
     <plurals name="usage_messages_count">
         <item quantity="one">%1$d mensaje del asistente</item>
@@ -476,6 +485,20 @@
     <string name="mcp_empty">No hay servidores MCP configurados</string>
     <string name="mcp_failed">No se pudieron cargar los servidores MCP</string>
     <string name="mcp_connected">Conectado</string>
+    <string name="mcp_disconnected">Desconectado</string>
+    <string name="mcp_add">Añadir servidor MCP</string>
+    <string name="mcp_add_button">Añadir</string>
+    <string name="mcp_added">Servidor MCP añadido</string>
+    <string name="mcp_add_failed">No se pudo añadir el servidor MCP</string>
+    <string name="mcp_add_name">Nombre</string>
+    <string name="mcp_kind_local">Local (comando)</string>
+    <string name="mcp_kind_remote">Remoto (URL)</string>
+    <string name="mcp_add_command">Comando</string>
+    <string name="mcp_add_command_hint">npx -y @modelcontextprotocol/server-everything</string>
+    <string name="mcp_add_url">URL</string>
+    <string name="mcp_add_url_hint">https://example.com/sse</string>
+    <string name="mcp_add_env">Variables de entorno (opcional)</string>
+    <string name="mcp_add_env_hint">API_KEY=valor (una por línea)</string>
     <string name="mcp_failed_state">Falló</string>
     <string name="mcp_disabled">Desactivado</string>
     <string name="mcp_tools_count">%1$d herramientas</string>

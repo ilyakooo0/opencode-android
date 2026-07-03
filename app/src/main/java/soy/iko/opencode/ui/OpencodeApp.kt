@@ -7,7 +7,11 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -16,11 +20,15 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -33,6 +41,7 @@ import soy.iko.opencode.ui.file.FileViewScreen
 import soy.iko.opencode.ui.server.ServerEditScreen
 import soy.iko.opencode.ui.server.ServerListScreen
 import soy.iko.opencode.ui.search.GlobalSearchScreen
+import soy.iko.opencode.ui.components.LargeScreenNavRail
 import soy.iko.opencode.ui.components.LocalChatTextScale
 import soy.iko.opencode.ui.components.LocalCodeWrap
 import soy.iko.opencode.ui.components.isReducedMotion
@@ -151,10 +160,21 @@ fun OpencodeApp(container: AppContainer) {
     // Capture the reduced-motion preference once (in the composable scope) so the
     // non-composable NavHost transition lambdas can use it to skip animations.
     val reducedMotion = isReducedMotion()
+    // Slide direction for push/pop transitions, mirrored in RTL so the animation reads
+    // naturally instead of "going the wrong way". +1 = LTR (push from right), -1 = RTL.
+    val slideDir = if (LocalLayoutDirection.current == LayoutDirection.Rtl) -1 else 1
     // Adaptive: on wide screens (tablets / unfolded foldables) show the session list and
     // the open conversation side by side instead of a single-pane back stack.
     BoxWithConstraints {
         val isTwoPane = maxWidth >= NetworkConfig.twoPaneWidthThresholdDp.dp && connection != null
+        // On large screens, surface a navigation rail alongside the content so top-level
+        // destinations (Sessions, Files, Search, …) are one tap away instead of buried in a
+        // screen's overflow menu. Mirrors the standard large-screen M3 layout.
+        val showNavRail = maxWidth >= NetworkConfig.navigationRailThresholdDp.dp
+        // Observe the current destination reactively so the rail's selected item tracks navigation
+        // (reading currentDestination once would go stale after the first composition).
+        val currentEntry by navController.currentBackStackEntryAsState()
+        val currentRoute = currentEntry?.destination?.route
 
         // Open a session requested by a notification tap or deep link, once connected.
         LaunchedEffect(pendingOpenSession, connection, isTwoPane) {
@@ -191,7 +211,9 @@ fun OpencodeApp(container: AppContainer) {
             navController.navigate(Routes.chat(pending.sessionId)) { launchSingleTop = true }
         }
 
+        val navHost = @Composable {
         NavHost(
+            modifier = Modifier.fillMaxSize(),
             navController = navController,
             startDestination = Routes.SERVERS,
             // Motion-aware transitions: respect the user's reduced-motion setting
@@ -206,7 +228,7 @@ fun OpencodeApp(container: AppContainer) {
                 } else if (targetState.destination.route?.startsWith("${Routes.CHAT}/") == true) {
                     fadeIn(tween(NetworkConfig.motionFadeDurationMs))
                 } else {
-                    slideInHorizontally(animationSpec = tween(NetworkConfig.motionSlideDurationMs)) { it } +
+                    slideInHorizontally(animationSpec = tween(NetworkConfig.motionSlideDurationMs)) { it * slideDir } +
                         fadeIn(tween(NetworkConfig.motionFadeDurationMs))
                 }
             },
@@ -228,7 +250,7 @@ fun OpencodeApp(container: AppContainer) {
                 if (reducedMotion) {
                     ExitTransition.None
                 } else {
-                    slideOutHorizontally(animationSpec = tween(NetworkConfig.motionSlideDurationMs)) { it } +
+                    slideOutHorizontally(animationSpec = tween(NetworkConfig.motionSlideDurationMs)) { it * slideDir } +
                         fadeOut(tween(NetworkConfig.motionFadeDurationMs))
                 }
             },
@@ -391,6 +413,20 @@ fun OpencodeApp(container: AppContainer) {
                 onBack = { navController.popBackStack() },
             )
         }
+        }
+        }
+
+        if (showNavRail) {
+            Row(modifier = Modifier.fillMaxSize()) {
+                LargeScreenNavRail(
+                    currentRoute = currentRoute,
+                    connected = connection != null,
+                    onNavigate = { route -> navController.navigate(route) { launchSingleTop = true } },
+                )
+                Box(modifier = Modifier.weight(1f).fillMaxHeight()) { navHost() }
+            }
+        } else {
+            navHost()
         }
     }
     }

@@ -47,11 +47,14 @@
 
     <!-- Server list -->
     <string name="servers_title">opencode servers</string>
+    <string name="sessions_title">Sessions</string>
     <string name="add_server">Add server</string>
     <string name="edit_server">Edit server</string>
     <string name="connected">Connected</string>
     <string name="no_servers_yet">No servers yet</string>
     <string name="no_servers_hint">Add an opencode serve endpoint to connect.</string>
+    <string name="search_servers">Filter servers</string>
+    <string name="no_server_matches">No matching servers</string>
     <string name="remove_server_title">Remove server?</string>
     <string name="remove_server_text">“%1$s” will be removed from your saved servers.</string>
     <string name="remove_server_active_text">“%1$s” is your current server. Removing it will also disconnect you.</string>
@@ -237,6 +240,8 @@
     <string name="diagnostics_desc">Crash reports are stored locally on this device.</string>
     <string name="crash_reports">Crash reports</string>
     <string name="no_crash_reports">No crashes recorded.</string>
+    <string name="search_crash_reports">Filter crash reports</string>
+    <string name="no_crash_matches">No matching crash reports</string>
     <string name="clear_all">Clear all</string>
     <string name="clear_all_confirm">Delete all stored crash reports?</string>
     <string name="reports_cleared">Crash reports cleared</string>
@@ -408,6 +413,7 @@
     <string name="app_lock_prompt_subtitle">Authenticate to access your servers.</string>
     <string name="app_locked">opencode is locked</string>
     <string name="app_unlock">Unlock</string>
+    <string name="app_locked_hint">Authenticate to continue</string>
 
     <!-- Agent task plan (todowrite tool) -->
     <string name="plan">Plan</string>
@@ -431,6 +437,7 @@
     <string name="reset">Reset</string>
     <string name="text_size_sample">The quick brown fox jumps over the lazy dog.</string>
     <string name="text_scale_value">%1$d%%</string>
+    <string name="text_size_capped">Capped to %1$d%% by your system font size to keep layouts readable.</string>
 
     <!-- Message actions -->
     <string name="message_actions">Message actions</string>
@@ -460,6 +467,8 @@
     <string name="usage_by_model">By model</string>
     <string name="usage_this_session">This session</string>
     <string name="usage_all_sessions">All sessions</string>
+    <string name="usage_filter_sessions">Filter sessions</string>
+    <string name="usage_no_sessions">No matching sessions</string>
     <string name="usage_empty">No usage recorded yet</string>
     <plurals name="usage_messages_count">
         <item quantity="one">%1$d assistant message</item>
@@ -498,6 +507,20 @@
     <string name="mcp_empty">No MCP servers configured</string>
     <string name="mcp_failed">Couldn\'t load MCP servers</string>
     <string name="mcp_connected">Connected</string>
+    <string name="mcp_disconnected">Disconnected</string>
+    <string name="mcp_add">Add MCP server</string>
+    <string name="mcp_add_button">Add</string>
+    <string name="mcp_added">MCP server added</string>
+    <string name="mcp_add_failed">Couldn\'t add MCP server</string>
+    <string name="mcp_add_name">Name</string>
+    <string name="mcp_kind_local">Local (command)</string>
+    <string name="mcp_kind_remote">Remote (URL)</string>
+    <string name="mcp_add_command">Command</string>
+    <string name="mcp_add_command_hint">npx -y @modelcontextprotocol/server-everything</string>
+    <string name="mcp_add_url">URL</string>
+    <string name="mcp_add_url_hint">https://example.com/sse</string>
+    <string name="mcp_add_env">Environment variables (optional)</string>
+    <string name="mcp_add_env_hint">API_KEY=value (one per line)</string>
     <string name="mcp_failed_state">Failed</string>
     <string name="mcp_disabled">Disabled</string>
     <string name="mcp_tools_count">%1$d tools</string>

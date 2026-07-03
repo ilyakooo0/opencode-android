@@ -32,9 +32,12 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.CancellationException
@@ -360,6 +363,15 @@ class ChatViewModel(
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
     val errorEvents: Flow<ChatError> = _errorEvents.receiveAsFlow()
+
+    /** One-shot events signaling a user-initiated delete was scheduled and is undoable in-place.
+     *  The ChatScreen collects these to show an Undo snackbar over the conversation the user is
+     *  already viewing, instead of navigating away first and surfacing Undo on the session list. */
+    private val _deleteUndoEvents = MutableSharedFlow<Unit>(
+        extraBufferCapacity = 1,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+    val deleteUndoEvents: SharedFlow<Unit> = _deleteUndoEvents.asSharedFlow()
 
     private val _models = MutableStateFlow<List<ModelOption>>(emptyList())
     val models: StateFlow<List<ModelOption>> = _models.asStateFlow()
@@ -1433,26 +1445,29 @@ class ChatViewModel(
         }
     }
 
-    /** Delete the current session via DELETE /session/:id. Surfaces a toast (via the UI's
-     *  sessionDeleted flow) and navigates away on success; a failure surfaces as a snackbar.
-     *  Unlike [SessionListViewModel.deleteSession] there's no undo window — the user is
-     *  already viewing the session, so a confirmation dialog guards the action instead. */
+    /** Delete the current session via DELETE /session/:id. Schedules a deferred delete with an
+     *  undo window and signals [deleteUndoEvents] so the ChatScreen shows an Undo snackbar
+     *  *over the conversation the user is viewing* — they can cancel without first being
+     *  navigated back to the session list. The actual REST delete runs after
+     *  [NetworkConfig.undoDeleteDelayMs]; cancel via [cancelSessionDelete]. If the window
+     *  expires, the scheduled delete's onDeleted sets [sessionDeleted] so the UI navigates away.
+     *  A failure surfaces as a snackbar. */
     fun deleteSession() {
         val conn = connection ?: return
-        // Schedule a deferred delete with an undo window (matching SessionListViewModel's
-        // pattern), so the user can undo from the session list after navigating back. The
-        // actual REST delete runs after undoDeleteDelayMs; cancel via cancelSessionDelete.
         container.scheduleSessionDelete(
             id = sessionId,
             delayMs = NetworkConfig.undoDeleteDelayMs,
-            onDeleted = { /* cleanup handled by container.scheduleSessionDelete */ },
+            // Navigate away only once the deferred delete actually commits — so an in-place Undo
+            // before the window expires keeps the user on this conversation.
+            onDeleted = { _sessionDeleted.value = true },
             onError = { _errorEvents.trySend(ChatError(container.friendlyError(it))) },
         )
-        // Let the SessionListScreen show the undo snackbar for this externally-initiated delete.
-        container.emitExternalSessionUndo(sessionId)
-        // Navigate back immediately so the user lands on the session list where the Undo shows.
-        _sessionDeleted.value = true
+        _deleteUndoEvents.tryEmit(Unit)
     }
+
+    /** Cancel a delete scheduled by [deleteSession] (the in-chat Undo action). Returns true if the
+     *  delete was still pending (Undo succeeded). */
+    fun cancelSessionDelete(): Boolean = container.cancelSessionDelete(sessionId)
 
     /** Reconnect to the most recently used server profile (used when the connection is gone). */
     fun reconnect() {

@@ -3,6 +3,7 @@ package soy.iko.opencode.ui.components
 import android.util.Base64
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,6 +23,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -40,6 +42,9 @@ import androidx.compose.ui.window.DialogProperties
 import coil.compose.SubcomposeAsyncImage
 import coil.request.ImageRequest
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import kotlinx.coroutines.withContext
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BrokenImage
@@ -231,8 +236,9 @@ fun RemoteImage(part: FilePart, ctx: ImageLoadContext, modifier: Modifier = Modi
 
 /**
  * Fullscreen zoomable image viewer opened by tapping an inline [RemoteImage]. Supports
- * pinch-to-zoom and pan via [detectTransformGestures], with a close button and tap-to-dismiss.
- * Uses a non-interactive Dialog window so it overlays the whole screen.
+ * pinch-to-zoom and pan via [detectTransformGestures], double-tap to toggle zoom, and
+ * re-centers when zoom returns to 1×. Uses a non-interactive Dialog window so it overlays
+ * the whole screen.
  */
 @Composable
 private fun FullscreenImageViewer(
@@ -240,9 +246,12 @@ private fun FullscreenImageViewer(
     contentDescription: String,
     onDismiss: () -> Unit,
 ) {
-    var scale by remember { mutableFloatStateOf(1f) }
+    // Scale is an Animatable so a double-tap smoothly tweens between 1× and the zoom target,
+    // while pinch-to-zoom drives it via snapTo (no animation) for immediate 1:1 finger tracking.
+    val scale = remember { Animatable(1f) }
     var offsetX by remember { mutableFloatStateOf(0f) }
     var offsetY by remember { mutableFloatStateOf(0f) }
+    val scope = rememberCoroutineScope()
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
@@ -253,12 +262,40 @@ private fun FullscreenImageViewer(
                 .background(androidx.compose.ui.graphics.Color.Black)
                 .pointerInput(Unit) {
                     detectTransformGestures { _, pan, zoom, _ ->
-                        scale *= zoom
-                        offsetX += pan.x
-                        offsetY += pan.y
+                        // Clamp the zoom so the image can't be scaled down below 1× (which would
+                        // leave empty letterbox) or blown up so far it becomes a handful of pixels.
+                        val newScale = (scale.value * zoom).coerceIn(1f, MAX_IMAGE_ZOOM)
+                        scope.launch { scale.snapTo(newScale) }
+                        if (newScale <= 1f) {
+                            // Returning to 1× recenters so a prior pan doesn't leave the image
+                            // stuck off-center at its rest size.
+                            offsetX = 0f
+                            offsetY = 0f
+                        } else {
+                            offsetX += pan.x
+                            offsetY += pan.y
+                        }
                     }
                 }
-                .clickable(role = Role.Button, onClick = onDismiss),
+                // Tap handling on the same surface: a double-tap toggles zoom (animated, with a
+                // recenter on the way back to 1×); a single tap dismisses the viewer. detectTapGestures
+                // defers the single-tap callback until it knows the touch isn't the first of a pair.
+                .pointerInput(Unit) {
+                    detectTapGestures(
+                        onDoubleTap = {
+                            scope.launch {
+                                if (scale.value > 1.001f) {
+                                    offsetX = 0f
+                                    offsetY = 0f
+                                    scale.animateTo(1f, tween(IMAGE_ZOOM_ANIM_MS))
+                                } else {
+                                    scale.animateTo(DOUBLE_TAP_ZOOM, tween(IMAGE_ZOOM_ANIM_MS))
+                                }
+                            }
+                        },
+                        onTap = { onDismiss() },
+                    )
+                },
             contentAlignment = Alignment.Center,
         ) {
             SubcomposeAsyncImage(
@@ -268,8 +305,8 @@ private fun FullscreenImageViewer(
                 modifier = Modifier
                     .fillMaxSize()
                     .graphicsLayer(
-                        scaleX = scale,
-                        scaleY = scale,
+                        scaleX = scale.value,
+                        scaleY = scale.value,
                         translationX = offsetX,
                         translationY = offsetY,
                     ),
@@ -288,6 +325,13 @@ private fun FullscreenImageViewer(
         }
     }
 }
+
+/** Maximum zoom factor applied by pinch or double-tap in the fullscreen image viewer. */
+private const val MAX_IMAGE_ZOOM = 5f
+/** Zoom factor a double-tap jumps to when starting from 1×. */
+private const val DOUBLE_TAP_ZOOM = 2.5f
+/** Duration (ms) of the animated double-tap zoom transition. */
+private const val IMAGE_ZOOM_ANIM_MS = 220
 
 /** Error slot for [RemoteImage]: a broken-image icon plus a "Tap to retry" caption, the whole box
  *  clickable so a failed load can be re-issued instead of stranding a permanent broken icon. */

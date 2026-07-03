@@ -1,7 +1,6 @@
 package soy.iko.opencode.ui.file
 
 import android.content.Intent
-import soy.iko.opencode.ui.components.showToast
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -50,6 +49,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -61,6 +62,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -92,6 +94,7 @@ import soy.iko.opencode.util.runCatchingCancellable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 import soy.iko.opencode.data.network.NetworkConfig
@@ -110,6 +113,8 @@ fun FileViewScreen(
     val vm: FileViewModel = viewModel(factory = vmFactory { FileViewModel(container, path) })
     val state by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val snackbar = remember { SnackbarHostState() }
     val filename = remember(path) {
         val trimmed = path.trimEnd('/')
         trimmed.substringAfterLast('/').ifBlank { path.ifBlank { "/" } }
@@ -188,7 +193,7 @@ fun FileViewScreen(
                 // lives when the user is in diff mode.
                 onToggleFind = {
                     if (showToggle && showDiff) {
-                        showToast(context, context.getString(R.string.switch_to_raw_to_search))
+                        scope.launch { snackbar.showSnackbar(context.getString(R.string.switch_to_raw_to_search)) }
                     } else {
                         findActive = !findActive
                         if (!findActive) findQuery = ""
@@ -203,10 +208,11 @@ fun FileViewScreen(
                         putExtra(Intent.EXTRA_TEXT, rawText)
                     }
                     runCatchingCancellable { context.startActivity(Intent.createChooser(send, shareLabel)) }
-                        .onFailure { showToast(context, context.getString(R.string.no_share_app)) }
+                        .onFailure { scope.launch { snackbar.showSnackbar(context.getString(R.string.no_share_app)) } }
                 },
             )
         },
+        snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
         // Pull-to-refresh wraps the content so a user who pull-to-refreshes out of habit
         // can reload the file, mirroring the file browser and session list gestures. The

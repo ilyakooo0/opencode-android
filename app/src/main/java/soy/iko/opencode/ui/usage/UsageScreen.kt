@@ -16,21 +16,31 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.QueryStats
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.SearchOff
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -38,6 +48,7 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -45,8 +56,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import soy.iko.opencode.R
 import soy.iko.opencode.data.model.Tokens
+import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.ui.components.AppTopBar
+import soy.iko.opencode.ui.components.ConnectionBannerFor
 import soy.iko.opencode.ui.components.EmptyState
 import soy.iko.opencode.ui.components.SectionHeader
 import soy.iko.opencode.ui.vmFactory
@@ -59,6 +72,7 @@ fun UsageScreen(container: AppContainer, onBack: () -> Unit, onOpenSession: (Str
     val vm: UsageViewModel = viewModel(factory = vmFactory { UsageViewModel(container) })
     val state by vm.state.collectAsStateWithLifecycle()
     val refreshing by vm.refreshing.collectAsStateWithLifecycle()
+    val snackbar = remember { SnackbarHostState() }
 
     Scaffold(
         topBar = {
@@ -72,6 +86,7 @@ fun UsageScreen(container: AppContainer, onBack: () -> Unit, onOpenSession: (Str
                 },
             )
         },
+        snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
         PullToRefreshBox(
             isRefreshing = refreshing,
@@ -79,6 +94,7 @@ fun UsageScreen(container: AppContainer, onBack: () -> Unit, onOpenSession: (Str
             modifier = Modifier.fillMaxSize().padding(padding),
         ) {
             Box(modifier = Modifier.fillMaxSize()) {
+                ConnectionBannerFor(container)
                 val loadingLabel = stringResource(R.string.usage_loading)
                 when (val s = state) {
                     is UsageViewModel.State.Loading -> Centered {
@@ -125,6 +141,15 @@ private fun Centered(content: @Composable androidx.compose.foundation.layout.Col
 
 @Composable
 private fun UsageContent(report: UsageReport, onOpenSession: (String) -> Unit) {
+    // Optional session-title filter. The global totals (cost/tokens/by-model) always reflect
+    // the whole history, but a user with many sessions can narrow the per-session list to find
+    // a specific conversation's spend without scrolling through all of it.
+    var sessionQuery by rememberSaveable { mutableStateOf("") }
+    val filteredSessions = remember(report.bySession, sessionQuery) {
+        val q = sessionQuery.trim()
+        if (q.isEmpty()) report.bySession
+        else report.bySession.filter { it.title.contains(q, ignoreCase = true) }
+    }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
@@ -133,7 +158,7 @@ private fun UsageContent(report: UsageReport, onOpenSession: (String) -> Unit) {
         item { TotalsCard(report) }
         item { TokenBreakdownCard(report.totalTokens) }
         if (report.byModel.isNotEmpty()) {
-            item { SectionHeader(stringResource(R.string.usage_by_model)) }
+            item { SectionHeader(stringResource(R.string.usage_by_model), Modifier.semantics { heading() }) }
             // Key on provider+model: the same model id served by two providers yields two
             // rows, so keying on the bare model would duplicate keys and crash the list.
             items(report.byModel, key = { it.provider + "/" + it.model }) { m ->
@@ -147,8 +172,38 @@ private fun UsageContent(report: UsageReport, onOpenSession: (String) -> Unit) {
             }
         }
         if (report.bySession.isNotEmpty()) {
-            item { SectionHeader(stringResource(R.string.usage_all_sessions)) }
-            items(report.bySession, key = { it.sessionId }) { s ->
+            item { SectionHeader(stringResource(R.string.usage_all_sessions), Modifier.semantics { heading() }) }
+            // Only show the filter field once there are enough sessions to justify it, so a
+            // short history isn't cluttered with a search bar.
+            if (report.bySession.size >= NetworkConfig.usageSessionSearchThreshold) {
+                item(key = "__session_search") {
+                    OutlinedTextField(
+                        value = sessionQuery,
+                        onValueChange = { sessionQuery = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        placeholder = { Text(stringResource(R.string.usage_filter_sessions)) },
+                        singleLine = true,
+                        leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                        trailingIcon = {
+                            if (sessionQuery.isNotEmpty()) {
+                                IconButton(onClick = { sessionQuery = "" }) {
+                                    Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.clear_search))
+                                }
+                            }
+                        },
+                    )
+                }
+            }
+            if (sessionQuery.isNotBlank() && filteredSessions.isEmpty()) {
+                item(key = "__no_match") {
+                    EmptyState(
+                        icon = Icons.Filled.SearchOff,
+                        title = stringResource(R.string.usage_no_sessions),
+                        modifier = Modifier.fillMaxWidth().padding(24.dp),
+                    )
+                }
+            }
+            items(filteredSessions, key = { it.sessionId }) { s ->
                 UsageRow(
                     title = s.title,
                     cost = s.cost,

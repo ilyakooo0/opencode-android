@@ -40,6 +40,7 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -54,6 +55,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import soy.iko.opencode.R
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.ui.components.AppTopBar
+import soy.iko.opencode.ui.components.ConnectionBannerFor
 import soy.iko.opencode.ui.components.EmptyState
 import soy.iko.opencode.ui.components.RelativeTimeText
 import soy.iko.opencode.ui.vmFactory
@@ -103,6 +105,7 @@ fun GlobalSearchScreen(
                 keyboardActions = KeyboardActions(onSearch = { keyboard?.hide() }),
             )
             Box(modifier = Modifier.fillMaxSize()) {
+                ConnectionBannerFor(container)
                 val searchingLabel = stringResource(R.string.searching)
                 when {
                     state.searching -> CircularProgressIndicator(
@@ -144,7 +147,7 @@ fun GlobalSearchScreen(
                                 pluralStringResource(R.plurals.search_results_count, state.results.size, state.results.size),
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(top = 8.dp),
+                                modifier = Modifier.padding(top = 8.dp).semantics { heading() },
                             )
                         }
                         if (state.truncated) {

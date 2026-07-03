@@ -5,6 +5,7 @@ import android.content.ContextWrapper
 import android.os.Build
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -31,6 +33,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -217,20 +220,39 @@ fun AppLockGate(enabled: Boolean, reLockDelaySeconds: Int = 0, content: @Composa
     if (unlocked) {
         stateHolder.SaveableStateProvider(APP_LOCK_CONTENT_KEY) { content() }
     } else {
+        // A Fingerprint glyph hints at the primary unlock method when a biometric is enrolled;
+        // fall back to the generic lock on credential-only setups. Computed once: enrollment
+        // doesn't change while the gate is shown, and re-prompting on each frame is wasteful.
+        val biometricAvailable = remember(context) {
+            BiometricManager.from(context)
+                .canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG) ==
+                BiometricManager.BIOMETRIC_SUCCESS
+        }
+        val unlockLabel = stringResource(R.string.app_unlock)
         Surface(
             modifier = Modifier.fillMaxSize(),
             color = MaterialTheme.colorScheme.background,
         ) {
+            // The whole surface is tappable to re-trigger the prompt (in addition to the button),
+            // so a user who dismissed the system prompt can retry by tapping anywhere — not just
+            // by finding the Unlock button.
             Column(
-                modifier = Modifier.fillMaxSize().padding(32.dp),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clickable(
+                        enabled = !authInFlight,
+                        role = Role.Button,
+                        onClickLabel = unlockLabel,
+                    ) { authenticate() }
+                    .padding(32.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center,
             ) {
                 Icon(
-                    Icons.Filled.Lock,
-                    contentDescription = stringResource(R.string.app_locked),
-                    modifier = Modifier.size(48.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    if (biometricAvailable) Icons.Filled.Fingerprint else Icons.Filled.Lock,
+                    contentDescription = null,
+                    modifier = Modifier.size(56.dp),
+                    tint = MaterialTheme.colorScheme.primary,
                 )
                 Text(
                     stringResource(R.string.app_locked),
@@ -238,6 +260,12 @@ fun AppLockGate(enabled: Boolean, reLockDelaySeconds: Int = 0, content: @Composa
                     modifier = Modifier
                         .padding(top = 16.dp)
                         .semantics { liveRegion = LiveRegionMode.Polite },
+                )
+                Text(
+                    stringResource(R.string.app_locked_hint),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp),
                 )
                 Button(
                     onClick = { authenticate() },
@@ -252,7 +280,7 @@ fun AppLockGate(enabled: Boolean, reLockDelaySeconds: Int = 0, content: @Composa
                         )
                         Spacer(Modifier.size(8.dp))
                     }
-                    Text(stringResource(R.string.app_unlock))
+                    Text(unlockLabel)
                 }
             }
         }

@@ -42,6 +42,8 @@ import io.ktor.http.contentType
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import kotlin.random.Random
 import java.net.URLEncoder
 
@@ -310,6 +312,33 @@ open class OpencodeApiClient private constructor(
      *  (e.g. the MCP viewer) so a schema addition on the server never breaks decoding. */
     open suspend fun config(): kotlinx.serialization.json.JsonObject = withRetry {
         client!!.get("config").body()
+    }
+
+    /** Live MCP server status (`GET /mcp`): a map of server name to its status (connected,
+     *  available tools, any error). Decoded as a raw JSON object so a schema change on the
+     *  server never breaks the viewer. */
+    open suspend fun mcpStatus(): kotlinx.serialization.json.JsonObject = withRetry {
+        client!!.get("mcp").body()
+    }
+
+    /** Dynamically register an MCP server (`POST /mcp`). [config] is the server's config object
+     *  (type/command-or-url/env…), sent as `{ "name": [name], "config": [config] }`. Mint the
+     *  Idempotency-Key *before* withRetry so a retried POST (first reached the server but the
+     *  response was lost) doesn't register a duplicate. */
+    open suspend fun addMcp(name: String, config: kotlinx.serialization.json.JsonObject): kotlinx.serialization.json.JsonObject {
+        val idempotencyKey = java.util.UUID.randomUUID().toString()
+        return withRetry {
+            client!!.post("mcp") {
+                contentType(ContentType.Application.Json)
+                header("Idempotency-Key", idempotencyKey)
+                setBody(
+                    buildJsonObject {
+                        put("name", name)
+                        put("config", config)
+                    },
+                )
+            }.body()
+        }
     }
 
     open suspend fun agents(): List<Agent> {

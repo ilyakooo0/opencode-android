@@ -39,6 +39,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
 import soy.iko.opencode.R
+import soy.iko.opencode.data.network.NetworkConfig
 
 /** The user's directory choice in the new-session picker. */
 private sealed interface DirChoice {
@@ -109,6 +110,7 @@ fun NewSessionDialog(
     // Optional title so a new session doesn't land in the list as "Untitled session" requiring a
     // rename. Trimmed to a sane max; an all-whitespace value is treated as no title.
     var titleText by rememberSaveable { mutableStateOf("") }
+    val titleLimit = NetworkConfig.maxSessionTitleChars
 
     // The initializer above may have run while options were still loading (serverDefault
     // null), pinning choice to DirChoice.Known(preselect). Once the real serverDefault
@@ -143,13 +145,14 @@ fun NewSessionDialog(
             ) {
                 OutlinedTextField(
                     value = titleText,
-                    onValueChange = { titleText = it.take(120) },
+                    onValueChange = { titleText = it.take(titleLimit) },
                     modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
                     label = { Text(stringResource(R.string.session_title_hint)) },
                     placeholder = { Text(stringResource(R.string.new_session)) },
                     singleLine = true,
                     enabled = !creating,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                    supportingText = { TitleCharCounter(titleText.length, titleLimit) },
                 )
                 Text(
                     stringResource(R.string.directory_label),
@@ -232,6 +235,16 @@ fun NewSessionDialog(
             TextButton(onClick = onDismiss, enabled = !creating) { Text(stringResource(R.string.cancel)) }
         },
     )
+}
+
+/** Character counter for the session-title field, shown only once the title nears the cap so a
+ *  normal short title isn't cluttered. Extracted from [NewSessionDialog] to keep its complexity
+ *  under the detekt threshold. */
+@Composable
+private fun TitleCharCounter(length: Int, limit: Int) {
+    if (length >= (limit * 0.8f).toInt()) {
+        Text("$length / $limit")
+    }
 }
 
 @Composable
