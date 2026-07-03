@@ -20,6 +20,7 @@ val gitCommitCount: Int = runCatching {
 android {
     namespace = "soy.iko.opencode"
     compileSdk = 35
+    buildToolsVersion = "35.0.0"
 
     defaultConfig {
         applicationId = "soy.iko.opencode"
