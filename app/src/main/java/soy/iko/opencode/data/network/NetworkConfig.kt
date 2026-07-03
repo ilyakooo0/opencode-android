@@ -125,6 +125,14 @@ object NetworkConfig {
     /** Grace period before a cold StateFlow is stopped after its last subscriber leaves. */
     const val stateFlowSubscriptionTimeoutMs = 5_000L
 
+    /** Maximum time a notification action BroadcastReceiver may hold its goAsync()
+     *  PendingResult open. The system ANRs a receiver that doesn't call finish() within
+     *  ~10s, so this must stay below that; a slow permission-respond retry (withRetry
+     *  exponential backoff up to ~90s) or a blocked outbox enqueue could otherwise blow
+     *  past the window. The watchdog finishes the PendingResult at this deadline so the
+     *  receiver never ANRs; the underlying network call keeps running on the app scope. */
+    const val notificationReceiverTimeoutMs = 8_000L
+
     // --- Draft persistence (ChatViewModel) ---
 
     /** Debounce delay before persisting a draft to disk after the user stops typing. */

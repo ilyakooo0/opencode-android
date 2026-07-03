@@ -148,14 +148,7 @@ fun SessionListScreen(
     // session list — the best source of session titles. Cheap, idempotent, and off the main
     // thread (the store write dispatches to IO); the widget refresh no-ops when none is placed.
     val platformContext = LocalContext.current.applicationContext
-    LaunchedEffect(state.sessions) {
-        val sessions = state.sessions
-        if (sessions.isEmpty()) return@LaunchedEffect
-        val recents = sessions.take(RecentSessionsStore.MAX).map { RecentSession(it.id, it.displayTitle) }
-        RecentSessionsStore.write(platformContext, recents)
-        AppShortcuts.update(platformContext, recents.firstOrNull())
-        SessionsWidgetProvider.refresh(platformContext)
-    }
+    SyncShortcutsAndWidget(platformContext, state)
 
     // Close the open dropdown on back press instead of navigating away.
     BackHandler(enabled = showServerMenu) { showServerMenu = false }
@@ -576,6 +569,33 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
 
 /** A session plus its nesting [depth] (0 = top level) for the sub-session tree. */
 private data class SessionNode(val session: soy.iko.opencode.data.model.Session, val depth: Int)
+
+/**
+ * Keep the home-screen widget, launcher shortcuts, and "Resume last" in sync with the
+ * loaded session list. When the list is populated, write recents and point "Resume last"
+ * at the most recent session. When the server is genuinely empty (done loading, no error),
+ * clear "Resume last" so it doesn't point at a deleted/nonexistent session. A transient
+ * load failure (error set) leaves existing shortcuts intact — wiping them on a network
+ * blip would vanish a valid shortcut until the next successful load.
+ */
+@Composable
+private fun SyncShortcutsAndWidget(
+    platformContext: android.content.Context,
+    state: SessionListState,
+) {
+    val serverIsEmpty = state.sessions.isEmpty() && state.error == null && !state.loading
+    LaunchedEffect(serverIsEmpty) {
+        if (serverIsEmpty) AppShortcuts.update(platformContext, null)
+    }
+    LaunchedEffect(state.sessions) {
+        val sessions = state.sessions
+        if (sessions.isEmpty()) return@LaunchedEffect
+        val recents = sessions.take(RecentSessionsStore.MAX).map { RecentSession(it.id, it.displayTitle) }
+        RecentSessionsStore.write(platformContext, recents)
+        AppShortcuts.update(platformContext, recents.firstOrNull())
+        SessionsWidgetProvider.refresh(platformContext)
+    }
+}
 
 /**
  * Order [sessions] so each child (a session whose `parentID` is also present) appears

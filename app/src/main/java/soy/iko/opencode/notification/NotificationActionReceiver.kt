@@ -6,6 +6,8 @@ import android.content.Intent
 import androidx.core.app.RemoteInput
 import soy.iko.opencode.OpencodeApp
 import soy.iko.opencode.data.model.PermissionResponse
+import soy.iko.opencode.data.network.NetworkConfig
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Handles the action buttons on the app's notifications so the user can respond without
@@ -19,6 +21,11 @@ import soy.iko.opencode.data.model.PermissionResponse
  * The receiver is not exported (see the manifest); the [PendingIntent]s that target it are
  * created by the app itself. Work is done on the process-lived app scope via [OpencodeApp]'s
  * container, and [goAsync] keeps the receiver alive until the (network) call resolves.
+ *
+ * A watchdog finishes the [PendingResult] within [NetworkConfig.notificationReceiverTimeoutMs]
+ * so a slow network call (e.g. a permission respond retried with exponential backoff) can't
+ * ANR the receiver. The underlying call keeps running on the app scope; only the receiver's
+ * lifetime is bounded. [finishOnce] guards against a double finish() (which would throw).
  */
 class NotificationActionReceiver : BroadcastReceiver() {
 
@@ -33,13 +40,16 @@ class NotificationActionReceiver : BroadcastReceiver() {
                     it.wire == intent.getStringExtra(EXTRA_RESPONSE)
                 } ?: return
                 val pending = goAsync()
+                val finished = AtomicBoolean(false)
+                val finishOnce = { if (finished.compareAndSet(false, true)) pending.finish() }
+                watchdog(finishOnce)
                 container.respondToPermissionFromNotification(sessionId, permissionId, response, profileId) { success ->
                     // Only dismiss the notification once the tool was actually answered. If
                     // there was no live connection (respond is a no-op) or the call failed,
                     // leave it up so the user can retry — otherwise it vanishes with the
                     // permission request left unanswered.
                     if (success) SessionNotifications.cancelPermission(context, sessionId)
-                    pending.finish()
+                    finishOnce()
                 }
             }
             ACTION_REPLY -> {
@@ -47,15 +57,32 @@ class NotificationActionReceiver : BroadcastReceiver() {
                     ?.getCharSequence(KEY_REPLY_TEXT)?.toString()?.trim()
                     ?.takeIf { it.isNotEmpty() } ?: return
                 val pending = goAsync()
+                val finished = AtomicBoolean(false)
+                val finishOnce = { if (finished.compareAndSet(false, true)) pending.finish() }
+                watchdog(finishOnce)
                 container.sendPromptFromNotification(sessionId, text) { enqueued ->
                     // The reply is durably queued (and flushed now if online); clear the
                     // "session ready" notification. If the enqueue failed, leave it up so the
                     // reply isn't silently lost and the user can retry.
                     if (enqueued) SessionNotifications.cancel(context, sessionId)
-                    pending.finish()
+                    finishOnce()
                 }
             }
         }
+    }
+
+    /** Schedule a deadline after which the receiver's [PendingResult] is finished even if
+     *  the network call hasn't resolved, so the system can't ANR the receiver. The
+     *  underlying work continues on the app scope. */
+    private fun watchdog(finishOnce: () -> Unit) {
+        Thread {
+            try {
+                Thread.sleep(NetworkConfig.notificationReceiverTimeoutMs)
+            } catch (_: InterruptedException) {
+                return@Thread
+            }
+            finishOnce()
+        }.apply { isDaemon = true; name = "notif-receiver-watchdog"; start() }
     }
 
     companion object {

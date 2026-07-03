@@ -1029,6 +1029,8 @@ open class AppContainer private constructor(
             val api = OpencodeApiClient(client)
             api.ping()
             true
+        } catch (c: kotlinx.coroutines.CancellationException) {
+            throw c
         } catch (e: Exception) {
             val status = responseStatusCode(e)
             if (status == 401 || status == 403) false else throw e
@@ -1043,6 +1045,8 @@ open class AppContainer private constructor(
             val api = OpencodeApiClient(client)
             api.ping()
             ProbeResult.Reachable
+        } catch (c: kotlinx.coroutines.CancellationException) {
+            throw c
         } catch (e: Exception) {
             val status = responseStatusCode(e)
             if (status == 401 || status == 403) {

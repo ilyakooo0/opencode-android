@@ -244,7 +244,7 @@ open class OpencodeApiClient private constructor(
             withRetry { client!!.delete("session/${encode(sessionId)}/share").body() }
         } catch (t: ClientRequestException) {
             if (t.response.status.value != 404) throw t
-            client!!.get("session/${encode(sessionId)}").body()
+            withRetry { client!!.get("session/${encode(sessionId)}").body() }
         }
     }
 

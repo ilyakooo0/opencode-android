@@ -11,8 +11,8 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavType
@@ -73,8 +73,11 @@ fun OpencodeApp(container: AppContainer) {
     // consumes it via consumePendingSharedMedia). Without this, re-sharing the *same* images
     // after consumption compares equal structurally ([A,B] == [A,B]) and would be treated as
     // "already handled", silently skipping the session-list navigation the second time.
-    var handledShareText by remember { mutableStateOf<String?>(null) }
-    var handledSharedMedia by remember { mutableStateOf<List<String>>(emptyList()) }
+    //
+    // rememberSaveable (not remember) so a process-kill restore doesn't reset the dedup
+    // state and re-navigate to SESSIONS for a share the user already handled before the kill.
+    var handledShareText by rememberSaveable { mutableStateOf<String?>(null) }
+    var handledSharedMedia by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
     LaunchedEffect(pendingShare, pendingSharedMedia, connection) {
         // Reset the remembered handled state for each channel independently as it drains,
         // so re-sharing the same payload after consumption is still recognized as new. A

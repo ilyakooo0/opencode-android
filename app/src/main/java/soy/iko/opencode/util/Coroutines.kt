@@ -21,12 +21,21 @@ inline fun <T> runCatchingCancellable(block: () -> T): Result<T> = try {
  * [ClientRequestException] embeds in its message and may contain auth or paths).
  * Use this instead of logging the full exception object when it may originate
  * from a Ktor HTTP call.
+ *
+ * Extracts the HTTP status code when available — it's safe to log (not a URL) and
+ * makes 4xx/5xx REST and SSE-establishment failures actionable. Walks the cause
+ * chain so a [ServerResponseException] (5xx) or [SSEClientException] wrapping a
+ * [ClientRequestException] still surfaces its status.
  */
 fun safeExceptionSummary(e: Throwable): String {
     var current: Throwable? = e
     var hops = 0
     while (current != null && hops < 8) {
-        val status = (current as? io.ktor.client.plugins.ClientRequestException)?.response?.status?.value
+        val status = when (current) {
+            is io.ktor.client.plugins.ResponseException -> current.response.status.value
+            is io.ktor.client.plugins.sse.SSEClientException -> current.response?.status?.value
+            else -> null
+        }
         if (status != null) return "${current.javaClass.simpleName}($status)"
         current = current.cause
         hops++

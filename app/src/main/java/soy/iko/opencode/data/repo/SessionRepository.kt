@@ -606,6 +606,12 @@ internal class MessageStore {
     private fun removePart(messageId: String, partId: String): Boolean {
         val current = messages[messageId] ?: return false
         if (current.parts.remove(partId) == null) return false
+        // Drop the pivot entry too so the set doesn't accumulate ids of removed parts for
+        // the rest of the session (it's otherwise only cleared on reseed/eviction). No
+        // correctness impact today — a stale entry just falls back to the REST snapshot's
+        // version in seed() — but keeping it symmetric with handleMessageRemoved/eviction
+        // bounds the set's growth over a long-lived session.
+        streamedSincePivot.remove(partId)
         current.invalidate()
         return true
     }

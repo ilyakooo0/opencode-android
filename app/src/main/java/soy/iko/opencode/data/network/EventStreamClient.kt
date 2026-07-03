@@ -97,10 +97,16 @@ open class EventStreamClient(
      * Read SSE events from [events], racing each read against an idle-timeout watchdog.
      * Throws [IOException] on idle timeout so the outer reconnect loop fires; breaks on
      * clean stream close or scope cancellation.
+     *
+     * If the idle watchdog tripped because a [triggerReconnect] signal was consumed
+     * (rather than a genuine idle timeout), [onReconnectConsumed] is invoked so the outer
+     * reconnect loop can reconnect immediately instead of waiting out the backoff — the
+     * signal is already consumed, so the backoff `select` couldn't be cut short.
      */
     private suspend fun readSseEvents(
         scope: CoroutineScope,
         events: kotlinx.coroutines.channels.ReceiveChannel<ServerSentEvent>,
+        onReconnectConsumed: () -> Unit,
         send: suspend (BusEvent) -> Unit,
     ) {
         while (scope.isActive) {
@@ -108,17 +114,20 @@ open class EventStreamClient(
             // read), so a socket the peer never closed would otherwise hang until OS TCP
             // keepalive kicks in — minutes to hours on stock Linux. If nothing arrives
             // within the idle timeout, treat the connection as half-open and drop it.
+            var consumedReconnectSignal = false
             val result: ChannelResult<ServerSentEvent>? = select {
                 events.onReceiveCatching { it }
                 onTimeout(idleTimeoutMs) { null }
                 // A triggerReconnect() issued while a read is active must interrupt it now:
                 // return the same null sentinel as the idle timeout so a half-open socket
                 // (no TCP RST) is dropped and reconnected promptly instead of waiting out
-                // idleTimeoutMs (~90s). Consuming the signal here also stops the backoff
-                // select below from re-triggering on the stale request.
-                reconnectSignal.onReceive { null }
+                // idleTimeoutMs (~90s).
+                reconnectSignal.onReceive { consumedReconnectSignal = true; null }
             }
-            if (result == null) throw IOException("SSE read dropped (idle timeout or reconnect requested), reconnecting")
+            if (result == null) {
+                if (consumedReconnectSignal) onReconnectConsumed()
+                throw IOException("SSE read dropped (idle timeout or reconnect requested), reconnecting")
+            }
             val sse = result.getOrNull()
             if (sse == null) {
                 // The producer channel is closed. A non-null cause means `incoming`
@@ -158,6 +167,12 @@ open class EventStreamClient(
         var backoffMs = initialBackoffMs
         while (isActive) {
             _state.value = ConnectionState.Connecting
+            // Set by readSseEvents when a triggerReconnect() signal interrupted an active
+            // read. The signal is consumed to drop the socket, so the backoff select below
+            // can't also see it — without this flag the reconnect would wait the full
+            // backoff despite the caller asking for an immediate reconnect (network
+            // handoff, manual refresh, ...).
+            var reconnectConsumedDuringRead = false
             try {
                 // The SSE stream is long-lived: disable the request-level and socket
                 // timeouts (the client default is 60s for REST) in the request config
@@ -221,7 +236,7 @@ open class EventStreamClient(
                     // never escalate the exponential ramp.
                     var receivedAny = false
                     try {
-                        readSseEvents(scope, events) {
+                        readSseEvents(scope, events, { reconnectConsumedDuringRead = true }) {
                             if (!receivedAny) {
                                 receivedAny = true
                                 backoffMs = initialBackoffMs
@@ -272,14 +287,30 @@ open class EventStreamClient(
             }
             _state.value = ConnectionState.Disconnected
             if (!isActive) break
-            // Wait for the backoff, but allow a reconnect signal to cut it short.
-            var signaled = false
-            val jitter = ((backoffMs * NetworkConfig.retryJitterFactor) * (Random.nextDouble() * 2 - 1)).toLong()
-            select {
-                reconnectSignal.onReceive { signaled = true }
-                onTimeout((backoffMs + jitter).coerceAtLeast(0)) { /* normal backoff elapsed */ }
-            }
+            // Wait for the backoff, but allow a reconnect signal to cut it short. When
+            // readSseEvents consumed a triggerReconnect() signal to drop an active read,
+            // the signal is already spent so the select below can't receive it — pass a
+            // zero backoff in that case so the reconnect is immediate (the whole point of
+            // triggerReconnect: network handoff, manual refresh, ...).
+            val signaled = waitForBackoffOrSignal(reconnectConsumedDuringRead, backoffMs)
             backoffMs = if (signaled) initialBackoffMs else (backoffMs * 2).coerceAtMost(maxBackoffMs)
         }
+    }
+
+    /** Suspend for the backoff unless [reconnectConsumedDuringRead] (immediate) or a new
+     *  [triggerReconnect] arrives during the wait. Returns true when the reconnect should
+     *  skip the backoff ramp (signal-driven), false when the full backoff elapsed. */
+    private suspend fun waitForBackoffOrSignal(
+        reconnectConsumedDuringRead: Boolean,
+        backoffMs: Long,
+    ): Boolean {
+        if (reconnectConsumedDuringRead) return true
+        var signaled = false
+        val jitter = ((backoffMs * NetworkConfig.retryJitterFactor) * (Random.nextDouble() * 2 - 1)).toLong()
+        select {
+            reconnectSignal.onReceive { signaled = true }
+            onTimeout((backoffMs + jitter).coerceAtLeast(0)) { /* normal backoff elapsed */ }
+        }
+        return signaled
     }
 }
