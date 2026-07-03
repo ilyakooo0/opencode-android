@@ -21,6 +21,23 @@ import androidx.compose.ui.unit.sp
  * (counts, timestamps' siblings, state text) don't inherit a monospace look.
  */
 val OpencodeTypography = Typography(
+    // Large display roles are rarely used here, but declaring them explicitly (FontFamily.Default,
+    // same weight intent as the rest of the scale) keeps any M3 component that reads them —
+    // e.g. a future large top bar — from falling back to stock purple-grey Roboto defaults that
+    // clash with Tokyo Night.
+    displayLarge = TextStyle(
+        fontFamily = FontFamily.Default,
+        fontWeight = FontWeight.Normal,
+        fontSize = 57.sp,
+        lineHeight = 64.sp,
+        letterSpacing = (-0.25).sp,
+    ),
+    displayMedium = TextStyle(
+        fontFamily = FontFamily.Default,
+        fontWeight = FontWeight.Normal,
+        fontSize = 45.sp,
+        lineHeight = 52.sp,
+    ),
     displaySmall = TextStyle(
         fontFamily = FontFamily.Default,
         fontWeight = FontWeight.Normal,
@@ -28,11 +45,25 @@ val OpencodeTypography = Typography(
         lineHeight = 40.sp,
         letterSpacing = 0.sp,
     ),
+    headlineLarge = TextStyle(
+        fontFamily = FontFamily.Default,
+        fontWeight = FontWeight.SemiBold,
+        fontSize = 32.sp,
+        lineHeight = 40.sp,
+    ),
     headlineMedium = TextStyle(
         fontFamily = FontFamily.Default,
         fontWeight = FontWeight.SemiBold,
         fontSize = 26.sp,
         lineHeight = 34.sp,
+    ),
+    // headlineSmall and titleSmall back AlertDialog titles and ListItem rows; override them so
+    // those stock M3 components match the brand family instead of Roboto defaults.
+    headlineSmall = TextStyle(
+        fontFamily = FontFamily.Default,
+        fontWeight = FontWeight.SemiBold,
+        fontSize = 22.sp,
+        lineHeight = 28.sp,
     ),
     titleLarge = TextStyle(
         fontFamily = FontFamily.Default,
@@ -45,6 +76,13 @@ val OpencodeTypography = Typography(
         fontWeight = FontWeight.Medium,
         fontSize = 16.sp,
         lineHeight = 22.sp,
+        letterSpacing = 0.1.sp,
+    ),
+    titleSmall = TextStyle(
+        fontFamily = FontFamily.Default,
+        fontWeight = FontWeight.Medium,
+        fontSize = 14.sp,
+        lineHeight = 20.sp,
         letterSpacing = 0.1.sp,
     ),
     bodyLarge = TextStyle(

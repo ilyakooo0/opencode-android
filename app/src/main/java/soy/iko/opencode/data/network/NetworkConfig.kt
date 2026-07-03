@@ -233,6 +233,11 @@ object NetworkConfig {
     /** Minimum number of sessions in the usage report before the per-session list shows its
      *  filter field. A short history is faster to scan than type into. */
     const val usageSessionSearchThreshold = 8
+
+    /** Minimum number of sessions before the session list shows its search/filter field.
+     *  Matches the sibling screens' convention: a short list is faster to scan by eye than
+     *  type into, so the field earns its vertical space only once the list grows. */
+    const val sessionListSearchThreshold = 6
     /** Extra bottom content padding (dp) for the chat message list, reserving room for the
      *  jump-to-latest FAB so it never floats over the last message. */
     const val chatListFabInsetDp = 80

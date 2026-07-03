@@ -3,4 +3,6 @@
     <!-- A darker splash background at night so the cold-start flash isn't a bright rectangle. -->
     <color name="splash_background">#1A1B26</color>
     <color name="ic_launcher_background">#34548A</color>
+    <!-- Matches the Compose dark colorScheme background (#1A1B26). -->
+    <color name="window_background">#1A1B26</color>
 </resources>

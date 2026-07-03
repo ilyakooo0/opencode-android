@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="no_crash_reports_desc">Reports are stored only on this device and collected automatically if the app crashes.</string>
+</resources>

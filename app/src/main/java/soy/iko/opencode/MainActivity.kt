@@ -14,9 +14,15 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.res.stringResource
 import kotlinx.coroutines.flow.combine
 import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
@@ -40,6 +46,16 @@ class MainActivity : FragmentActivity() {
     private var shareIntentHandled = false
     private var openSessionHandled = false
     private var newSessionHandled = false
+    // Cold-start prompts (crash report, notification rationale) rendered as Compose M3
+    // dialogs. Hoisted as Activity-level mutableState so the non-composable trigger logic
+    // (onCreate/onResume) can flip them and the Compose tree (inside OpencodeTheme) reads
+    // them and renders an M3 AlertDialog that picks up the app palette. The triggers
+    // themselves are idempotent per instance (crashes are acknowledged on first fire;
+    // notificationPermissionRequested is restored from saved state), so a plain
+    // mutableStateOf (not saveable) preserves the original dismissal semantics across
+    // config-change recreation: the prompt simply doesn't re-fire after a rotate.
+    private var showCrashPrompt by mutableStateOf(false)
+    private var showNotifRationale by mutableStateOf(false)
     // Track whether the notification-permission prompt has been shown for this Activity
     // instance. onCreate only requests when savedInstanceState == null (a fresh process),
     // but an Activity recreated by a config change NOT listed in the manifest's configChanges
@@ -104,6 +120,47 @@ class MainActivity : FragmentActivity() {
                     AppLockGate(enabled = locked, reLockDelaySeconds = appLockReLockSeconds) {
                         OpencodeAppUi(container = container)
                     }
+                    // First-launch prompts as Compose M3 dialogs (siblings of AppLockGate so they
+                    // still surface over the lock screen, matching the prior framework-dialog
+                    // behavior) and inside OpencodeTheme so they use the app palette.
+                    if (showCrashPrompt) {
+                        AlertDialog(
+                            onDismissRequest = { showCrashPrompt = false },
+                            title = { Text(stringResource(R.string.crash_last_run_title)) },
+                            text = { Text(stringResource(R.string.crash_last_run_text)) },
+                            confirmButton = {
+                                TextButton(onClick = {
+                                    showCrashPrompt = false
+                                    container.requestDiagnostics()
+                                }) { Text(stringResource(R.string.crash_last_run_view)) }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { showCrashPrompt = false }) {
+                                    Text(stringResource(R.string.crash_last_run_dismiss))
+                                }
+                            },
+                        )
+                    }
+                    if (showNotifRationale) {
+                        AlertDialog(
+                            // Mirrors the original setCancelable(false): not dismissible by
+                            // back/outside tap, only by the buttons below.
+                            onDismissRequest = { },
+                            title = { Text(stringResource(R.string.notif_rationale_title)) },
+                            text = { Text(stringResource(R.string.notif_rationale_text)) },
+                            confirmButton = {
+                                TextButton(onClick = {
+                                    showNotifRationale = false
+                                    runCatching { requestNotificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS) }
+                                }) { Text(stringResource(R.string.notif_rationale_allow)) }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { showNotifRationale = false }) {
+                                    Text(stringResource(R.string.notif_rationale_skip))
+                                }
+                            },
+                        )
+                    }
                 }
             }
         }
@@ -117,15 +174,7 @@ class MainActivity : FragmentActivity() {
         val crashLogger = soy.iko.opencode.data.repo.CrashLogger.get(this)
         if (!crashLogger.hasUnacknowledgedCrash()) return
         crashLogger.acknowledgeCrashes()
-        android.app.AlertDialog.Builder(this)
-            .setTitle(R.string.crash_last_run_title)
-            .setMessage(R.string.crash_last_run_text)
-            .setPositiveButton(R.string.crash_last_run_view) { _, _ ->
-                (application as OpencodeApp).container.requestDiagnostics()
-            }
-            .setNegativeButton(R.string.crash_last_run_dismiss, null)
-            .setCancelable(true)
-            .show()
+        showCrashPrompt = true
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -272,15 +321,6 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun showNotificationRationaleDialog() {
-        val ctx = this
-        android.app.AlertDialog.Builder(ctx)
-            .setTitle(R.string.notif_rationale_title)
-            .setMessage(R.string.notif_rationale_text)
-            .setPositiveButton(R.string.notif_rationale_allow) { _, _ ->
-                runCatching { requestNotificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS) }
-            }
-            .setNegativeButton(R.string.notif_rationale_skip, null)
-            .setCancelable(false)
-            .show()
+        showNotifRationale = true
     }
 }

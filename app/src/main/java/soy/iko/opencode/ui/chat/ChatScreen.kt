@@ -11,6 +11,12 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -22,6 +28,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
@@ -33,6 +40,7 @@ import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
@@ -89,7 +97,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
@@ -101,6 +111,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -953,23 +965,55 @@ fun ChatScreen(
                 // first message / state content. (topPad computed above.)
                 if (loading && messages.isEmpty()) {
                     val loadingLabel = stringResource(R.string.loading)
-                    // Attach the a11y label directly to the spinner (a detached zero-size Box
-                    // isn't reliably focused/announced by TalkBack) and show a visible label so
-                    // sighted users get "Loading…" rather than a bare spinner.
+                    // Skeleton bubbles pre-structure the layout so the perceived load is faster
+                    // than a bare centered spinner and the first real messages pop into an
+                    // already-shaped list instead of a blank-then-pop. Alpha pulses (gated by
+                    // reduced-motion) to convey ongoing work; the column carries the a11y label.
+                    val reducedMotion = LocalReducedMotion.current
+                    val transition = rememberInfiniteTransition(label = "skeleton")
+                    val pulse by transition.animateFloat(
+                        initialValue = 0.35f,
+                        targetValue = 0.7f,
+                        animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
+                        label = "skeletonAlpha",
+                    )
+                    val skeletonAlpha = if (reducedMotion) 0.5f else pulse
+                    val skeletonColor = MaterialTheme.colorScheme.surfaceVariant
+                    @Composable
+                    fun bar(widthFraction: Float) {
+                        Box(
+                            Modifier
+                                .fillMaxWidth(widthFraction)
+                                .height(14.dp)
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(skeletonColor)
+                                .alpha(skeletonAlpha),
+                        )
+                    }
                     Column(
-                        modifier = Modifier.align(Alignment.Center).padding(top = topPad),
-                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .padding(top = topPad)
+                            .padding(16.dp)
+                            .fillMaxWidth()
+                            .semantics { contentDescription = loadingLabel },
+                        verticalArrangement = Arrangement.spacedBy(14.dp),
                     ) {
-                        CircularProgressIndicator(
-                            Modifier.semantics { contentDescription = loadingLabel },
-                            strokeWidth = 2.dp,
-                        )
-                        Spacer(Modifier.size(8.dp))
-                        Text(
-                            loadingLabel,
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                        repeat(4) { i ->
+                            val left = i % 2 == 0
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = if (left) Arrangement.Start else Arrangement.End,
+                            ) {
+                                Column(
+                                    modifier = Modifier.fillMaxWidth(if (left) 0.7f else 0.55f),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                                ) {
+                                    bar(1f)
+                                    bar(0.8f)
+                                }
+                            }
+                        }
                     }
                 } else if (loadError && messages.isEmpty()) {
                     // A failed load with nothing to show. Distinct from the empty
@@ -1150,6 +1194,24 @@ fun ChatScreen(
                     if (running) {
                         item(key = "__typing") {
                             val workingText = stringResource(R.string.working)
+                            // Elapsed-since-run chip: the typing row only composes while a run is
+                            // active, so anchoring the timer to first composition approximates the
+                            // run start and gives the user a sense of how long the agent has been
+                            // working — distinguishing a healthy long run from a hung one. Updates
+                            // once per second; the value is decorative (the a11y label is the row's).
+                            var startMs by remember { mutableLongStateOf(0L) }
+                            LaunchedEffect(Unit) { startMs = System.currentTimeMillis() }
+                            val elapsedMs by produceState(0L, startMs) {
+                                if (startMs == 0L) return@produceState
+                                while (true) {
+                                    value = (System.currentTimeMillis() - startMs).coerceAtLeast(0L)
+                                    delay(1000)
+                                }
+                            }
+                            val elapsedText = remember(elapsedMs) {
+                                val total = elapsedMs / 1000
+                                "%d:%02d".format(total / 60, total % 60)
+                            }
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier.semantics {
@@ -1158,6 +1220,20 @@ fun ChatScreen(
                             ) {
                                 CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
                                 Text(workingText, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 6.dp))
+                                Spacer(Modifier.size(8.dp))
+                                Icon(
+                                    Icons.Filled.Schedule,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(14.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Text(
+                                    elapsedText,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(start = 4.dp),
+                                )
                             }
                         }
                     }

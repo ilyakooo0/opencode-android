@@ -14,8 +14,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.HelpOutline
+import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
-import androidx.compose.material.icons.filled.CallSplit
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Edit
@@ -145,7 +145,7 @@ private fun MessageLongPressMenu(
         }
         if (text != null && onBranch != null) {
             DropdownMenuItem(
-                leadingIcon = { Icon(Icons.Filled.CallSplit, contentDescription = null) },
+                leadingIcon = { Icon(Icons.AutoMirrored.Filled.PlaylistAdd, contentDescription = null) },
                 text = { Text(stringResource(R.string.branch_session)) },
                 onClick = { onDismiss(); onBranch(text) },
             )
@@ -196,7 +196,7 @@ private fun MessageOverflow(
             }
             onBranch?.let { branch ->
                 DropdownMenuItem(
-                    leadingIcon = { Icon(Icons.Filled.CallSplit, contentDescription = null) },
+                    leadingIcon = { Icon(Icons.AutoMirrored.Filled.PlaylistAdd, contentDescription = null) },
                     text = { Text(stringResource(R.string.branch_session)) },
                     onClick = {
                         expanded = false

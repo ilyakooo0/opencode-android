@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -56,6 +57,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -181,6 +183,8 @@ private fun ServerEditForm(
         modifier = Modifier
             .padding(padding)
             .imePadding()
+            .fillMaxWidth()
+            .wrapContentWidth(Alignment.CenterHorizontally)
             .widthIn(max = 600.dp)
             .padding(16.dp)
             .verticalScroll(rememberScrollState()),
@@ -197,15 +201,18 @@ private fun ServerEditForm(
             isError = state.baseUrl.isNotBlank() && !urlValid,
             supportingText = {
                 if (state.baseUrl.isNotBlank() && !urlValid) {
-                    // Offer a one-tap "http://" fix for bare host:port input instead of a
+                    // Offer a one-tap scheme fix for bare host:port input instead of a
                     // generic error, so the user doesn't have to know the URL needs a scheme.
+                    // suggestUrlScheme() picks https:// for TLS-shaped hosts (port 443, public
+                    // domains) so the quick-fix doesn't nudge users onto cleartext.
                     val suggestion = suggestUrlScheme(state.baseUrl)
                     if (suggestion != null) {
+                        val labelRes = if (suggestion.startsWith("https://")) R.string.suggest_scheme_https else R.string.suggest_scheme
                         TextButton(
                             onClick = { vm.update { it.copy(baseUrl = suggestion) } },
                             contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp),
                         ) {
-                            Text(stringResource(R.string.suggest_scheme))
+                            Text(stringResource(labelRes))
                         }
                     } else {
                         Text(stringResource(R.string.invalid_url))
@@ -213,6 +220,7 @@ private fun ServerEditForm(
                 }
             },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done),
+            keyboardActions = KeyboardActions(onDone = { keyboard?.hide() }),
             modifier = Modifier.fillMaxWidth().focusRequester(baseUrlFocus).testTag("server_url"),
         )
         // Auto-expand LAN discovery only on a fresh form (no URL yet) so tapping a found
@@ -304,6 +312,15 @@ private fun AuthFields(
     // Memoize the URI parse on baseUrl so the test-credentials button doesn't re-parse it on
     // every keystroke's recomposition (see ServerEditForm).
     val canSave = remember(state.baseUrl, state.certPin) { state.canSave }
+    val usernameFocus = remember { FocusRequester() }
+    val passwordFocus = remember { FocusRequester() }
+    // AuthFields only enters composition once the server is known to require credentials
+    // (AnimatedVisibility in ServerEditForm), so a Unit-keyed effect fires once on reveal
+    // and focuses the username — otherwise the user has to tap into it after the probe flips
+    // the auth fields open.
+    LaunchedEffect(Unit) {
+        runCatching { usernameFocus.requestFocus() }
+    }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(
             stringResource(R.string.auth_required),
@@ -316,7 +333,8 @@ private fun AuthFields(
             label = { Text(stringResource(R.string.username_optional)) },
             singleLine = true,
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
-            modifier = Modifier.fillMaxWidth().testTag("server_username"),
+            keyboardActions = KeyboardActions(onNext = { passwordFocus.requestFocus() }),
+            modifier = Modifier.fillMaxWidth().focusRequester(usernameFocus).testTag("server_username"),
         )
         OutlinedTextField(
             value = state.password,
@@ -334,7 +352,7 @@ private fun AuthFields(
             },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
             keyboardActions = KeyboardActions(onDone = { onImeDone() }),
-            modifier = Modifier.fillMaxWidth().testTag("server_password"),
+            modifier = Modifier.fillMaxWidth().focusRequester(passwordFocus).testTag("server_password"),
         )
         OutlinedButton(
             onClick = onTestCredentials,
@@ -377,9 +395,11 @@ private fun AdvancedSection(
     onUpdate: (((ServerEditState) -> ServerEditState)) -> Unit,
 ) {
     var expanded by rememberSaveable { mutableStateOf(state.requireHttps || state.certPin.isNotBlank()) }
+    val stateLabel = stringResource(if (expanded) R.string.state_expanded else R.string.state_collapsed)
     Column(modifier = Modifier.fillMaxWidth()) {
         TextButton(
             onClick = { expanded = !expanded },
+            modifier = Modifier.semantics { stateDescription = stateLabel },
             contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp),
         ) {
             Icon(
@@ -448,9 +468,11 @@ private fun SecurityFields(
 private fun DiscoverySection(onPick: (String) -> Unit, initiallyExpanded: Boolean = false) {
     val context = LocalContext.current
     var expanded by rememberSaveable { mutableStateOf(initiallyExpanded) }
+    val stateLabel = stringResource(if (expanded) R.string.state_expanded else R.string.state_collapsed)
     Column(modifier = Modifier.fillMaxWidth()) {
         TextButton(
             onClick = { expanded = !expanded },
+            modifier = Modifier.semantics { stateDescription = stateLabel },
             contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp),
         ) {
             Icon(Icons.Filled.Wifi, contentDescription = null, modifier = Modifier.size(18.dp))

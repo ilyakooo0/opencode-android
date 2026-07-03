@@ -2,4 +2,7 @@
 <resources>
     <color name="splash_background">#34548A</color>
     <color name="ic_launcher_background">#34548A</color>
+    <!-- Matches the Compose light colorScheme background so the pre-Compose window
+         doesn't flash a different shade than the UI paints. -->
+    <color name="window_background">#F6F7FB</color>
 </resources>

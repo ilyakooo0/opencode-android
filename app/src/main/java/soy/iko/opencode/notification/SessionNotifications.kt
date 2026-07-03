@@ -1,6 +1,8 @@
 package soy.iko.opencode.notification
 
 import android.annotation.SuppressLint
+import android.app.Notification
+import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
@@ -72,10 +74,6 @@ object SessionNotifications {
                 context, android.Manifest.permission.POST_NOTIFICATIONS,
             ) == android.content.pm.PackageManager.PERMISSION_GRANTED
 
-    /** Sanitize a session id before embedding it in the deep-link URI so characters like
-     *  /, ?, # can't inject path segments or query parameters. */
-    private fun safeId(sessionId: String): String = notifIdRegex.replace(sessionId, "")
-
     /** A PendingIntent that opens [sessionId] in the app when the notification body is tapped.
      *  [profileId] (the originating server) is embedded so a tap after the user has switched
      *  servers routes back to the server that ran the session, not whichever is active —
@@ -83,9 +81,12 @@ object SessionNotifications {
     private fun openSessionIntent(
         context: Context, sessionId: String, requestCode: Int, profileId: String?,
     ): PendingIntent {
+        // Sanitize the session id before embedding it in the deep-link URI so characters like
+        // /, ?, # can't inject path segments or query parameters.
+        val safeId = notifIdRegex.replace(sessionId, "")
         val openIntent = Intent(context, MainActivity::class.java).apply {
             action = Intent.ACTION_VIEW
-            data = android.net.Uri.parse("opencode://session/${safeId(sessionId)}")
+            data = android.net.Uri.parse("opencode://session/$safeId")
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
             profileId?.let { putExtra(NotificationActionReceiver.EXTRA_PROFILE_ID, it) }
         }
@@ -120,7 +121,7 @@ object SessionNotifications {
             PendingIntent.FLAG_UPDATE_CURRENT or mutableFlag(),
         )
         val replyAction = NotificationCompat.Action.Builder(
-            R.drawable.ic_launcher_foreground,
+            R.drawable.ic_action_reply,
             context.getString(R.string.notif_action_reply),
             replyPending,
         ).addRemoteInput(remoteInput).setAllowGeneratedReplies(true).build()
@@ -136,19 +137,20 @@ object SessionNotifications {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val markReadAction = NotificationCompat.Action.Builder(
-            R.drawable.ic_launcher_foreground,
+            R.drawable.ic_action_check,
             context.getString(R.string.notif_action_mark_read),
             markReadPending,
         ).build()
 
         val notification = NotificationCompat.Builder(context, NotificationChannels.COMPLETED)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setSmallIcon(R.drawable.ic_stat_notify)
             .setContentTitle(context.getString(R.string.notif_completed_title))
             // No % escaping here: getString(id, arg) inserts the argument verbatim and
             // never re-scans it for format specifiers, so escaping the title would show
             // literal doubled percent signs (e.g. a "50% done" title as "50%% done").
             .setContentText(context.getString(R.string.notif_completed_text, title))
             .setAutoCancel(true)
+            .setOnlyAlertOnce(true)
             .setContentIntent(openSessionIntent(context, sessionId, notifId, profileId))
             .addAction(replyAction)
             .addAction(markReadAction)
@@ -171,10 +173,10 @@ object SessionNotifications {
     @SuppressLint("MissingPermission")
     private fun postCompletedSummary(context: Context) {
         val summary = NotificationCompat.Builder(context, NotificationChannels.COMPLETED)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setSmallIcon(R.drawable.ic_stat_notify)
             .setContentTitle(context.getString(R.string.notif_completed_title))
             .setContentText(context.getString(R.string.app_name))
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setSmallIcon(R.drawable.ic_stat_notify)
             .setAutoCancel(true)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setGroup(GROUP_COMPLETED)
@@ -201,23 +203,29 @@ object SessionNotifications {
             ?: context.getString(R.string.notif_permission_fallback)
 
         val builder = NotificationCompat.Builder(context, NotificationChannels.PERMISSION)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setSmallIcon(R.drawable.ic_stat_notify)
             .setContentTitle(context.getString(R.string.notif_permission_title, sessionTitle))
             .setContentText(detail)
             .setStyle(NotificationCompat.BigTextStyle().bigText(detail))
             .setAutoCancel(true)
             .setContentIntent(openSessionIntent(context, sessionId, notifId, profileId))
-            .setCategory(NotificationCompat.CATEGORY_CALL)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setGroup(GROUP_PERMISSION)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setPublicVersion(
+                NotificationCompat.Builder(context, NotificationChannels.PERMISSION)
+                    .setSmallIcon(R.drawable.ic_stat_notify)
+                    .setContentTitle(context.getString(R.string.notif_permission_public))
+                    .build(),
+            )
 
         // One action per response. Each PendingIntent needs a distinct request code or
         // FLAG_UPDATE_CURRENT would collapse them into one (the last extras win).
         listOf(
-            PermissionResponse.ONCE to R.string.notif_action_allow_once,
-            PermissionResponse.ALWAYS to R.string.notif_action_always,
-            PermissionResponse.REJECT to R.string.notif_action_reject,
-        ).forEach { (response, labelRes) ->
+            Triple(PermissionResponse.ONCE, R.string.notif_action_allow_once, R.drawable.ic_action_check),
+            Triple(PermissionResponse.ALWAYS, R.string.notif_action_always, R.drawable.ic_action_check),
+            Triple(PermissionResponse.REJECT, R.string.notif_action_reject, R.drawable.ic_action_block),
+        ).forEach { (response, labelRes, iconRes) ->
             val intent = Intent(context, NotificationActionReceiver::class.java).apply {
                 action = NotificationActionReceiver.ACTION_PERMISSION
                 putExtra(NotificationActionReceiver.EXTRA_SESSION_ID, sessionId)
@@ -229,7 +237,7 @@ object SessionNotifications {
                 context, notifId + response.ordinal + 1, intent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             )
-            builder.addAction(R.drawable.ic_launcher_foreground, context.getString(labelRes), pending)
+            builder.addAction(iconRes, context.getString(labelRes), pending)
         }
 
         runCatching { NotificationManagerCompat.from(context).notify(notifId, builder.build()) }
@@ -246,15 +254,23 @@ object SessionNotifications {
         if (!canPost(context)) return
         val notifId = notifId(NS_ERROR, sessionId)
         val notification = NotificationCompat.Builder(context, NotificationChannels.ERROR)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setSmallIcon(R.drawable.ic_stat_notify)
             .setContentTitle(context.getString(R.string.notif_error_title))
             .setContentText(context.getString(R.string.notif_error_text, title))
             .setAutoCancel(true)
+            .setOnlyAlertOnce(true)
             .setContentIntent(openSessionIntent(context, sessionId, notifId, profileId))
             .setCategory(NotificationCompat.CATEGORY_ERROR)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             // Group error notifications so a burst of failures collapses into a stackable group.
             .setGroup(GROUP_ERROR)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setPublicVersion(
+                NotificationCompat.Builder(context, NotificationChannels.ERROR)
+                    .setSmallIcon(R.drawable.ic_stat_notify)
+                    .setContentTitle(context.getString(R.string.notif_error_public))
+                    .build(),
+            )
             .build()
         runCatching { NotificationManagerCompat.from(context).notify(notifId, notification) }
             .onFailure { Log.w(TAG, "Failed to post error notification", it) }
@@ -273,7 +289,7 @@ object SessionNotifications {
         }
         val notifId = notifId(NS_COMPLETED, sessionId)
         val notification = NotificationCompat.Builder(context, NotificationChannels.COMPLETED)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setSmallIcon(R.drawable.ic_stat_notify)
             .setContentTitle(context.getString(R.string.notif_reply_sent))
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
@@ -290,10 +306,11 @@ object SessionNotifications {
     @SuppressLint("MissingPermission")
     fun postReplyFailed(context: Context, sessionId: String, profileId: String? = null) {
         NotificationManagerCompat.from(context).cancel(notifId(NS_COMPLETED, sessionId))
+        maybeCancelSummary(context, GROUP_COMPLETED, SUMMARY_COMPLETED_ID)
         if (!canPost(context)) return
         val notifId = notifId(NS_ERROR, sessionId)
         val notification = NotificationCompat.Builder(context, NotificationChannels.ERROR)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setSmallIcon(R.drawable.ic_stat_notify)
             .setContentTitle(context.getString(R.string.notif_reply_failed_title))
             .setContentText(context.getString(R.string.notif_reply_failed_text))
             .setAutoCancel(true)
@@ -312,11 +329,13 @@ object SessionNotifications {
     /** Cancel a session's completion notification (e.g. when the user opens it). */
     fun cancel(context: Context, sessionId: String) {
         NotificationManagerCompat.from(context).cancel(notifId(NS_COMPLETED, sessionId))
+        maybeCancelSummary(context, GROUP_COMPLETED, SUMMARY_COMPLETED_ID)
     }
 
     /** Cancel a session's permission notification (on reply, or when the user opens it). */
     fun cancelPermission(context: Context, sessionId: String) {
         NotificationManagerCompat.from(context).cancel(notifId(NS_PERMISSION, sessionId))
+        maybeCancelSummary(context, GROUP_PERMISSION, SUMMARY_PERMISSION_ID)
     }
 
     /** Cancel a session's error notification (e.g. when the user opens it). Without this a
@@ -324,6 +343,31 @@ object SessionNotifications {
      *  than tapping the notification itself (setAutoCancel only clears it on a direct tap). */
     fun cancelError(context: Context, sessionId: String) {
         NotificationManagerCompat.from(context).cancel(notifId(NS_ERROR, sessionId))
+        maybeCancelSummary(context, GROUP_ERROR, SUMMARY_ERROR_ID)
+    }
+
+    /** Build the lock-screen (public) version of a notification: only a generic title, no
+     *  detail line, so sensitive file paths / commands in the real content aren't revealed
+     *  while the device is locked. */
+    /** When the last child of a group is dismissed, cancel its lingering summary so it
+     *  doesn't sit empty in the shade. NotificationManagerCompat lacks getActiveNotifications,
+     *  so reach for the platform NotificationManager. The children/summary are posted without
+     *  a tag, so matching by [android.app.Notification.getGroup] (plus excluding the summary
+     *  id) is the reliable way to tell if any child remains. */
+    private fun maybeCancelSummary(context: Context, group: String, summaryId: Int) {
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+            ?: return
+        val active = try {
+            nm.activeNotifications
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to query active notifications for summary cleanup", e)
+            return
+        }
+        val hasChild = active.any { it.id != summaryId && it.notification?.group == group }
+        if (!hasChild) {
+            runCatching { NotificationManagerCompat.from(context).cancel(summaryId) }
+                .onFailure { Log.w(TAG, "Failed to cancel empty group summary", it) }
+        }
     }
 
     private const val GROUP_COMPLETED = "soy.iko.opencode.COMPLETED"
@@ -339,7 +383,7 @@ object SessionNotifications {
     private fun postGroupSummary(context: Context, channelId: String, group: String, summaryId: Int) {
         if (!canPost(context)) return
         val summary = NotificationCompat.Builder(context, channelId)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setSmallIcon(R.drawable.ic_stat_notify)
             .setContentTitle(context.getString(R.string.app_name))
             .setAutoCancel(true)
             .setGroup(group)

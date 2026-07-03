@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Night variant: dark Material parent + dark windowBackground so the post-splash
+     window matches the Compose dark palette instead of flashing a light frame. -->
+<resources>
+    <style name="Theme.OpencodeAndroid" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/window_background</item>
+    </style>
+</resources>

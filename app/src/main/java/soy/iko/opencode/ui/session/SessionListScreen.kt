@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Link
@@ -284,6 +285,14 @@ fun SessionListScreen(
                         Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.more_options))
                     }
                     DropdownMenu(expanded = showMainMenu, onDismissRequest = { showMainMenu = false }) {
+                        // Only offer bulk mark-read when there's actually something unread.
+                        if (unread.isNotEmpty()) {
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.mark_all_read)) },
+                                leadingIcon = { Icon(Icons.Filled.DoneAll, contentDescription = null) },
+                                onClick = { showMainMenu = false; container.clearAllUnread() },
+                            )
+                        }
                         DropdownMenuItem(
                             text = { Text(stringResource(R.string.files)) },
                             leadingIcon = { Icon(Icons.Filled.Folder, contentDescription = null) },
@@ -491,23 +500,28 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
         )
         else -> Column(modifier = Modifier.fillMaxSize()) {
             val keyboardController = LocalSoftwareKeyboardController.current
-            OutlinedTextField(
-                value = state.query,
-                onValueChange = onQueryChange,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).testTag("session_search"),
-                label = { Text(stringResource(R.string.search_sessions)) },
-                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-                trailingIcon = if (state.query.isNotEmpty()) {
-                    {
-                        IconButton(onClick = { onQueryChange("") }) {
-                            Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.clear_search))
+            // Match the sibling screens' convention: hide the search field until the list is
+            // long enough that typing beats scanning by eye (NetworkConfig.sessionListSearchThreshold).
+            val showSearch = state.sessions.size >= NetworkConfig.sessionListSearchThreshold
+            if (showSearch) {
+                OutlinedTextField(
+                    value = state.query,
+                    onValueChange = onQueryChange,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).testTag("session_search"),
+                    label = { Text(stringResource(R.string.search_sessions)) },
+                    leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                    trailingIcon = if (state.query.isNotEmpty()) {
+                        {
+                            IconButton(onClick = { onQueryChange("") }) {
+                                Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.clear_search))
+                            }
                         }
-                    }
-                } else null,
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(onSearch = { keyboardController?.hide() }),
-            )
+                    } else null,
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(onSearch = { keyboardController?.hide() }),
+                )
+            }
             val sessions = remember(
                 state.sessions, state.query, state.previews,
                 state.pinnedIds, state.archivedIds, state.showArchived,
@@ -771,6 +785,21 @@ private fun RenameSessionDialog(
     )
 }
 
+@Composable
+private fun SessionTitle(text: String, unread: Boolean) {
+    // Unread is conveyed by both color AND weight so the distinction survives colorblindness /
+    // low-contrast themes, not color alone. Extracted from SessionCard to keep that function
+    // under the cyclomatic-complexity threshold.
+    Text(
+        text = text,
+        style = MaterialTheme.typography.titleMedium,
+        color = if (unread) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+        fontWeight = if (unread) FontWeight.SemiBold else FontWeight.Normal,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+    )
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SessionCard(
@@ -887,13 +916,7 @@ private fun SessionCard(
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
-                        Text(
-                            session.displayTitle,
-                            style = MaterialTheme.typography.titleMedium,
-                            color = if (unreadCount > 0) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
+                        SessionTitle(session.displayTitle, unreadCount > 0)
                     }
                     // Long-press the relative label to reveal the full absolute timestamp.
                     RelativeTimeText(

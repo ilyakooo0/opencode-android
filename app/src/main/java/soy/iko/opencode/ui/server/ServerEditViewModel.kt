@@ -97,14 +97,49 @@ fun isValidUrl(url: String): Boolean {
 
 /**
  * If [input] looks like a bare host (optionally with a port/path) and lacks a scheme,
- * return the suggested `http://`-prefixed form (only when it parses to a valid URL).
- * Lets the UI offer a one-tap fix instead of a generic "invalid URL" error.
+ * return a scheme-prefixed form (only when it parses to a valid URL). Lets the UI offer a
+ * one-tap fix instead of a generic "invalid URL" error.
+ *
+ * Picks `https://` for shapes that imply TLS by convention (explicit :443 port, or a
+ * public-looking domain with no port) so the quick-fix doesn't nudge users onto cleartext.
+ * Local/LAN hosts (localhost, private IP ranges, `*.local`) stay `http://` — the common
+ * `opencode serve` case over the LAN.
  */
 fun suggestUrlScheme(input: String): String? {
     val trimmed = input.trim()
     if (trimmed.isEmpty() || "://" in trimmed) return null
-    val candidate = "http://$trimmed"
+    val scheme = if (looksLikeTls(trimmed)) "https" else "http"
+    val candidate = "$scheme://$trimmed"
     return if (isValidUrl(candidate)) candidate else null
+}
+
+private fun looksLikeTls(input: String): Boolean {
+    val host = input.substringBefore('/').lowercase()
+    val hostNoPort = host.substringBefore(':')
+    val port = host.substringAfter(':', missingDelimiterValue = "")
+    if (port == "443") return true
+    if (port.isNotEmpty()) return false
+    if (hostNoPort == "localhost") return false
+    if (isPrivateHost(hostNoPort)) return false
+    // A dotless single-label host (e.g. an mDNS/Bonjour name on some setups) is ambiguous;
+    // keep cleartext as the LAN-friendly default rather than suggesting TLS.
+    if ('.' !in hostNoPort) return false
+    return true
+}
+
+private fun isPrivateHost(host: String): Boolean {
+    if (host.endsWith(".local")) return true
+    val octets = host.split('.')
+    if (octets.size == 4 && octets.all { it.toIntOrNull() in 0..255 }) {
+        val a = octets[0].toInt()
+        val b = octets[1].toInt()
+        if (a == 10) return true
+        if (a == 192 && b == 168) return true
+        if (a == 172 && b in 16..31) return true
+        if (a == 127) return true
+        if (a == 169 && b == 254) return true
+    }
+    return false
 }
 
 class ServerEditViewModel(
@@ -371,7 +406,7 @@ class ServerEditViewModel(
                     // stranded on an empty screen with no error.
                     val pingOk = runCatchingCancellable { container.activeConnection.value?.api?.ping() }.isSuccess
                     if (!pingOk) {
-                        throw java.io.IOException("Server reachable but did not respond to ping")
+                        throw java.io.IOException(container.string(R.string.error_ping_failed))
                     }
                 }
             }

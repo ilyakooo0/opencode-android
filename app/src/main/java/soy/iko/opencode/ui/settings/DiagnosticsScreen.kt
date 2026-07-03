@@ -9,12 +9,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -23,11 +20,16 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -39,10 +41,12 @@ import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
+import androidx.compose.material3.Surface
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -78,6 +82,8 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import soy.iko.opencode.R
 import soy.iko.opencode.data.network.NetworkConfig
@@ -211,6 +217,7 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                 EmptyState(
                     icon = Icons.Filled.BugReport,
                     title = stringResource(R.string.no_crash_reports),
+                    description = stringResource(R.string.no_crash_reports_desc),
                     modifier = Modifier.fillMaxWidth().padding(24.dp),
                 )
             } else {
@@ -220,6 +227,7 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                         crashQuery = it
                     }
                     items(filtered, key = { it.fileName }) { report ->
+                        var menuExpanded by remember { mutableStateOf(false) }
                         // Swipe end-to-start reveals a delete affordance. The delete is
                         // deferred for an undo window (matching the session/server lists);
                         // confirmValueChange snaps back so the row remains while the undo
@@ -296,6 +304,29 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                                 }) {
                                     Icon(Icons.Filled.Share, contentDescription = stringResource(R.string.share))
                                 }
+                                Box {
+                                    IconButton(onClick = { menuExpanded = true }) {
+                                        Icon(
+                                            Icons.Filled.MoreVert,
+                                            contentDescription = stringResource(R.string.more_options),
+                                        )
+                                    }
+                                    DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                                        DropdownMenuItem(
+                                            leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null) },
+                                            text = {
+                                                Text(
+                                                    stringResource(R.string.delete),
+                                                    color = MaterialTheme.colorScheme.error,
+                                                )
+                                            },
+                                            onClick = {
+                                                menuExpanded = false
+                                                pendingReportDelete = report.fileName
+                                            },
+                                        )
+                                    }
+                                }
                             }
                         }
                         HorizontalDivider()
@@ -320,86 +351,94 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
             if (loaded != null) reportContent = loaded else loadFailed = true
         }
         val content = reportContent
-        AlertDialog(
+        Dialog(
             onDismissRequest = { viewing = null },
-            confirmButton = {
-                TextButton(onClick = { viewing = null }) { Text(stringResource(R.string.close)) }
-            },
-            dismissButton = {
-                Row {
-                    TextButton(
-                        // Disable Copy until the report has loaded so it can't copy an empty body.
-                        enabled = content != null,
-                        onClick = {
-                            copyToClipboard(context, context.getString(R.string.crash_report), content.orEmpty())
-                        },
-                    ) { Text(stringResource(R.string.copy)) }
-                    Spacer(Modifier.size(8.dp))
-                    TextButton(
-                        // Disable Share until the report has loaded — otherwise tapping it
-                        // while the async read is still in flight (content == null) shares an
-                        // empty body instead of the report.
-                        enabled = content != null,
-                        onClick = {
-                            val send = Intent(Intent.ACTION_SEND).apply {
-                                type = "text/plain"
-                                putExtra(Intent.EXTRA_SUBJECT, shareSubject)
-                                putExtra(Intent.EXTRA_TEXT, content.orEmpty())
-                            }
-                            runCatchingCancellable { context.startActivity(Intent.createChooser(send, shareLabel)) }
-                                .onFailure {
-                                    Log.w("Diagnostics", "Failed to share crash report", it)
-                                    // FIX 20: "no app to share" only fits ActivityNotFoundException; other failures
-                                    // (e.g. an oversized report exceeding the Binder limit → TransactionTooLargeException)
-                                    // get a generic toast, not that misleading one.
-                                    val msg = if (it is ActivityNotFoundException) R.string.no_share_app else R.string.error_generic
-                                    showToast(context, context.getString(msg))
+            properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
+        ) {
+            Surface(modifier = Modifier.fillMaxSize()) {
+                Scaffold(
+                    topBar = {
+                        TopAppBar(
+                            title = { Text(stringResource(R.string.crash_report)) },
+                            navigationIcon = {
+                                IconButton(onClick = { viewing = null }) {
+                                    Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.close))
                                 }
-                        },
-                    ) { Text(stringResource(R.string.share)) }
-                    Spacer(Modifier.size(8.dp))
-                    TextButton(onClick = {
-                        // Confirm before deleting a single report, matching clear-all.
-                        pendingReportDelete = reportName
-                    }) { Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error) }
-                }
-            },
-            title = { Text(stringResource(R.string.crash_report)) },
-            text = {
-                when {
-                    content != null -> Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 400.dp)
-                            .verticalScroll(rememberScrollState()),
-                    ) {
-                        // Wrap in SelectionContainer so a user can select/copy just the
-                        // relevant stack snippet instead of the whole-report Copy button.
-                        SelectionContainer {
+                            },
+                            actions = {
+                                IconButton(
+                                    // Disable Copy until the report has loaded so it can't copy an empty body.
+                                    enabled = content != null,
+                                    onClick = {
+                                        copyToClipboard(context, context.getString(R.string.crash_report), content.orEmpty())
+                                    },
+                                ) { Icon(Icons.Filled.ContentCopy, contentDescription = stringResource(R.string.copy)) }
+                                IconButton(
+                                    // Disable Share until the report has loaded — otherwise tapping it
+                                    // while the async read is still in flight (content == null) shares an
+                                    // empty body instead of the report.
+                                    enabled = content != null,
+                                    onClick = {
+                                        val send = Intent(Intent.ACTION_SEND).apply {
+                                            type = "text/plain"
+                                            putExtra(Intent.EXTRA_SUBJECT, shareSubject)
+                                            putExtra(Intent.EXTRA_TEXT, content.orEmpty())
+                                        }
+                                        runCatchingCancellable { context.startActivity(Intent.createChooser(send, shareLabel)) }
+                                            .onFailure {
+                                                Log.w("Diagnostics", "Failed to share crash report", it)
+                                                // FIX 20: "no app to share" only fits ActivityNotFoundException; other failures
+                                                // (e.g. an oversized report exceeding the Binder limit → TransactionTooLargeException)
+                                                // get a generic toast, not that misleading one.
+                                                val msg = if (it is ActivityNotFoundException) R.string.no_share_app else R.string.error_generic
+                                                showToast(context, context.getString(msg))
+                                            }
+                                    },
+                                ) { Icon(Icons.Filled.Share, contentDescription = stringResource(R.string.share)) }
+                                IconButton(onClick = {
+                                    // Confirm before deleting a single report, matching clear-all.
+                                    pendingReportDelete = reportName
+                                }) { Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.delete)) }
+                            },
+                        )
+                    },
+                ) { padding ->
+                    when {
+                        content != null -> SelectionContainer {
+                            // Wrap in SelectionContainer so a user can select/copy just the
+                            // relevant stack snippet instead of the whole-report Copy button.
                             Text(
                                 content,
                                 style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .verticalScroll(rememberScrollState())
+                                    .padding(padding)
+                                    .padding(16.dp),
                             )
                         }
-                    }
-                    loadFailed -> Text(
-                        stringResource(R.string.report_load_failed),
-                        color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.padding(vertical = 24.dp),
-                    )
-                    else -> {
-                        val loadingLabel = stringResource(R.string.loading)
-                        Box(
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
+                        loadFailed -> Box(
+                            modifier = Modifier.fillMaxSize().padding(padding),
                             contentAlignment = Alignment.Center,
                         ) {
-                            CircularProgressIndicator(Modifier.semantics { contentDescription = loadingLabel })
+                            Text(
+                                stringResource(R.string.report_load_failed),
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                        else -> {
+                            val loadingLabel = stringResource(R.string.loading)
+                            Box(
+                                modifier = Modifier.fillMaxSize().padding(padding),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                CircularProgressIndicator(Modifier.semantics { contentDescription = loadingLabel })
+                            }
                         }
                     }
                 }
-            },
-        )
+            }
+        }
     }
 
     pendingReportDelete?.let { name ->

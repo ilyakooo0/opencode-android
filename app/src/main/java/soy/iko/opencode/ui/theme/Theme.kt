@@ -117,9 +117,12 @@ fun OpencodeTheme(
 ) {
     val context = LocalContext.current
     val colorScheme = when {
+        // AMOLED takes precedence over dynamic color: a user who explicitly chose pure-black
+        // surfaces wants OLED-black even with Material You on, rather than silently getting the
+        // wallpaper-derived palette (which left the AMOLED choice appearing to do nothing).
+        darkTheme && amoled -> AmoledColors
         dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ->
             if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-        darkTheme && amoled -> AmoledColors
         darkTheme -> DarkColors
         else -> LightColors
     }
@@ -127,7 +130,12 @@ fun OpencodeTheme(
     if (!view.isInEditMode) {
         SideEffect {
             val window = view.context.findActivity()?.window ?: return@SideEffect
-            WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = !darkTheme
+            val controller = WindowCompat.getInsetsController(window, view)
+            controller.isAppearanceLightStatusBars = !darkTheme
+            // Keep the navigation-bar icon/affordance contrast in sync with the status bar so
+            // 3-button-nav and gesture-nav devices don't end up with invisible controls on one
+            // theme. The system only guesses when this isn't set explicitly.
+            controller.isAppearanceLightNavigationBars = !darkTheme
         }
     }
     MaterialTheme(

@@ -276,6 +276,11 @@ open class AppContainer private constructor(
     /** Mark a session as read (clear its unread badge) — the "Mark read" notification action. */
     open fun markSessionRead(id: String) = clearUnread(id)
 
+    /** Clear every session's unread badge at once — the session list's "Mark all read" action. */
+    open fun clearAllUnread() {
+        _unread.update { emptyMap() }
+    }
+
     /** Restore a session's unread badge after a failed server switch reconnects.
      *  Preserves the prior [count] so a session badged with "5 unread" before the
      *  switch attempt still shows 5 (not 1) after the restore. No-op for the session
@@ -314,8 +319,18 @@ open class AppContainer private constructor(
             // Show only the HTTP status (e.g. 401, 404) — never the request URL,
             // which a ClientRequestException carries in its message and which we
             // promised not to leak (it can include auth or internal paths).
-            ErrorKind.CLIENT -> responseStatusCode(t)?.let { string(R.string.error_client_status, it) }
-                ?: string(R.string.error_generic)
+            ErrorKind.CLIENT -> {
+                val code = responseStatusCode(t)
+                when (code) {
+                    // Auth failures reuse the connection banner text: the request itself is
+                    // fine, the credentials aren't, so the fix is re-editing the profile —
+                    // not "request failed (401)" which implies an opaque program error.
+                    401, 403 -> string(R.string.connection_failed)
+                    404 -> string(R.string.error_not_found)
+                    else -> code?.let { string(R.string.error_client_status, it) }
+                        ?: string(R.string.error_generic)
+                }
+            }
             ErrorKind.UNKNOWN -> string(R.string.error_generic)
         }
 
@@ -483,8 +498,29 @@ open class AppContainer private constructor(
                     else -> false
                 }
                 if (permanent) {
-                    Log.w("AppContainer", "Dropping undeliverable outbox message ${msg.id} for ${msg.sessionId} (HTTP $status)")
+                    Log.w(
+                        "AppContainer",
+                        "Dropping undeliverable outbox message ${msg.id} for ${msg.sessionId} (HTTP $status): ${string(R.string.outbox_dropped_text)}",
+                    )
                     outboxStore.remove(msg.id)
+                    // Previously this silent drop only hit logcat, so the user got no signal
+                    // that their composed reply never landed. Surface it on the ERROR channel.
+                    // postError is the only public entry point that posts there; it renders a
+                    // fixed title/text and interpolates its title arg, so the localized
+                    // outbox_dropped_title is passed as that arg (a user-facing message rather
+                    // than an opaque session id). Tap routes back to the originating profile.
+                    val ctx = appContext
+                    if (ctx != null) {
+                        runCatchingCancellable {
+                            SessionNotifications.postError(
+                                ctx, msg.sessionId,
+                                string(R.string.outbox_dropped_title),
+                                conn.profile.id,
+                            )
+                        }.onFailure {
+                            Log.w("AppContainer", "outbox drop notification failed: ${safeExceptionSummary(it)}")
+                        }
+                    }
                 } else {
                     break
                 }

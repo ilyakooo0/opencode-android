@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Añadidos de UX de Ajustes (en un archivo dedicado para no editar strings.xml compartido). -->
+    <string name="restart">Reiniciar</string>
+    <string name="notification_settings">Ajustes de notificaciones</string>
+    <string name="could_not_open_link">No se pudo abrir el enlace</string>
+    <string name="dynamic_color_disabled_amoled">Se ignora con Negro AMOLED seleccionado</string>
+    <plurals name="app_lock_relock_hours">
+        <item quantity="one">%1$d hora</item>
+        <item quantity="other">%1$d horas</item>
+    </plurals>
+</resources>

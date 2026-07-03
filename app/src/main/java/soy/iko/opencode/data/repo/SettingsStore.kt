@@ -34,7 +34,7 @@ class SettingsStore(context: Context) {
         const val DEFAULT_CHAT_TEXT_SCALE = 1.0f
         /** 0 means re-lock the instant the app backgrounds. Other entries are the grace
          *  period (seconds) during which a quick app-switch does NOT re-prompt for auth. */
-        val APP_LOCK_RELOCK_OPTIONS_SECONDS: List<Int> = listOf(0, 30, 60, 300)
+        val APP_LOCK_RELOCK_OPTIONS_SECONDS: List<Int> = listOf(0, 30, 60, 300, 1800, 3600)
         const val DEFAULT_APP_LOCK_RELOCK_SECONDS = 0
     }
 

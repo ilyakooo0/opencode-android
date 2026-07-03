@@ -95,6 +95,7 @@
     <string name="directory_loading">Cargando directorios…</string>
     <string name="session_directory_desc">Directorio: %1$s</string>
     <string name="unread">Sin leer</string>
+    <string name="mark_all_read">Marcar todo leído</string>
     <string name="unread_count">%1$d sin leer</string>
     <string name="no_sessions_yet">Aún no hay sesiones</string>
     <string name="no_sessions_hint">Inicia una conversación con opencode.</string>
@@ -149,6 +150,7 @@
     <string name="error_timeout">La solicitud agotó el tiempo de espera. Comprueba la conexión e inténtalo de nuevo.</string>
     <string name="error_server">El servidor informó de un error. Inténtalo más tarde.</string>
     <string name="error_load_timeout">La carga tardó demasiado. Inténtalo de nuevo.</string>
+    <string name="error_ping_failed">Se pudo contactar con el servidor, pero no respondió. Comprueba la URL y la versión de opencode.</string>
     <string name="error_switch_and_restore_failed">No se pudo conectar con el nuevo servidor (%1$s), y tampoco se pudo restaurar el servidor anterior (%2$s).</string>
 
     <!-- Part renderer -->
@@ -203,6 +205,7 @@
     <string name="binary_file">Archivo binario — vista previa no compatible.</string>
     <string name="empty_folder">Esta carpeta está vacía</string>
     <string name="empty_file">Este archivo está vacío</string>
+    <string name="show_hidden">Mostrar ocultos</string>
     <string name="parent_dir">Directorio superior</string>
     <string name="folder">Carpeta: %1$s</string>
     <string name="file_label">Archivo: %1$s</string>
@@ -289,6 +292,7 @@
     <string name="unknown_part">Contenido no compatible</string>
     <string name="tool_preview">🔧 %1$s</string>
     <string name="suggest_scheme">Añadir prefijo http://</string>
+    <string name="suggest_scheme_https">Añadir prefijo https://</string>
     <string name="sort">Ordenar</string>
     <string name="sort_recent">Actividad reciente</string>
     <string name="sort_title">Título</string>
@@ -420,9 +424,9 @@
     <!-- Message actions -->
     <string name="message_actions">Acciones del mensaje</string>
     <string name="quote_reply">Responder citando</string>
-    <string name="branch_session">Ramificar en sesión nueva</string>
-    <string name="branch_created">Ramificado en una sesión nueva</string>
-    <string name="branch_failed">No se pudo ramificar la sesión</string>
+    <string name="branch_session">Iniciar sesión nueva desde aquí</string>
+    <string name="branch_created">Se inició una sesión nueva desde este mensaje</string>
+    <string name="branch_failed">No se pudo iniciar una sesión nueva</string>
 
     <!-- Offline outbox -->
     <string name="outbox_queued">Sin conexión: mensaje en cola, se enviará al reconectar</string>
@@ -543,6 +547,10 @@
 
     <!-- File view -->
     <string name="switch_to_raw_to_search">Cambia a Sin formato para buscar</string>
+    <string name="go_to_line">Ir a la línea</string>
+    <string name="go_to_line_hint">Número de línea (1–%1$d)</string>
+    <string name="match_case">Coincidir mayúsculas</string>
+    <string name="share_full_file">Compartir archivo completo</string>
 
     <!-- Settings backup/restore -->
     <string name="import_confirm_title">¿Reemplazar todos los datos?</string>

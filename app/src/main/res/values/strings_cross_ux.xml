@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Cross-cutting UX: differentiated 4xx messages + outbox permanent-drop surfacing. -->
+    <string name="error_not_found">Not found — it may have been deleted.</string>
+    <string name="outbox_dropped_title">Message couldn\'t be sent</string>
+    <string name="outbox_dropped_text">A queued reply couldn\'t be delivered — the session may have been deleted.</string>
+</resources>

@@ -56,7 +56,8 @@ fun TwoPaneSessionChat(
     // Bumped by the empty-detail "New session" button to open the left pane's new-session
     // directory picker (the same dialog the FAB uses) instead of creating a directory-less
     // session; the created session then opens into the detail pane via onOpenSession.
-    var newSessionTrigger by remember { mutableStateOf(0) }
+    // Saveable so a rotation between the tap and the dialog-opening effect doesn't drop it.
+    var newSessionTrigger by rememberSaveable { mutableStateOf(0) }
     val pendingOpenSession by container.pendingOpenSession.collectAsStateWithLifecycle()
     val pendingShare by container.pendingShare.collectAsStateWithLifecycle()
     val activeConnection by container.activeConnection.collectAsStateWithLifecycle()

@@ -58,18 +58,23 @@ class RunForegroundService : Service() {
         return START_NOT_STICKY
     }
 
-    private fun buildNotification(sessionTitle: String?, sessionId: String?, progress: String? = null): Notification {
+    private fun mainContentIntent(): PendingIntent {
         // Tapping the notification opens the app so the user can see the running session.
         val openIntent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
-        val pendingIntent = PendingIntent.getActivity(
+        return PendingIntent.getActivity(
             this, 0, openIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
+    }
+
+    private fun buildNotification(sessionTitle: String?, sessionId: String?, progress: String? = null): Notification {
+        val pendingIntent = mainContentIntent()
         val contentText = progress ?: sessionTitle ?: getString(R.string.notif_running_text)
         val builder = NotificationCompat.Builder(this, NotificationChannels.STATUS)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setSmallIcon(R.drawable.ic_stat_notify)
+            .setColor(BRAND_COLOR)
             .setContentTitle(getString(R.string.notif_running_title))
             .setContentText(contentText)
             .setContentIntent(pendingIntent)
@@ -94,7 +99,7 @@ class RunForegroundService : Service() {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             )
             builder.addAction(
-                R.drawable.ic_launcher_foreground,
+                R.drawable.ic_action_stop,
                 getString(R.string.notif_action_stop),
                 stopPending,
             )
@@ -126,9 +131,11 @@ class RunForegroundService : Service() {
     private fun postTimeoutNotification() {
         runCatching {
             val notification = NotificationCompat.Builder(this, NotificationChannels.STATUS)
-                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setSmallIcon(R.drawable.ic_stat_notify)
+                .setColor(BRAND_COLOR)
                 .setContentTitle(getString(R.string.notif_running_title))
                 .setContentText(getString(R.string.notif_fg_timeout_text))
+                .setContentIntent(mainContentIntent())
                 .setAutoCancel(true)
                 .setPriority(NotificationCompat.PRIORITY_LOW)
                 .build()
@@ -149,6 +156,8 @@ class RunForegroundService : Service() {
         private const val TAG = "RunForegroundService"
         private const val NOTIF_ID = 1
         private const val NOTIF_TIMEOUT_ID = 2
+        // Brand accent for the foreground notifications' small-icon tint circle.
+        private val BRAND_COLOR = 0xFF34548A.toInt()
         const val EXTRA_SESSION_TITLE = "soy.iko.opencode.extra.SESSION_TITLE"
         const val EXTRA_SESSION_ID = "soy.iko.opencode.extra.SESSION_ID"
         const val EXTRA_PROGRESS = "soy.iko.opencode.extra.PROGRESS"

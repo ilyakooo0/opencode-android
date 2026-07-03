@@ -1,7 +1,9 @@
 package soy.iko.opencode.ui.settings
 
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -16,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
@@ -24,25 +27,31 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Hub
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.QueryStats
 import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MenuAnchorType
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -182,6 +191,8 @@ fun SettingsScreen(
     val exportedMsg = stringResource(R.string.backup_exported)
     val exportFailedMsg = stringResource(R.string.backup_export_failed)
     val importedMsg = stringResource(R.string.backup_imported)
+    val restartLabel = stringResource(R.string.restart)
+    val couldNotOpenLinkMsg = stringResource(R.string.could_not_open_link)
     val importFailedMsg = stringResource(R.string.backup_import_failed)
     val exportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/json"),
@@ -224,7 +235,15 @@ fun SettingsScreen(
         },
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
-        Column(modifier = Modifier.padding(padding).widthIn(max = 600.dp).verticalScroll(rememberScrollState()).padding(16.dp)) {
+        Column(
+            modifier = Modifier
+                .padding(padding)
+                .fillMaxWidth()
+                .wrapContentWidth(Alignment.CenterHorizontally)
+                .widthIn(max = 600.dp)
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp),
+        ) {
             val s = settings
             Text(
                 stringResource(R.string.appearance),
@@ -248,11 +267,13 @@ fun SettingsScreen(
                 // Dynamic color (Material You) only works on Android 12+, so hide the toggle
                 // on older devices instead of offering a control that silently does nothing.
                 if (dynamicColorAvailable) {
+                    val amoledActive = s.themeMode == ThemeMode.AMOLED
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .toggleable(
                                 value = s.dynamicColor,
+                                enabled = !amoledActive,
                                 onValueChange = { scope.launch { runCatchingCancellable { container.settingsStore.setDynamicColor(it) } } },
                                 role = Role.Switch,
                             )
@@ -266,10 +287,18 @@ fun SettingsScreen(
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
+                            if (amoledActive) {
+                                Text(
+                                    stringResource(R.string.dynamic_color_disabled_amoled),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                         }
                         Switch(
                             checked = s.dynamicColor,
                             onCheckedChange = null,
+                            enabled = !amoledActive,
                         )
                     }
                 }
@@ -468,6 +497,21 @@ fun SettingsScreen(
                 enabled = activeProfile != null,
                 onClick = onOpenMcp,
             )
+            NavRow(
+                icon = Icons.Filled.Notifications,
+                label = stringResource(R.string.notification_settings),
+                enabled = true,
+                onClick = {
+                    scope.launch {
+                        val opened = runCatchingCancellable {
+                            val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                                .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                            context.startActivity(intent)
+                        }.isSuccess
+                        if (!opened) snackbar.showSnackbar(couldNotOpenLinkMsg)
+                    }
+                },
+            )
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
 
@@ -583,7 +627,17 @@ fun SettingsScreen(
                                 ?: error("no input stream")
                             container.backupManager.import(text)
                         }.isSuccess
-                        snackbar.showSnackbar(if (ok) importedMsg else importFailedMsg)
+                        if (ok) {
+                            val result = snackbar.showSnackbar(
+                                message = importedMsg,
+                                actionLabel = restartLabel,
+                            )
+                            if (result == SnackbarResult.ActionPerformed) {
+                                android.os.Process.killProcess(android.os.Process.myPid())
+                            }
+                        } else {
+                            snackbar.showSnackbar(importFailedMsg)
+                        }
                     }
                 }) { Text(stringResource(R.string.import_confirm_replace), color = MaterialTheme.colorScheme.error) }
             },
@@ -808,36 +862,38 @@ private fun Badge(count: Int) {
 /** Dropdown selecting how long after backgrounding the app re-locks. Only shown when app lock
  *  is on. The grace period avoids a re-prompt on every quick app-switch (the most common reason
  *  users disable biometric locks), while still re-locking immediately by default. */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AppLockReLockSelector(seconds: Int, onSelect: (Int) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
-    val label = relockLabel(seconds)
-    Row(
+    ExposedDropdownMenuBox(
+        expanded = expanded,
+        onExpandedChange = { expanded = it },
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 56.dp, top = 4.dp)
-            .clickable(role = Role.Button) { expanded = true },
-        verticalAlignment = Alignment.CenterVertically,
+            .padding(start = 56.dp, top = 4.dp),
     ) {
-        Text(
-            stringResource(R.string.app_lock_relock),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.weight(1f),
+        OutlinedTextField(
+            value = relockLabel(seconds),
+            onValueChange = {},
+            readOnly = true,
+            singleLine = true,
+            label = { Text(stringResource(R.string.app_lock_relock)) },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            modifier = Modifier
+                .menuAnchor(MenuAnchorType.PrimaryNotEditable, true)
+                .fillMaxWidth(),
         )
-        Text(label, style = MaterialTheme.typography.bodyMedium)
-        Icon(
-            Icons.Filled.ArrowDropDown,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-    androidx.compose.material3.DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-        SettingsStore.APP_LOCK_RELOCK_OPTIONS_SECONDS.forEach { option ->
-            androidx.compose.material3.DropdownMenuItem(
-                text = { Text(relockLabel(option)) },
-                onClick = { expanded = false; onSelect(option) },
-            )
+        ExposedDropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+        ) {
+            SettingsStore.APP_LOCK_RELOCK_OPTIONS_SECONDS.forEach { option ->
+                DropdownMenuItem(
+                    text = { Text(relockLabel(option)) },
+                    onClick = { expanded = false; onSelect(option) },
+                )
+            }
         }
     }
 }
@@ -846,8 +902,12 @@ private fun AppLockReLockSelector(seconds: Int, onSelect: (Int) -> Unit) {
 private fun relockLabel(seconds: Int): String = when {
     seconds <= 0 -> stringResource(R.string.app_lock_relock_immediately)
     seconds < 60 -> pluralStringResource(R.plurals.app_lock_relock_seconds, seconds, seconds)
-    else -> {
+    seconds < 3600 -> {
         val mins = seconds / 60
         pluralStringResource(R.plurals.app_lock_relock_minutes, mins, mins)
+    }
+    else -> {
+        val hours = seconds / 3600
+        pluralStringResource(R.plurals.app_lock_relock_hours, hours, hours)
     }
 }

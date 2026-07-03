@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Settings UX additions (kept in a dedicated file to avoid editing the shared strings.xml). -->
+    <string name="restart">Restart</string>
+    <string name="notification_settings">Notification settings</string>
+    <string name="could_not_open_link">Couldn\'t open link</string>
+    <string name="dynamic_color_disabled_amoled">Ignored while AMOLED Black is selected</string>
+    <plurals name="app_lock_relock_hours">
+        <item quantity="one">%1$d hour</item>
+        <item quantity="other">%1$d hours</item>
+    </plurals>
+</resources>

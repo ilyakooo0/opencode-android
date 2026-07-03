@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -30,6 +31,7 @@ import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Article
 import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -266,11 +268,19 @@ private fun Breadcrumbs(path: String, onNavigate: (String) -> Unit, modifier: Mo
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             val target = acc
+            // Cap each segment's width so a single long folder name (e.g. a lengthy monorepo
+            // directory) doesn't push its siblings and the current folder off the screeen.
+            // The deepest segment gets a larger cap since it's the one the user navigated to
+            // and the auto-scroll keeps it in view.
+            val segMaxWidth = if (index == segments.lastIndex) 220.dp else 120.dp
             Text(
                 segment,
                 style = MaterialTheme.typography.bodyMedium,
                 color = if (index == segments.lastIndex) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.primary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
                 modifier = Modifier
+                    .widthIn(max = segMaxWidth)
                     .clickable(role = Role.Button) { onNavigate(target) }
                     .defaultMinSize(minHeight = 48.dp)
                     .padding(horizontal = 6.dp, vertical = 14.dp),
@@ -500,10 +510,17 @@ private fun DirectoryListing(
     // Sort preference for the directory listing. Folders-first + name sort is the most useful
     // default; the toggle flips between folders-first name sort and the server's raw order.
     var foldersFirst by rememberSaveable { mutableStateOf(true) }
-    val sorted = remember(state.entries, foldersFirst) {
-        if (!foldersFirst) state.entries
+    // Hidden-files preference. The server may already include dotfiles in its listing; this
+    // hides them by default (the common case for browsing a repo) and lets the user reveal
+    // .env / .git / .opencode on demand. Default off so the listing isn't cluttered.
+    var showHidden by rememberSaveable { mutableStateOf(false) }
+    val visible = remember(state.entries, showHidden) {
+        if (showHidden) state.entries else state.entries.filterNot { it.name.startsWith(".") }
+    }
+    val sorted = remember(visible, foldersFirst) {
+        if (!foldersFirst) visible
         else {
-            val (dirs, files) = state.entries.partition { it.isDirectory }
+            val (dirs, files) = visible.partition { it.isDirectory }
             dirs.sortedBy { it.name.lowercase() } + files.sortedBy { it.name.lowercase() }
         }
     }
@@ -517,9 +534,14 @@ private fun DirectoryListing(
         item(key = "__sort") {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(end = 8.dp, top = 2.dp, bottom = 2.dp),
-                horizontalArrangement = Arrangement.End,
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                androidx.compose.material3.FilterChip(
+                    selected = showHidden,
+                    onClick = { showHidden = !showHidden },
+                    label = { Text(stringResource(R.string.show_hidden), style = MaterialTheme.typography.labelSmall) },
+                )
                 androidx.compose.material3.FilterChip(
                     selected = foldersFirst,
                     onClick = { foldersFirst = !foldersFirst },
@@ -623,6 +645,14 @@ private fun FileRow(
             }
         }
         if (status != null) StatusBadge(status)
+        // Explicit overflow button so "Copy path" is reachable without a long-press (which
+        // isn't available to TalkBack/keyboard users or anyone who can't hold the gesture).
+        // Rendered only when the row supplies an onCopyPath (the parent ".." row does not).
+        if (onCopyPath != null) {
+            IconButton(onClick = { menu = true }) {
+                Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.more_options))
+            }
+        }
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
             DropdownMenuItem(
                 leadingIcon = { Icon(Icons.Filled.Link, contentDescription = null) },

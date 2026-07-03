@@ -104,6 +104,7 @@
     <string name="directory_loading">Loading directories…</string>
     <string name="session_directory_desc">Directory: %1$s</string>
     <string name="unread">Unread</string>
+    <string name="mark_all_read">Mark all read</string>
     <string name="unread_count">%1$d unread</string>
     <string name="no_sessions_yet">No sessions yet</string>
     <string name="no_sessions_hint">Start a conversation with opencode.</string>
@@ -158,6 +159,7 @@
     <string name="error_timeout">The request timed out. Check the connection and try again.</string>
     <string name="error_server">The server reported an error. Try again later.</string>
     <string name="error_load_timeout">Loading took too long. Try again.</string>
+    <string name="error_ping_failed">Server was reachable but did not respond. Check the URL and opencode version.</string>
     <string name="error_switch_and_restore_failed">Could not connect to the new server (%1$s), and restoring the previous server also failed (%2$s).</string>
 
     <!-- Part renderer -->
@@ -212,6 +214,7 @@
     <string name="binary_file">Binary file — preview not supported.</string>
     <string name="empty_folder">This folder is empty</string>
     <string name="empty_file">This file is empty</string>
+    <string name="show_hidden">Show hidden</string>
     <string name="parent_dir">Parent directory</string>
     <string name="folder">Folder: %1$s</string>
     <string name="file_label">File: %1$s</string>
@@ -298,6 +301,7 @@
     <string name="unknown_part">Unsupported content</string>
     <string name="tool_preview">🔧 %1$s</string>
     <string name="suggest_scheme">Add http:// prefix</string>
+    <string name="suggest_scheme_https">Add https:// prefix</string>
     <string name="sort">Sort</string>
     <string name="sort_recent">Recent activity</string>
     <string name="sort_title">Title</string>
@@ -442,9 +446,9 @@
     <!-- Message actions -->
     <string name="message_actions">Message actions</string>
     <string name="quote_reply">Quote reply</string>
-    <string name="branch_session">Branch new session</string>
-    <string name="branch_created">Branched to a new session</string>
-    <string name="branch_failed">Couldn\'t branch session</string>
+    <string name="branch_session">Start new session from here</string>
+    <string name="branch_created">Started a new session from this message</string>
+    <string name="branch_failed">Couldn\'t start a new session</string>
 
     <!-- Offline outbox -->
     <string name="outbox_queued">Offline — message queued, will send when reconnected</string>
@@ -565,6 +569,10 @@
 
     <!-- File view -->
     <string name="switch_to_raw_to_search">Switch to Raw to search</string>
+    <string name="go_to_line">Go to line</string>
+    <string name="go_to_line_hint">Line number (1–%1$d)</string>
+    <string name="match_case">Match case</string>
+    <string name="share_full_file">Share full file</string>
 
     <!-- Settings backup/restore -->
     <string name="import_confirm_title">Replace all data?</string>

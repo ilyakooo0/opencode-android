@@ -27,6 +27,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -40,6 +41,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -76,6 +78,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
@@ -141,6 +144,13 @@ fun FileViewScreen(
     var wrap by rememberSaveable(path) { mutableStateOf(codeWrap) }
     val listState = rememberLazyListState()
     val rawText = state.content?.content.orEmpty()
+    // Directory portion of the path, shown under the filename in the top bar so a user who
+    // has drilled into a deep workspace keeps context of where this file lives.
+    val pathSubtitle = remember(path) {
+        val trimmed = path.trimEnd('/')
+        val parent = trimmed.substringBeforeLast('/', "")
+        parent.ifBlank { path }
+    }
     // Split the raw text exactly once here (the line viewer and find-in-file both consume this
     // list) and cap it so a huge file doesn't get split twice or overwhelm the LazyColumn.
     val allLines = remember(rawText) { rawText.split("\n") }
@@ -158,6 +168,9 @@ fun FileViewScreen(
         lineCount = lines.size,
         listState = listState,
     )
+    // Find-in-file match-case toggle (default case-insensitive). Persisted so a rotation keeps
+    // the choice, and applied to the off-thread match scan below.
+    var caseSensitive by rememberSaveable(path) { mutableStateOf(false) }
     // Debounce the query so each keystroke doesn't trigger a full-file scan, and run the
     // scan on Dispatchers.Default so a large file doesn't jank the keyboard while typing.
     var debouncedFind by remember { mutableStateOf("") }
@@ -165,11 +178,13 @@ fun FileViewScreen(
         val q = findQuery.trim()
         if (q.isEmpty()) debouncedFind = "" else { delay(150); debouncedFind = q }
     }
-    val matchIndices by produceState(emptyList<Int>(), lines, debouncedFind) {
+    val matchIndices by produceState(emptyList<Int>(), lines, debouncedFind, caseSensitive) {
         val q = debouncedFind
         value = if (q.isEmpty()) emptyList()
         else withContext(Dispatchers.Default) {
-            lines.mapIndexedNotNull { index, line -> index.takeIf { line.contains(q, ignoreCase = true) } }
+            lines.mapIndexedNotNull { index, line ->
+                index.takeIf { line.contains(q, ignoreCase = !caseSensitive) }
+            }
         }
     }
     // Keep the current match index in range when the match set shrinks (e.g. the file
@@ -181,10 +196,19 @@ fun FileViewScreen(
     LaunchedEffect(matchPos, matchIndices) {
         matchIndices.getOrNull(matchPos)?.let { idx -> runCatchingCancellable { listState.animateScrollToItem(idx) } }
     }
+    // "Go to line" dialog state. Clears the jump highlight and scrolls the LazyColumn to the
+    // requested line (clamped to the rendered range) when the user confirms.
+    var showGoToLine by rememberSaveable(path) { mutableStateOf(false) }
+    fun goToLine(n: Int) {
+        val target = (n - 1).coerceIn(0, (lines.size - 1).coerceAtLeast(0))
+        highlightLine.value = null
+        scope.launch { runCatchingCancellable { listState.animateScrollToItem(target) } }
+    }
     Scaffold(
         topBar = {
             FileViewTopBar(
                 filename = filename,
+                subtitle = pathSubtitle,
                 loading = state.loading,
                 content = rawText,
                 wrap = wrap,
@@ -203,6 +227,7 @@ fun FileViewScreen(
                     }
                 },
                 onToggleWrap = { wrap = !wrap },
+                onGoToLine = { showGoToLine = true },
                 onCopy = { copyToClipboard(context, filename, rawText) },
                 onCopyPath = { copyToClipboard(context, context.getString(R.string.clip_label_path), path) },
                 onShare = {
@@ -270,11 +295,81 @@ fun FileViewScreen(
                     highlightLineIndex = highlightLine.value,
                     listState = listState,
                     onRetry = { vm.reload() },
+                    caseSensitive = caseSensitive,
+                    onToggleCaseSensitive = { caseSensitive = !caseSensitive },
+                    onShareFull = {
+                        val send = Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(Intent.EXTRA_SUBJECT, filename)
+                            putExtra(Intent.EXTRA_TEXT, rawText)
+                        }
+                        runCatchingCancellable { context.startActivity(Intent.createChooser(send, shareLabel)) }
+                            .onFailure { scope.launch { snackbar.showSnackbar(context.getString(R.string.no_share_app)) } }
+                    },
                 )
             }
             }
         }
     }
+
+    GoToLineLauncher(
+        visible = showGoToLine,
+        maxLine = lines.size,
+        onConfirm = { n -> showGoToLine = false; goToLine(n) },
+        onDismiss = { showGoToLine = false },
+    )
+}
+
+// Wraps the go-to-line dialog's visibility gate so the branch stays out of FileViewScreen
+// (keeping that composable under the cyclomatic-complexity threshold).
+@Composable
+private fun GoToLineLauncher(
+    visible: Boolean,
+    maxLine: Int,
+    onConfirm: (Int) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    if (visible) {
+        GoToLineDialog(maxLine = maxLine, onConfirm = onConfirm, onDismiss = onDismiss)
+    }
+}
+
+@Composable
+private fun GoToLineDialog(maxLine: Int, onConfirm: (Int) -> Unit, onDismiss: () -> Unit) {
+    var text by rememberSaveable { mutableStateOf("") }
+    val parsed = text.trim().toIntOrNull()
+    val valid = parsed != null && parsed >= 1
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.go_to_line)) },
+        text = {
+            OutlinedTextField(
+                value = text,
+                onValueChange = { v -> text = v.filter { it.isDigit() } },
+                singleLine = true,
+                isError = text.isNotEmpty() && !valid,
+                supportingText = {
+                    Text(
+                        stringResource(R.string.go_to_line_hint, maxLine),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                },
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Number,
+                    imeAction = ImeAction.Done,
+                ),
+                keyboardActions = KeyboardActions(onDone = { parsed?.let { onConfirm(it) } }),
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { parsed?.let { onConfirm(it) } }, enabled = valid) {
+                Text(stringResource(R.string.go_to_line))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
+        },
+    )
 }
 
 // Owns the "jump to a line from a search hit" behaviour: scroll to the target once the raw
@@ -312,6 +407,7 @@ private fun rememberJumpToLineHighlight(
 @Composable
 private fun FileViewTopBar(
     filename: String,
+    subtitle: String,
     loading: Boolean,
     content: String,
     wrap: Boolean,
@@ -320,12 +416,29 @@ private fun FileViewTopBar(
     onReload: () -> Unit,
     onToggleFind: () -> Unit,
     onToggleWrap: () -> Unit,
+    onGoToLine: () -> Unit,
     onCopy: () -> Unit,
     onCopyPath: () -> Unit,
     onShare: () -> Unit,
 ) {
     TopAppBar(
-        title = { Text(filename, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        title = {
+            // Two-line title: filename (primary) + the directory portion of the path
+            // (secondary), so a file opened from deep in a workspace keeps its location
+            // visible without an extra breadcrumb row.
+            Column {
+                Text(filename, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (subtitle.isNotBlank()) {
+                    Text(
+                        subtitle,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        },
         navigationIcon = {
             IconButton(onClick = onBack) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
@@ -365,6 +478,11 @@ private fun FileViewTopBar(
                     // Wrap long lines instead of horizontal-scrolling; useful for prose. Disabled
                     // in diff mode because DiffView ignores wrap, so an active-looking toggle there
                     // would be a silent no-op.
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.go_to_line)) },
+                        onClick = { onGoToLine(); menuExpanded = false },
+                        leadingIcon = { Icon(Icons.Filled.KeyboardArrowDown, contentDescription = null) },
+                    )
                     DropdownMenuItem(
                         text = { Text(stringResource(R.string.wrap_lines)) },
                         onClick = { onToggleWrap(); menuExpanded = false },
@@ -419,6 +537,9 @@ private fun BoxScope.FileViewStateContent(
     highlightLineIndex: Int?,
     listState: LazyListState,
     onRetry: () -> Unit,
+    onShareFull: () -> Unit,
+    caseSensitive: Boolean,
+    onToggleCaseSensitive: () -> Unit,
 ) {
     when {
         // Full-screen spinner only on the initial load (no content yet). A reload keeps the
@@ -461,6 +582,9 @@ private fun BoxScope.FileViewStateContent(
             truncated = truncated,
             highlightLineIndex = highlightLineIndex,
             listState = listState,
+            onShareFull = onShareFull,
+            caseSensitive = caseSensitive,
+            onToggleCaseSensitive = onToggleCaseSensitive,
         )
     }
 }
@@ -485,6 +609,9 @@ private fun BoxScope.FileViewContentBody(
     truncated: Boolean,
     highlightLineIndex: Int?,
     listState: LazyListState,
+    onShareFull: () -> Unit,
+    caseSensitive: Boolean,
+    onToggleCaseSensitive: () -> Unit,
 ) {
     // Overlay bar: stacks the diff/raw chips and the find bar at the top so both stay
     // reachable while scrolling. Each contributes a top inset so the content below
@@ -543,6 +670,8 @@ private fun BoxScope.FileViewContentBody(
                     onPrev = onPrev,
                     onNext = onNext,
                     onClose = onCloseFind,
+                    caseSensitive = caseSensitive,
+                    onToggleCaseSensitive = onToggleCaseSensitive,
                 )
             }
         }
@@ -575,6 +704,7 @@ private fun BoxScope.FileViewContentBody(
                 matchIndices = matchIndices,
                 highlightLineIndex = highlightLineIndex,
                 listState = listState,
+                onShareFull = onShareFull,
             )
         }
     }
@@ -589,8 +719,11 @@ private fun FindBar(
     onPrev: () -> Unit,
     onNext: () -> Unit,
     onClose: () -> Unit,
+    caseSensitive: Boolean,
+    onToggleCaseSensitive: () -> Unit,
 ) {
     val keyboardController = LocalSoftwareKeyboardController.current
+    val matchCaseLabel = stringResource(R.string.match_case)
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -604,22 +737,33 @@ private fun FindBar(
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
             keyboardActions = KeyboardActions(onSearch = { keyboardController?.hide() }),
             trailingIcon = {
-                val countText = if (query.isBlank()) ""
-                else if (matchCount == 0) stringResource(R.string.no_matches_in_file)
-                else stringResource(R.string.match_count, matchPos + 1, matchCount)
-                if (countText.isNotEmpty()) {
-                    // Use error color for "no matches" so the zero-result state is
-                    // distinguishable from a positive match count at a glance.
-                    val color = if (query.isNotBlank() && matchCount == 0) MaterialTheme.colorScheme.error
-                        else MaterialTheme.colorScheme.onSurfaceVariant
-                    Text(
-                        countText,
-                        // labelMedium (not labelSmall) so the counter is legible for low-vision
-                        // users at large font scales; the error color still distinguishes zero
-                        // matches at a glance.
-                        style = MaterialTheme.typography.labelMedium,
-                        color = color,
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    // Case-sensitivity toggle. A small "Aa" chip keeps the bar compact while
+                    // surfacing a previously substring-only, always-case-insensitive search.
+                    FilterChip(
+                        selected = caseSensitive,
+                        onClick = onToggleCaseSensitive,
+                        label = { Text("Aa", style = MaterialTheme.typography.labelSmall) },
+                        modifier = Modifier.semantics { contentDescription = matchCaseLabel },
                     )
+                    Spacer(Modifier.size(8.dp))
+                    val countText = if (query.isBlank()) ""
+                    else if (matchCount == 0) stringResource(R.string.no_matches_in_file)
+                    else stringResource(R.string.match_count, matchPos + 1, matchCount)
+                    if (countText.isNotEmpty()) {
+                        // Use error color for "no matches" so the zero-result state is
+                        // distinguishable from a positive match count at a glance.
+                        val color = if (query.isNotBlank() && matchCount == 0) MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.onSurfaceVariant
+                        Text(
+                            countText,
+                            // labelMedium (not labelSmall) so the counter is legible for low-vision
+                            // users at large font scales; the error color still distinguishes zero
+                            // matches at a glance.
+                            style = MaterialTheme.typography.labelMedium,
+                            color = color,
+                        )
+                    }
                 }
             },
         )
@@ -646,6 +790,7 @@ private fun FileTextContent(
     matchIndices: List<Int>,
     highlightLineIndex: Int?,
     listState: LazyListState,
+    onShareFull: () -> Unit,
 ) {
     // Honor the user's chat text-size preference (the same one the chat markdown honors) so
     // a user who bumped the scale for readability gets the same scale in the code viewer.
@@ -674,49 +819,67 @@ private fun FileTextContent(
     MaterialTheme(typography = scaled) {
         Column(modifier = Modifier.fillMaxSize().padding(top = topInset)) {
             if (truncated) {
-                Text(
-                    stringResource(R.string.file_truncated, MAX_RENDERED_LINES),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                androidx.compose.foundation.layout.Row(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
-                )
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(
+                        stringResource(R.string.file_truncated, MAX_RENDERED_LINES),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f),
+                    )
+                    // Escape hatch: when only the first N lines render, offer the (already
+                    // full-content) Share action inline so the user isn't stranded without the
+                    // rest of the file. The overflow Share shares the same full content.
+                    TextButton(onClick = onShareFull) {
+                        Text(stringResource(R.string.share_full_file))
+                    }
+                }
             }
-            LazyColumn(
-                state = listState,
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .padding(8.dp),
-            ) {
-                itemsIndexed(lines, key = { index, _ -> index }) { index, line ->
-                    val isMatch = q.isNotEmpty() && index in matchSet
-                    // The jump-to-line target keeps the same emphasis as a find match so the line
-                    // the viewer landed on is obvious until the user scrolls or starts a find.
-                    val isTarget = index == highlightLineIndex
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .then(if (wrap) Modifier else Modifier.horizontalScroll(hScrollState))
-                            .then(if (isMatch || isTarget) Modifier.background(MaterialTheme.colorScheme.secondaryContainer) else Modifier),
-                    ) {
-                        Text(
-                            "${index + 1}",
-                            modifier = Modifier.width(gutterWidth),
-                            style = MaterialTheme.typography.bodySmall,
-                            fontFamily = FontFamily.Monospace,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        // Heuristic syntax highlighting per line. Falls back to plain text for
-                        // unknown extensions, so non-code files render unchanged. Memoized so the
-                        // O(n) tokenizer + AnnotatedString allocation runs only when the line text,
-                        // file, or palette actually changes — not on every recomposition (e.g. every
-                        // keystroke into find-in-file, which would otherwise re-highlight all visible lines).
-                        val highlighted = remember(line, syntax, palette) { highlightLine(line, syntax, palette) }
-                        Text(
-                            highlighted,
-                            modifier = Modifier.padding(start = 8.dp),
-                            style = MaterialTheme.typography.bodySmall,
-                        )
+            // SelectionContainer lets the user select/copy a portion of the rendered code
+            // (not just the whole-file Copy in the overflow). Selection across recycled
+            // LazyColumn items can drop spans that have scrolled away, but partial selection
+            // of the visible region — the common case — works.
+            SelectionContainer {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .padding(8.dp),
+                ) {
+                    itemsIndexed(lines, key = { index, _ -> index }) { index, line ->
+                        val isMatch = q.isNotEmpty() && index in matchSet
+                        // The jump-to-line target keeps the same emphasis as a find match so the line
+                        // the viewer landed on is obvious until the user scrolls or starts a find.
+                        val isTarget = index == highlightLineIndex
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .then(if (wrap) Modifier else Modifier.horizontalScroll(hScrollState))
+                                .then(if (isMatch || isTarget) Modifier.background(MaterialTheme.colorScheme.secondaryContainer) else Modifier),
+                        ) {
+                            Text(
+                                "${index + 1}",
+                                modifier = Modifier.width(gutterWidth),
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            // Heuristic syntax highlighting per line. Falls back to plain text for
+                            // unknown extensions, so non-code files render unchanged. Memoized so the
+                            // O(n) tokenizer + AnnotatedString allocation runs only when the line text,
+                            // file, or palette actually changes — not on every recomposition (e.g. every
+                            // keystroke into find-in-file, which would otherwise re-highlight all visible lines).
+                            val highlighted = remember(line, syntax, palette) { highlightLine(line, syntax, palette) }
+                            Text(
+                                highlighted,
+                                modifier = Modifier.padding(start = 8.dp),
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
                     }
                 }
             }
