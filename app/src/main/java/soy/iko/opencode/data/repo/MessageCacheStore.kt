@@ -55,8 +55,22 @@ open class MessageCacheStore private constructor(
     private val locks = java.util.concurrent.ConcurrentHashMap<String, Mutex>()
     private fun lockFor(sessionId: String): Mutex = locks.getOrPut(sessionId) { Mutex() }
 
+    /** Sessions whose cache file has been removed by [remove]. A teardown flush of an
+     *  observer (CacheWriter.flushOnTeardown) runs under NonCancellable and can race with
+     *  remove(): both serialize on [lockFor], but their relative order is nondeterministic.
+     *  If the flush's save lands after remove, it re-creates the deleted session's cache
+     *  file, defeating the deletion (a privacy/disk-leak with no background cleanup). The
+     *  tombstone lets a post-remove save detect the deletion and skip. Cleared by [load] so
+     *  re-opening a session (which won't happen for a truly deleted UUID, but is safe)
+     *  re-enables saving. Bounded by distinct deleted sessions, each a few bytes. */
+    private val tombstones: MutableSet<String> =
+        java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap())
+
     /** Load the cached messages for [sessionId] under [profileId], or empty if none / unreadable. */
     open suspend fun load(profileId: String, sessionId: String): List<MessageWithParts> = lockFor(sessionId).withLock {
+        // Re-opening a session re-enables saving: clear any tombstone so a fresh conversation
+        // write isn't suppressed by a prior deletion of the same (reused) id.
+        tombstones.remove(sessionId)
         withContext(Dispatchers.IO) {
             val file = fileFor(profileId, sessionId)?.takeIf { it.exists() } ?: return@withContext emptyList()
             runCatchingCancellable { OpencodeJson.decodeFromString(serializer, file.readText()) }
@@ -66,6 +80,10 @@ open class MessageCacheStore private constructor(
 
     /** Persist [messages] for [sessionId] under [profileId] (an empty list deletes the file). */
     open suspend fun save(profileId: String, sessionId: String, messages: List<MessageWithParts>): Unit = lockFor(sessionId).withLock {
+        // Skip if this session was deleted since the observer started: a teardown flush racing
+        // after remove() must not re-create the file. (Held under the same per-session lock as
+        // remove, so the tombstone is visible to a save that lost the race.)
+        if (sessionId in tombstones) return@withLock
         withContext(Dispatchers.IO) {
             val file = fileFor(profileId, sessionId) ?: return@withContext
             runCatchingCancellable {
@@ -94,6 +112,9 @@ open class MessageCacheStore private constructor(
      *  and the map is bounded by the number of distinct sessions touched. */
     open suspend fun remove(sessionId: String) {
         lockFor(sessionId).withLock {
+            // Set the tombstone before deleting so a concurrent/loser save sees it and skips,
+            // instead of re-creating the file we're about to delete.
+            tombstones.add(sessionId)
             withContext(Dispatchers.IO) {
                 runCatchingCancellable {
                     val name = idRegex.replace(sessionId, "_") + ".json"

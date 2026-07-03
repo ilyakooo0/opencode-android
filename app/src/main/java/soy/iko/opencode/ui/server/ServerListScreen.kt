@@ -121,7 +121,15 @@ fun ServerListScreen(
         // delete timer (started at emit time) fires before its snackbar is ever shown —
         // a dead Undo button. collectLatest instead cancels the current snackbar and
         // shows the newest immediately, keeping its Undo window aligned with its timer.
+        // Tracking `pending` mirrors DiagnosticsScreen: when a newer delete supersedes the
+        // prior snackbar mid-window, the prior profile's deferred delete (still scheduled
+        // on the container's scope) would fire with no reachable Undo. Withdrawing it via
+        // undoDelete cancels the timer and re-shows the row (no-op if it already fired), so
+        // no profile is silently deleted without a chance to undo.
+        var pending: String? = null
         vm.undoEvents.collectLatest { profileId ->
+            pending?.let { vm.undoDelete(it) }
+            pending = profileId
             coroutineScope {
                 val dismisser = launch {
                     delay(NetworkConfig.undoServerDeleteDelayMs)
@@ -135,6 +143,7 @@ fun ServerListScreen(
                 dismisser.cancel()
                 if (result == SnackbarResult.ActionPerformed) {
                     vm.undoDelete(profileId)
+                    pending = null
                 }
             }
         }

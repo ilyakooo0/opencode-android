@@ -30,17 +30,9 @@ open class DraftStore private constructor(
     protected constructor() : this(null, null, true)
 
     private val prefs by lazy {
-        val sp = appContext?.getSharedPreferences("drafts", Context.MODE_PRIVATE)
+        appContext?.getSharedPreferences("drafts", Context.MODE_PRIVATE)
             ?: error("No context — override methods in test subclass")
-        prefsInitialized.set(true)
-        sp
     }
-
-    /** Tracks whether the [prefs] lazy has been resolved (i.e. the file has been
-     *  opened from disk). Accessed from [flushDraft] to decide whether a synchronous
-     *  write on the main thread is safe or whether the write must be deferred to a
-     *  background thread to avoid blocking on first-time disk I/O. */
-    private val prefsInitialized = java.util.concurrent.atomic.AtomicBoolean(false)
 
     /** Single-thread executor for flushDraft when prefs aren't initialized yet,
      *  so the main thread is never blocked on disk I/O. */

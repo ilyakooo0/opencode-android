@@ -172,7 +172,15 @@ fun SessionListScreen(
         // delete timer (started at emit time) fires before its snackbar is ever shown —
         // a dead Undo button. collectLatest instead cancels the current snackbar and
         // shows the newest immediately, keeping its Undo window aligned with its timer.
+        // Tracking `pending` mirrors DiagnosticsScreen: when a newer delete supersedes the
+        // prior snackbar mid-window, the prior session's deferred REST delete (still
+        // scheduled on the container's scope) would fire with no reachable Undo. Withdrawing
+        // it via undoDelete cancels the timer and restores the row (no-op if it already
+        // fired), so no session is silently deleted without a chance to undo.
+        var pending: String? = null
         vm.undoEvents.collectLatest { sessionId ->
+            pending?.let { vm.undoDelete(it) }
+            pending = sessionId
             coroutineScope {
                 val dismisser = launch {
                     delay(NetworkConfig.undoDeleteDelayMs)
@@ -186,6 +194,7 @@ fun SessionListScreen(
                 dismisser.cancel()
                 if (result == androidx.compose.material3.SnackbarResult.ActionPerformed) {
                     vm.undoDelete(sessionId)
+                    pending = null
                 }
             }
         }

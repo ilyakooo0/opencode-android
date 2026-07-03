@@ -7,6 +7,7 @@ import android.util.Base64
 import androidx.core.content.FileProvider
 import soy.iko.opencode.data.model.FilePromptPart
 import soy.iko.opencode.data.network.NetworkConfig
+import soy.iko.opencode.util.runCatchingCancellable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -28,7 +29,7 @@ suspend fun Uri.toAttachmentResult(context: Context): AttachmentResult = withCon
     if (declaredSize != null && declaredSize > max) return@withContext AttachmentResult.TooLarge
     // Read with a hard cap so a provider that under-reports or omits its size still can't OOM
     // us: stop as soon as we've read one byte past the cap, then reject.
-    val bytes = runCatching {
+    val bytes = runCatchingCancellable {
         resolver.openInputStream(this@toAttachmentResult)?.use { it.readAtMost(max + 1) }
     }.getOrNull() ?: return@withContext AttachmentResult.Failed
     if (bytes.size > max) return@withContext AttachmentResult.TooLarge

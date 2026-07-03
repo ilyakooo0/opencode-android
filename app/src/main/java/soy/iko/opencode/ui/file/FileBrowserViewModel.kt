@@ -122,11 +122,15 @@ class FileBrowserViewModel(private val container: AppContainer) : ViewModel() {
         } else {
             open(_state.value.path)
         }
+        // Capture the job this refresh kicked off. open()/setQuery() reassign the field to a
+        // new job on a second refresh() (cancelling the first), so a naive join() on the first
+        // would complete immediately (cancelled) and clear the spinner while the second load is
+        // still in flight. Only clear when the active job is still the one we joined — a newer
+        // refresh owns the spinner now. Mirrors SessionListViewModel.refresh().
+        val job = if (searching) searchJob else openJob
         viewModelScope.launch {
-            // Clear the spinner once the in-flight load settles by joining whichever job
-            // the refresh kicked off (search or directory open).
-            (if (searching) searchJob else openJob)?.join()
-            _refreshing.value = false
+            job?.join()
+            if ((if (searching) searchJob else openJob) === job) _refreshing.value = false
         }
     }
 

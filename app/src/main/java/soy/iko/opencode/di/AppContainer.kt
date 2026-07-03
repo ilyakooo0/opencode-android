@@ -570,16 +570,22 @@ open class AppContainer private constructor(
      *  follow it, re-adding the session would pin anyRunActive true indefinitely. */
     private fun isLiveRunActivity(event: BusEvent): Boolean {
         if (event !is MessagePartUpdated && event !is MessageUpdated) return false
-        val info = (event as? MessageUpdated)?.properties?.info
-        if (info is AssistantMessage && info.isComplete) return false
+        // For MessageUpdated, only an in-flight *assistant* message counts as live activity.
+        // A UserMessage or UnknownMessage update (e.g. a metadata refresh of an existing user
+        // message) would otherwise add the session to activeRuns with no following SessionIdle
+        // to clear it — pinning anyRunActive true and the foreground notification indefinitely.
+        // Mirrors SessionRepository.isRunActivity's guard exactly.
+        if (event is MessageUpdated) {
+            val info = event.properties.info
+            return info is AssistantMessage && !info.isComplete && info.error == null
+        }
         // A step-finish part is the trailing completion marker for a run (it carries the
         // final cost/token totals) and arrives after the last stream delta. Like a completed
         // message.updated, treating it as live would re-add the session to activeRuns with no
         // following SessionIdle to clear it — pinning anyRunActive true indefinitely when such
         // a part is replayed/reordered after the run already went idle.
-        val part = (event as? MessagePartUpdated)?.properties?.part
-        if (part is StepFinishPart) return false
-        return true
+        val part = (event as MessagePartUpdated).properties.part
+        return part !is StepFinishPart
     }
 
     /** Session ids currently streaming an assistant run (best-effort, in-process). Backed by

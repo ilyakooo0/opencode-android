@@ -45,6 +45,7 @@ import soy.iko.opencode.R
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.ui.components.RelativeTimeText
 import soy.iko.opencode.ui.vmFactory
+import soy.iko.opencode.util.runCatchingCancellable
 
 /** Cross-session message search: type a query, tap a result to open that conversation. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -60,7 +61,7 @@ fun GlobalSearchScreen(
     val keyboard = LocalSoftwareKeyboardController.current
 
     LaunchedEffect(Unit) {
-        runCatching { focusRequester.requestFocus() }
+        runCatchingCancellable { focusRequester.requestFocus() }
     }
 
     Scaffold(

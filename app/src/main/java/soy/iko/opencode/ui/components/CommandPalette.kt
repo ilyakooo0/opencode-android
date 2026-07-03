@@ -28,6 +28,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import soy.iko.opencode.R
+import soy.iko.opencode.util.runCatchingCancellable
 
 /**
  * A keyboard-first command palette: a search field over a list of [actions], filtered as the
@@ -74,7 +75,7 @@ fun CommandPalette(
                             }
                         },
                 )
-                LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+                LaunchedEffect(Unit) { runCatchingCancellable { focus.requestFocus() } }
                 if (filtered.isEmpty()) {
                     Text(
                         stringResource(R.string.palette_no_results),
