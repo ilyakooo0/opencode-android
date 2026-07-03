@@ -60,17 +60,21 @@ open class MessageCacheStore private constructor(
      *  remove(): both serialize on [lockFor], but their relative order is nondeterministic.
      *  If the flush's save lands after remove, it re-creates the deleted session's cache
      *  file, defeating the deletion (a privacy/disk-leak with no background cleanup). The
-     *  tombstone lets a post-remove save detect the deletion and skip. Cleared by [load] so
-     *  re-opening a session (which won't happen for a truly deleted UUID, but is safe)
-     *  re-enables saving. Bounded by distinct deleted sessions, each a few bytes. */
+     *  tombstone lets a post-remove save detect the deletion and skip. Keyed by
+     *  "$profileId/$sessionId" — a bare sessionId would suppress a *different* server's
+     *  saves if two servers share a colliding session id (the very case the per-profile
+     *  namespacing at [profileDir] exists to defend against). Cleared by [load] so
+     *  re-opening a session re-enables saving. Bounded by distinct deleted sessions. */
     private val tombstones: MutableSet<String> =
         java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap())
+
+    private fun tombstoneKey(profileId: String, sessionId: String): String = "$profileId/$sessionId"
 
     /** Load the cached messages for [sessionId] under [profileId], or empty if none / unreadable. */
     open suspend fun load(profileId: String, sessionId: String): List<MessageWithParts> = lockFor(sessionId).withLock {
         // Re-opening a session re-enables saving: clear any tombstone so a fresh conversation
         // write isn't suppressed by a prior deletion of the same (reused) id.
-        tombstones.remove(sessionId)
+        tombstones.remove(tombstoneKey(profileId, sessionId))
         withContext(Dispatchers.IO) {
             val file = fileFor(profileId, sessionId)?.takeIf { it.exists() } ?: return@withContext emptyList()
             runCatchingCancellable { OpencodeJson.decodeFromString(serializer, file.readText()) }
@@ -83,7 +87,7 @@ open class MessageCacheStore private constructor(
         // Skip if this session was deleted since the observer started: a teardown flush racing
         // after remove() must not re-create the file. (Held under the same per-session lock as
         // remove, so the tombstone is visible to a save that lost the race.)
-        if (sessionId in tombstones) return@withLock
+        if (tombstoneKey(profileId, sessionId) in tombstones) return@withLock
         withContext(Dispatchers.IO) {
             val file = fileFor(profileId, sessionId) ?: return@withContext
             runCatchingCancellable {
@@ -109,12 +113,14 @@ open class MessageCacheStore private constructor(
      *  namespace: session ids are unique per server and deletion is terminal, so the caller
      *  needn't know which profile owned it. The per-session lock is intentionally NOT evicted —
      *  a concurrent teardown save() for this id must serialize against the same [Mutex] instance,
-     *  and the map is bounded by the number of distinct sessions touched. */
-    open suspend fun remove(sessionId: String) {
+     *  and the map is bounded by the number of distinct sessions touched.
+     *  [profileId] namespaces the tombstone so a delete on one server doesn't suppress another
+     *  server's saves for a colliding session id. */
+    open suspend fun remove(profileId: String, sessionId: String) {
         lockFor(sessionId).withLock {
             // Set the tombstone before deleting so a concurrent/loser save sees it and skips,
             // instead of re-creating the file we're about to delete.
-            tombstones.add(sessionId)
+            tombstones.add(tombstoneKey(profileId, sessionId))
             withContext(Dispatchers.IO) {
                 runCatchingCancellable {
                     val name = idRegex.replace(sessionId, "_") + ".json"

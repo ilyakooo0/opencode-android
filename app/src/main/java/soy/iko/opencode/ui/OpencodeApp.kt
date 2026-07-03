@@ -100,11 +100,12 @@ fun OpencodeApp(container: AppContainer) {
     }
 
     // "New session" from a launcher shortcut / QS tile: once connected, create a fresh
-    // session and open it. The pending flag is consumed (compareAndSet) only *after*
-    // createSession succeeds, so a transient failure leaves the request pending to retry
-    // (on the next connection change / trigger) instead of silently dropping the tap.
+    // session and open it. The pending counter is consumed only *after* createSession
+    // succeeds, so a transient failure leaves the request pending to retry (on the next
+    // connection change or a re-tap that increments the counter) instead of silently
+    // dropping the tap.
     LaunchedEffect(pendingNewSession, connection) {
-        if (!pendingNewSession) return@LaunchedEffect
+        if (pendingNewSession == 0) return@LaunchedEffect
         val conn = connection ?: return@LaunchedEffect
         val session = runCatchingCancellable { conn.repository.createSession() }.getOrNull()
             ?: return@LaunchedEffect
@@ -126,8 +127,16 @@ fun OpencodeApp(container: AppContainer) {
 
         // Open a session requested by a notification tap or deep link, once connected.
         LaunchedEffect(pendingOpenSession, connection, isTwoPane) {
-            val id = pendingOpenSession ?: return@LaunchedEffect
+            val pending = pendingOpenSession ?: return@LaunchedEffect
             if (connection == null) return@LaunchedEffect
+            // If the notification body-tap carries a profile id from a different server,
+            // switch to it first so the session opens under the server that ran it, not
+            // whichever is active. The effect re-runs when connection changes (keyed on it),
+            // so on the second run the profile matches and the open proceeds.
+            if (pending.profileId != null && connection?.profile?.id != pending.profileId) {
+                if (!container.connectByProfileId(pending.profileId)) return@LaunchedEffect
+                return@LaunchedEffect // re-run on the new connection
+            }
             // In two-pane mode the detail pane (TwoPaneSessionChat, hosted on the SESSIONS
             // route) consumes the request and opens it in the detail pane. But it only
             // exists while the NavHost is on SESSIONS, so if the user is currently on
@@ -148,7 +157,7 @@ fun OpencodeApp(container: AppContainer) {
             if (!navController.popBackStack(Routes.SESSIONS, inclusive = false)) {
                 navController.navigate(Routes.SESSIONS) { launchSingleTop = true }
             }
-            navController.navigate(Routes.chat(id)) { launchSingleTop = true }
+            navController.navigate(Routes.chat(pending.sessionId)) { launchSingleTop = true }
         }
 
         NavHost(

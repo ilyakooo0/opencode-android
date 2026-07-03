@@ -123,7 +123,7 @@ private const val COLLAPSED_DIFF_LINES = 200
  * expands the view.
  */
 @Composable
-fun DiffView(diff: String, modifier: Modifier = Modifier) {
+fun DiffView(diff: String, modifier: Modifier = Modifier, saveKey: String? = null) {
     val lines = remember(diff) { parseDiff(diff) }
     // Derive the four row colors once per color scheme instead of allocating fresh Color
     // objects (the .copy() calls) on every recomposition — a diff re-parses/recomposes
@@ -135,7 +135,10 @@ fun DiffView(diff: String, modifier: Modifier = Modifier) {
     val removeText = scheme.error
     val context = LocalContext.current
     val hScrollState = rememberScrollState()
-    var expanded by rememberSaveable(diff) { mutableStateOf(false) }
+    // Key on a stable id (the part id) when available so streaming updates that grow `diff`
+    // don't reset expand state on every token. Fall back to `diff` for non-streaming callers
+    // (e.g. FileViewScreen) where the content is static.
+    var expanded by rememberSaveable(saveKey ?: diff) { mutableStateOf(false) }
 
     Column(
         modifier = modifier

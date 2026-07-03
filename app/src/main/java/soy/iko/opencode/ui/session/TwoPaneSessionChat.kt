@@ -64,9 +64,12 @@ fun TwoPaneSessionChat(
     val sessionListState by sessionListVm.state.collectAsStateWithLifecycle()
 
     // A notification tap / deep link requests a session: open it in the detail pane.
+    // The connection switch (if the pending session is from a different server) is handled
+    // by the LaunchedEffect in OpencodeApp before we get here, so by the time this runs
+    // the active connection already matches.
     LaunchedEffect(pendingOpenSession) {
         pendingOpenSession?.let {
-            selected = it
+            selected = it.sessionId
             container.consumePendingOpenSession()
         }
     }

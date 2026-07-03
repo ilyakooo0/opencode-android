@@ -151,8 +151,10 @@ private fun ReasoningBlock(text: String, streaming: Boolean, keyId: String, modi
     // Key the expanded state on the part's stable id so a new ReasoningPart doesn't
     // inherit the positional saveable key of a prior block. A content-prefix key would
     // change on nearly every token while streaming and snap the block back to collapsed;
-    // fall back to a content prefix only when the part has no id.
-    val saveableKey = keyId.ifBlank { text.take(64) }
+    // when the part has no id, use a constant — the key(part.id, index) wrapper at the
+    // call site already disambiguates sibling parts positionally, so a constant per
+    // block type won't collide.
+    val saveableKey = keyId.ifBlank { "reasoning" }
     var expanded by rememberSaveable(saveableKey) { mutableStateOf(false) }
     val expandedState = stringResource(R.string.state_expanded)
     val collapsedState = stringResource(R.string.state_collapsed)
@@ -310,6 +312,7 @@ private fun ToolCallView(part: ToolPart, modifier: Modifier) {
                 expandedState = expandedState,
                 collapsedState = collapsedState,
                 onCopy = { copyToClipboard(context, "output", detail) },
+                diffSaveKey = part.id,
             )
         }
     }
@@ -333,6 +336,7 @@ private fun CollapsibleDetail(
     expandedState: String = "",
     collapsedState: String = "",
     onCopy: (() -> Unit)? = null,
+    diffSaveKey: String? = null,
 ) {
     Column(modifier = Modifier.fillMaxWidth().padding(top = 6.dp)) {
         if (label != null) {
@@ -361,7 +365,7 @@ private fun CollapsibleDetail(
             if (!inputExpanded) return@Column
         }
         if (isDiff) {
-            DiffView(detail)
+            DiffView(detail, saveKey = diffSaveKey)
         } else {
             // SelectionContainer so the user can select a portion of the output (e.g.
             // a single line of stdout) instead of only copy-all via the button below.

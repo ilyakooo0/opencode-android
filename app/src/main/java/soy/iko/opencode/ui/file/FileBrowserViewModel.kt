@@ -78,7 +78,12 @@ class FileBrowserViewModel(private val container: AppContainer) : ViewModel() {
         // called once from init with a null api and never retried.
         viewModelScope.launch {
             container.activeConnection.collectLatest { conn ->
-                if (conn == null) return@collectLatest
+                if (conn == null) {
+                    // Cancel the in-flight VCS status load so it can't write stale badges
+                    // from the old server after the connection drops.
+                    statusJob?.cancel()
+                    return@collectLatest
+                }
                 loadStatus()
                 // Re-open the current directory when a connection becomes available
                 // so the initial open("") (which may have run before auto-reconnect

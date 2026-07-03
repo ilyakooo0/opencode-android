@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.update
 import soy.iko.opencode.data.model.Agent
 import soy.iko.opencode.data.model.BusEvent
 import soy.iko.opencode.data.model.Command
@@ -378,7 +379,7 @@ class FakeMessageCacheStore : MessageCacheStore() {
         if (messages.isEmpty()) store.remove(sessionId) else store[sessionId] = messages
     }
 
-    override suspend fun remove(sessionId: String) { store.remove(sessionId) }
+    override suspend fun remove(profileId: String, sessionId: String) { store.remove(sessionId) }
 }
 
 // ---------------------------------------------------------------------------
@@ -422,6 +423,10 @@ class FakeAppContainer : AppContainer() {
     var probeWithCredentialsResult: Boolean? = null
     var probeWithCredentialsCalls: List<Triple<String, String, String>> = emptyList()
         private set
+
+    override fun clearUnread(id: String) {
+        fakeUnread.update { it - id }
+    }
 
     override fun string(id: Int, vararg formatArgs: Any): String = "test-string-$id"
 

@@ -233,6 +233,9 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
     /** Pin or unpin [session] (pinned sessions sort to the top of the list). */
     fun togglePin(session: Session) {
         val pin = session.id !in _state.value.pinnedIds
+        // Optimistically update the displayed state so rapid taps toggle correctly instead
+        // of both reading the same stale set (pre-observer-round-trip) and double-pinning.
+        _state.update { it.copy(pinnedIds = if (pin) it.pinnedIds + session.id else it.pinnedIds - session.id) }
         viewModelScope.launch {
             runCatchingCancellable { container.sessionPrefsStore.setPinned(session.id, pin) }
                 .onFailure { _transientErrors.tryEmit(container.friendlyError(it)) }
@@ -242,6 +245,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
     /** Archive or unarchive [session] (archived sessions are hidden unless "show archived"). */
     fun toggleArchive(session: Session) {
         val archive = session.id !in _state.value.archivedIds
+        _state.update { it.copy(archivedIds = if (archive) it.archivedIds + session.id else it.archivedIds - session.id) }
         viewModelScope.launch {
             runCatchingCancellable { container.sessionPrefsStore.setArchived(session.id, archive) }
                 .onFailure { _transientErrors.tryEmit(container.friendlyError(it)) }
@@ -337,8 +341,9 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
                                         // the loop existed — killing live updates for good).
                                         runCatchingCancellable { container.draftStore.remove(id) }
                                         runCatchingCancellable { container.attachmentDraftStore.remove(id) }
-                                        runCatchingCancellable { container.messageCacheStore.remove(id) }
+                                        runCatchingCancellable { container.messageCacheStore.remove(conn.profile.id, id) }
                                         runCatchingCancellable { container.sessionPrefsStore.forget(id) }
+                                        container.clearUnread(id)
                                         _state.update { s ->
                                             s.copy(
                                                 sessions = s.sessions.filterNot { it.id == id },

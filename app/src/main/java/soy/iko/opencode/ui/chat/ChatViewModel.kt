@@ -1276,8 +1276,9 @@ class ChatViewModel(
                 .onSuccess {
                     container.draftStore.remove(sessionId)
                     container.attachmentDraftStore.remove(sessionId)
-                    container.messageCacheStore.remove(sessionId)
+                    container.messageCacheStore.remove(conn.profile.id, sessionId)
                     container.outboxStore.removeForSession(sessionId)
+                    container.clearUnread(sessionId)
                     _sessionDeleted.value = true
                 }
                 .onFailure { _errorEvents.trySend(ChatError(container.friendlyError(it))) }

@@ -76,12 +76,18 @@ object SessionNotifications {
      *  /, ?, # can't inject path segments or query parameters. */
     private fun safeId(sessionId: String): String = notifIdRegex.replace(sessionId, "")
 
-    /** A PendingIntent that opens [sessionId] in the app when the notification body is tapped. */
-    private fun openSessionIntent(context: Context, sessionId: String, requestCode: Int): PendingIntent {
+    /** A PendingIntent that opens [sessionId] in the app when the notification body is tapped.
+     *  [profileId] (the originating server) is embedded so a tap after the user has switched
+     *  servers routes back to the server that ran the session, not whichever is active —
+     *  mirroring the Reply and permission action intents. */
+    private fun openSessionIntent(
+        context: Context, sessionId: String, requestCode: Int, profileId: String?,
+    ): PendingIntent {
         val openIntent = Intent(context, MainActivity::class.java).apply {
             action = Intent.ACTION_VIEW
             data = android.net.Uri.parse("opencode://session/${safeId(sessionId)}")
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            profileId?.let { putExtra(NotificationActionReceiver.EXTRA_PROFILE_ID, it) }
         }
         return PendingIntent.getActivity(
             context, requestCode, openIntent,
@@ -127,7 +133,7 @@ object SessionNotifications {
             // literal doubled percent signs (e.g. a "50% done" title as "50%% done").
             .setContentText(context.getString(R.string.notif_completed_text, title))
             .setAutoCancel(true)
-            .setContentIntent(openSessionIntent(context, sessionId, notifId))
+            .setContentIntent(openSessionIntent(context, sessionId, notifId, profileId))
             .addAction(replyAction)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
@@ -158,7 +164,7 @@ object SessionNotifications {
             .setContentText(detail)
             .setStyle(NotificationCompat.BigTextStyle().bigText(detail))
             .setAutoCancel(true)
-            .setContentIntent(openSessionIntent(context, sessionId, notifId))
+            .setContentIntent(openSessionIntent(context, sessionId, notifId, profileId))
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
 
@@ -189,7 +195,7 @@ object SessionNotifications {
 
     /** Post a notification when a background run fails. */
     @SuppressLint("MissingPermission")
-    fun postError(context: Context, sessionId: String, title: String) {
+    fun postError(context: Context, sessionId: String, title: String, profileId: String? = null) {
         if (!canPost(context)) return
         val notifId = notifId(NS_ERROR, sessionId)
         val notification = NotificationCompat.Builder(context, NotificationChannels.ERROR)
@@ -197,7 +203,7 @@ object SessionNotifications {
             .setContentTitle(context.getString(R.string.notif_error_title))
             .setContentText(context.getString(R.string.notif_error_text, title))
             .setAutoCancel(true)
-            .setContentIntent(openSessionIntent(context, sessionId, notifId))
+            .setContentIntent(openSessionIntent(context, sessionId, notifId, profileId))
             .setCategory(NotificationCompat.CATEGORY_ERROR)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .build()
@@ -210,7 +216,7 @@ object SessionNotifications {
      *  stuck in the "sending…" spinner — a stuck field can't be resubmitted — and post an error
      *  notification so the reply isn't silently lost and the user can reopen the session to retry. */
     @SuppressLint("MissingPermission")
-    fun postReplyFailed(context: Context, sessionId: String) {
+    fun postReplyFailed(context: Context, sessionId: String, profileId: String? = null) {
         NotificationManagerCompat.from(context).cancel(notifId(NS_COMPLETED, sessionId))
         if (!canPost(context)) return
         val notifId = notifId(NS_ERROR, sessionId)
@@ -219,7 +225,7 @@ object SessionNotifications {
             .setContentTitle(context.getString(R.string.notif_reply_failed_title))
             .setContentText(context.getString(R.string.notif_reply_failed_text))
             .setAutoCancel(true)
-            .setContentIntent(openSessionIntent(context, sessionId, notifId))
+            .setContentIntent(openSessionIntent(context, sessionId, notifId, profileId))
             .setCategory(NotificationCompat.CATEGORY_ERROR)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .build()

@@ -41,8 +41,14 @@ class NotificationActionReceiver : BroadcastReceiver() {
                 } ?: return
                 val pending = goAsync()
                 val finished = AtomicBoolean(false)
-                val finishOnce = { if (finished.compareAndSet(false, true)) pending.finish() }
-                watchdog(finishOnce)
+                var watchdogThread: Thread? = null
+                val finishOnce = {
+                    if (finished.compareAndSet(false, true)) {
+                        watchdogThread?.interrupt()
+                        pending.finish()
+                    }
+                }
+                watchdogThread = watchdog(finishOnce)
                 container.respondToPermissionFromNotification(sessionId, permissionId, response, profileId) { success ->
                     // Only dismiss the notification once the tool was actually answered. If
                     // there was no live connection (respond is a no-op) or the call failed,
@@ -66,8 +72,14 @@ class NotificationActionReceiver : BroadcastReceiver() {
                 val profileId = intent.getStringExtra(EXTRA_PROFILE_ID)?.takeIf { it.isNotBlank() }
                 val pending = goAsync()
                 val finished = AtomicBoolean(false)
-                val finishOnce = { if (finished.compareAndSet(false, true)) pending.finish() }
-                watchdog(finishOnce)
+                var watchdogThread: Thread? = null
+                val finishOnce = {
+                    if (finished.compareAndSet(false, true)) {
+                        watchdogThread?.interrupt()
+                        pending.finish()
+                    }
+                }
+                watchdogThread = watchdog(finishOnce)
                 container.sendPromptFromNotification(sessionId, text, profileId) { enqueued ->
                     // The reply is durably queued (and flushed now if online); clear the
                     // "session ready" notification. If the enqueue failed, cancel it anyway and
@@ -77,7 +89,7 @@ class NotificationActionReceiver : BroadcastReceiver() {
                     if (enqueued) {
                         SessionNotifications.cancel(context, sessionId)
                     } else {
-                        SessionNotifications.postReplyFailed(context, sessionId)
+                        SessionNotifications.postReplyFailed(context, sessionId, profileId)
                     }
                     finishOnce()
                 }
@@ -87,8 +99,10 @@ class NotificationActionReceiver : BroadcastReceiver() {
 
     /** Schedule a deadline after which the receiver's [PendingResult] is finished even if
      *  the network call hasn't resolved, so the system can't ANR the receiver. The
-     *  underlying work continues on the app scope. */
-    private fun watchdog(finishOnce: () -> Unit) {
+     *  underlying work continues on the app scope. Returns the watchdog thread so the
+     *  caller can [interrupt][Thread.interrupt] it when work completes early, releasing
+     *  the sleeping thread immediately instead of leaving it for the full timeout. */
+    private fun watchdog(finishOnce: () -> Unit): Thread =
         Thread {
             try {
                 Thread.sleep(NetworkConfig.notificationReceiverTimeoutMs)
@@ -97,7 +111,6 @@ class NotificationActionReceiver : BroadcastReceiver() {
             }
             finishOnce()
         }.apply { isDaemon = true; name = "notif-receiver-watchdog"; start() }
-    }
 
     companion object {
         const val ACTION_PERMISSION = "soy.iko.opencode.action.PERMISSION"

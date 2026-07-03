@@ -154,21 +154,36 @@ open class AppContainer private constructor(
 
     /**
      * Set from an external "New session" trigger (launcher shortcut / QS tile). The nav host
-     * consumes it once connected, creating a fresh session and opening it.
+     * consumes it once connected, creating a fresh session and opening it. Uses a counter
+     * (not a boolean) so re-tapping the shortcut while a prior request is still pending
+     * increments the value and re-fires the LaunchedEffect — a boolean StateFlow wouldn't
+     * emit when set to the same value, making the request unrecoverable by re-tapping.
      */
-    private val _pendingNewSession = MutableStateFlow(false)
-    open val pendingNewSession: StateFlow<Boolean> = _pendingNewSession.asStateFlow()
-    open fun requestNewSession() { _pendingNewSession.value = true }
-    open fun consumePendingNewSession(): Boolean = _pendingNewSession.compareAndSet(true, false)
+    private val _pendingNewSession = MutableStateFlow(0)
+    open val pendingNewSession: StateFlow<Int> = _pendingNewSession.asStateFlow()
+    open fun requestNewSession() { _pendingNewSession.update { it + 1 } }
+    open fun consumePendingNewSession(): Boolean {
+        while (true) {
+            val current = _pendingNewSession.value
+            if (current == 0) return false
+            if (_pendingNewSession.compareAndSet(current, current - 1)) return true
+        }
+    }
 
     /**
-     * A session id to open from an external trigger (a notification tap or a deep link).
-     * The nav host consumes it once a connection is active.
+     * A session id to open from an external trigger (a notification tap or a deep link),
+     * paired with the originating server's profile id (if known) so a tap after the user
+     * has switched servers routes back to the server that ran the session. The nav host
+     * consumes it once a connection is active (switching to [profileId] first if needed).
      */
-    private val _pendingOpenSession = MutableStateFlow<String?>(null)
-    open val pendingOpenSession: StateFlow<String?> = _pendingOpenSession.asStateFlow()
-    open fun requestOpenSession(id: String) { _pendingOpenSession.value = id }
-    open fun consumePendingOpenSession(): String? {
+    data class PendingOpenSession(val sessionId: String, val profileId: String?)
+
+    private val _pendingOpenSession = MutableStateFlow<PendingOpenSession?>(null)
+    open val pendingOpenSession: StateFlow<PendingOpenSession?> = _pendingOpenSession.asStateFlow()
+    open fun requestOpenSession(id: String, profileId: String? = null) {
+        _pendingOpenSession.value = PendingOpenSession(id, profileId)
+    }
+    open fun consumePendingOpenSession(): PendingOpenSession? {
         val current = _pendingOpenSession.value ?: return null
         return if (_pendingOpenSession.compareAndSet(current, null)) current else null
     }
@@ -226,6 +241,13 @@ open class AppContainer private constructor(
                 SessionNotifications.cancelError(it, id)
             }
         }
+    }
+
+    /** Clear unread badge and dedup set for a deleted session so its stale count doesn't
+     *  linger in the session list badge or leak memory until the next connect/disconnect. */
+    open fun clearUnread(id: String) {
+        _unread.update { it - id }
+        unreadMessageIds.remove(id)
     }
 
     /** Restore a session's unread badge after a failed server switch reconnects.
@@ -488,7 +510,7 @@ open class AppContainer private constructor(
                             }
                         }
                         if (wasRunning && !isActivelyViewing(esid)) {
-                            appScope.launch { notifySessionError(esid, conn.repository) }
+                            appScope.launch { notifySessionError(esid, conn.repository, conn.profile.id) }
                         }
                         return@collect
                     }
@@ -649,12 +671,14 @@ open class AppContainer private constructor(
         appContext?.let { SessionNotifications.postPermission(it, permission, title, originConn.profile.id) }
     }
 
-    /** Post an error notification for a failed background run. */
-    private suspend fun notifySessionError(sessionId: String, originRepo: SessionRepository) {
+    /** Post an error notification for a failed background run. [originProfileId] is embedded
+     *  in the tap intent so the session opens under the server that ran it, not whichever
+     *  is active when the user taps — mirroring [notifySessionCompleted]. */
+    private suspend fun notifySessionError(sessionId: String, originRepo: SessionRepository, originProfileId: String) {
         val title = resolveSessionTitle(sessionId, originRepo)
         // Re-check viewing just before posting — see notifySessionCompleted for the race.
         if (isActivelyViewing(sessionId)) return
-        appContext?.let { SessionNotifications.postError(it, sessionId, title) }
+        appContext?.let { SessionNotifications.postError(it, sessionId, title, originProfileId) }
     }
 
     /** Respond to a permission from a notification action (Allow once / Always / Reject),
@@ -769,16 +793,22 @@ open class AppContainer private constructor(
         // teardown by identity.)
         _reconnecting.value = true
         var conn: OpencodeConnection? = null
-        val ok = runCatchingCancellable {
-            conn = connectIfIdle(recent) ?: return@runCatchingCancellable false
-            conn!!.api.ping()
-            true
-        }.getOrDefault(false)
-        _reconnecting.value = false
-        when {
-            conn == null -> Unit // slot already taken by a manual connect — leave it be
-            ok -> _autoConnectDone.value = true
-            else -> disconnectIf(conn!!)
+        try {
+            val ok = runCatchingCancellable {
+                conn = connectIfIdle(recent) ?: return@runCatchingCancellable false
+                conn!!.api.ping()
+                true
+            }.getOrDefault(false)
+            when {
+                conn == null -> Unit // slot already taken by a manual connect — leave it be
+                ok -> _autoConnectDone.value = true
+                else -> disconnectIf(conn!!)
+            }
+        } finally {
+            // Reset in a finally so a CancellationException (e.g. scope cancelled during
+            // shutdown) can't leave the flag pinned true — runCatchingCancellable rethrows it,
+            // skipping the line below the try block.
+            _reconnecting.value = false
         }
     }
 
@@ -829,6 +859,14 @@ open class AppContainer private constructor(
      *  minute), so rapid reconnect storms don't each trigger a DataStore write. */
     open suspend fun connect(profile: ServerProfile): OpencodeConnection =
         connectionMutex.withLock { connectLocked(profile) }
+
+    /** Connect to the profile with [profileId], looking it up from [profileStore]. Returns
+     *  true on success, false if the profile wasn't found or connect threw. Used by the
+     *  notification body-tap path to route a session open back to the originating server. */
+    open suspend fun connectByProfileId(profileId: String): Boolean {
+        val profile = profileStore.profiles.first().find { it.id == profileId } ?: return false
+        return runCatchingCancellable { connect(profile) }.isSuccess
+    }
 
     /** Connect to [profile] only if nothing is currently active, checking-and-connecting
      *  atomically under [connectionMutex]. Returns null (touching nothing) when a connection is
@@ -985,8 +1023,9 @@ open class AppContainer private constructor(
                         draftStore.remove(id)
                         attachmentDraftStore.remove(id)
                         sessionPrefsStore.forget(id)
-                        messageCacheStore.remove(id)
+                        messageCacheStore.remove(conn.profile.id, id)
                         outboxStore.removeForSession(id)
+                        clearUnread(id)
                         onDeleted()
                     }
                     .onFailure { onError(it) }

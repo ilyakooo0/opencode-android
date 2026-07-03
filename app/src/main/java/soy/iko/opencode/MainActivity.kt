@@ -9,6 +9,7 @@ import android.os.Bundle
 import android.view.WindowManager
 import androidx.core.content.IntentCompat
 import soy.iko.opencode.data.network.NetworkConfig
+import soy.iko.opencode.notification.NotificationActionReceiver
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -187,7 +188,9 @@ class MainActivity : FragmentActivity() {
         // this flag (mirroring shareIntentHandled) the session would re-open unexpectedly.
         if (!openSessionHandled) {
             id?.takeIf { it.isNotBlank() && it.matches(VALID_SESSION_ID) }?.let {
-                container.requestOpenSession(it)
+                val profileId = intent?.getStringExtra(NotificationActionReceiver.EXTRA_PROFILE_ID)
+                    ?.takeIf { it.isNotBlank() }
+                container.requestOpenSession(it, profileId)
                 openSessionHandled = true
             }
         }
@@ -221,7 +224,7 @@ class MainActivity : FragmentActivity() {
         // the re-delivered intent re-dispatches it into the new container on restore; already
         // consumed → persist true so we don't re-open it unexpectedly on every later restore.
         val openConsumed = container.pendingOpenSession.value == null
-        val newConsumed = !container.pendingNewSession.value
+        val newConsumed = container.pendingNewSession.value == 0
         val shareConsumed = container.pendingShare.value == null && container.pendingSharedMedia.value.isEmpty()
         outState.putBoolean(KEY_SHARE_HANDLED, shareIntentHandled && shareConsumed)
         outState.putBoolean(KEY_OPEN_SESSION_HANDLED, openSessionHandled && openConsumed)
