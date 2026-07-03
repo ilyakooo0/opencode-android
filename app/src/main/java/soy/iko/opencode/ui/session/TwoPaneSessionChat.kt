@@ -2,6 +2,7 @@ package soy.iko.opencode.ui.session
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.widthIn
 import androidx.activity.compose.BackHandler
@@ -14,6 +15,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -141,6 +143,10 @@ fun TwoPaneSessionChat(
                 selectedSessionId = selected,
             )
         }
+
+        // Clear boundary between the list and detail panes (the custom split has no divider
+        // of its own).
+        VerticalDivider(modifier = Modifier.fillMaxHeight())
 
         Box(modifier = Modifier.weight(NetworkConfig.twoPaneRightWeight).fillMaxSize()) {
             val sessionId = selected

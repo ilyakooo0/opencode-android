@@ -120,7 +120,7 @@ fun TodoPlanBar(todos: List<TodoItem>, modifier: Modifier = Modifier) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .defaultMinSize(minHeight = 44.dp)
+                    .defaultMinSize(minHeight = 48.dp)
                     .clickable(role = Role.Button) { expanded = !expanded }
                     .semantics { stateDescription = if (expanded) expandedState else collapsedState }
                     .padding(horizontal = 12.dp, vertical = 6.dp),

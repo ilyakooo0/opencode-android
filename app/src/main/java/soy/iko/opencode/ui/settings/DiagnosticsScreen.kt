@@ -93,6 +93,7 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
     val snackbar = remember { SnackbarHostState() }
     val undoLabel = stringResource(R.string.undo)
     val reportDeletedLabel = stringResource(R.string.report_deleted)
+    val reportsClearedLabel = stringResource(R.string.reports_cleared)
     // Deferred report deletions are owned by the CrashLogger (its process-lived scope),
     // so they survive both rotation and navigating away from this screen. The screen only
     // shows the Undo snackbar and asks the logger to cancel a pending delete on undo.
@@ -134,6 +135,30 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                     logger.cancelScheduledDelete(name)
                     pending = null
                 }
+            }
+        }
+    }
+
+    // Clear-all undo: defers the bulk delete for the same window as a single-report delete,
+    // so the previously-irreversible "Clear all" is now recoverable.
+    val clearAllEvents = remember {
+        MutableSharedFlow<Unit>(extraBufferCapacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+    }
+    LaunchedEffect(Unit) {
+        clearAllEvents.collectLatest {
+            logger.scheduleClearAll(NetworkConfig.undoReportDeleteDelayMs)
+            coroutineScope {
+                val dismisser = launch {
+                    delay(NetworkConfig.undoReportDeleteDelayMs)
+                    snackbar.currentSnackbarData?.dismiss()
+                }
+                val result = snackbar.showSnackbar(
+                    message = reportsClearedLabel,
+                    actionLabel = undoLabel,
+                    duration = SnackbarDuration.Indefinite,
+                )
+                dismisser.cancel()
+                if (result == SnackbarResult.ActionPerformed) logger.cancelScheduledClearAll()
             }
         }
     }
@@ -381,7 +406,7 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
             confirmButton = {
                 TextButton(onClick = {
                     showClearAll = false
-                    logger.clearAll()
+                    shareScope.launch { clearAllEvents.emit(Unit) }
                 }) { Text(stringResource(R.string.clear_all), color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = {

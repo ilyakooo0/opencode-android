@@ -22,6 +22,7 @@ import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Archive
+import androidx.compose.material.icons.filled.Unarchive
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.ArrowUpward
@@ -137,6 +138,7 @@ fun SessionListScreen(
     val timeTick = rememberRelativeTimeTick()
     var showServerMenu by rememberSaveable { mutableStateOf(false) }
     var showSortMenu by rememberSaveable { mutableStateOf(false) }
+    var showMainMenu by rememberSaveable { mutableStateOf(false) }
     var showNewSessionDialog by rememberSaveable { mutableStateOf(false) }
     // Open the new-session directory picker, kicking off a fetch of the server's known
     // directories so they're ready by the time the user looks at the list.
@@ -245,21 +247,38 @@ fun SessionListScreen(
                         onToggleDirection = { vm.toggleSortDirection() },
                         onSetShowArchived = { vm.setShowArchived(it) },
                     )
-                    IconButton(onClick = { vm.refresh() }) {
-                        Icon(Icons.Filled.Refresh, contentDescription = stringResource(R.string.refresh))
-                    }
-                    IconButton(onClick = onOpenFiles) {
-                        Icon(Icons.Filled.Folder, contentDescription = stringResource(R.string.files))
-                    }
                     IconButton(onClick = onOpenSettings) {
                         Icon(Icons.Filled.Settings, contentDescription = stringResource(R.string.settings))
                     }
-                    IconButton(onClick = {
-                        // Confirm before disconnecting if an agent run is active in any
-                        // session — disconnecting kills the SSE stream and the run.
-                        if (anyRunActive) showDisconnectConfirm = true else onDisconnect()
-                    }) {
-                        Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = stringResource(R.string.disconnect))
+                    // Less-frequent destinations (files, manual refresh, disconnect) live in an
+                    // overflow so the bar stays uncluttered — pull-to-refresh and live SSE make
+                    // the standalone Refresh icon largely redundant.
+                    IconButton(onClick = { showMainMenu = true }) {
+                        Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.more_options))
+                    }
+                    DropdownMenu(expanded = showMainMenu, onDismissRequest = { showMainMenu = false }) {
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.files)) },
+                            leadingIcon = { Icon(Icons.Filled.Folder, contentDescription = null) },
+                            onClick = { showMainMenu = false; onOpenFiles() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.refresh)) },
+                            leadingIcon = { Icon(Icons.Filled.Refresh, contentDescription = null) },
+                            onClick = { showMainMenu = false; vm.refresh() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.disconnect)) },
+                            leadingIcon = {
+                                Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = null)
+                            },
+                            onClick = {
+                                showMainMenu = false
+                                // Confirm before disconnecting if an agent run is active in any
+                                // session — disconnecting kills the SSE stream and the run.
+                                if (anyRunActive) showDisconnectConfirm = true else onDisconnect()
+                            },
+                        )
                     }
                 },
             )
@@ -495,14 +514,30 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
                             // same confirmation dialog as the trash icon. We never commit
                             // the dismissal (always reset to Settled) so the card snaps back
                             // and the dialog guards against accidental data loss.
+                            val isArchivedForSwipe = session.id in state.archivedIds
                             val swipeState = rememberSwipeToDismissBoxState(
-                                confirmValueChange = {
-                                    // Haptic at the trigger so the swipe path matches the icon-path
-                                    // delete, which vibrates on confirm. Returns false (snap back) so
-                                    // the dialog guards the actual deletion.
-                                    haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                                    onDelete(session.id)
-                                    false
+                                confirmValueChange = { value ->
+                                    // Haptic at the trigger so both swipe paths match the icon
+                                    // paths, which vibrate on confirm. Always returns false (snap
+                                    // back): delete is guarded by a dialog, archive is instantly
+                                    // undoable via snackbar, so neither commits the dismissal.
+                                    when (value) {
+                                        SwipeToDismissBoxValue.EndToStart -> {
+                                            haptics.performHapticFeedback(
+                                                androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress,
+                                            )
+                                            onDelete(session.id)
+                                            false
+                                        }
+                                        SwipeToDismissBoxValue.StartToEnd -> {
+                                            haptics.performHapticFeedback(
+                                                androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress,
+                                            )
+                                            onArchive(session)
+                                            false
+                                        }
+                                        SwipeToDismissBoxValue.Settled -> false
+                                    }
                                 },
                             )
                             // Per-item callbacks memoized on the session id so SessionCard
@@ -519,26 +554,47 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
                             val isArchived = session.id in state.archivedIds
                             SwipeToDismissBox(
                                 state = swipeState,
-                                enableDismissFromStartToEnd = false,
+                                // Swipe end-to-start deletes (dialog-guarded); start-to-end
+                                // archives/unarchives (instantly undoable via snackbar).
+                                enableDismissFromStartToEnd = true,
+                                enableDismissFromEndToStart = true,
                                 // Indent sub-sessions under their parent (capped so deep
                                 // nesting doesn't squeeze the card off-screen).
                                 modifier = Modifier
                                     .animateItem()
                                     .padding(start = (node.depth.coerceAtMost(3) * 16).dp),
                                 backgroundContent = {
+                                    val archiving = swipeState.dismissDirection == SwipeToDismissBoxValue.StartToEnd
+                                    val bg = if (archiving) {
+                                        MaterialTheme.colorScheme.tertiaryContainer
+                                    } else {
+                                        MaterialTheme.colorScheme.errorContainer
+                                    }
                                     Box(
                                         modifier = Modifier
                                             .fillMaxSize()
                                             .clip(MaterialTheme.shapes.medium)
-                                            .background(MaterialTheme.colorScheme.errorContainer)
+                                            .background(bg)
                                             .padding(horizontal = 20.dp),
-                                        contentAlignment = Alignment.CenterEnd,
+                                        contentAlignment = if (archiving) Alignment.CenterStart else Alignment.CenterEnd,
                                     ) {
-                                        Icon(
-                                            Icons.Filled.Delete,
-                                            contentDescription = stringResource(R.string.delete),
-                                            tint = MaterialTheme.colorScheme.onErrorContainer,
-                                        )
+                                        if (archiving) {
+                                            val label = stringResource(
+                                                if (isArchivedForSwipe) R.string.session_unarchive
+                                                else R.string.session_archive,
+                                            )
+                                            Icon(
+                                                if (isArchivedForSwipe) Icons.Filled.Unarchive else Icons.Filled.Archive,
+                                                contentDescription = label,
+                                                tint = MaterialTheme.colorScheme.onTertiaryContainer,
+                                            )
+                                        } else {
+                                            Icon(
+                                                Icons.Filled.Delete,
+                                                contentDescription = stringResource(R.string.delete),
+                                                tint = MaterialTheme.colorScheme.onErrorContainer,
+                                            )
+                                        }
                                     }
                                 },
                             ) {

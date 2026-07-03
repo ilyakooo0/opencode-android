@@ -260,9 +260,15 @@ private fun FileViewTopBar(
         },
         actions = {
             // In-place refresh: a file's content can change on the server (the agent may
-            // be editing it), so reload without requiring a back-out.
+            // be editing it), so reload without requiring a back-out. Shows a spinner while
+            // loading since the content now stays on screen during a reload (the spinner is
+            // the only progress signal).
             IconButton(onClick = onReload, enabled = !loading) {
-                Icon(Icons.Filled.Refresh, contentDescription = stringResource(R.string.refresh))
+                if (loading) {
+                    CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                } else {
+                    Icon(Icons.Filled.Refresh, contentDescription = stringResource(R.string.refresh))
+                }
             }
             if (content.isNotEmpty()) {
                 // Find-in-file: toggles a search bar over the raw content. Stays enabled even in
@@ -311,7 +317,9 @@ private fun BoxScope.FileViewStateContent(
     onRetry: () -> Unit,
 ) {
     when {
-        state.loading -> {
+        // Full-screen spinner only on the initial load (no content yet). A reload keeps the
+        // existing content on screen; the top-bar reload button shows the in-flight progress.
+        state.loading && state.content == null -> {
             val loadingLabel = stringResource(R.string.loading)
             CircularProgressIndicator(
                 Modifier.align(Alignment.Center).semantics { contentDescription = loadingLabel },

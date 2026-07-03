@@ -217,6 +217,7 @@ fun ChatScreen(
     val inputFocusRequester = remember { androidx.compose.ui.focus.FocusRequester() }
     var showModelPicker by rememberSaveable { mutableStateOf(false) }
     var showAgentPicker by rememberSaveable { mutableStateOf(false) }
+    var showTitleMenu by rememberSaveable { mutableStateOf(false) }
     var showCommandPicker by rememberSaveable { mutableStateOf(false) }
     var showExitConfirm by rememberSaveable { mutableStateOf(false) }
     var showStopConfirm by rememberSaveable { mutableStateOf(false) }
@@ -429,37 +430,55 @@ fun ChatScreen(
             TopAppBar(
                 title = {
                     val changeLabel = stringResource(R.string.change_model_agent)
-                    Row(
-                        modifier = Modifier
-                            .clickable(enabled = models.isNotEmpty(), role = Role.Button) { showModelPicker = true }
-                            .semantics(mergeDescendants = true) { contentDescription = changeLabel },
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(modifier = Modifier.weight(1f, fill = false)) {
-                            // maxLines=1 + Ellipsis so a long session title can't wrap and
-                            // push the top bar to multiple lines, shifting the whole layout.
-                            Text(
-                                sessionTitle ?: sessionLabel,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Text(
-                                subtitle,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
+                    // The subtitle reads "model · agent", so tapping the title offers *both*
+                    // — a small menu picks which picker to open. Previously the tap went
+                    // straight to the model picker, leaving the agent changeable only via
+                    // the overflow menu despite the title implying otherwise.
+                    Box {
+                        Row(
+                            modifier = Modifier
+                                .clickable(enabled = models.isNotEmpty(), role = Role.Button) { showTitleMenu = true }
+                                .semantics(mergeDescendants = true) { contentDescription = changeLabel },
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(modifier = Modifier.weight(1f, fill = false)) {
+                                // maxLines=1 + Ellipsis so a long session title can't wrap and
+                                // push the top bar to multiple lines, shifting the whole layout.
+                                Text(
+                                    sessionTitle ?: sessionLabel,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    subtitle,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            // Visual affordance that the title is tappable; without it the
+                            // title is indistinguishable from plain text and the pickers are
+                            // effectively undiscoverable.
+                            if (models.isNotEmpty()) {
+                                Icon(
+                                    Icons.Filled.KeyboardArrowDown,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(20.dp),
+                                )
+                            }
                         }
-                        // Visual affordance that the title opens the model picker;
-                        // without it the tappable title is indistinguishable from plain
-                        // text and the picker is effectively undiscoverable.
-                        if (models.isNotEmpty()) {
-                            Icon(
-                                Icons.Filled.KeyboardArrowDown,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(20.dp),
+                        DropdownMenu(expanded = showTitleMenu, onDismissRequest = { showTitleMenu = false }) {
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.palette_switch_model)) },
+                                enabled = !modelsLoading || models.isNotEmpty(),
+                                onClick = { showTitleMenu = false; showModelPicker = true },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.palette_choose_agent)) },
+                                enabled = !agentsLoading || agents.isNotEmpty(),
+                                onClick = { showTitleMenu = false; showAgentPicker = true },
                             )
                         }
                     }

@@ -37,8 +37,11 @@ class SettingsStore(context: Context) {
             .getOrDefault(ThemeMode.SYSTEM)
     }
 
+    // Default OFF so the app ships with its hand-built "Tokyo Night" brand palette rather than
+    // the wallpaper-derived Material You scheme, which fully replaces the brand colours. Users
+    // on Android 12+ can still opt into dynamic color from Settings.
     val dynamicColor: Flow<Boolean> = appContext.settingsDataStore.data.map { prefs ->
-        prefs[dynamicColorKey] ?: true
+        prefs[dynamicColorKey] ?: false
     }
 
     /** When true, the hardware Enter key sends the prompt; when false, Enter inserts a

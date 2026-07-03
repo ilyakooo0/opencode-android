@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import soy.iko.opencode.util.runCatchingCancellable
 
@@ -49,7 +50,10 @@ class FileViewModel(
                     _state.value = FileViewState(loading = false, error = container.string(R.string.not_connected))
                     return@collectLatest
                 }
-                _state.value = FileViewState(loading = true)
+                // Keep any already-loaded content visible during a reload (only the initial
+                // load has null content) so a manual refresh doesn't blank the file — matching
+                // the file browser, which keeps the prior listing while refreshing.
+                _state.update { it.copy(loading = true, error = null) }
                 runCatchingCancellable { conn.api.readFile(path) }
                     .onSuccess { _state.value = FileViewState(loading = false, content = it) }
                     .onFailure { _state.value = FileViewState(loading = false, error = container.friendlyError(it)) }

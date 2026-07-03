@@ -38,6 +38,11 @@ class UsageViewModel(private val container: AppContainer) : ViewModel() {
     private val _state = MutableStateFlow<State>(State.Loading)
     val state: StateFlow<State> = _state.asStateFlow()
 
+    /** True while a reload runs on top of an already-loaded report, so the existing figures stay
+     *  on screen and only the pull-to-refresh spinner shows. */
+    private val _refreshing = MutableStateFlow(false)
+    val refreshing: StateFlow<Boolean> = _refreshing.asStateFlow()
+
     /** Bumped by [load] (refresh/retry) to re-run without waiting for a connection change. */
     private val _reload = MutableStateFlow(0)
 
@@ -59,7 +64,9 @@ class UsageViewModel(private val container: AppContainer) : ViewModel() {
             _state.value = State.Disconnected
             return
         }
-        _state.value = State.Loading
+        // Keep the current report visible during a manual reload; only blank to the full-screen
+        // spinner on the first load.
+        if (_state.value is State.Ready) _refreshing.value = true else _state.value = State.Loading
         runCatchingCancellable {
             val sessions = conn.repository.listSessions()
             // Cap concurrent message fetches so a large history doesn't open dozens of
@@ -84,6 +91,7 @@ class UsageViewModel(private val container: AppContainer) : ViewModel() {
         }
             .onSuccess { _state.value = State.Ready(it) }
             .onFailure { _state.value = State.Error }
+        _refreshing.value = false
     }
 
     private companion object {

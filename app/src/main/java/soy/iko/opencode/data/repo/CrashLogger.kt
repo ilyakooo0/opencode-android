@@ -144,6 +144,29 @@ class CrashLogger private constructor(private val appContext: Context) {
         }
     }
 
+    /** Deferred whole-directory clear, cancellable via [cancelScheduledClearAll] so the bulk
+     *  action gets the same undo window as a single-report delete. Runs on the logger's own
+     *  scope so it commits even if the user leaves the Diagnostics screen. */
+    private var pendingClearAll: Job? = null
+
+    fun scheduleClearAll(delayMs: Long) {
+        pendingClearAll?.cancel()
+        pendingClearAll = scope.launch {
+            delay(delayMs)
+            pendingClearAll = null
+            crashDir.listFiles { f -> f.isFile && f.name.endsWith(".txt") }?.forEach { it.delete() }
+            refresh()
+        }
+    }
+
+    /** Cancel a pending clear-all (the Undo action). Returns true if it was still pending. */
+    fun cancelScheduledClearAll(): Boolean {
+        val job = pendingClearAll ?: return false
+        pendingClearAll = null
+        job.cancel()
+        return true
+    }
+
     fun reportCount(): Int = _reports.value.size
 
     /** Cancel the internal coroutine scope so background work doesn't outlive the

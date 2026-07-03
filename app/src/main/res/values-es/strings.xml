@@ -25,6 +25,8 @@
     <string name="rename">Renombrar</string>
     <string name="disconnect">Desconectar</string>
     <string name="loading">Cargando…</string>
+    <string name="searching">Buscando…</string>
+    <string name="edit_drops_attachments">Solo se recarga el texto: los adjuntos no se incluyen en una edición.</string>
 
     <!-- Theme modes -->
     <string name="theme_system">Sistema</string>
@@ -217,7 +219,8 @@
     <string name="crash_reports">Informes de fallos</string>
     <string name="no_crash_reports">No hay fallos registrados.</string>
     <string name="clear_all">Borrar todo</string>
-    <string name="clear_all_confirm">¿Eliminar todos los informes de fallos guardados? Esta acción no se puede deshacer.</string>
+    <string name="clear_all_confirm">¿Eliminar todos los informes de fallos guardados?</string>
+    <string name="reports_cleared">Informes de fallos eliminados</string>
     <string name="crash_report">Informe de fallos</string>
     <string name="close">Cerrar</string>
     <string name="delete_report_title">¿Eliminar informe de fallos?</string>
@@ -286,6 +289,7 @@
 
     <!-- UX additions: chat overflow, date separators, settings retry -->
     <string name="more">Más</string>
+    <string name="more_options">Más opciones</string>
     <string name="delete_session_chat">Eliminar sesión</string>
     <string name="delete_session_chat_title">¿Eliminar esta sesión?</string>
     <string name="delete_session_chat_text">«%1$s» se eliminará permanentemente. Esta acción no se puede deshacer.</string>
@@ -358,6 +362,9 @@
     <string name="search_all_hint">Buscar en todas las conversaciones…</string>
     <string name="search_no_matches">No hay mensajes coincidentes</string>
     <string name="search_truncated">Mostrando resultados solo de las sesiones más recientes.</string>
+    <string name="search_all_start">Busca en tus conversaciones</string>
+    <string name="search_all_start_hint">Escribe una palabra o frase para encontrarla en todas las sesiones.</string>
+    <string name="search_results_count">%1$d resultados</string>
 
     <!-- Plan de tareas del agente (herramienta todowrite) -->
     <string name="plan">Plan</string>

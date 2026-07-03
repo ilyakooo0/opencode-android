@@ -3,6 +3,7 @@ package soy.iko.opencode.ui.components
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.os.Build
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
@@ -293,11 +294,19 @@ internal fun extractCodeText(raw: String, isFenced: Boolean): String {
     return body.joinToString("\n").trimEnd()
 }
 
-/** Copy [text] to the system clipboard and show a confirmation toast. */
+/** Copy [text] to the system clipboard and show a confirmation toast (except on Android 13+,
+ *  which renders its own system copy confirmation — a toast there would be a redundant double). */
 internal fun copyToClipboard(context: Context, label: String, text: String = label) {
     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
     clipboard.setPrimaryClip(ClipData.newPlainText(label.take(40), text))
-    showToast(context, context.getString(R.string.copied))
+    showCopyToast(context, context.getString(R.string.copied))
+}
+
+/** Toast that self-suppresses on Android 13+ (Build.VERSION_CODES.TIRAMISU), where the platform
+ *  already shows a copy confirmation. Use for clipboard-copy feedback so it isn't doubled. */
+internal fun showCopyToast(context: Context, message: String) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) return
+    showToast(context, message)
 }
 
 private var lastToast: Toast? = null

@@ -28,6 +28,11 @@ class McpViewModel(private val container: AppContainer) : ViewModel() {
     private val _state = MutableStateFlow<State>(State.Loading)
     val state: StateFlow<State> = _state.asStateFlow()
 
+    /** True while a reload runs on top of already-loaded data, so the list stays visible and the
+     *  pull-to-refresh spinner (not the full-screen one) shows. */
+    private val _refreshing = MutableStateFlow(false)
+    val refreshing: StateFlow<Boolean> = _refreshing.asStateFlow()
+
     /** Bumped by [load] (refresh/retry) to re-run without waiting for a connection change. */
     private val _reload = MutableStateFlow(0)
 
@@ -49,12 +54,15 @@ class McpViewModel(private val container: AppContainer) : ViewModel() {
             _state.value = State.Disconnected
             return
         }
-        _state.value = State.Loading
+        // Keep already-loaded servers on screen during a reload; only show the full-screen
+        // spinner on the very first load.
+        if (_state.value is State.Ready) _refreshing.value = true else _state.value = State.Loading
         runCatchingCancellable {
             val config = conn.api.config()
             withContext(Dispatchers.Default) { parseMcpServers(config) }
         }
             .onSuccess { _state.value = State.Ready(it) }
             .onFailure { _state.value = State.Error }
+        _refreshing.value = false
     }
 }

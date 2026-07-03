@@ -75,7 +75,7 @@ import soy.iko.opencode.ui.components.RemoteImage
 import soy.iko.opencode.ui.components.copyToClipboard
 import soy.iko.opencode.ui.components.isImage
 import soy.iko.opencode.ui.components.looksLikeDiff
-import soy.iko.opencode.ui.components.showToast
+import soy.iko.opencode.ui.components.showCopyToast
 import soy.iko.opencode.R
 
 private const val COLLAPSED_LIMIT = 600
@@ -496,18 +496,19 @@ private fun FileChip(part: FilePart, modifier: Modifier, onOpenFile: ((String) -
                     } else if (!path.isNullOrBlank()) {
                         haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         copyToClipboard(context, "path", path)
-                        showToast(context, context.getString(R.string.path_copied))
+                        showCopyToast(context, context.getString(R.string.path_copied))
                     }
                 },
                 onLongClick = {
                     if (!path.isNullOrBlank()) {
                         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                         copyToClipboard(context, "path", path)
-                        showToast(context, context.getString(R.string.path_copied))
+                        showCopyToast(context, context.getString(R.string.path_copied))
                     }
                 },
             )
             .semantics { contentDescription = semanticsLabel }
+            .defaultMinSize(minHeight = 48.dp)
             .padding(horizontal = 12.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

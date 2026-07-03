@@ -2,22 +2,21 @@ package soy.iko.opencode.ui.mcp
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.CloudQueue
 import androidx.compose.material.icons.filled.Computer
+import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -26,11 +25,14 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -38,6 +40,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import soy.iko.opencode.R
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.ui.components.AppTopBar
+import soy.iko.opencode.ui.components.EmptyState
 import soy.iko.opencode.ui.vmFactory
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -45,6 +48,7 @@ import soy.iko.opencode.ui.vmFactory
 fun McpScreen(container: AppContainer, onBack: () -> Unit) {
     val vm: McpViewModel = viewModel(factory = vmFactory { McpViewModel(container) })
     val state by vm.state.collectAsStateWithLifecycle()
+    val refreshing by vm.refreshing.collectAsStateWithLifecycle()
 
     Scaffold(
         topBar = {
@@ -59,43 +63,49 @@ fun McpScreen(container: AppContainer, onBack: () -> Unit) {
             )
         },
     ) { padding ->
-        Box(modifier = Modifier.fillMaxSize().padding(padding)) {
-            when (val s = state) {
-                is McpViewModel.State.Loading ->
-                    CircularProgressIndicator(Modifier.align(Alignment.Center))
-                is McpViewModel.State.Disconnected -> CenteredText(stringResource(R.string.not_connected))
-                is McpViewModel.State.Error -> Column(
-                    modifier = Modifier.align(Alignment.Center).padding(24.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    Text(stringResource(R.string.mcp_failed), color = MaterialTheme.colorScheme.error)
-                    Spacer(Modifier.size(12.dp))
-                    Button(onClick = { vm.load() }) { Text(stringResource(R.string.retry)) }
-                }
-                is McpViewModel.State.Ready ->
-                    if (s.servers.isEmpty()) {
-                        CenteredText(stringResource(R.string.mcp_empty))
-                    } else {
-                        LazyColumn(
-                            modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp),
-                        ) {
-                            items(s.servers, key = { it.name }) { McpServerCard(it) }
+        PullToRefreshBox(
+            isRefreshing = refreshing,
+            onRefresh = { vm.load() },
+            modifier = Modifier.fillMaxSize().padding(padding),
+        ) {
+            Box(modifier = Modifier.fillMaxSize()) {
+                val loadingLabel = stringResource(R.string.loading)
+                when (val s = state) {
+                    is McpViewModel.State.Loading -> CircularProgressIndicator(
+                        Modifier.align(Alignment.Center).semantics { contentDescription = loadingLabel },
+                    )
+                    is McpViewModel.State.Disconnected -> EmptyState(
+                        icon = Icons.Filled.CloudOff,
+                        title = stringResource(R.string.not_connected),
+                        modifier = Modifier.align(Alignment.Center),
+                    )
+                    is McpViewModel.State.Error -> EmptyState(
+                        icon = Icons.Filled.ErrorOutline,
+                        title = stringResource(R.string.mcp_failed),
+                        modifier = Modifier.align(Alignment.Center),
+                        actionLabel = stringResource(R.string.retry),
+                        onAction = { vm.load() },
+                    )
+                    is McpViewModel.State.Ready ->
+                        if (s.servers.isEmpty()) {
+                            EmptyState(
+                                icon = Icons.Filled.Hub,
+                                title = stringResource(R.string.mcp_empty),
+                                modifier = Modifier.align(Alignment.Center),
+                            )
+                        } else {
+                            LazyColumn(
+                                modifier = Modifier.fillMaxSize(),
+                                contentPadding = PaddingValues(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                items(s.servers, key = { it.name }) { McpServerCard(it) }
+                            }
                         }
-                    }
+                }
             }
         }
     }
-}
-
-@Composable
-private fun BoxScope.CenteredText(text: String) {
-    Text(
-        text,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.align(Alignment.Center).padding(24.dp),
-    )
 }
 
 @Composable

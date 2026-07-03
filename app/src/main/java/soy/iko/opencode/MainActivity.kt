@@ -67,7 +67,7 @@ class MainActivity : FragmentActivity() {
             notificationPermissionRequested = savedInstanceState.getBoolean(KEY_NOTIF_PERM_REQUESTED, false)
         }
         // Hold the splash until the persisted theme and app-lock settings load, so we never
-        // paint a frame with the defaults (dynamicColor=true / SYSTEM, app lock off) that then
+        // paint a frame with the defaults (dynamicColor=false / SYSTEM, app lock off) that then
         // snap to the user's real choice — including a brief unlocked, un-FLAG_SECURE'd frame
         // before app lock resolves. Mirrors the SettingsScreen's null-gate.
         var settingsLoaded = false

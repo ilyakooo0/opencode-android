@@ -41,6 +41,7 @@ import soy.iko.opencode.R
 import soy.iko.opencode.data.model.AssistantMessage
 import soy.iko.opencode.data.model.MessageWithParts
 import soy.iko.opencode.data.model.ModelOption
+import soy.iko.opencode.data.model.FilePart
 import soy.iko.opencode.data.model.TextPart
 import soy.iko.opencode.data.model.Tokens
 import soy.iko.opencode.data.model.UnknownMessage
@@ -48,6 +49,7 @@ import soy.iko.opencode.data.model.UserMessage
 import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.ui.components.ImageLoadContext
 import soy.iko.opencode.ui.components.copyToClipboard
+import soy.iko.opencode.ui.components.showToast
 import soy.iko.opencode.ui.components.RelativeTimeText
 
 /**
@@ -244,7 +246,15 @@ private fun UserBubble(
                     // conversation to before it so a Send replaces it. Only when there's text
                     // to edit (an image-only prompt has nothing to reload).
                     if (onEdit != null && textToCopy != null) {
-                        IconButton(onClick = { onEdit(textToCopy) }) {
+                        val dropsAttachmentsMsg = stringResource(R.string.edit_drops_attachments)
+                        val hasAttachments = message.parts.any { it is FilePart }
+                        IconButton(onClick = {
+                            onEdit(textToCopy)
+                            // Editing reloads only the text; if this prompt carried images or
+                            // files, tell the user they won't be reattached rather than
+                            // silently dropping them.
+                            if (hasAttachments) showToast(context, dropsAttachmentsMsg)
+                        }) {
                             Icon(
                                 Icons.Filled.Edit,
                                 contentDescription = editLabel,

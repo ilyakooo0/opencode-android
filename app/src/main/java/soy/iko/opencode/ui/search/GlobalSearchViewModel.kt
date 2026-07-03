@@ -68,6 +68,15 @@ class GlobalSearchViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
+    /** Re-run the current query immediately (no debounce), used by the error-state Retry. */
+    fun retry() {
+        val trimmed = _state.value.query.trim()
+        if (trimmed.length < NetworkConfig.minSearchQueryLength) return
+        searchJob?.cancel()
+        _state.update { it.copy(searching = true, error = null) }
+        searchJob = viewModelScope.launch { runSearch(trimmed) }
+    }
+
     private suspend fun runSearch(query: String) {
         val conn = container.activeConnection.value
         if (conn == null) {
