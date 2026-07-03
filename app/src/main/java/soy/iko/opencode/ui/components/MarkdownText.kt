@@ -18,6 +18,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.automirrored.filled.WrapText
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -191,6 +192,16 @@ private fun CodeWithCopy(model: MarkdownComponentModel) {
     // while this block is composed (rememberSaveable would over-persist across blocks).
     val defaultWrap = LocalCodeWrap.current
     var wrap by remember(defaultWrap) { mutableStateOf(defaultWrap) }
+    // Briefly flip the copy button to a checkmark after a successful copy so the user gets
+    // visible confirmation even on Android 13+, where the copy toast is suppressed in favor of
+    // the platform's tiny (and easy to miss) confirmation chip.
+    var copied by remember { mutableStateOf(false) }
+    LaunchedEffect(copied) {
+        if (copied) {
+            delay(1200)
+            copied = false
+        }
+    }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -220,13 +231,18 @@ private fun CodeWithCopy(model: MarkdownComponentModel) {
                 )
             }
             IconButton(
-                onClick = { copyToClipboard(context, context.getString(R.string.clip_label_code), code) },
+                onClick = {
+                    copyToClipboard(context, context.getString(R.string.clip_label_code), code)
+                    copied = true
+                },
             ) {
                 Icon(
-                    Icons.Filled.ContentCopy,
-                    contentDescription = context.getString(R.string.copy),
+                    if (copied) Icons.Filled.Check else Icons.Filled.ContentCopy,
+                    contentDescription = if (copied) context.getString(R.string.copied)
+                        else context.getString(R.string.copy),
                     modifier = Modifier.size(18.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    tint = if (copied) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }

@@ -59,6 +59,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import soy.iko.opencode.util.runCatchingCancellable
 import soy.iko.opencode.ui.components.AppTopBar
+import soy.iko.opencode.ui.components.EmptyState
 import soy.iko.opencode.ui.components.copyToClipboard
 import soy.iko.opencode.ui.components.showToast
 import androidx.compose.ui.Alignment
@@ -200,7 +201,9 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                     .semantics { heading() },
             )
             if (reports.isEmpty()) {
-                EmptyCrashReports(
+                EmptyState(
+                    icon = Icons.Filled.BugReport,
+                    title = stringResource(R.string.no_crash_reports),
                     modifier = Modifier.fillMaxWidth().padding(24.dp),
                 )
             } else {
@@ -422,30 +425,6 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
             dismissButton = {
                 TextButton(onClick = { showClearAll = false }) { Text(stringResource(R.string.cancel)) }
             },
-        )
-    }
-}
-
-/** Empty state for the crash reports list. Rendered with an icon + text to match the
- *  empty-state pattern used by the session and server lists (the prior version was a
- *  bare `Text` line that read as a status message rather than an intentional state). */
-@Composable
-private fun EmptyCrashReports(modifier: Modifier = Modifier) {
-    Column(
-        modifier = modifier,
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Icon(
-            Icons.Filled.BugReport,
-            contentDescription = null,
-            modifier = Modifier.size(48.dp),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.size(12.dp))
-        Text(
-            stringResource(R.string.no_crash_reports),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }

@@ -1,6 +1,7 @@
 package soy.iko.opencode.ui.chat
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,6 +16,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.CallSplit
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Error
@@ -29,6 +31,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ripple
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -44,7 +47,11 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import soy.iko.opencode.R
 import soy.iko.opencode.data.model.AssistantMessage
 import soy.iko.opencode.data.model.MessageWithParts
@@ -95,9 +102,11 @@ fun MessageBubble(
     onBranch: ((String) -> Unit)? = null,
     sendStatus: MessageSendStatus? = null,
     isEdited: Boolean = false,
+    onRetry: (() -> Unit)? = null,
+    onDismiss: (() -> Unit)? = null,
 ) {
     when (message.info) {
-        is UserMessage -> UserBubble(message, imageContext, modifier, onOpenFile, onRevert, onEdit, onQuote, onBranch, sendStatus, isEdited)
+        is UserMessage -> UserBubble(message, imageContext, modifier, onOpenFile, onRevert, onEdit, onQuote, onBranch, sendStatus, isEdited, onRetry, onDismiss)
         is UnknownMessage -> UnknownMessageBlock(message, imageContext, modifier, onOpenFile)
         else -> AssistantBlock(message, isRunning, imageContext, modifier, modelLabel, onOpenFile, onRevert, onSpeak, isSpeaking, onQuote, onBranch, isEdited)
     }
@@ -274,6 +283,8 @@ private fun UserBubble(
     onBranch: ((String) -> Unit)? = null,
     sendStatus: MessageSendStatus? = null,
     isEdited: Boolean = false,
+    onRetry: (() -> Unit)? = null,
+    onDismiss: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val haptics = LocalHapticFeedback.current
@@ -353,17 +364,59 @@ private fun UserBubble(
                             )
                         }
                         MessageSendStatus.FAILED -> {
-                            Icon(
-                                Icons.Filled.Error,
-                                contentDescription = stringResource(R.string.message_send_failed),
-                                modifier = Modifier.size(12.dp),
-                                tint = MaterialTheme.colorScheme.error,
-                            )
-                            Text(
-                                stringResource(R.string.message_send_failed),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.error,
-                            )
+                            // Tap-to-retry: the whole failed label is tappable to re-send (far more
+                            // discoverable than relying on the transient snackbar). A dismiss (×) button
+                            // removes the abandoned message entirely, since its text will never match a
+                            // real server message and would otherwise linger forever.
+                            val retryModifier = if (onRetry != null) {
+                                Modifier.clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = ripple(),
+                                    role = Role.Button,
+                                    onClick = {
+                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        onRetry()
+                                    },
+                                ).padding(vertical = 2.dp)
+                            } else {
+                                Modifier.padding(vertical = 2.dp)
+                            }
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = retryModifier.semantics(mergeDescendants = true) {
+                                    contentDescription = context.getString(R.string.message_send_failed) +
+                                        ". " + context.getString(R.string.tap_to_retry)
+                                },
+                            ) {
+                                Icon(
+                                    Icons.Filled.Error,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(12.dp),
+                                    tint = MaterialTheme.colorScheme.error,
+                                )
+                                Text(
+                                    stringResource(R.string.message_send_failed),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.padding(start = 4.dp),
+                                )
+                            }
+                            if (onDismiss != null) {
+                                IconButton(
+                                    onClick = {
+                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        onDismiss()
+                                    },
+                                    modifier = Modifier.size(20.dp),
+                                ) {
+                                    Icon(
+                                        Icons.Filled.Close,
+                                        contentDescription = stringResource(R.string.outbox_discard),
+                                        modifier = Modifier.size(14.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
                         }
                         null -> {}
                     }

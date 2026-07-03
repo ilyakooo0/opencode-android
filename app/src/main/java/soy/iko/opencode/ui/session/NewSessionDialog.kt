@@ -85,7 +85,7 @@ fun NewSessionDialog(
     sessionDirectories: List<String>,
     lastChosenDirectory: String?,
     creating: Boolean,
-    onCreate: (String?) -> Unit,
+    onCreate: (directory: String?, title: String?) -> Unit,
     onDismiss: () -> Unit,
 ) {
     // Directories to list as selectable rows: known projects + directories of existing
@@ -106,6 +106,9 @@ fun NewSessionDialog(
         )
     }
     var customText by rememberSaveable { mutableStateOf("") }
+    // Optional title so a new session doesn't land in the list as "Untitled session" requiring a
+    // rename. Trimmed to a sane max; an all-whitespace value is treated as no title.
+    var titleText by rememberSaveable { mutableStateOf("") }
 
     // The initializer above may have run while options were still loading (serverDefault
     // null), pinning choice to DirChoice.Known(preselect). Once the real serverDefault
@@ -124,6 +127,7 @@ fun NewSessionDialog(
         is DirChoice.Known -> c.path
         is DirChoice.Custom -> customText.trim().takeIf { it.isNotBlank() }
     }
+    val resolvedTitle: String? = titleText.trim().takeIf { it.isNotBlank() }
     // Custom requires a non-blank path; the other choices are always valid.
     val canCreate = !creating && (choice !is DirChoice.Custom || customText.isNotBlank())
 
@@ -137,6 +141,16 @@ fun NewSessionDialog(
                     .heightIn(max = 380.dp)
                     .verticalScroll(rememberScrollState()),
             ) {
+                OutlinedTextField(
+                    value = titleText,
+                    onValueChange = { titleText = it.take(120) },
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                    label = { Text(stringResource(R.string.session_title_hint)) },
+                    placeholder = { Text(stringResource(R.string.new_session)) },
+                    singleLine = true,
+                    enabled = !creating,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                )
                 Text(
                     stringResource(R.string.directory_label),
                     style = MaterialTheme.typography.labelLarge,
@@ -185,7 +199,7 @@ fun NewSessionDialog(
                         singleLine = true,
                         enabled = !creating,
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                        keyboardActions = KeyboardActions(onDone = { if (canCreate) onCreate(resolved) }),
+                        keyboardActions = KeyboardActions(onDone = { if (canCreate) onCreate(resolved, resolvedTitle) }),
                     )
                 }
 
@@ -206,7 +220,7 @@ fun NewSessionDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = { onCreate(resolved) }, enabled = canCreate) {
+            TextButton(onClick = { onCreate(resolved, resolvedTitle) }, enabled = canCreate) {
                 if (creating) {
                     CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
                 } else {

@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -172,30 +173,52 @@ fun GlobalSearchScreen(
 
 @Composable
 private fun SearchResultCard(hit: SearchHit, query: String, onClick: () -> Unit) {
+    val highlightColor = MaterialTheme.colorScheme.primary
+    // Highlight the title too when the match was in the title (otherwise the body snippet below
+    // is highlighted but the title above stays plain — an inconsistency).
+    val title = remember(hit.session.displayTitle, query, hit.matchedTitle, highlightColor) {
+        if (hit.matchedTitle) highlightMatches(hit.session.displayTitle, query, highlightColor)
+        else AnnotatedString(hit.session.displayTitle)
+    }
     Card(modifier = Modifier.fillMaxWidth().clickable(role = Role.Button) { onClick() }) {
         Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
-            Text(
-                hit.session.displayTitle,
-                style = MaterialTheme.typography.titleMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    title,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                // Show how many times the query occurs so the user knows whether the session is
+                // worth opening (multiple hits) instead of seeing only the single returned snippet.
+                if (hit.matchCount > 1) {
+                    val countLabel = pluralStringResource(R.plurals.search_results_count, hit.matchCount, hit.matchCount)
+                    Text(
+                        countLabel,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(start = 8.dp),
+                    )
+                }
+            }
             RelativeTimeText(
                 hit.session.time?.updated ?: hit.session.time?.created,
                 modifier = Modifier.padding(top = 2.dp),
             )
-            val highlightColor = MaterialTheme.colorScheme.primary
-            val snippet = remember(hit.snippet, query, highlightColor) {
-                highlightMatches(hit.snippet, query, highlightColor)
+            if (hit.snippet.isNotEmpty()) {
+                val snippet = remember(hit.snippet, query, highlightColor) {
+                    highlightMatches(hit.snippet, query, highlightColor)
+                }
+                Text(
+                    snippet,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
             }
-            Text(
-                snippet,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 3,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(top = 6.dp),
-            )
         }
     }
 }

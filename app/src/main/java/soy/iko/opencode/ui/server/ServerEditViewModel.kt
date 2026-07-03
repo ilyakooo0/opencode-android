@@ -365,7 +365,14 @@ class ServerEditViewModel(
                 }
                 if (connectAfter) {
                     container.connect(saved)
-                    container.activeConnection.value?.api?.ping()
+                    // Await the ping and treat a failure as a failed save: without this, a server
+                    // that accepts the connect but is half-up (wrong path, unresponsive /info) would
+                    // navigate to the session list as if everything succeeded, leaving the user
+                    // stranded on an empty screen with no error.
+                    val pingOk = runCatchingCancellable { container.activeConnection.value?.api?.ping() }.isSuccess
+                    if (!pingOk) {
+                        throw java.io.IOException("Server reachable but did not respond to ping")
+                    }
                 }
             }
             result.onSuccess { onDone() }

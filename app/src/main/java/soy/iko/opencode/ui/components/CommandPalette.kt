@@ -1,5 +1,6 @@
 package soy.iko.opencode.ui.components
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -7,6 +8,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -27,6 +29,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
@@ -55,10 +58,28 @@ fun CommandPalette(
     val filtered = remember(query, actions) {
         if (query.isBlank()) actions else actions.filter { it.label.contains(query, ignoreCase = true) }
     }
+    // Keyboard selection index over `filtered`. Clamped when the list shrinks; Enter/Go run the
+    // selected row (or the first match when nothing is highlighted) — the keyboard-first behavior
+    // a command palette is expected to have.
+    var selectedIndex by remember { mutableStateOf(0) }
+    val listState = rememberLazyListState()
+    LaunchedEffect(filtered.size, query) {
+        // Reset selection whenever the result set changes so the highlight never points past the end.
+        if (selectedIndex > filtered.lastIndex) selectedIndex = filtered.lastIndex.coerceAtLeast(0)
+    }
+    LaunchedEffect(selectedIndex) {
+        // Keep the highlighted row visible as the user arrows through the list.
+        if (filtered.isNotEmpty()) listState.animateScrollToItem(selectedIndex)
+    }
     val focus = remember { androidx.compose.ui.focus.FocusRequester() }
     fun run(action: PaletteAction) {
         onDismiss()
         action.onSelect()
+    }
+    fun moveSelection(delta: Int) {
+        if (filtered.isNotEmpty()) {
+            selectedIndex = (selectedIndex + delta).coerceIn(0, filtered.lastIndex)
+        }
     }
     Dialog(onDismissRequest = onDismiss) {
         Surface(
@@ -81,18 +102,14 @@ fun CommandPalette(
                         }
                     },
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
-                    keyboardActions = KeyboardActions(onGo = { filtered.firstOrNull()?.let { run(it) } }),
+                    keyboardActions = KeyboardActions(onGo = {
+                        val target = filtered.getOrNull(selectedIndex) ?: filtered.firstOrNull()
+                        target?.let { run(it) }
+                    }),
                     modifier = Modifier
                         .fillMaxWidth()
                         .focusRequester(focus)
-                        .onPreviewKeyEvent { ev ->
-                            if (ev.type == KeyEventType.KeyDown && ev.key == Key.Enter) {
-                                filtered.firstOrNull()?.let { run(it) }
-                                true
-                            } else {
-                                false
-                            }
-                        },
+                        .onPreviewKeyEvent { ev -> handlePaletteKey(ev, filtered, selectedIndex, ::moveSelection, ::run) },
                 )
                 LaunchedEffect(Unit) { runCatchingCancellable { focus.requestFocus() } }
                 if (filtered.isEmpty()) {
@@ -103,13 +120,21 @@ fun CommandPalette(
                         modifier = Modifier.padding(16.dp),
                     )
                 } else {
-                    LazyColumn(modifier = Modifier.heightIn(max = 360.dp)) {
+                    LazyColumn(state = listState, modifier = Modifier.heightIn(max = 360.dp)) {
                         items(filtered, key = { it.id }) { action ->
+                            val index = filtered.indexOf(action)
+                            val isSelected = index == selectedIndex
                             Text(
                                 action.label,
                                 style = MaterialTheme.typography.bodyLarge,
+                                color = if (isSelected) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.onSurface,
                                 modifier = Modifier
                                     .fillMaxWidth()
+                                    .background(
+                                        if (isSelected) MaterialTheme.colorScheme.secondaryContainer
+                                            else androidx.compose.ui.graphics.Color.Transparent,
+                                    )
                                     .clickable(role = Role.Button) { run(action) }
                                     .padding(horizontal = 12.dp, vertical = 14.dp),
                             )
@@ -118,5 +143,30 @@ fun CommandPalette(
                 }
             }
         }
+    }
+}
+
+/** Keyboard navigation for the palette: Enter runs the highlighted (or first) action; arrows/Page
+ *  keys move the highlight; Home/End jump to the ends. Returns true when the event is consumed.
+ *  Extracted from the composable so the key-handling branches don't inflate its complexity. */
+private fun handlePaletteKey(
+    ev: KeyEvent,
+    filtered: List<PaletteAction>,
+    selectedIndex: Int,
+    moveSelection: (Int) -> Unit,
+    run: (PaletteAction) -> Unit,
+): Boolean {
+    if (ev.type != KeyEventType.KeyDown) return false
+    return when (ev.key) {
+        Key.Enter -> {
+            val target = filtered.getOrNull(selectedIndex) ?: filtered.firstOrNull()
+            target?.let(run)
+            true
+        }
+        Key.DirectionDown, Key.PageDown -> { moveSelection(1); true }
+        Key.DirectionUp, Key.PageUp -> { moveSelection(-1); true }
+        Key.MoveHome -> { moveSelection(Int.MIN_VALUE / 2); true }
+        Key.MoveEnd -> { moveSelection(Int.MAX_VALUE / 2); true }
+        else -> false
     }
 }

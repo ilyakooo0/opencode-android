@@ -160,17 +160,29 @@ fun DiffView(diff: String, modifier: Modifier = Modifier, saveKey: String? = nul
         // One horizontalScroll on the container instead of one per row: each modifier
         // adds a layout node + clip + offset pass, so a 200-line collapsed diff was
         // paying for 200 of them. The shared scroll state still synchronizes all rows.
+        // oldLine/newLine track the current line numbers derived from each @@ hunk header
+        // so the gutter can show absolute line numbers (a big readability win for review).
+        var oldLine = 0
+        var newLine = 0
+        val hunkRegex = Regex("""@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@""")
         Column(modifier = Modifier.horizontalScroll(hScrollState)) {
             visibleLines.forEach { line ->
                 Row(modifier = Modifier.padding(horizontal = 10.dp)) {
                     when (line) {
-                        is DiffLine.Hunk -> Text(
-                            line.text,
-                            style = MaterialTheme.typography.bodySmall,
-                            fontFamily = FontFamily.Monospace,
-                            color = MaterialTheme.colorScheme.tertiary,
-                            modifier = Modifier.padding(vertical = 2.dp),
-                        )
+                        is DiffLine.Hunk -> {
+                            val m = hunkRegex.find(line.text)
+                            if (m != null) {
+                                oldLine = m.groupValues[1].toInt()
+                                newLine = m.groupValues[2].toInt()
+                            }
+                            Text(
+                                line.text,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace,
+                                color = MaterialTheme.colorScheme.tertiary,
+                                modifier = Modifier.padding(vertical = 2.dp),
+                            )
+                        }
                         is DiffLine.FileHeader -> Text(
                             line.text,
                             style = MaterialTheme.typography.bodySmall,
@@ -185,9 +197,16 @@ fun DiffView(diff: String, modifier: Modifier = Modifier, saveKey: String? = nul
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(vertical = 1.dp),
                         )
-                        is DiffLine.Add -> DiffRow(line.text, "+", addColor, addText)
-                        is DiffLine.Remove -> DiffRow(line.text, "-", removeColor, removeText)
-                        is DiffLine.Context -> DiffRow(line.text, " ", Color.Transparent, MaterialTheme.colorScheme.onSurface)
+                        is DiffLine.Add -> {
+                            val n = newLine++; DiffRow(line.text, "+", addColor, addText, oldLine = null, newLine = n)
+                        }
+                        is DiffLine.Remove -> {
+                            val o = oldLine++; DiffRow(line.text, "-", removeColor, removeText, oldLine = o, newLine = null)
+                        }
+                        is DiffLine.Context -> {
+                            val o = oldLine++; val n = newLine++
+                            DiffRow(line.text, " ", Color.Transparent, MaterialTheme.colorScheme.onSurface, oldLine = o, newLine = n)
+                        }
                     }
                 }
             }
@@ -209,10 +228,35 @@ fun DiffView(diff: String, modifier: Modifier = Modifier, saveKey: String? = nul
 }
 
 @Composable
-private fun DiffRow(text: String, prefix: String, bg: Color, textColor: androidx.compose.ui.graphics.Color) {
+private fun DiffRow(
+    text: String,
+    prefix: String,
+    bg: Color,
+    textColor: androidx.compose.ui.graphics.Color,
+    oldLine: Int? = null,
+    newLine: Int? = null,
+) {
+    val gutterColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
     Row(
         modifier = Modifier.background(bg),
     ) {
+        // Old/new line-number gutters. Blank (not 0) for the side that doesn't have a number
+        // (an added line has no old number; a removed line has no new number) so the columns
+        // stay aligned.
+        Text(
+            oldLine?.toString() ?: "",
+            style = MaterialTheme.typography.bodySmall,
+            fontFamily = FontFamily.Monospace,
+            color = gutterColor,
+            modifier = Modifier.width(36.dp),
+        )
+        Text(
+            newLine?.toString() ?: "",
+            style = MaterialTheme.typography.bodySmall,
+            fontFamily = FontFamily.Monospace,
+            color = gutterColor,
+            modifier = Modifier.width(36.dp),
+        )
         Text(
             prefix,
             style = MaterialTheme.typography.bodySmall,

@@ -22,6 +22,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import soy.iko.opencode.data.repo.SettingsStore
 import soy.iko.opencode.data.repo.ThemeMode
 import soy.iko.opencode.ui.AppLockGate
 import soy.iko.opencode.ui.OpencodeApp as OpencodeAppUi
@@ -78,6 +79,8 @@ class MainActivity : FragmentActivity() {
                     .combine(container.settingsStore.dynamicColor, ::Pair)
             }.collectAsStateWithLifecycle(initialValue = null)
             val appLock by container.settingsStore.appLock.collectAsStateWithLifecycle(initialValue = null)
+            val appLockReLockSeconds by container.settingsStore.appLockReLockSeconds
+                .collectAsStateWithLifecycle(initialValue = SettingsStore.DEFAULT_APP_LOCK_RELOCK_SECONDS)
             LaunchedEffect(theme, appLock) { if (theme != null && appLock != null) settingsLoaded = true }
             // Hide the app's content from screenshots / the recents thumbnail while app lock is
             // enabled — and while its value is still unknown (null) at cold start, so a protected
@@ -98,7 +101,7 @@ class MainActivity : FragmentActivity() {
                     ThemeMode.AMOLED -> true
                 }
                 OpencodeTheme(darkTheme = dark, dynamicColor = dynamicColor, amoled = amoled) {
-                    AppLockGate(enabled = locked) {
+                    AppLockGate(enabled = locked, reLockDelaySeconds = appLockReLockSeconds) {
                         OpencodeAppUi(container = container)
                     }
                 }

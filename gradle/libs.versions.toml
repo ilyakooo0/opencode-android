@@ -13,6 +13,7 @@ securityCrypto = "1.1.0"
 coil = "2.7.0"
 biometric = "1.1.0"
 markdownRenderer = "0.27.0"
+zxingCore = "3.5.3"
 coreKtx = "1.13.1"
 splashscreen = "1.0.1"
 junit = "4.13.2"
@@ -56,6 +57,7 @@ coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coi
 androidx-biometric = { group = "androidx.biometric", name = "biometric", version.ref = "biometric" }
 markdown-renderer-m3 = { group = "com.mikepenz", name = "multiplatform-markdown-renderer-m3", version.ref = "markdownRenderer" }
 markdown-renderer = { group = "com.mikepenz", name = "multiplatform-markdown-renderer", version.ref = "markdownRenderer" }
+zxing-core = { group = "com.google.zxing", name = "core", version.ref = "zxingCore" }
 
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-test-ext-junit = { group = "androidx.test.ext", name = "junit", version.ref = "androidxTestExt" }

@@ -24,9 +24,16 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import java.util.concurrent.ConcurrentHashMap
 
-/** One search result: the [session] that matched and a [snippet] of the matching text. */
+/** One search result: the [session] that matched, a [snippet] of the matching text, the total
+ *  number of [matchCount] occurrences (across body + title), and whether the title itself matched
+ *  ([matchedTitle]) so the UI can highlight it like the snippet. */
 @Immutable
-data class SearchHit(val session: Session, val snippet: String)
+data class SearchHit(
+    val session: Session,
+    val snippet: String,
+    val matchCount: Int = 1,
+    val matchedTitle: Boolean = false,
+)
 
 @Immutable
 data class GlobalSearchState(
@@ -122,8 +129,18 @@ class GlobalSearchViewModel(private val container: AppContainer) : ViewModel() {
                                     emptyList()
                                 }
                         val snippet = matchSnippet(messages, query)
-                            ?: session.displayTitle.takeIf { it.contains(query, ignoreCase = true) }
-                        if (snippet != null) hits[session.id] = SearchHit(session, snippet)
+                        val titleMatched = session.displayTitle.contains(query, ignoreCase = true)
+                        if (snippet != null || titleMatched) {
+                            val count = countMatches(messages, query) +
+                                countIn(session.displayTitle, query)
+                            hits[session.id] = SearchHit(
+                                session = session,
+                                snippet = snippet
+                                    ?: session.displayTitle.takeIf { titleMatched }.orEmpty(),
+                                matchCount = count.coerceAtLeast(1),
+                                matchedTitle = titleMatched,
+                            )
+                        }
                     }
                 }
             }
@@ -162,5 +179,35 @@ class GlobalSearchViewModel(private val container: AppContainer) : ViewModel() {
         val prefix = if (start > 0) "…" else ""
         val suffix = if (end < text.length) "…" else ""
         return prefix + text.substring(start, end).trim() + suffix
+    }
+
+    /** Count all occurrences of [query] across the text parts of [messages] (case-insensitive,
+     *  non-overlapping) so a result card can show "N matches" instead of just one snippet. */
+    private fun countMatches(
+        messages: List<soy.iko.opencode.data.model.MessageWithParts>,
+        query: String,
+    ): Int {
+        var count = 0
+        for (message in messages) {
+            for (part in message.parts) {
+                if (part !is TextPart) continue
+                count += countIn(part.text, query)
+            }
+        }
+        return count
+    }
+
+    /** Non-overlapping case-insensitive occurrence count of [query] within [text]. */
+    private fun countIn(text: String, query: String): Int {
+        if (query.isEmpty()) return 0
+        var count = 0
+        var idx = 0
+        while (true) {
+            val next = text.indexOf(query, idx, ignoreCase = true)
+            if (next < 0) break
+            count++
+            idx = next + query.length
+        }
+        return count
     }
 }

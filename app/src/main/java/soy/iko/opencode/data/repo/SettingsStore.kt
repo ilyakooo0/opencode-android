@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
@@ -21,6 +22,7 @@ class SettingsStore(context: Context) {
     private val dynamicColorKey = booleanPreferencesKey("dynamic_color")
     private val sendOnEnterKey = booleanPreferencesKey("send_on_enter")
     private val appLockKey = booleanPreferencesKey("app_lock")
+    private val appLockReLockSecondsKey = intPreferencesKey("app_lock_relock_seconds")
     private val chatTextScaleKey = floatPreferencesKey("chat_text_scale")
     private val codeWrapKey = booleanPreferencesKey("code_wrap")
 
@@ -30,6 +32,10 @@ class SettingsStore(context: Context) {
         const val MIN_CHAT_TEXT_SCALE = 0.8f
         const val MAX_CHAT_TEXT_SCALE = 1.6f
         const val DEFAULT_CHAT_TEXT_SCALE = 1.0f
+        /** 0 means re-lock the instant the app backgrounds. Other entries are the grace
+         *  period (seconds) during which a quick app-switch does NOT re-prompt for auth. */
+        val APP_LOCK_RELOCK_OPTIONS_SECONDS: List<Int> = listOf(0, 30, 60, 300)
+        const val DEFAULT_APP_LOCK_RELOCK_SECONDS = 0
     }
 
     val themeMode: Flow<ThemeMode> = appContext.settingsDataStore.data.map { prefs ->
@@ -56,6 +62,13 @@ class SettingsStore(context: Context) {
      *  stored server credentials. Defaults to false so the app is usable out of the box. */
     val appLock: Flow<Boolean> = appContext.settingsDataStore.data.map { prefs ->
         prefs[appLockKey] ?: false
+    }
+
+    /** Grace period (seconds) before re-locking after the app backgrounds. 0 = re-lock
+     *  immediately (the prior behavior). Lets a quick app-switch not re-prompt, which is the
+     *  standard reason users disable biometric locks in messaging/banking apps. */
+    val appLockReLockSeconds: Flow<Int> = appContext.settingsDataStore.data.map { prefs ->
+        prefs[appLockReLockSecondsKey] ?: DEFAULT_APP_LOCK_RELOCK_SECONDS
     }
 
     /** Multiplier applied to chat message (markdown) and code text so users can size the
@@ -87,6 +100,12 @@ class SettingsStore(context: Context) {
 
     suspend fun setAppLock(enabled: Boolean) {
         appContext.settingsDataStore.edit { it[appLockKey] = enabled }
+    }
+
+    suspend fun setAppLockReLockSeconds(seconds: Int) {
+        appContext.settingsDataStore.edit {
+            it[appLockReLockSecondsKey] = APP_LOCK_RELOCK_OPTIONS_SECONDS.minBy { k -> Math.abs(k - seconds) }
+        }
     }
 
     suspend fun setChatTextScale(scale: Float) {

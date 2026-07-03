@@ -22,6 +22,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Unarchive
 import androidx.compose.material.icons.filled.ArrowDownward
@@ -104,6 +105,7 @@ import soy.iko.opencode.platform.AppShortcuts
 import soy.iko.opencode.platform.SessionsWidgetProvider
 import soy.iko.opencode.R
 import soy.iko.opencode.ui.components.ConnectionBanner
+import soy.iko.opencode.ui.components.EmptyState
 import soy.iko.opencode.ui.components.LocalRelativeTimeTick
 import soy.iko.opencode.ui.components.RelativeTimeText
 import soy.iko.opencode.ui.components.rememberRelativeTimeTick
@@ -242,18 +244,14 @@ fun SessionListScreen(
                         expanded = showServerMenu,
                         onExpand = { showServerMenu = true },
                         onDismiss = { showServerMenu = false },
-                        onSelect = { profile ->
-                            // Keep the switcher open so its per-row spinner (driven by
-                            // switchingId) is visible during the switch; the LaunchedEffect
-                            // above dismisses it once the switch resolves. Tapping the
-                            // already-active server is a no-op, so just close the menu.
-                            if (profile.id == connectedId) showServerMenu = false
-                            else vm.switchServer(profile)
-                        },
+                        // The active-profile no-op and the active-run confirmation are handled
+                        // inside ServerSwitcherMenu, so onSelect only fires for a genuine switch.
+                        onSelect = { profile -> vm.switchServer(profile) },
                         onAddServer = {
                             showServerMenu = false
                             onAddServer()
                         },
+                        anyRunActive = anyRunActive,
                     )
                 },
                 actions = {
@@ -391,19 +389,9 @@ fun SessionListScreen(
     }
 
     if (showDisconnectConfirm) {
-        AlertDialog(
-            onDismissRequest = { showDisconnectConfirm = false },
-            title = { Text(stringResource(R.string.disconnect_active_title)) },
-            text = { Text(stringResource(R.string.disconnect_active_text)) },
-            confirmButton = {
-                TextButton(onClick = {
-                    showDisconnectConfirm = false
-                    onDisconnect()
-                }) { Text(stringResource(R.string.disconnect), color = MaterialTheme.colorScheme.error) }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDisconnectConfirm = false }) { Text(stringResource(R.string.cancel)) }
-            },
+        DisconnectActiveConfirmDialog(
+            onConfirm = onDisconnect,
+            onDismiss = { showDisconnectConfirm = false },
         )
     }
 
@@ -419,8 +407,8 @@ fun SessionListScreen(
             sessionDirectories = sessionDirectories,
             lastChosenDirectory = vm.lastChosenDirectory,
             creating = creating,
-            onCreate = { dir ->
-                vm.createSession(directory = dir) { id ->
+            onCreate = { dir, title ->
+                vm.createSession(directory = dir, title = title) { id ->
                     showNewSessionDialog = false
                     onOpenSession(id)
                 }
@@ -460,17 +448,30 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
             modifier = Modifier.align(Alignment.Center).padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
+            Icon(
+                Icons.Filled.ErrorOutline,
+                contentDescription = null,
+                modifier = Modifier.size(56.dp),
+                tint = MaterialTheme.colorScheme.error,
+            )
+            Spacer(Modifier.size(12.dp))
             Text(
                 state.error ?: "",
                 color = MaterialTheme.colorScheme.error,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
             )
             Spacer(Modifier.size(12.dp))
             TextButton(onClick = onRefresh) {
                 Text(stringResource(R.string.retry))
             }
         }
-        state.sessions.isEmpty() -> EmptySessions(
-            onCreate = onCreateSession,
+        state.sessions.isEmpty() -> EmptyState(
+            icon = Icons.Filled.ChatBubbleOutline,
+            title = stringResource(R.string.no_sessions_yet),
+            description = stringResource(R.string.no_sessions_hint),
+            actionIcon = Icons.Filled.Add,
+            actionLabel = stringResource(R.string.new_session),
+            onAction = onCreateSession,
             modifier = Modifier.align(Alignment.Center),
         )
         else -> Column(modifier = Modifier.fillMaxSize()) {
@@ -1031,34 +1032,6 @@ private fun SortMenu(
     }
 }
 
-@Composable
-private fun EmptySessions(onCreate: () -> Unit, modifier: Modifier = Modifier) {
-    Column(
-        modifier = modifier.padding(32.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Icon(
-            Icons.Filled.ChatBubbleOutline,
-            contentDescription = null,
-            modifier = Modifier.size(56.dp),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.size(16.dp))
-        Text(stringResource(R.string.no_sessions_yet), style = MaterialTheme.typography.titleMedium)
-        Spacer(Modifier.size(8.dp))
-        Text(
-            stringResource(R.string.no_sessions_hint),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.size(20.dp))
-        Button(onClick = onCreate) {
-            Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-            Text(stringResource(R.string.new_session), modifier = Modifier.padding(start = 6.dp))
-        }
-    }
-}
-
 /** Title + dropdown for quick-switching between saved servers. Highlights the active
  *  server with a check mark and primary color so the user can tell which one they're
  *  on at a glance. Includes an "Add server" item so adding a new server doesn't require
@@ -1074,7 +1047,12 @@ private fun ServerSwitcherMenu(
     onDismiss: () -> Unit,
     onSelect: (ServerProfile) -> Unit,
     onAddServer: () -> Unit,
+    anyRunActive: Boolean = false,
 ) {
+    // Switching servers kills the SSE stream and any in-flight run (same hazard as disconnecting),
+    // so confirm first when a run is active. Kept inside the switcher so the call site stays a
+    // plain onSelect and SessionListScreen's complexity doesn't grow.
+    var pendingSwitch by rememberSaveable { mutableStateOf<ServerProfile?>(null) }
     Column {
         Box {
             Row(
@@ -1130,7 +1108,16 @@ private fun ServerSwitcherMenu(
                                 }
                             }
                         },
-                        onClick = { onSelect(profile) },
+                        onClick = {
+                            when {
+                                isActiveProfile -> onDismiss()
+                                anyRunActive -> pendingSwitch = profile
+                                // Don't dismiss here: keep the switcher open so its per-row spinner
+                                // (driven by switchingId) stays visible during the switch. The
+                                // LaunchedEffect in SessionListScreen dismisses it once it resolves.
+                                else -> onSelect(profile)
+                            }
+                        },
                     )
                 }
                 // Divider + Add server item so the user can add a server without leaving
@@ -1147,4 +1134,53 @@ private fun ServerSwitcherMenu(
             }
         }
     }
+    SwitchServerConfirmDialog(
+        target = pendingSwitch,
+        onSwitch = { profile -> pendingSwitch = null; onSelect(profile) },
+        onDismiss = { pendingSwitch = null },
+    )
+}
+
+/** Confirmation shown before switching to another server while an agent run is active, since the
+ *  switch kills the SSE stream and any in-flight run (same hazard as disconnecting). Renders
+ *  nothing when [target] is null (the profile vanished before the dialog showed). */
+@Composable
+private fun SwitchServerConfirmDialog(
+    target: soy.iko.opencode.data.model.ServerProfile?,
+    onSwitch: (soy.iko.opencode.data.model.ServerProfile) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    if (target == null) return
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.disconnect_active_title)) },
+        text = { Text(stringResource(R.string.disconnect_active_text)) },
+        confirmButton = {
+            TextButton(onClick = { onDismiss(); onSwitch(target) }) {
+                Text(stringResource(R.string.switch_server), color = MaterialTheme.colorScheme.error)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
+        },
+    )
+}
+
+/** Confirmation shown before disconnecting while an agent run is active, since disconnecting kills
+ *  the SSE stream and any in-flight run. */
+@Composable
+private fun DisconnectActiveConfirmDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.disconnect_active_title)) },
+        text = { Text(stringResource(R.string.disconnect_active_text)) },
+        confirmButton = {
+            TextButton(onClick = { onDismiss(); onConfirm() }) {
+                Text(stringResource(R.string.disconnect), color = MaterialTheme.colorScheme.error)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
+        },
+    )
 }

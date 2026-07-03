@@ -24,6 +24,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Download
@@ -57,6 +58,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
@@ -64,6 +66,8 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.combine
@@ -109,12 +113,24 @@ fun SettingsScreen(
         ) { theme, dyn, enter, lock -> SettingsValues(theme, dyn, enter, lock) as SettingsValues? }
     }
     val settings by settingsFlow.collectAsStateWithLifecycle(initialValue = null)
+    // Re-check biometric availability whenever the screen resumes. A user who enrolled a
+    // fingerprint in system settings then returned here would otherwise still see "unavailable"
+    // (remember with no key caches the first check forever). LifecycleResumeEffect bumps a tick
+    // on each ON_RESUME; keying the availability check on it forces a recompute.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var biometricCheckTick by remember { mutableStateOf(0) }
+    LifecycleResumeEffect(Unit, lifecycleOwner) {
+        biometricCheckTick++
+        onPauseOrDispose { }
+    }
     // Text/display prefs are collected separately from [settingsFlow] (kotlinx combine
     // tops out at 5 typed flows) and render independently — they don't need the same
     // load-gate as the appearance block.
     val chatTextScale by container.settingsStore.chatTextScale
         .collectAsStateWithLifecycle(initialValue = SettingsStore.DEFAULT_CHAT_TEXT_SCALE)
     val codeWrap by container.settingsStore.codeWrap.collectAsStateWithLifecycle(initialValue = false)
+    val appLockReLockSeconds by container.settingsStore.appLockReLockSeconds
+        .collectAsStateWithLifecycle(initialValue = SettingsStore.DEFAULT_APP_LOCK_RELOCK_SECONDS)
     val dynamicColorAvailable = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
     val activeProfile = container.activeConnection.collectAsStateWithLifecycle().value?.profile
     // SSE connection state so the Settings screen can show a dropped stream (the
@@ -180,6 +196,13 @@ fun SettingsScreen(
         if (uri == null) return@rememberLauncherForActivityResult
         // Stage the file; the actual destructive import waits on the confirm dialog.
         pendingImportUri = uri
+    }
+    // Timestamped export name so successive backups don't overwrite one another when the user
+    // exports more than once (e.g. before and after a change).
+    fun backupFilename(): String {
+        val now = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US)
+            .format(java.util.Date())
+        return "opencode-backup-$now.json"
     }
 
     Scaffold(
@@ -274,7 +297,7 @@ fun SettingsScreen(
                 // App lock: gate on device capability. Always allow turning it *off* (in case
                 // the enrolled biometric was later removed), but only allow turning it on when
                 // a biometric or device credential is actually available.
-                val appLockAvailable = remember { canAuthenticateForAppLock(context) }
+                val appLockAvailable = remember(biometricCheckTick) { canAuthenticateForAppLock(context) }
                 val appLockToggleable = appLockAvailable || s.appLock
                 Spacer(Modifier.size(4.dp))
                 Row(
@@ -301,6 +324,14 @@ fun SettingsScreen(
                         checked = s.appLock,
                         onCheckedChange = null,
                         enabled = appLockToggleable,
+                    )
+                }
+                if (s.appLock) {
+                    AppLockReLockSelector(
+                        seconds = appLockReLockSeconds,
+                        onSelect = { sec ->
+                            scope.launch { runCatchingCancellable { container.settingsStore.setAppLockReLockSeconds(sec) } }
+                        },
                     )
                 }
             } else {
@@ -474,7 +505,7 @@ fun SettingsScreen(
                 // the file picker. Without passwords, export straight away.
                 onClick = {
                     if (includePasswords) showExportPasswordWarning = true
-                    else runCatching { exportLauncher.launch("opencode-backup.json") }
+                    else runCatching { exportLauncher.launch(backupFilename()) }
                 },
             )
             NavRow(
@@ -564,7 +595,7 @@ fun SettingsScreen(
             confirmButton = {
                 TextButton(onClick = {
                     showExportPasswordWarning = false
-                    runCatching { exportLauncher.launch("opencode-backup.json") }
+                    runCatching { exportLauncher.launch(backupFilename()) }
                 }) { Text(stringResource(R.string.export_backup), color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = {
@@ -747,5 +778,52 @@ private fun Badge(count: Int) {
             color = MaterialTheme.colorScheme.onError,
             textAlign = TextAlign.Center,
         )
+    }
+}
+
+/** Dropdown selecting how long after backgrounding the app re-locks. Only shown when app lock
+ *  is on. The grace period avoids a re-prompt on every quick app-switch (the most common reason
+ *  users disable biometric locks), while still re-locking immediately by default. */
+@Composable
+private fun AppLockReLockSelector(seconds: Int, onSelect: (Int) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    val label = relockLabel(seconds)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 56.dp, top = 4.dp)
+            .clickable(role = Role.Button) { expanded = true },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            stringResource(R.string.app_lock_relock),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
+        )
+        Text(label, style = MaterialTheme.typography.bodyMedium)
+        Icon(
+            Icons.Filled.ArrowDropDown,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+    androidx.compose.material3.DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+        SettingsStore.APP_LOCK_RELOCK_OPTIONS_SECONDS.forEach { option ->
+            androidx.compose.material3.DropdownMenuItem(
+                text = { Text(relockLabel(option)) },
+                onClick = { expanded = false; onSelect(option) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun relockLabel(seconds: Int): String = when {
+    seconds <= 0 -> stringResource(R.string.app_lock_relock_immediately)
+    seconds < 60 -> pluralStringResource(R.plurals.app_lock_relock_seconds, seconds, seconds)
+    else -> {
+        val mins = seconds / 60
+        pluralStringResource(R.plurals.app_lock_relock_minutes, mins, mins)
     }
 }

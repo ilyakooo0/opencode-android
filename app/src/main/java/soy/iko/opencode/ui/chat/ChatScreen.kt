@@ -116,6 +116,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import soy.iko.opencode.data.model.Part
@@ -721,7 +722,15 @@ fun ChatScreen(
         val listState = rememberLazyListState()
         val contentScope = rememberCoroutineScope()
         val timeTick = rememberRelativeTimeTick()
-        // Group messages by day and interleave date separators so a long conversation
+        // Dismiss the soft keyboard when the user scrolls the message list, a standard Android
+        // chat affordance for reading while the IME is open. Watching isScrollInProgress via
+        // snapshotFlow avoids wiring a nested scroll connection and fires on any scroll gesture.
+        val keyboardController = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+        androidx.compose.runtime.LaunchedEffect(listState) {
+            androidx.compose.runtime.snapshotFlow { listState.isScrollInProgress }
+                .distinctUntilChanged()
+                .collect { scrolling -> if (scrolling) keyboardController?.hide() }
+        }        // Group messages by day and interleave date separators so a long conversation
         // has visual "Today"/"Yesterday"/date breaks. Computed once per messages
         // emission (memoized) so a scroll-induced recomposition doesn't re-scan. Lives
         // outside the PullToRefreshBox so the auto-scroll effects below can reference
@@ -883,11 +892,24 @@ fun ChatScreen(
                 val topPad = if (bannerVisible) 44.dp else 16.dp
                 if (loading && messages.isEmpty()) {
                     val loadingLabel = stringResource(R.string.loading)
-                    CircularProgressIndicator(
-                        Modifier.align(Alignment.Center).padding(top = topPad),
-                        strokeWidth = 2.dp,
-                    )
-                    Box(modifier = Modifier.semantics { contentDescription = loadingLabel })
+                    // Attach the a11y label directly to the spinner (a detached zero-size Box
+                    // isn't reliably focused/announced by TalkBack) and show a visible label so
+                    // sighted users get "Loading…" rather than a bare spinner.
+                    Column(
+                        modifier = Modifier.align(Alignment.Center).padding(top = topPad),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        CircularProgressIndicator(
+                            Modifier.semantics { contentDescription = loadingLabel },
+                            strokeWidth = 2.dp,
+                        )
+                        Spacer(Modifier.size(8.dp))
+                        Text(
+                            loadingLabel,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 } else if (loadError && messages.isEmpty()) {
                     // A failed load with nothing to show. Distinct from the empty
                     // conversation state below — the conversation isn't empty, it
@@ -1002,6 +1024,20 @@ fun ChatScreen(
                                         else soy.iko.opencode.ui.chat.MessageSendStatus.SENDING
                                     },
                                     isEdited = message.info.time?.let { it.updated != null && it.updated != it.created } == true,
+                                    onRetry = optimisticStatuses[message.info.id]?.let { failed ->
+                                        if (failed) {
+                                            { vm.retryOptimisticMessage(message.info.id) }
+                                        } else {
+                                            null
+                                        }
+                                    },
+                                    onDismiss = optimisticStatuses[message.info.id]?.let { failed ->
+                                        if (failed) {
+                                            { vm.dismissOptimistic(message.info.id) }
+                                        } else {
+                                            null
+                                        }
+                                    },
                                 )
                             }
                         }

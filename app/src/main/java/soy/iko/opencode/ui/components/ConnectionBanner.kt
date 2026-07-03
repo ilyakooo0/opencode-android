@@ -15,6 +15,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -74,7 +75,10 @@ fun ConnectionBanner(
     // early-returning on null there would leave nothing to fade, so the banner would just
     // vanish instead of fading out.
     val lastText = remember { mutableStateOf(text) }
-    if (text != null) lastText.value = text
+    // Write the retained text in a SideEffect (not directly in the body): writing state during
+    // composition is a documented anti-pattern that can trigger extra recompositions and isn't
+    // guaranteed a defined ordering. SideEffect runs only after a successful composition.
+    SideEffect { if (text != null) lastText.value = text }
     AnimatedVisibility(visible = text != null, enter = fadeIn(), exit = fadeOut()) {
         val shown = lastText.value ?: return@AnimatedVisibility
         // Distinguish a hard failure (e.g. bad credentials) and an offline device from

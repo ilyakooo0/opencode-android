@@ -89,7 +89,7 @@ private fun Context.findFragmentActivity(): FragmentActivity? {
  * [canAuthenticateForAppLock] is true, so this fallback just prevents a hard lock-out.
  */
 @Composable
-fun AppLockGate(enabled: Boolean, content: @Composable () -> Unit) {
+fun AppLockGate(enabled: Boolean, reLockDelaySeconds: Int = 0, content: @Composable () -> Unit) {
     if (!enabled) {
         content()
         return
@@ -116,6 +116,12 @@ fun AppLockGate(enabled: Boolean, content: @Composable () -> Unit) {
     // app-lock bypass. Rotation is handled by the activity's configChanges (no recreation), so a
     // plain remember still avoids re-prompting on rotation while re-locking on real recreation.
     var unlocked by remember { mutableStateOf(false) }
+    // Wall-clock time of the most recent ON_STOP. Used with [reLockDelaySeconds] so a quick
+    // app-switch (e.g. glancing at another app for a few seconds) doesn't re-prompt — the most
+    // common reason users disable biometric locks. A killed process resets unlocked anyway, so the
+    // grace period only governs the in-memory re-lock decision across a surviving background stint.
+    val lastStopTimeMs = remember { longArrayOf(0L) }
+    val reLockDelayMs = reLockDelaySeconds * 1000L
 
     val title = stringResource(R.string.app_lock_prompt_title)
     val subtitle = stringResource(R.string.app_lock_prompt_subtitle)
@@ -175,13 +181,24 @@ fun AppLockGate(enabled: Boolean, content: @Composable () -> Unit) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_STOP -> {
-                    unlocked = false
-                    // The system dismisses an in-flight prompt on background and posts its
-                    // onAuthenticationError asynchronously; clear the flag now so ON_START re-prompts
-                    // instead of no-opping on a stale authInFlight and stranding the manual button.
+                    // Record the stop time but DON'T clear unlocked yet — the re-lock decision is
+                    // made on the next ON_START, so a brief background stint under the grace period
+                    // returns the user straight to their session without a re-prompt. authInFlight
+                    // is still cleared because the system dismisses an in-flight prompt on background.
+                    lastStopTimeMs[0] = System.currentTimeMillis()
                     authInFlight = false
                 }
-                Lifecycle.Event.ON_START -> if (!unlocked) authenticate()
+                Lifecycle.Event.ON_START -> {
+                    // Only re-lock (and re-prompt) if more than the grace period elapsed since the
+                    // last ON_STOP, or the app is freshly starting (lastStopTimeMs == 0).
+                    val elapsed = System.currentTimeMillis() - lastStopTimeMs[0]
+                    if (unlocked && lastStopTimeMs[0] != 0L && elapsed < reLockDelayMs) {
+                        // Within the grace period — stay unlocked, no re-prompt.
+                    } else {
+                        unlocked = false
+                        if (!unlocked) authenticate()
+                    }
+                }
                 else -> {}
             }
         }

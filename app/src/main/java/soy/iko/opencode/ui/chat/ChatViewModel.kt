@@ -1101,6 +1101,21 @@ class ChatViewModel(
         }
     }
 
+    /** Dismiss a single failed optimistic message by its tempId so it no longer lingers in the
+     *  list. Without this there's no recovery path for a failed message the user chose to abandon
+     *  (its text won't ever match a real server message, so reconcileOptimistic never clears it). */
+    fun dismissOptimistic(tempId: String) {
+        _optimisticMessages.update { entries -> entries.filterNot { it.tempId == tempId } }
+    }
+
+    /** Re-send a specific failed optimistic message by its tempId. Loads its text into the
+     *  composer and fires a send, mirroring the snackbar's Retry path. Returns false (and is a
+     *  no-op) if the entry can't be found or a run is already active. */
+    fun retryOptimisticMessage(tempId: String): Boolean {
+        val entry = _optimisticMessages.value.firstOrNull { it.tempId == tempId && it.failed } ?: return false
+        return send(entry.text, includeAttachments = false)
+    }
+
     /**
      * Queue [text] to be sent automatically when the current run finishes, or clear any
      * queued follow-up when [text] is blank. Used when the user taps Send while a run

@@ -602,14 +602,15 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
      * launch cwd — the pre-directory behavior. The chosen directory is remembered
      * ([lastChosenDirectory]) so the next new-session picker can preselect it.
      */
-    fun createSession(directory: String? = null, onCreated: (String) -> Unit) {
-        val conn = container.activeConnection.value ?: return
-        if (!_creating.compareAndSet(false, true)) return
-        val dir = directory?.takeIf { it.isNotBlank() }
-        viewModelScope.launch {
-            try {
-                runCatchingCancellable { conn.repository.createSession(directory = dir) }
-                    .onSuccess { lastChosenDirectory = dir; onCreated(it.id); refresh() }
+     fun createSession(directory: String? = null, title: String? = null, onCreated: (String) -> Unit) {
+         val conn = container.activeConnection.value ?: return
+         if (!_creating.compareAndSet(false, true)) return
+         val dir = directory?.takeIf { it.isNotBlank() }
+         val resolvedTitle = title?.trim()?.takeIf { it.isNotBlank() }
+         viewModelScope.launch {
+             try {
+                 runCatchingCancellable { conn.repository.createSession(title = resolvedTitle, directory = dir) }
+                     .onSuccess { lastChosenDirectory = dir; onCreated(it.id); refresh() }
                     .onFailure {
                         _state.update { it.copy(error = null) }
                         _transientErrors.tryEmit(container.friendlyError(it))

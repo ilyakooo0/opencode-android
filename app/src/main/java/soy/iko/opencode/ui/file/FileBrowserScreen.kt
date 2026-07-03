@@ -19,12 +19,14 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.Article
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -39,11 +41,13 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -73,7 +77,9 @@ import soy.iko.opencode.data.model.SymbolResult
 import soy.iko.opencode.data.model.symbolKindLabel
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
+import soy.iko.opencode.ui.components.AppTopBar
 import soy.iko.opencode.ui.components.ConnectionBannerFor
+import soy.iko.opencode.ui.components.EmptyState
 import soy.iko.opencode.ui.vmFactory
 import soy.iko.opencode.util.runCatchingCancellable
 
@@ -97,14 +103,7 @@ fun FileBrowserScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text(stringResource(R.string.files), maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
-                    }
-                },
-            )
+            AppTopBar(title = stringResource(R.string.files), onBack = onBack)
         },
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
@@ -481,6 +480,16 @@ private fun DirectoryListing(
         )
         return
     }
+    // Sort preference for the directory listing. Folders-first + name sort is the most useful
+    // default; the toggle flips between folders-first name sort and the server's raw order.
+    var foldersFirst by rememberSaveable { mutableStateOf(true) }
+    val sorted = remember(state.entries, foldersFirst) {
+        if (!foldersFirst) state.entries
+        else {
+            val (dirs, files) = state.entries.partition { it.isDirectory }
+            dirs.sortedBy { it.name.lowercase() } + files.sortedBy { it.name.lowercase() }
+        }
+    }
     LazyColumn(modifier = Modifier.fillMaxSize()) {
         if (state.path.isNotBlank()) {
             item(key = "__up") {
@@ -488,7 +497,25 @@ private fun DirectoryListing(
                 HorizontalDivider()
             }
         }
-        items(state.entries, key = { it.path + "_" + it.name }) { node ->
+        item(key = "__sort") {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(end = 8.dp, top = 2.dp, bottom = 2.dp),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                androidx.compose.material3.FilterChip(
+                    selected = foldersFirst,
+                    onClick = { foldersFirst = !foldersFirst },
+                    leadingIcon = {
+                        if (foldersFirst) {
+                            Icon(Icons.Filled.Folder, contentDescription = null, modifier = Modifier.size(16.dp))
+                        }
+                    },
+                    label = { Text(stringResource(R.string.sort_name), style = MaterialTheme.typography.labelSmall) },
+                )
+            }
+        }
+        items(sorted, key = { it.path + "_" + it.name }) { node ->
             FileRow(
                 icon = node.isDirectory,
                 label = node.name,
@@ -501,28 +528,11 @@ private fun DirectoryListing(
     }
 }
 
-/** Shared empty-state for the file browser: icon + message, matching the icon+text
- *  pattern used by the session and server lists (the prior versions were bare Text
- *  lines that read as status messages rather than intentional empty states). */
+/** Shared empty-state for the file browser. Delegates to the canonical [EmptyState] so every
+ *  screen's "nothing here" reads and behaves identically (icon size, spacing, styling). */
 @Composable
 private fun EmptyFileState(icon: androidx.compose.ui.graphics.vector.ImageVector, message: String, modifier: Modifier = Modifier) {
-    Column(
-        modifier = modifier,
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Icon(
-            icon,
-            contentDescription = null,
-            modifier = Modifier.size(48.dp),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.size(12.dp))
-        Text(
-            message,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
+    EmptyState(icon = icon, title = message, modifier = modifier)
 }
 
 @Composable
@@ -559,7 +569,7 @@ private fun FileRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
-            if (icon) Icons.Filled.Folder else Icons.Filled.Description,
+            if (icon) Icons.Filled.Folder else iconForFile(label),
             contentDescription = null,
             modifier = Modifier.size(20.dp),
             tint = if (icon) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -611,5 +621,20 @@ private fun StatusBadge(status: FileStatusEntry) {
                 modifier = Modifier.padding(start = 4.dp),
             )
         }
+    }
+}
+
+/** Pick an icon for a file by its extension so the directory listing is scannable instead of a
+ *  wall of identical `Description` glyphs: images, source code, and Markdown/article files each
+ *  get a distinct glyph; unknown extensions fall back to the generic document icon. */
+private fun iconForFile(name: String): androidx.compose.ui.graphics.vector.ImageVector {
+    val ext = name.substringAfterLast('.', missingDelimiterValue = "").lowercase()
+    return when (ext) {
+        "png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "ico", "heic" -> Icons.Filled.Image
+        "kt", "kts", "java", "js", "ts", "jsx", "tsx", "py", "rb", "go", "rs", "c", "cpp", "h",
+        "hpp", "cs", "swift", "scala", "gradle", "groovy", "sh", "bash", "zsh", "fish", "ps1",
+        "lua", "r", "dart", "php", "pl", "sql", "vue", "svelte" -> Icons.Filled.Code
+        "md", "markdown", "txt", "rst", "adoc", "rtf", "doc", "docx", "pdf", "epub" -> Icons.Filled.Article
+        else -> Icons.Filled.Description
     }
 }

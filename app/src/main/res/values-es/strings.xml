@@ -564,4 +564,26 @@
     <string name="crash_last_run_dismiss">Descartar</string>
     <string name="connecting_to">Conectando a %1$s…</string>
     <string name="scroll_to_top">Ir arriba</string>
+
+    <!-- UI/UX improvements: QR sharing, app-lock re-lock, sort, server state -->
+    <string name="connection_failed_short">Conexión fallida</string>
+    <string name="sort_name">Nombre</string>
+    <string name="share_qr">Compartir como código QR</string>
+    <string name="import_from_image">Importar desde imagen</string>
+    <string name="qr_import_failed">No se encontró un código QR de servidor opencode en esa imagen.</string>
+    <string name="qr_import_title">¿Añadir este servidor?</string>
+    <string name="qr_added">Servidor añadido</string>
+    <string name="ok">OK</string>
+    <string name="qr_includes_password">Incluye la contraseña</string>
+    <string name="qr_includes_password_warning">Incluye la contraseña — comparte con cuidado</string>
+    <string name="app_lock_relock">Bloquear de nuevo tras</string>
+    <string name="app_lock_relock_immediately">Inmediatamente</string>
+    <plurals name="app_lock_relock_seconds">
+        <item quantity="one">%1$d segundo</item>
+        <item quantity="other">%1$d segundos</item>
+    </plurals>
+    <plurals name="app_lock_relock_minutes">
+        <item quantity="one">%1$d minuto</item>
+        <item quantity="other">%1$d minutos</item>
+    </plurals>
 </resources>
