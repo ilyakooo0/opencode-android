@@ -1,24 +1,33 @@
 package soy.iko.opencode.ui.components
 
 import android.util.Base64
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -26,14 +35,15 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import coil.compose.SubcomposeAsyncImage
 import coil.request.ImageRequest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BrokenImage
+import androidx.compose.material.icons.filled.Close
 import soy.iko.opencode.R
 import soy.iko.opencode.data.model.FilePart
 import soy.iko.opencode.data.model.ServerProfile
@@ -175,6 +185,8 @@ fun RemoteImage(part: FilePart, ctx: ImageLoadContext, modifier: Modifier = Modi
     // Bumping retryKey re-builds the ImageRequest, so a failed load can be re-issued by tapping
     // the error state instead of being a permanent broken-image icon.
     var retryKey by remember(part.source, part.url, ctx.baseUrl) { mutableIntStateOf(0) }
+    // Fullscreen zoomable viewer state: opened by tapping the inline image.
+    var showFullscreen by remember { mutableStateOf(false) }
     val request = remember(part.source, part.url, ctx.baseUrl, ctx.basicAuthHeader, model, retryKey) {
         ImageRequest.Builder(context)
             .data(model)
@@ -193,7 +205,10 @@ fun RemoteImage(part: FilePart, ctx: ImageLoadContext, modifier: Modifier = Modi
         contentScale = ContentScale.FillWidth,
         modifier = modifier
             .heightIn(max = 320.dp)
-            .clip(MaterialTheme.shapes.small),
+            .clip(MaterialTheme.shapes.small)
+            // Tap to open a fullscreen zoomable viewer so the user can inspect details
+            // without the inline 320dp height cap.
+            .clickable(role = Role.Button) { showFullscreen = true },
         loading = {
             Box(
                 modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp),
@@ -207,6 +222,71 @@ fun RemoteImage(part: FilePart, ctx: ImageLoadContext, modifier: Modifier = Modi
         },
         error = { ImageRetry(onRetry = { retryKey++ }) },
     )
+    if (showFullscreen) {
+        FullscreenImageViewer(request = request, contentDescription = part.filename ?: stringResource(R.string.image)) {
+            showFullscreen = false
+        }
+    }
+}
+
+/**
+ * Fullscreen zoomable image viewer opened by tapping an inline [RemoteImage]. Supports
+ * pinch-to-zoom and pan via [detectTransformGestures], with a close button and tap-to-dismiss.
+ * Uses a non-interactive Dialog window so it overlays the whole screen.
+ */
+@Composable
+private fun FullscreenImageViewer(
+    request: ImageRequest,
+    contentDescription: String,
+    onDismiss: () -> Unit,
+) {
+    var scale by remember { mutableFloatStateOf(1f) }
+    var offsetX by remember { mutableFloatStateOf(0f) }
+    var offsetY by remember { mutableFloatStateOf(0f) }
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(androidx.compose.ui.graphics.Color.Black)
+                .pointerInput(Unit) {
+                    detectTransformGestures { _, pan, zoom, _ ->
+                        scale *= zoom
+                        offsetX += pan.x
+                        offsetY += pan.y
+                    }
+                }
+                .clickable(role = Role.Button, onClick = onDismiss),
+            contentAlignment = Alignment.Center,
+        ) {
+            SubcomposeAsyncImage(
+                model = request,
+                contentDescription = contentDescription,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer(
+                        scaleX = scale,
+                        scaleY = scale,
+                        translationX = offsetX,
+                        translationY = offsetY,
+                    ),
+            )
+            // Close button in the top corner.
+            androidx.compose.material3.IconButton(
+                onClick = onDismiss,
+                modifier = Modifier.align(Alignment.TopEnd).padding(16.dp),
+            ) {
+                Icon(
+                    Icons.Filled.Close,
+                    contentDescription = stringResource(R.string.close),
+                    tint = androidx.compose.ui.graphics.Color.White,
+                )
+            }
+        }
+    }
 }
 
 /** Error slot for [RemoteImage]: a broken-image icon plus a "Tap to retry" caption, the whole box

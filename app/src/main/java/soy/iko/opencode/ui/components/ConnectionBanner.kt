@@ -4,6 +4,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -14,6 +15,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Alignment
@@ -24,8 +27,13 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import soy.iko.opencode.R
 import soy.iko.opencode.data.network.EventStreamClient
+import soy.iko.opencode.di.AppContainer
 
 /**
  * Banner shown when the SSE event stream is not connected. Shared by the chat and the
@@ -121,4 +129,33 @@ fun ConnectionBanner(
             }
         }
     }
+}
+
+/**
+ * Convenience wrapper that collects the SSE connection state and device connectivity from
+ * [container] and renders a [ConnectionBanner] aligned to the top center of the calling
+ * [BoxScope]. Screens that don't already expose connection state (Files, Settings,
+ * Diagnostics) can call this instead of duplicating the flatMapLatest boilerplate.
+ * The retry callback triggers an SSE reconnect on the active connection.
+ */
+@OptIn(ExperimentalCoroutinesApi::class)
+@Composable
+fun BoxScope.ConnectionBannerFor(container: AppContainer) {
+    // flatMapLatest without stateIn: collectAsStateWithLifecycle handles the lifecycle and
+    // gives an initial value. No ViewModel scope needed, so this works on any screen.
+    val connectionState by produceState(
+        initialValue = EventStreamClient.ConnectionState.Disconnected,
+        container,
+    ) {
+        container.activeConnection
+            .flatMapLatest { it?.events?.state ?: flowOf(EventStreamClient.ConnectionState.Disconnected) }
+            .collect { value = it }
+    }
+    val isOnline by container.isOnline.collectAsStateWithLifecycle()
+    ConnectionBanner(
+        state = connectionState,
+        modifier = Modifier.align(Alignment.TopCenter),
+        isOnline = isOnline,
+        onRetry = { container.activeConnection.value?.events?.triggerReconnect() },
+    )
 }

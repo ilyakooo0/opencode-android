@@ -80,6 +80,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
+import soy.iko.opencode.ui.components.ConnectionBannerFor
 import soy.iko.opencode.ui.components.DiffView
 import soy.iko.opencode.ui.components.LocalCodeWrap
 import soy.iko.opencode.ui.components.copyToClipboard
@@ -93,10 +94,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.withContext
 
-/** Cap on how many lines the raw viewer renders and searches. A multi-megabyte file is
- *  split once (not twice) into this many lines at most, so it can't hold two full line
- *  lists in memory or stall the LazyColumn; beyond the cap a truncation banner is shown. */
-private const val MAX_RENDERED_LINES = 5000
+import soy.iko.opencode.data.network.NetworkConfig
+
+/** Cap on how many lines the raw viewer renders and searches. See [NetworkConfig.maxRenderedFileLines]. */
+private const val MAX_RENDERED_LINES = NetworkConfig.maxRenderedFileLines
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -207,7 +208,17 @@ fun FileViewScreen(
             )
         },
     ) { padding ->
-        Box(modifier = Modifier.fillMaxSize().padding(padding)) {
+        // Pull-to-refresh wraps the content so a user who pull-to-refreshes out of habit
+        // can reload the file, mirroring the file browser and session list gestures. The
+        // top-bar reload icon remains for a targeted tap.
+        androidx.compose.material3.pulltorefresh.PullToRefreshBox(
+            isRefreshing = state.loading && state.content != null,
+            onRefresh = { vm.reload() },
+            modifier = Modifier.fillMaxSize().padding(padding),
+        ) {
+            Box(modifier = Modifier.fillMaxSize()) {
+            // Surface SSE connection state so a dropped stream is visible while viewing a file.
+            ConnectionBannerFor(container)
             // AnimatedContent cross-fades between loading / error / content states so the
             // viewer doesn't snap abruptly when a reload finishes or fails.
             AnimatedContent(
@@ -250,6 +261,7 @@ fun FileViewScreen(
                     listState = listState,
                     onRetry = { vm.reload() },
                 )
+            }
             }
         }
     }
@@ -586,7 +598,10 @@ private fun FindBar(
                         else MaterialTheme.colorScheme.onSurfaceVariant
                     Text(
                         countText,
-                        style = MaterialTheme.typography.labelSmall,
+                        // labelMedium (not labelSmall) so the counter is legible for low-vision
+                        // users at large font scales; the error color still distinguishes zero
+                        // matches at a glance.
+                        style = MaterialTheme.typography.labelMedium,
                         color = color,
                     )
                 }

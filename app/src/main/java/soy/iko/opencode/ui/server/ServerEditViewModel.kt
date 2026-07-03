@@ -285,8 +285,13 @@ class ServerEditViewModel(
         val probedRequireHttps = s.requireHttps
         val probedCertPin = s.certPin.trim().takeIf { it.isNotBlank() }
         viewModelScope.launch {
+            // Bound the probe so a hung/unresponsive server doesn't leave the "Testing…"
+            // spinner spinning indefinitely. A timeout surfaces as a failure (the probe
+            // didn't confirm credentials), not a silent hang.
             val result = runCatchingCancellable {
-                container.probeWithCredentials(probedUrl, probedUser, probedPass, probedRequireHttps, probedCertPin)
+                withTimeoutOrNull(NetworkConfig.testCredentialsTimeoutMs) {
+                    container.probeWithCredentials(probedUrl, probedUser, probedPass, probedRequireHttps, probedCertPin)
+                }
             }
             result.onSuccess { ok ->
                 _state.update {
@@ -295,7 +300,7 @@ class ServerEditViewModel(
                     it.copy(
                         testingCredentials = false,
                         credentialsResult = ok,
-                        error = if (ok) null else container.string(R.string.credentials_rejected),
+                        error = if (ok == true) null else container.string(R.string.credentials_rejected),
                     )
                 }
             }.onFailure { e ->

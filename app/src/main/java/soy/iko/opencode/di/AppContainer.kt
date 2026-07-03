@@ -316,7 +316,22 @@ open class AppContainer private constructor(
                 .debounce(NetworkConfig.runForegroundDebounceMs)
                 .distinctUntilChanged()
                 .collect { active ->
-                    if (active) RunForegroundService.start(ctx) else RunForegroundService.stop(ctx)
+                    if (active) {
+                        // When exactly one run is active, resolve its title so the notification
+                        // identifies which session is running. Multiple concurrent runs fall back
+                        // to the generic title (naming one would be misleading).
+                        val title = synchronized(activeRuns) {
+                            activeRuns.toList().singleOrNull()
+                        }?.let { sid ->
+                            runCatchingCancellable {
+                                activeConnection.value?.repository?.listSessions()
+                                    ?.firstOrNull { it.id == sid }?.displayTitle
+                            }.getOrNull()
+                        }
+                        RunForegroundService.start(ctx, title)
+                    } else {
+                        RunForegroundService.stop(ctx)
+                    }
                 }
         }
     }

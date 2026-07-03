@@ -32,6 +32,7 @@
     <string name="theme_system">System</string>
     <string name="theme_light">Light</string>
     <string name="theme_dark">Dark</string>
+    <string name="theme_amoled">AMOLED Black</string>
 
     <!-- Connection banner -->
     <string name="connecting">Connecting…</string>
@@ -75,6 +76,7 @@
     <string name="test_credentials">Test credentials</string>
     <string name="discover_on_network">Discover on network</string>
     <string name="searching_network">Searching the local network…</string>
+    <string name="no_servers_found">No opencode servers found on the local network.</string>
     <string name="testing_credentials">Testing…</string>
     <string name="credentials_ok">Credentials accepted.</string>
     <string name="credentials_rejected">Credentials rejected.</string>
@@ -108,6 +110,8 @@
     <string name="session">Session</string>
     <string name="default_model">default model</string>
     <string name="message_placeholder">Message opencode…</string>
+    <string name="expand_editor">Expand editor</string>
+    <string name="collapse_editor">Collapse</string>
     <string name="empty_chat_title">Start a conversation</string>
     <string name="empty_chat_hint">Type a message below to begin.</string>
     <string name="empty_chat_suggest_1">Explain what this codebase does</string>
@@ -163,6 +167,7 @@
     <string name="permission_title">Permission requested</string>
     <string name="permission_text">Allow this tool to run?</string>
     <string name="allow_once">Allow once</string>
+    <string name="allow_for_session">Allow for this session</string>
     <string name="always_allow">Always allow</string>
     <string name="reject">Reject</string>
 

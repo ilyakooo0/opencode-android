@@ -73,6 +73,7 @@ import soy.iko.opencode.data.model.SymbolResult
 import soy.iko.opencode.data.model.symbolKindLabel
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
+import soy.iko.opencode.ui.components.ConnectionBannerFor
 import soy.iko.opencode.ui.vmFactory
 import soy.iko.opencode.util.runCatchingCancellable
 
@@ -108,6 +109,11 @@ fun FileBrowserScreen(
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
+            // Surface SSE connection state so a dropped stream is visible while browsing
+            // files, not just on the chat/session screens.
+            Box(modifier = Modifier.fillMaxWidth()) {
+                ConnectionBannerFor(container)
+            }
             // Tappable breadcrumb trail so deep paths are navigable.
             Breadcrumbs(
                 path = state.path,

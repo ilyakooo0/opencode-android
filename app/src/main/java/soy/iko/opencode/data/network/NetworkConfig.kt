@@ -107,6 +107,13 @@ object NetworkConfig {
     /** Max messages to keep in memory per observed session; oldest are evicted beyond this. */
     const val maxInMemoryMessages = 500
 
+    // --- File viewer (FileViewScreen) ---
+
+    /** Cap on how many lines the raw viewer renders and searches. A multi-megabyte file is
+     *  split once (not twice) into this many lines at most, so it can't hold two full line
+     *  lists in memory or stall the LazyColumn; beyond the cap a truncation banner is shown. */
+    const val maxRenderedFileLines = 5000
+
     // --- File browser (FileBrowserViewModel) ---
 
     /** Debounce delay before firing a file-search request after the user stops typing. */
@@ -164,6 +171,16 @@ object NetworkConfig {
 
     /** Timeout for loading a profile from DataStore before giving up. */
     const val profileLoadTimeoutMs = 5_000L
+
+    /** How long mDNS discovery searches before showing a "no servers found" terminal state.
+     *  Discovery continues running in the background (a late server can still appear), but the
+     *  spinner is replaced with the no-results message so the user isn't left looking at an
+     *  infinite spinner on a network with no opencode servers. */
+    const val nsdDiscoveryNoResultTimeoutMs = 8_000L
+
+    /** Timeout for a credential test (probe) before giving up, so a hung/unresponsive server
+     *  doesn't leave the "Testing…" spinner spinning indefinitely. */
+    const val testCredentialsTimeoutMs = 15_000L
 
     // --- SSE stream (EventStreamClient, AppContainer) ---
 

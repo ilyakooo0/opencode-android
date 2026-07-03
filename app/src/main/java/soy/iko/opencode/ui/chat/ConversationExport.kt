@@ -21,6 +21,7 @@ fun buildConversationMarkdown(messages: List<MessageWithParts>, title: String?):
     if (!title.isNullOrBlank()) {
         sb.append("# ").append(escapeMarkdown(title.trim())).append("\n\n")
     }
+    appendMetadataHeader(sb, messages)
     for (message in messages) {
         val heading = when (message.info) {
             is UserMessage -> "## You"
@@ -48,6 +49,23 @@ fun buildConversationMarkdown(messages: List<MessageWithParts>, title: String?):
         sb.append(heading).append("\n\n").append(body).append("\n\n")
     }
     return sb.toString().trimEnd()
+}
+
+/** Append a metadata header (message counts + timestamp range) so a shared transcript has
+ *  context for support/debugging. Skipped when there are no messages. */
+private fun appendMetadataHeader(sb: StringBuilder, messages: List<MessageWithParts>) {
+    if (messages.isEmpty()) return
+    val userCount = messages.count { it.info is UserMessage }
+    val assistantCount = messages.count { it.info is AssistantMessage }
+    val firstTime = messages.firstOrNull()?.info?.time?.created
+    val lastTime = messages.lastOrNull()?.info?.time?.created
+    sb.append("> ")
+    sb.append("$userCount user · $assistantCount assistant message")
+    if (userCount != 1) sb.append("s")
+    if (firstTime != null && lastTime != null) {
+        sb.append(" · $firstTime → $lastTime")
+    }
+    sb.append("\n\n---\n\n")
 }
 
 /** Render a tool call as a compact, readable blockquote summary: the tool name, its

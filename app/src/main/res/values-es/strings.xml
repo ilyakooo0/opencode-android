@@ -32,6 +32,7 @@
     <string name="theme_system">Sistema</string>
     <string name="theme_light">Claro</string>
     <string name="theme_dark">Oscuro</string>
+    <string name="theme_amoled">Negro AMOLED</string>
 
     <!-- Connection banner -->
     <string name="connecting">Conectando…</string>
@@ -75,6 +76,7 @@
     <string name="test_credentials">Probar credenciales</string>
     <string name="discover_on_network">Descubrir en la red</string>
     <string name="searching_network">Buscando en la red local…</string>
+    <string name="no_servers_found">No se encontraron servidores de opencode en la red local.</string>
     <string name="testing_credentials">Probando…</string>
     <string name="credentials_ok">Credenciales aceptadas.</string>
     <string name="credentials_rejected">Credenciales rechazadas.</string>
@@ -108,6 +110,8 @@
     <string name="session">Sesión</string>
     <string name="default_model">modelo predeterminado</string>
     <string name="message_placeholder">Escribe a opencode…</string>
+    <string name="expand_editor">Expandir editor</string>
+    <string name="collapse_editor">Contraer</string>
     <string name="empty_chat_title">Inicia una conversación</string>
     <string name="empty_chat_hint">Escribe un mensaje abajo para empezar.</string>
     <string name="empty_chat_suggest_1">Explica qué hace este código</string>
@@ -163,6 +167,7 @@
     <string name="permission_title">Permiso solicitado</string>
     <string name="permission_text">¿Permitir que esta herramienta se ejecute?</string>
     <string name="allow_once">Permitir una vez</string>
+    <string name="allow_for_session">Permitir por esta sesión</string>
     <string name="always_allow">Permitir siempre</string>
     <string name="reject">Rechazar</string>
 

@@ -1,3 +1,5 @@
+@file:Suppress("TooManyFunctions")
+
 package soy.iko.opencode.ui.chat
 
 import android.app.Activity
@@ -37,6 +39,7 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Expand
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MoreVert
@@ -44,6 +47,7 @@ import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Restore
+import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AlertDialog
@@ -1224,6 +1228,8 @@ private fun ChatInputBar(
 ) {
     // Sendable when there's text OR at least one attachment (an image-only prompt is valid).
     val hasContent = value.isNotBlank() || attachments.isNotEmpty()
+    // Full-screen editor state: opened when the user wants more space for a long prompt.
+    var showFullScreenEditor by rememberSaveable { mutableStateOf(false) }
     Surface(tonalElevation = 3.dp, modifier = Modifier.imePadding()) {
         Column(modifier = Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.navigationBars)) {
             // A queued follow-up replaces the Stop button with a "queued" chip so the
@@ -1288,6 +1294,10 @@ private fun ChatInputBar(
                 IconButton(onClick = onVoice, enabled = enabled) {
                     Icon(Icons.Filled.Mic, contentDescription = stringResource(R.string.voice_input))
                 }
+                // Expand to a full-screen editor for long prompts (the inline field caps at 6 lines).
+                IconButton(onClick = { showFullScreenEditor = true }, enabled = enabled) {
+                    Icon(Icons.Filled.Expand, contentDescription = stringResource(R.string.expand_editor))
+                }
                 OutlinedTextField(
                     value = value,
                     onValueChange = { v ->
@@ -1344,26 +1354,15 @@ private fun ChatInputBar(
                         }
                     },
                     keyboardOptions = KeyboardOptions(
-                        // With send-on-Enter off, expose the platform default action so the soft
-                        // keyboard shows a newline key (this is a multi-line field) instead of a
-                        // Send action — otherwise the setting has no effect on soft keyboards and
-                        // there's no way to type a newline. Hardware Enter is handled separately.
-                        imeAction = if (sendOnEnter) ImeAction.Send else ImeAction.Default,
+                        // Always expose the platform default (newline) IME action so a soft-
+                        // keyboard user can insert a newline even when "Send on Enter" is on —
+                        // soft keyboards have no Shift key, so the hardware Shift+Enter escape
+                        // hatch doesn't apply. The trailing Send button and the hardware Enter
+                        // (onPreviewKeyEvent above) are the send affordances; the soft IME
+                        // action is the newline affordance.
+                        imeAction = ImeAction.Default,
                         capitalization = KeyboardCapitalization.Sentences,
                     ),
-                    keyboardActions = KeyboardActions(onSend = {
-                        if (enabled) {
-                            // During a run the Send IME action queues a follow-up, but only when
-                            // there's typed text — queuing "" would cancel an existing queued
-                            // follow-up (see the Queue button gate). When not running, an
-                            // attachment-only send is valid, so gate that path on hasContent.
-                            if (running) {
-                                if (value.isNotBlank()) onQueueFollowUp(value)
-                            } else if (hasContent) {
-                                onSend()
-                            }
-                        }
-                    }),
                 )
                 ComposerTrailingButton(
                     running = running,
@@ -1375,6 +1374,66 @@ private fun ChatInputBar(
                     onQueue = { onQueueFollowUp(value) },
                 )
             }
+        }
+        if (showFullScreenEditor) {
+            FullScreenEditor(
+                value = value,
+                onValueChange = onValueChange,
+                onDismiss = { showFullScreenEditor = false },
+                onSend = { showFullScreenEditor = false; onSend() },
+                canSend = enabled && hasContent,
+            )
+        }
+    }
+}
+
+/** Full-screen editor dialog for composing long prompts. Gives the full viewport height to
+ *  the text field (vs the inline 6-line cap) with a Send button and a collapse action. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun FullScreenEditor(
+    value: String,
+    onValueChange: (String) -> Unit,
+    onDismiss: () -> Unit,
+    onSend: () -> Unit,
+    canSend: Boolean,
+) {
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
+    ) {
+        Scaffold(
+            topBar = {
+                androidx.compose.material3.TopAppBar(
+                    title = { Text(stringResource(R.string.message_placeholder)) },
+                    navigationIcon = {
+                        androidx.compose.material3.TextButton(onClick = onDismiss) {
+                            Text(stringResource(R.string.collapse_editor))
+                        }
+                    },
+                )
+            },
+            bottomBar = {
+                Surface(tonalElevation = 3.dp) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().imePadding().padding(12.dp),
+                        horizontalArrangement = Arrangement.End,
+                    ) {
+                        androidx.compose.material3.Button(onClick = onSend, enabled = canSend) {
+                            Text(stringResource(R.string.send))
+                        }
+                    }
+                }
+            },
+        ) { padding ->
+            OutlinedTextField(
+                value = value,
+                onValueChange = { v -> onValueChange(v.take(NetworkConfig.maxDraftLengthChars)) },
+                modifier = Modifier.fillMaxSize().padding(padding),
+                placeholder = { Text(stringResource(R.string.message_placeholder)) },
+                maxLines = Int.MAX_VALUE,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default, capitalization = KeyboardCapitalization.Sentences),
+            )
         }
     }
 }
@@ -1422,10 +1481,11 @@ private fun ComposerTrailingButton(
                     onClick = onQueue,
                     modifier = Modifier.testTag("queue_button"),
                 ) {
-                    // A clock/schedule icon (not Send) so it reads as "queue for later" and
-                    // isn't confused with the send action sitting right beside the Stop button.
+                    // PlaylistAdd reads as "add to a queue/list" more clearly than a clock
+                    // icon (which can be read as "snooze" or "later"), and isn't confused with
+                    // the Send action sitting right beside the Stop button.
                     Icon(
-                        Icons.Filled.Schedule,
+                        Icons.AutoMirrored.Filled.PlaylistAdd,
                         contentDescription = stringResource(R.string.queue_followup),
                     )
                 }

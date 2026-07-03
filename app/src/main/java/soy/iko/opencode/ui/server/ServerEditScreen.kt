@@ -65,6 +65,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import soy.iko.opencode.data.network.NsdDiscovery
+import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
 import soy.iko.opencode.ui.vmFactory
@@ -459,20 +460,17 @@ private fun DiscoverySection(onPick: (String) -> Unit, initiallyExpanded: Boolea
             val discovery = remember { NsdDiscovery(context) }
             val servers by remember(discovery) { discovery.discover() }
                 .collectAsStateWithLifecycle(initialValue = emptyList())
-            if (servers.isEmpty()) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(vertical = 8.dp),
-                ) {
-                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                    Text(
-                        stringResource(R.string.searching_network),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(start = 8.dp),
-                    )
-                }
-            } else {
+            // mDNS discovery is a continuous flow that never emits a terminal "no results"
+            // state — on a network with no opencode servers the spinner would spin forever.
+            // After the timeout, swap the spinner for a "no servers found" message. Discovery
+            // keeps running, so a late server can still replace the message when it arrives.
+            var searchTimedOut by remember { mutableStateOf(false) }
+            LaunchedEffect(Unit) {
+                searchTimedOut = false
+                kotlinx.coroutines.delay(NetworkConfig.nsdDiscoveryNoResultTimeoutMs)
+                searchTimedOut = true
+            }
+            if (servers.isNotEmpty()) {
                 servers.forEach { server ->
                     Column(
                         modifier = Modifier
@@ -489,6 +487,26 @@ private fun DiscoverySection(onPick: (String) -> Unit, initiallyExpanded: Boolea
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
+                }
+            } else if (searchTimedOut) {
+                Text(
+                    stringResource(R.string.no_servers_found),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(vertical = 8.dp),
+                )
+            } else {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(vertical = 8.dp),
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Text(
+                        stringResource(R.string.searching_network),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 8.dp),
+                    )
                 }
             }
         }

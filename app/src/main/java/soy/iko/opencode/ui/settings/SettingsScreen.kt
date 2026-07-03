@@ -660,6 +660,7 @@ private fun ThemeRow(mode: ThemeMode, selected: Boolean, usingSystemColors: Bool
         }
         ThemeMode.LIGHT -> LightSwatches
         ThemeMode.DARK -> DarkSwatches
+        ThemeMode.AMOLED -> DarkSwatches
     }
     Row(
         modifier = Modifier
@@ -675,6 +676,7 @@ private fun ThemeRow(mode: ThemeMode, selected: Boolean, usingSystemColors: Bool
                 ThemeMode.SYSTEM -> stringResource(R.string.theme_system)
                 ThemeMode.LIGHT -> stringResource(R.string.theme_light)
                 ThemeMode.DARK -> stringResource(R.string.theme_dark)
+                ThemeMode.AMOLED -> stringResource(R.string.theme_amoled)
             },
             style = MaterialTheme.typography.bodyLarge,
             modifier = Modifier.weight(1f),

@@ -321,7 +321,24 @@ class ChatViewModel(
     // dispatcher (event collector + viewModelScope launches), so no extra synchronization is needed.
     private val pendingPermissions = LinkedHashMap<String, Permission>()
 
+    // Session-scoped permission grants (Allow-for-this-session). Each entry is a (type, patternText)
+    // pair the user approved with PermissionResponse.SESSION. Subsequent matching requests are
+    // auto-responded ONCE without showing the dialog, so e.g. a user granting "read" for one path
+    // isn't re-prompted for every other file read in the same conversation. Cleared on connection
+    // change (see the activeConnection collector) so it never leaks across servers. The server only
+    // knows once/always/reject; SESSION is a client-side scope that maps to ONCE on the wire.
+    private val sessionAllowed = mutableSetOf<Pair<String, String>>()
+
     private fun enqueuePermission(permission: Permission) {
+        // Auto-respond to a permission whose (type, pattern) the user previously granted for this
+        // session, instead of showing the dialog again. Resolved immediately (not via the queue) so
+        // the tool run isn't paused waiting for a dialog the user will never see.
+        val type = permission.type.orEmpty()
+        val pattern = permission.patternText.orEmpty()
+        if (type.isNotEmpty() && sessionAllowed.contains(type to pattern)) {
+            respondPermission(permission, PermissionResponse.ONCE)
+            return
+        }
         pendingPermissions[permission.id] = permission
         _pendingPermission.value = pendingPermissions.values.lastOrNull()
         updatePermissionProgress()
@@ -600,11 +617,12 @@ class ChatViewModel(
                     // otherwise the working spinner sticks on, ChatScreen keeps keepScreenOn +
                     // the RunForegroundService alive, and the Stop button no-ops (abort() early-
                     // returns with no connection) until a later reconnect happens to clear it.
-                    _running.value = false
-                    _aborting.value = false
-                    clearPermissions()
-                    sessionTitleJob?.cancel()
-                    return@collectLatest
+                _running.value = false
+                _aborting.value = false
+                clearPermissions()
+                sessionAllowed.clear()
+                sessionTitleJob?.cancel()
+                return@collectLatest
                 }
                 _running.value = false
                 // Allow the re-light below to recover a still-running run after this (re)connect;
@@ -612,6 +630,7 @@ class ChatViewModel(
                 // won't spuriously re-light.
                 runEndedByIdle = false
                 clearPermissions()
+                sessionAllowed.clear()
                 _failedDraft.value = null
                 // NOTE: deliberately not clearing _queuedFollowUp here. It's session-scoped
                 // user intent that is now persisted; wiping it on every (re)connect — which
@@ -1353,6 +1372,14 @@ class ChatViewModel(
 
     fun respondPermission(permission: Permission, response: PermissionResponse) {
         val conn = connection ?: return
+        // Record a session-scoped grant so subsequent matching requests are auto-answered.
+        // SESSION maps to ONCE on the wire (the server has no session-scope concept); the
+        // client-side set is what gives it the "for this session" semantics.
+        if (response == PermissionResponse.SESSION) {
+            val type = permission.type.orEmpty()
+            val pattern = permission.patternText.orEmpty()
+            if (type.isNotEmpty()) sessionAllowed.add(type to pattern)
+        }
         // Dismiss optimistically (revealing any queued request); permission.replied will confirm.
         // If the call fails we re-surface this request so the user can retry instead of being stuck
         // with a dismissed dialog and a tool run that's still paused server-side.

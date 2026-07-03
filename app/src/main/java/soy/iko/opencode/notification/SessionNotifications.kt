@@ -137,10 +137,35 @@ object SessionNotifications {
             .addAction(replyAction)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            // Group notifications from the same server so multiple completions collapse into
+            // a stackable group on Android 7+ instead of filling the shade with individual entries.
+            .setGroup(GROUP_COMPLETED)
             .build()
 
-        runCatching { NotificationManagerCompat.from(context).notify(notifId, notification) }
-            .onFailure { Log.w(TAG, "Failed to post completion notification", it) }
+        runCatching {
+            NotificationManagerCompat.from(context).notify(notifId, notification)
+            // Post a summary notification so the group has a single top-level entry in the shade.
+            postCompletedSummary(context)
+        }.onFailure { Log.w(TAG, "Failed to post completion notification", it) }
+    }
+
+    /** Post (or update) a summary notification for the completed-sessions group so multiple
+     *  completions collapse into one stackable entry instead of filling the shade. */
+    @SuppressLint("MissingPermission")
+    private fun postCompletedSummary(context: Context) {
+        val summary = NotificationCompat.Builder(context, NotificationChannels.COMPLETED)
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setContentTitle(context.getString(R.string.notif_completed_title))
+            .setContentText(context.getString(R.string.app_name))
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setAutoCancel(true)
+            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+            .setGroup(GROUP_COMPLETED)
+            .setGroupSummary(true)
+            .build()
+        runCatching {
+            NotificationManagerCompat.from(context).notify(SUMMARY_COMPLETED_ID, summary)
+        }.onFailure { Log.w(TAG, "Failed to post completion summary notification", it) }
     }
 
     /** Post a heads-up notification for a permission request with Allow once / Always /
@@ -253,4 +278,7 @@ object SessionNotifications {
     fun cancelError(context: Context, sessionId: String) {
         NotificationManagerCompat.from(context).cancel(notifId(NS_ERROR, sessionId))
     }
+
+    private const val GROUP_COMPLETED = "soy.iko.opencode.COMPLETED"
+    private const val SUMMARY_COMPLETED_ID = -1
 }

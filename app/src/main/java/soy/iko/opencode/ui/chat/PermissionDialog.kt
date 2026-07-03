@@ -133,14 +133,21 @@ fun PermissionDialog(
                 OutlinedButton(
                     onClick = {
                         haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                        respond(PermissionResponse.SESSION)
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text(stringResource(R.string.allow_for_session)) }
+                OutlinedButton(
+                    onClick = {
+                        haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                         respond(PermissionResponse.ALWAYS)
                     },
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text(stringResource(R.string.always_allow)) }
                 // Reject is an OutlinedButton (not a low-prominence TextButton) in the
-                // same column so the three actions are visually balanced — the prior
-                // layout buried Reject as a small dismiss-button, nudging users toward
-                // granting. Reject uses the error color to signal its consequence.
+                // same column so the actions are visually balanced — the prior layout buried
+                // Reject as a small dismiss-button, nudging users toward granting. Reject
+                // uses the error color to signal its consequence.
                 OutlinedButton(
                     onClick = {
                         haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)

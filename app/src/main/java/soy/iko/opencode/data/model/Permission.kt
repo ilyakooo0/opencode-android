@@ -38,11 +38,19 @@ data class Permission(
         }
 }
 
-/** Allowed values for the permission response body. */
+/** Allowed values for the permission response body.
+ *
+ * [SESSION] is a client-side scope: it auto-responds [ONCE] to subsequent permission requests
+ * whose (type, pattern) match a remembered set, without showing the dialog. The set lives in
+ * [soy.iko.opencode.ui.chat.ChatViewModel] and is cleared on connection change. It is NOT sent
+ * to the server (the server only knows `once`/`always`/`reject`); the VM maps it to [ONCE] on
+ * the wire and tracks the grant locally. This gives users a middle ground between "allow once"
+ * (re-prompts on every file read) and "always" (persists in the server config outliving the app). */
 enum class PermissionResponse(val wire: String) {
     ONCE("once"),
     ALWAYS("always"),
     REJECT("reject"),
+    SESSION("once"),
 }
 
 /** Body for `POST /session/:id/permissions/:permissionID`. */

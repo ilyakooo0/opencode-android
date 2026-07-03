@@ -26,7 +26,11 @@ import soy.iko.opencode.R
 class RunForegroundService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val notification = buildNotification()
+        // The session title (when a single run is active) is passed via the intent extra so
+        // the notification can identify which session is running, instead of a generic
+        // "Agent is working…". Null/blank falls back to the generic title.
+        val sessionTitle = intent?.getStringExtra(EXTRA_SESSION_TITLE)?.takeIf { it.isNotBlank() }
+        val notification = buildNotification(sessionTitle)
         // startForeground can throw ForegroundServiceStartNotAllowedException on
         // Android 12+ if the app is in the background when the service starts. Wrap
         // it so a backgrounded start (e.g. the user navigates away at the wrong
@@ -50,7 +54,7 @@ class RunForegroundService : Service() {
         return START_NOT_STICKY
     }
 
-    private fun buildNotification(): Notification {
+    private fun buildNotification(sessionTitle: String?): Notification {
         // Tapping the notification opens the app so the user can see the running session.
         val openIntent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -59,10 +63,11 @@ class RunForegroundService : Service() {
             this, 0, openIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
+        val contentText = sessionTitle ?: getString(R.string.notif_running_text)
         return NotificationCompat.Builder(this, NotificationChannels.STATUS)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle(getString(R.string.notif_running_title))
-            .setContentText(getString(R.string.notif_running_text))
+            .setContentText(contentText)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
             // Show a live elapsed timer so the user can see how long the current run has
@@ -102,13 +107,16 @@ class RunForegroundService : Service() {
     companion object {
         private const val TAG = "RunForegroundService"
         private const val NOTIF_ID = 1
+        const val EXTRA_SESSION_TITLE = "soy.iko.opencode.extra.SESSION_TITLE"
 
-        fun start(context: Context) {
+        fun start(context: Context, sessionTitle: String? = null) {
             // startForegroundService can throw ForegroundServiceStartNotAllowedException
             // on Android 12+ if the app is in the background. Wrap it so a backgrounded
             // start (e.g. the user navigates away at the wrong moment) doesn't crash.
             runCatching {
-                context.startForegroundService(Intent(context, RunForegroundService::class.java))
+                val intent = Intent(context, RunForegroundService::class.java)
+                sessionTitle?.let { intent.putExtra(EXTRA_SESSION_TITLE, it) }
+                context.startForegroundService(intent)
             }.onFailure {
                 Log.w(TAG, "startForegroundService failed; running without foreground priority", it)
             }

@@ -225,18 +225,21 @@ private fun ReasoningBlock(text: String, streaming: Boolean, keyId: String, modi
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                TextButton(
-                    onClick = {
-                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        copyToClipboard(context, context.getString(R.string.clip_label_reasoning), text)
-                    },
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp),
-                    modifier = Modifier.semantics(mergeDescendants = true) {},
-                ) {
-                    Icon(Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(14.dp))
-                    Text(stringResource(R.string.copy), style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(start = 4.dp))
-                }
             }
+        }
+        // Copy affordance lives outside AnimatedVisibility so it's reachable when the
+        // block is collapsed — previously the copy button was inside the expanded content,
+        // leaving a collapsed reasoning block with no copy affordance at all.
+        TextButton(
+            onClick = {
+                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                copyToClipboard(context, context.getString(R.string.clip_label_reasoning), text)
+            },
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp),
+            modifier = Modifier.semantics(mergeDescendants = true) {},
+        ) {
+            Icon(Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(14.dp))
+            Text(stringResource(R.string.copy), style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(start = 4.dp))
         }
     }
 }

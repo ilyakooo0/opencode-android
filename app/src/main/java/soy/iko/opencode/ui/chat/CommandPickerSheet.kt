@@ -45,6 +45,8 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.ui.platform.LocalConfiguration
 import soy.iko.opencode.data.model.Command
 import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.R
@@ -144,7 +146,8 @@ fun CommandPickerSheet(
                     modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp),
                 )
             } else {
-                LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
+                // Responsive height: half the viewport rather than a hardcoded 420dp cap.
+                LazyColumn(modifier = Modifier.fillMaxHeight(0.5f)) {
                     // distinctBy the name so duplicate command names from the server can't
                     // crash the list with LazyColumn's "Key was already used".
                     items(filtered.distinctBy { it.name }, key = { it.name }) { cmd ->

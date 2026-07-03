@@ -95,16 +95,31 @@ private val LightColors = lightColorScheme(
     scrim = Color(0xFF000000),
 )
 
+/**
+ * AMOLED — the Tokyo Night dark palette with pure-black backgrounds (#000000) so OLED
+ * displays power off pixels in large black areas, extending battery life. The accent
+ * colours stay the same so the brand identity is preserved; only the backgrounds and
+ * surfaces drop to true black.
+ */
+private val AmoledColors = DarkColors.copy(
+    background = Color(0xFF000000),
+    surface = Color(0xFF000000),
+    surfaceVariant = Color(0xFF1A1F2E),
+    inverseOnSurface = Color(0xFF000000),
+)
+
 @Composable
 fun OpencodeTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     dynamicColor: Boolean = false,
+    amoled: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     val context = LocalContext.current
     val colorScheme = when {
         dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ->
             if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+        darkTheme && amoled -> AmoledColors
         darkTheme -> DarkColors
         else -> LightColors
     }

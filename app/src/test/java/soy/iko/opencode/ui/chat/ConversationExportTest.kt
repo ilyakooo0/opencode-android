@@ -35,7 +35,9 @@ class ConversationExportTest {
     @Test
     fun omitsTitleWhenBlank() {
         val md = buildConversationMarkdown(listOf(user("u1", "hi")), title = null)
-        assertTrue(md.startsWith("## You"))
+        // The metadata header is now prepended (message count + timestamp range), so the
+        // first message heading follows it.
+        assertTrue(md.contains("## You"))
     }
 
     @Test

@@ -48,6 +48,8 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.ui.platform.LocalConfiguration
 import soy.iko.opencode.data.model.ModelOption
 import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.R
@@ -177,7 +179,9 @@ fun ModelPickerSheet(
                 LaunchedEffect(Unit) {
                     if (selectedIndex >= 0) listState.scrollToItem(selectedIndex)
                 }
-                LazyColumn(state = listState, modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
+                // Responsive height: half the viewport rather than a hardcoded 420dp cap, so
+                // the sheet doesn't cramp in landscape or leave empty space on a tall phone.
+                LazyColumn(state = listState, modifier = Modifier.fillMaxHeight(0.5f)) {
                     grouped.forEach { (providerID, opts) ->
                         item(key = "header_$providerID") {
                             Text(

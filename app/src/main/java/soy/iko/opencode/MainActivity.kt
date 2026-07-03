@@ -90,12 +90,14 @@ class MainActivity : FragmentActivity() {
             val locked = appLock
             if (themePair != null && locked != null) {
                 val (themeMode, dynamicColor) = themePair
+                val amoled = themeMode == ThemeMode.AMOLED
                 val dark = when (themeMode) {
                     ThemeMode.SYSTEM -> isSystemInDarkTheme()
                     ThemeMode.LIGHT -> false
                     ThemeMode.DARK -> true
+                    ThemeMode.AMOLED -> true
                 }
-                OpencodeTheme(darkTheme = dark, dynamicColor = dynamicColor) {
+                OpencodeTheme(darkTheme = dark, dynamicColor = dynamicColor, amoled = amoled) {
                     AppLockGate(enabled = locked) {
                         OpencodeAppUi(container = container)
                     }
