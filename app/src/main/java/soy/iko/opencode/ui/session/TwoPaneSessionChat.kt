@@ -53,6 +53,10 @@ fun TwoPaneSessionChat(
     modifier: Modifier = Modifier,
 ) {
     var selected by rememberSaveable { mutableStateOf<String?>(null) }
+    // Bumped by the empty-detail "New session" button to open the left pane's new-session
+    // directory picker (the same dialog the FAB uses) instead of creating a directory-less
+    // session; the created session then opens into the detail pane via onOpenSession.
+    var newSessionTrigger by remember { mutableStateOf(0) }
     val pendingOpenSession by container.pendingOpenSession.collectAsStateWithLifecycle()
     val pendingShare by container.pendingShare.collectAsStateWithLifecycle()
     val activeConnection by container.activeConnection.collectAsStateWithLifecycle()
@@ -101,12 +105,24 @@ fun TwoPaneSessionChat(
     // the latch is set the moment any of those wins, it never re-selects after a user clears
     // the pane (BackHandler) or a server switch nulls `selected`.
     var autoSelected by remember { mutableStateOf(false) }
-    LaunchedEffect(sessionListState.loading, sessionListState.sessions, pendingOpenSession, selected) {
+    LaunchedEffect(
+        sessionListState.loading,
+        sessionListState.sessions,
+        sessionListState.archivedIds,
+        sessionListState.showArchived,
+        pendingOpenSession,
+        selected,
+    ) {
         if (autoSelected || sessionListState.loading) return@LaunchedEffect
         // A pending deep-link or an existing selection takes precedence; yield the pane to it.
         if (pendingOpenSession != null || selected != null) { autoSelected = true; return@LaunchedEffect }
-        // Pick by recency regardless of the list's current sort mode.
-        val id = mostRecentSessionId(sessionListState.sessions) ?: return@LaunchedEffect
+        // Pick by recency regardless of the list's current sort mode, but only among
+        // sessions visible under the current archive filter so we never open a hidden row.
+        val id = mostRecentSessionId(
+            sessionListState.sessions,
+            sessionListState.archivedIds,
+            sessionListState.showArchived,
+        ) ?: return@LaunchedEffect
         selected = id
         autoSelected = true
     }
@@ -140,6 +156,7 @@ fun TwoPaneSessionChat(
                 onOpenSettings = onOpenSettings,
                 onAddServer = onAddServer,
                 onOpenSearch = onOpenSearch,
+                externalNewSessionTrigger = newSessionTrigger,
                 selectedSessionId = selected,
             )
         }
@@ -151,11 +168,10 @@ fun TwoPaneSessionChat(
         Box(modifier = Modifier.weight(NetworkConfig.twoPaneRightWeight).fillMaxSize()) {
             val sessionId = selected
             if (sessionId == null) {
-                // Reuse the same VM create path the session-list FAB uses; open the new
-                // session straight into the detail pane.
-                EmptyDetail(onNewSession = {
-                    sessionListVm.createSession(directory = null) { id -> selected = id }
-                })
+                // Route through the same new-session directory picker the left-pane FAB
+                // opens (rather than creating a directory-less session here); the created
+                // session opens into the detail pane via the shared onOpenSession callback.
+                EmptyDetail(onNewSession = { newSessionTrigger++ })
             } else {
                 BackHandler { selected = null }
                 // key() on the session id so switching conversations in two-pane mode
@@ -179,9 +195,21 @@ fun TwoPaneSessionChat(
     }
 }
 
-/** Id of the most recently updated (or created) session, or null when the list is empty. */
-private fun mostRecentSessionId(sessions: List<Session>): String? =
-    sessions.maxByOrNull { it.time?.updated ?: it.time?.created ?: 0L }?.id
+/**
+ * Id of the most recently updated (or created) session that is *visible* under the current
+ * archive filter (archived sessions excluded unless [showArchived]), or null when none
+ * qualify. Auto-selecting a hidden/archived session would open the detail pane on a row with
+ * no corresponding highlighted entry in the list.
+ */
+private fun mostRecentSessionId(
+    sessions: List<Session>,
+    archivedIds: Set<String>,
+    showArchived: Boolean,
+): String? =
+    sessions
+        .filter { showArchived || it.id !in archivedIds }
+        .maxByOrNull { it.time?.updated ?: it.time?.created ?: 0L }
+        ?.id
 
 /** Whether a session with [id] is present in [sessions]. */
 private fun containsSession(sessions: List<Session>, id: String): Boolean =

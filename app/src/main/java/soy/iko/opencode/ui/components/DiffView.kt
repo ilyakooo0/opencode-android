@@ -31,6 +31,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import soy.iko.opencode.R
 
@@ -150,7 +151,7 @@ fun DiffView(diff: String, modifier: Modifier = Modifier, saveKey: String? = nul
             modifier = Modifier.fillMaxWidth().padding(top = 2.dp, end = 4.dp),
             horizontalArrangement = Arrangement.End,
         ) {
-            IconButton(onClick = { copyToClipboard(context, "diff", diff) }) {
+            IconButton(onClick = { copyToClipboard(context, context.getString(R.string.clip_label_diff), diff) }) {
                 Icon(Icons.Filled.ContentCopy, contentDescription = stringResource(R.string.copy), tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
@@ -181,7 +182,7 @@ fun DiffView(diff: String, modifier: Modifier = Modifier, saveKey: String? = nul
                             line.text,
                             style = MaterialTheme.typography.bodySmall,
                             fontFamily = FontFamily.Monospace,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(vertical = 1.dp),
                         )
                         is DiffLine.Add -> DiffRow(line.text, "+", addColor, addText)
@@ -191,12 +192,16 @@ fun DiffView(diff: String, modifier: Modifier = Modifier, saveKey: String? = nul
                 }
             }
         }
-        if (lines.size > COLLAPSED_DIFF_LINES && !expanded) {
+        if (lines.size > COLLAPSED_DIFF_LINES) {
+            val hidden = lines.size - COLLAPSED_DIFF_LINES
             TextButton(
-                onClick = { expanded = true },
+                onClick = { expanded = !expanded },
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp),
             ) {
-                Text(stringResource(R.string.show_more_lines, lines.size - COLLAPSED_DIFF_LINES))
+                Text(
+                    if (expanded) stringResource(R.string.show_less)
+                    else pluralStringResource(R.plurals.show_more_lines, hidden, hidden),
+                )
             }
         }
         Spacer(Modifier.height(10.dp))

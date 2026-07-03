@@ -2,11 +2,13 @@ package soy.iko.opencode.ui.chat
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
@@ -222,10 +224,13 @@ private fun UserBubble(
             .joinToString("\n\n") { it.text }
             .takeIf { it.isNotBlank() }
     }
-    Row(modifier = modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+    // Wrap-content bubble capped at the width fraction (end-aligned), so a one-word prompt is
+    // snug instead of a wide empty box while long prompts still cap at the readable fraction.
+    BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier
-                .fillMaxWidth(NetworkConfig.userBubbleWidthFraction)
+                .align(Alignment.TopEnd)
+                .widthIn(max = maxWidth * NetworkConfig.userBubbleWidthFraction)
                 .clip(MaterialTheme.shapes.medium)
                 .background(MaterialTheme.colorScheme.primaryContainer)
                 .padding(12.dp),
@@ -271,7 +276,7 @@ private fun UserBubble(
                         IconButton(
                             onClick = {
                                 haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                copyToClipboard(context, "message", textToCopy)
+                                copyToClipboard(context, context.getString(R.string.clip_label_message), textToCopy)
                             },
                         ) {
                             Icon(
@@ -424,7 +429,7 @@ private fun AssistantActions(
         if (textToCopy != null) {
             IconButton(onClick = {
                 haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                copyToClipboard(context, "message", textToCopy)
+                copyToClipboard(context, context.getString(R.string.clip_label_message), textToCopy)
             }) {
                 Icon(
                     Icons.Filled.ContentCopy,

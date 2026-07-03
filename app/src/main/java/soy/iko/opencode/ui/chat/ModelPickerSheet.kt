@@ -49,6 +49,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.Box
 import soy.iko.opencode.data.model.ModelOption
+import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.R
 
 /**
@@ -124,9 +125,14 @@ fun ModelPickerSheet(
             val keyboardController = LocalSoftwareKeyboardController.current
             val haptics = LocalHapticFeedback.current
             // Auto-focus the search field (and raise the keyboard) when the sheet opens so the
-            // user can start typing to filter a long catalog without an extra tap.
+            // user can start typing to filter a long catalog without an extra tap. Skip it for a
+            // short catalog that's faster to scan by eye than to filter.
             val searchFocus = remember { FocusRequester() }
-            LaunchedEffect(Unit) { runCatching { searchFocus.requestFocus() } }
+            LaunchedEffect(Unit) {
+                if (options.size > NetworkConfig.pickerSearchAutofocusThreshold) {
+                    runCatching { searchFocus.requestFocus() }
+                }
+            }
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },

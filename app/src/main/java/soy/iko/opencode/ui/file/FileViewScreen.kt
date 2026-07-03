@@ -9,6 +9,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
@@ -35,10 +36,13 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -51,6 +55,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -85,7 +90,13 @@ import soy.iko.opencode.ui.vmFactory
 import soy.iko.opencode.util.runCatchingCancellable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.withContext
+
+/** Cap on how many lines the raw viewer renders and searches. A multi-megabyte file is
+ *  split once (not twice) into this many lines at most, so it can't hold two full line
+ *  lists in memory or stall the LazyColumn; beyond the cap a truncation banner is shown. */
+private const val MAX_RENDERED_LINES = 5000
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -121,7 +132,23 @@ fun FileViewScreen(
     var wrap by rememberSaveable(path) { mutableStateOf(codeWrap) }
     val listState = rememberLazyListState()
     val rawText = state.content?.content.orEmpty()
-    val lines = remember(rawText) { rawText.split("\n") }
+    // Split the raw text exactly once here (the line viewer and find-in-file both consume this
+    // list) and cap it so a huge file doesn't get split twice or overwhelm the LazyColumn.
+    val allLines = remember(rawText) { rawText.split("\n") }
+    val truncated = allLines.size > MAX_RENDERED_LINES
+    val lines = remember(allLines) {
+        if (allLines.size > MAX_RENDERED_LINES) allLines.subList(0, MAX_RENDERED_LINES) else allLines
+    }
+    // The line the viewer was opened at (from a search hit), highlighted until the user scrolls
+    // or starts an in-file find so the landed line stands out. Null once cleared.
+    val highlightLine = rememberJumpToLineHighlight(
+        path = path,
+        initialLine = initialLine,
+        content = state.content,
+        isBinary = state.content?.isBinary == true,
+        lineCount = lines.size,
+        listState = listState,
+    )
     // Debounce the query so each keystroke doesn't trigger a full-file scan, and run the
     // scan on Dispatchers.Default so a large file doesn't jank the keyboard while typing.
     var debouncedFind by remember { mutableStateOf("") }
@@ -145,19 +172,6 @@ fun FileViewScreen(
     LaunchedEffect(matchPos, matchIndices) {
         matchIndices.getOrNull(matchPos)?.let { idx -> runCatchingCancellable { listState.animateScrollToItem(idx) } }
     }
-    // Opened at a specific line (from a search hit): scroll there once the raw content loads.
-    // One-shot so a later find-in-file navigation isn't overridden.
-    var didInitialLineScroll by rememberSaveable(path) { mutableStateOf(false) }
-    LaunchedEffect(state.content, initialLine) {
-        val line = initialLine ?: return@LaunchedEffect
-        if (didInitialLineScroll) return@LaunchedEffect
-        val content = state.content ?: return@LaunchedEffect
-        if (content.isBinary) return@LaunchedEffect
-        val target = (line - 1).coerceIn(0, (lines.size - 1).coerceAtLeast(0))
-        runCatchingCancellable { listState.scrollToItem(target) }
-        didInitialLineScroll = true
-    }
-
     Scaffold(
         topBar = {
             FileViewTopBar(
@@ -165,6 +179,7 @@ fun FileViewScreen(
                 loading = state.loading,
                 content = rawText,
                 wrap = wrap,
+                diffShown = showToggle && showDiff,
                 onBack = onBack,
                 onReload = { vm.reload() },
                 // Find searches the raw line list, which isn't on screen under a diff. Rather
@@ -222,19 +237,53 @@ fun FileViewScreen(
                     },
                     findActive = findActive,
                     findQuery = findQuery,
-                    onQueryChange = { findQuery = it; matchPos = 0 },
+                    onQueryChange = { findQuery = it; matchPos = 0; if (it.isNotEmpty()) highlightLine.value = null },
                     matchIndices = matchIndices,
                     matchPos = matchPos,
                     onPrev = { if (matchIndices.isNotEmpty()) matchPos = (matchPos - 1 + matchIndices.size) % matchIndices.size },
                     onNext = { if (matchIndices.isNotEmpty()) matchPos = (matchPos + 1) % matchIndices.size },
                     onCloseFind = { findActive = false; findQuery = "" },
                     wrap = wrap,
+                    lines = lines,
+                    truncated = truncated,
+                    highlightLineIndex = highlightLine.value,
                     listState = listState,
                     onRetry = { vm.reload() },
                 )
             }
         }
     }
+}
+
+// Owns the "jump to a line from a search hit" behaviour: scroll to the target once the raw
+// content loads (one-shot), and clear the highlight the moment the user drags the list by hand.
+// Extracted so FileViewScreen stays under the cyclomatic-complexity threshold.
+@Composable
+private fun rememberJumpToLineHighlight(
+    path: String,
+    initialLine: Int?,
+    content: Any?,
+    isBinary: Boolean,
+    lineCount: Int,
+    listState: LazyListState,
+): MutableState<Int?> {
+    val highlight = rememberSaveable(path) { mutableStateOf<Int?>(null) }
+    var didInitialScroll by rememberSaveable(path) { mutableStateOf(false) }
+    LaunchedEffect(content, initialLine) {
+        val line = initialLine ?: return@LaunchedEffect
+        if (didInitialScroll || content == null || isBinary) return@LaunchedEffect
+        val target = (line - 1).coerceIn(0, (lineCount - 1).coerceAtLeast(0))
+        runCatchingCancellable { listState.scrollToItem(target) }
+        highlight.value = target
+        didInitialScroll = true
+    }
+    LaunchedEffect(listState) {
+        if (initialLine == null) return@LaunchedEffect
+        listState.interactionSource.interactions.collect { interaction ->
+            if (interaction is DragInteraction.Start) highlight.value = null
+        }
+    }
+    return highlight
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -244,6 +293,7 @@ private fun FileViewTopBar(
     loading: Boolean,
     content: String,
     wrap: Boolean,
+    diffShown: Boolean,
     onBack: () -> Unit,
     onReload: () -> Unit,
     onToggleFind: () -> Unit,
@@ -263,9 +313,13 @@ private fun FileViewTopBar(
             // be editing it), so reload without requiring a back-out. Shows a spinner while
             // loading since the content now stays on screen during a reload (the spinner is
             // the only progress signal).
+            val loadingLabel = stringResource(R.string.loading)
             IconButton(onClick = onReload, enabled = !loading) {
                 if (loading) {
-                    CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                    CircularProgressIndicator(
+                        Modifier.size(20.dp).semantics { contentDescription = loadingLabel },
+                        strokeWidth = 2.dp,
+                    )
                 } else {
                     Icon(Icons.Filled.Refresh, contentDescription = stringResource(R.string.refresh))
                 }
@@ -278,19 +332,38 @@ private fun FileViewTopBar(
                 IconButton(onClick = onToggleFind) {
                     Icon(Icons.Filled.Search, contentDescription = stringResource(R.string.find_in_file))
                 }
-                // Wrap long lines instead of horizontal-scrolling, useful for prose.
-                IconButton(onClick = onToggleWrap) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.WrapText,
-                        contentDescription = stringResource(R.string.wrap_lines),
-                        tint = if (wrap) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                // Overflow the less-frequent actions (wrap / copy / share) so a long filename
+                // title isn't crowded off screen by five inline icons on a phone.
+                var menuExpanded by remember { mutableStateOf(false) }
+                IconButton(onClick = { menuExpanded = true }) {
+                    Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.more_options))
+                }
+                DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                    // Wrap long lines instead of horizontal-scrolling; useful for prose. Disabled
+                    // in diff mode because DiffView ignores wrap, so an active-looking toggle there
+                    // would be a silent no-op.
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.wrap_lines)) },
+                        onClick = { onToggleWrap(); menuExpanded = false },
+                        enabled = !diffShown,
+                        leadingIcon = {
+                            Icon(
+                                Icons.AutoMirrored.Filled.WrapText,
+                                contentDescription = null,
+                                tint = if (wrap) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        },
                     )
-                }
-                IconButton(onClick = onCopy) {
-                    Icon(Icons.Filled.ContentCopy, contentDescription = stringResource(R.string.copy))
-                }
-                IconButton(onClick = onShare) {
-                    Icon(Icons.Filled.Share, contentDescription = stringResource(R.string.share))
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.copy)) },
+                        onClick = { onCopy(); menuExpanded = false },
+                        leadingIcon = { Icon(Icons.Filled.ContentCopy, contentDescription = null) },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.share)) },
+                        onClick = { onShare(); menuExpanded = false },
+                        leadingIcon = { Icon(Icons.Filled.Share, contentDescription = null) },
+                    )
                 }
             }
         },
@@ -313,6 +386,9 @@ private fun BoxScope.FileViewStateContent(
     onNext: () -> Unit,
     onCloseFind: () -> Unit,
     wrap: Boolean,
+    lines: List<String>,
+    truncated: Boolean,
+    highlightLineIndex: Int?,
     listState: LazyListState,
     onRetry: () -> Unit,
 ) {
@@ -353,6 +429,9 @@ private fun BoxScope.FileViewStateContent(
             onNext = onNext,
             onCloseFind = onCloseFind,
             wrap = wrap,
+            lines = lines,
+            truncated = truncated,
+            highlightLineIndex = highlightLineIndex,
             listState = listState,
         )
     }
@@ -374,6 +453,9 @@ private fun BoxScope.FileViewContentBody(
     onNext: () -> Unit,
     onCloseFind: () -> Unit,
     wrap: Boolean,
+    lines: List<String>,
+    truncated: Boolean,
+    highlightLineIndex: Int?,
     listState: LazyListState,
 ) {
     // Overlay bar: stacks the diff/raw chips and the find bar at the top so both stay
@@ -456,12 +538,14 @@ private fun BoxScope.FileViewContentBody(
             )
         } else {
             FileTextContent(
-                text = text,
+                lines = lines,
                 filename = filename,
                 topInset = topInset,
+                truncated = truncated,
                 wrap = wrap,
                 findQuery = findQuery,
                 matchIndices = matchIndices,
+                highlightLineIndex = highlightLineIndex,
                 listState = listState,
             )
         }
@@ -522,15 +606,16 @@ private fun FindBar(
 
 @Composable
 private fun FileTextContent(
-    text: String,
+    lines: List<String>,
     filename: String,
     topInset: androidx.compose.ui.unit.Dp,
+    truncated: Boolean,
     wrap: Boolean,
     findQuery: String,
     matchIndices: List<Int>,
+    highlightLineIndex: Int?,
     listState: LazyListState,
 ) {
-    val lines = remember(text) { text.split("\n") }
     // Gutter width scales with the digit count and the font scale so accessibility
     // text scaling (e.g. 1.3x) doesn't make line numbers overflow the gutter and
     // collide with the code text. 10dp/digit covers bodySmall at 1.0x; scale up
@@ -545,39 +630,52 @@ private fun FileTextContent(
     val syntax = remember(filename) { syntaxFor(filename) }
     val q = findQuery.trim()
     val matchSet = remember(matchIndices) { matchIndices.toHashSet() }
-    LazyColumn(
-        state = listState,
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(top = topInset)
-            .padding(8.dp),
-    ) {
-        itemsIndexed(lines, key = { index, _ -> index }) { index, line ->
-            val isMatch = q.isNotEmpty() && index in matchSet
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .then(if (wrap) Modifier else Modifier.horizontalScroll(hScrollState))
-                    .then(if (isMatch) Modifier.background(MaterialTheme.colorScheme.secondaryContainer) else Modifier),
-            ) {
-                Text(
-                    "${index + 1}",
-                    modifier = Modifier.width(gutterWidth),
-                    style = MaterialTheme.typography.bodySmall,
-                    fontFamily = FontFamily.Monospace,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                // Heuristic syntax highlighting per line. Falls back to plain text for
-                // unknown extensions, so non-code files render unchanged. Memoized so the
-                // O(n) tokenizer + AnnotatedString allocation runs only when the line text,
-                // file, or palette actually changes — not on every recomposition (e.g. every
-                // keystroke into find-in-file, which would otherwise re-highlight all visible lines).
-                val highlighted = remember(line, syntax, palette) { highlightLine(line, syntax, palette) }
-                Text(
-                    highlighted,
-                    modifier = Modifier.padding(start = 8.dp),
-                    style = MaterialTheme.typography.bodySmall,
-                )
+    Column(modifier = Modifier.fillMaxSize().padding(top = topInset)) {
+        if (truncated) {
+            Text(
+                stringResource(R.string.file_truncated, MAX_RENDERED_LINES),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+            )
+        }
+        LazyColumn(
+            state = listState,
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .padding(8.dp),
+        ) {
+            itemsIndexed(lines, key = { index, _ -> index }) { index, line ->
+                val isMatch = q.isNotEmpty() && index in matchSet
+                // The jump-to-line target keeps the same emphasis as a find match so the line
+                // the viewer landed on is obvious until the user scrolls or starts a find.
+                val isTarget = index == highlightLineIndex
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .then(if (wrap) Modifier else Modifier.horizontalScroll(hScrollState))
+                        .then(if (isMatch || isTarget) Modifier.background(MaterialTheme.colorScheme.secondaryContainer) else Modifier),
+                ) {
+                    Text(
+                        "${index + 1}",
+                        modifier = Modifier.width(gutterWidth),
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    // Heuristic syntax highlighting per line. Falls back to plain text for
+                    // unknown extensions, so non-code files render unchanged. Memoized so the
+                    // O(n) tokenizer + AnnotatedString allocation runs only when the line text,
+                    // file, or palette actually changes — not on every recomposition (e.g. every
+                    // keystroke into find-in-file, which would otherwise re-highlight all visible lines).
+                    val highlighted = remember(line, syntax, palette) { highlightLine(line, syntax, palette) }
+                    Text(
+                        highlighted,
+                        modifier = Modifier.padding(start = 8.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
             }
         }
     }

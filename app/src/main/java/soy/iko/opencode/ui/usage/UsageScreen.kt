@@ -1,6 +1,7 @@
 package soy.iko.opencode.ui.usage
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -33,7 +34,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
@@ -52,7 +55,7 @@ import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun UsageScreen(container: AppContainer, onBack: () -> Unit) {
+fun UsageScreen(container: AppContainer, onBack: () -> Unit, onOpenSession: (String) -> Unit = {}) {
     val vm: UsageViewModel = viewModel(factory = vmFactory { UsageViewModel(container) })
     val state by vm.state.collectAsStateWithLifecycle()
     val refreshing by vm.refreshing.collectAsStateWithLifecycle()
@@ -105,7 +108,7 @@ fun UsageScreen(container: AppContainer, onBack: () -> Unit) {
                                 modifier = Modifier.align(Alignment.Center),
                             )
                         } else {
-                            UsageContent(s.report)
+                            UsageContent(s.report, onOpenSession)
                         }
                 }
             }
@@ -121,7 +124,7 @@ private fun Centered(content: @Composable androidx.compose.foundation.layout.Col
 }
 
 @Composable
-private fun UsageContent(report: UsageReport) {
+private fun UsageContent(report: UsageReport, onOpenSession: (String) -> Unit) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
@@ -152,6 +155,7 @@ private fun UsageContent(report: UsageReport) {
                     tokens = s.tokens,
                     messages = s.messages,
                     costFraction = fractionOf(s.cost, report.totalCost),
+                    onClick = { onOpenSession(s.sessionId) },
                 )
             }
         }
@@ -199,7 +203,7 @@ private fun TotalsCard(report: UsageReport) {
             )
             Spacer(Modifier.size(8.dp))
             Text(
-                stringResource(R.string.usage_messages_count, report.messageCount),
+                pluralStringResource(R.plurals.usage_messages_count, report.messageCount, report.messageCount),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -238,13 +242,24 @@ private fun StatRow(label: String, value: String) {
 }
 
 @Composable
-private fun UsageRow(title: String, cost: Double, tokens: Tokens, messages: Int, costFraction: Float) {
-    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+private fun UsageRow(
+    title: String,
+    cost: Double,
+    tokens: Tokens,
+    messages: Int,
+    costFraction: Float,
+    onClick: (() -> Unit)? = null,
+) {
+    val rowModifier = Modifier
+        .fillMaxWidth()
+        .let { if (onClick != null) it.clickable(role = Role.Button, onClick = onClick) else it }
+        .padding(vertical = 6.dp)
+    Column(modifier = rowModifier) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium)
                 Text(
-                    stringResource(R.string.usage_messages_count, messages) + " · " + formatInt(tokens.total),
+                    pluralStringResource(R.plurals.usage_messages_count, messages, messages) + " · " + formatInt(tokens.total),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

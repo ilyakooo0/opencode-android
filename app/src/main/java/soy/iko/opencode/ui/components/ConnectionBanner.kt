@@ -79,7 +79,10 @@ fun ConnectionBanner(
         Surface(
             modifier = modifier
                 .fillMaxWidth()
-                .semantics {
+                // mergeDescendants so the spinner + label read as one TalkBack stop instead of
+                // several; the Retry TextButton is its own merged node, so it stays separately
+                // actionable.
+                .semantics(mergeDescendants = true) {
                     // Announce connection state changes to TalkBack users so they're
                     // aware the stream dropped/reconnecting without visual cues.
                     liveRegion = LiveRegionMode.Polite

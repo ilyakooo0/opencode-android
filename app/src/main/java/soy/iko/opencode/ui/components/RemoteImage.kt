@@ -1,20 +1,28 @@
 package soy.iko.opencode.ui.components
 
 import android.util.Base64
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -164,7 +172,10 @@ fun RemoteImage(part: FilePart, ctx: ImageLoadContext, modifier: Modifier = Modi
         ImageStatusBox { BrokenImageIcon() }
         return
     }
-    val request = remember(part.source, part.url, ctx.baseUrl, ctx.basicAuthHeader, model) {
+    // Bumping retryKey re-builds the ImageRequest, so a failed load can be re-issued by tapping
+    // the error state instead of being a permanent broken-image icon.
+    var retryKey by remember(part.source, part.url, ctx.baseUrl) { mutableIntStateOf(0) }
+    val request = remember(part.source, part.url, ctx.baseUrl, ctx.basicAuthHeader, model, retryKey) {
         ImageRequest.Builder(context)
             .data(model)
             .apply {
@@ -194,8 +205,32 @@ fun RemoteImage(part: FilePart, ctx: ImageLoadContext, modifier: Modifier = Modi
                 )
             }
         },
-        error = { ImageStatusBox { BrokenImageIcon() } },
+        error = { ImageRetry(onRetry = { retryKey++ }) },
     )
+}
+
+/** Error slot for [RemoteImage]: a broken-image icon plus a "Tap to retry" caption, the whole box
+ *  clickable so a failed load can be re-issued instead of stranding a permanent broken icon. */
+@Composable
+private fun ImageRetry(onRetry: () -> Unit) {
+    val label = stringResource(R.string.tap_to_retry)
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 120.dp)
+            .clickable(role = Role.Button, onClick = onRetry),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            BrokenImageIcon()
+            Text(
+                label,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
+    }
 }
 
 /** Sentinel for [RemoteImage]'s produceState while resolveModel runs off-thread, so the initial

@@ -35,7 +35,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
@@ -117,6 +119,14 @@ fun GlobalSearchScreen(
                         title = stringResource(R.string.search_no_matches),
                         modifier = Modifier.align(Alignment.Center),
                     )
+                    // Typed something but below the min length (no search run yet): nudge to keep
+                    // typing rather than reverting to the untouched start state, which reads as if
+                    // the field were empty.
+                    state.query.isNotBlank() && !state.hasSearched -> EmptyState(
+                        icon = Icons.Filled.Search,
+                        title = stringResource(R.string.search_keep_typing),
+                        modifier = Modifier.align(Alignment.Center),
+                    )
                     state.results.isEmpty() -> EmptyState(
                         icon = Icons.Filled.Search,
                         title = stringResource(R.string.search_all_start),
@@ -130,7 +140,7 @@ fun GlobalSearchScreen(
                     ) {
                         item(key = "__count") {
                             Text(
-                                stringResource(R.string.search_results_count, state.results.size),
+                                pluralStringResource(R.plurals.search_results_count, state.results.size, state.results.size),
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(top = 8.dp),
@@ -162,7 +172,7 @@ fun GlobalSearchScreen(
 
 @Composable
 private fun SearchResultCard(hit: SearchHit, query: String, onClick: () -> Unit) {
-    Card(modifier = Modifier.fillMaxWidth().clickable { onClick() }) {
+    Card(modifier = Modifier.fillMaxWidth().clickable(role = Role.Button) { onClick() }) {
         Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
             Text(
                 hit.session.displayTitle,

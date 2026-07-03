@@ -32,6 +32,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -45,6 +46,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
@@ -60,6 +63,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -70,6 +74,7 @@ import soy.iko.opencode.data.model.symbolKindLabel
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
 import soy.iko.opencode.ui.vmFactory
+import soy.iko.opencode.util.runCatchingCancellable
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -110,10 +115,18 @@ fun FileBrowserScreen(
                 modifier = Modifier.fillMaxWidth(),
             )
             val keyboardController = LocalSoftwareKeyboardController.current
+            // Search is the primary reason to open this screen, so focus the field on first
+            // composition. Focus only (no forced keyboard) so it doesn't fight the breadcrumb/listing.
+            val searchFocus = remember { FocusRequester() }
+            LaunchedEffect(Unit) { runCatchingCancellable { searchFocus.requestFocus() } }
             OutlinedTextField(
                 value = state.query,
                 onValueChange = vm::setQuery,
-                modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 12.dp).testTag("file_search"),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 12.dp, end = 12.dp, top = 12.dp)
+                    .focusRequester(searchFocus)
+                    .testTag("file_search"),
                 label = {
                     Text(
                         stringResource(
@@ -154,13 +167,14 @@ fun FileBrowserScreen(
                 modifier = Modifier.fillMaxSize(),
             ) {
                 Box(modifier = Modifier.fillMaxSize()) {
+                    val loadingLabel = stringResource(R.string.loading)
                     when {
-                        state.loading || state.searching -> {
-                            val loadingLabel = stringResource(R.string.loading)
-                            CircularProgressIndicator(
-                                Modifier.align(Alignment.Center).semantics { contentDescription = loadingLabel },
-                            )
-                        }
+                        // Full-screen spinner only for the initial directory load. An in-flight
+                        // search keeps the previous results visible (a slim top bar below shows the
+                        // progress) instead of blanking the list behind a spinner on every keystroke.
+                        state.loading -> CircularProgressIndicator(
+                            Modifier.align(Alignment.Center).semantics { contentDescription = loadingLabel },
+                        )
                         state.error != null -> Column(
                             modifier = Modifier.align(Alignment.Center).padding(24.dp),
                             horizontalAlignment = Alignment.CenterHorizontally,
@@ -180,15 +194,31 @@ fun FileBrowserScreen(
                             }
                         }
                         state.mode == SearchMode.TEXT ->
-                            TextResults(state.textResults) { path, line -> onOpenFile(path, line) }
+                            TextResults(
+                                state.textResults,
+                                searchEmptyMessage(state.searching, state.query.isBlank(), R.string.search_contents_hint),
+                            ) { path, line -> onOpenFile(path, line) }
                         state.mode == SearchMode.SYMBOL ->
-                            SymbolResults(state.symbolResults) { path, line -> onOpenFile(path, line) }
+                            SymbolResults(
+                                state.symbolResults,
+                                searchEmptyMessage(state.searching, state.query.isBlank(), R.string.search_symbols_hint),
+                            ) { path, line -> onOpenFile(path, line) }
                         state.isSearching -> SearchResults(state.results) { onOpenFile(it, null) }
                         else -> DirectoryListing(
                             state = state,
                             onOpenDir = vm::open,
                             onUp = vm::up,
                             onOpenFile = { onOpenFile(it, null) },
+                        )
+                    }
+                    // Slim progress bar for an in-flight search; the results list stays visible
+                    // underneath so incremental typing doesn't flash an empty screen each keystroke.
+                    if (state.searching) {
+                        LinearProgressIndicator(
+                            modifier = Modifier
+                                .align(Alignment.TopCenter)
+                                .fillMaxWidth()
+                                .semantics { contentDescription = loadingLabel },
                         )
                     }
                 }
@@ -200,9 +230,13 @@ fun FileBrowserScreen(
 @Composable
 private fun Breadcrumbs(path: String, onNavigate: (String) -> Unit, modifier: Modifier = Modifier) {
     val segments = if (path.isBlank()) emptyList() else path.trim('/').split('/').filter { it.isNotEmpty() }
+    val scrollState = rememberScrollState()
+    // Scroll to the deepest segment when the path changes so the current directory stays in
+    // view instead of hiding off the right edge behind the earlier segments on a deep path.
+    LaunchedEffect(path) { scrollState.animateScrollTo(scrollState.maxValue) }
     Row(
         modifier = modifier
-            .horizontalScroll(rememberScrollState())
+            .horizontalScroll(scrollState)
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -268,18 +302,39 @@ private fun SearchModeChip(label: String, selected: Boolean, onClick: () -> Unit
     FilterChip(selected = selected, onClick = onClick, label = { Text(label) })
 }
 
+/** Empty-state message for a content/symbol search: a "type to search" hint before anything
+ *  is typed, nothing while a search is in flight (the top progress bar covers that, so the
+ *  first keystroke doesn't flash a false "No matches"), and "No matches" only once a real
+ *  query genuinely returned nothing. */
+@Composable
+private fun searchEmptyMessage(searching: Boolean, queryBlank: Boolean, hint: Int): String? = when {
+    searching -> null
+    queryBlank -> stringResource(hint)
+    else -> stringResource(R.string.no_matches)
+}
+
 /** Content (ripgrep) search results: file + line number, with the matched line highlighted. */
 @Composable
-private fun TextResults(results: List<FindMatch>, onOpen: (String, Int?) -> Unit) {
+private fun TextResults(results: List<FindMatch>, emptyMessage: String?, onOpen: (String, Int?) -> Unit) {
     if (results.isEmpty()) {
-        EmptyFileState(
-            icon = Icons.Filled.Search,
-            message = stringResource(R.string.no_matches),
-            modifier = Modifier.fillMaxWidth().padding(24.dp),
-        )
+        if (emptyMessage != null) {
+            EmptyFileState(
+                icon = Icons.Filled.Search,
+                message = emptyMessage,
+                modifier = Modifier.fillMaxWidth().padding(24.dp),
+            )
+        }
         return
     }
     LazyColumn(modifier = Modifier.fillMaxSize()) {
+        item(key = "__count") {
+            Text(
+                pluralStringResource(R.plurals.file_search_results, results.size, results.size),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+            )
+        }
         itemsIndexed(results, key = { i, m -> "${m.filePath}:${m.lineNumber}:$i" }) { _, match ->
             val name = match.filePath.substringAfterLast('/')
             val dir = match.filePath.substringBeforeLast('/', missingDelimiterValue = "").trimEnd('/')
@@ -331,16 +386,26 @@ private fun TextResults(results: List<FindMatch>, onOpen: (String, Int?) -> Unit
 
 /** Workspace symbol results: symbol name + kind, and the file:line it's defined at. */
 @Composable
-private fun SymbolResults(results: List<SymbolResult>, onOpen: (String, Int?) -> Unit) {
+private fun SymbolResults(results: List<SymbolResult>, emptyMessage: String?, onOpen: (String, Int?) -> Unit) {
     if (results.isEmpty()) {
-        EmptyFileState(
-            icon = Icons.Filled.Search,
-            message = stringResource(R.string.no_matches),
-            modifier = Modifier.fillMaxWidth().padding(24.dp),
-        )
+        if (emptyMessage != null) {
+            EmptyFileState(
+                icon = Icons.Filled.Search,
+                message = emptyMessage,
+                modifier = Modifier.fillMaxWidth().padding(24.dp),
+            )
+        }
         return
     }
     LazyColumn(modifier = Modifier.fillMaxSize()) {
+        item(key = "__count") {
+            Text(
+                pluralStringResource(R.plurals.file_search_results, results.size, results.size),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+            )
+        }
         itemsIndexed(results, key = { i, s -> "${s.filePath}:${s.name}:$i" }) { _, symbol ->
             val fileName = symbol.filePath.substringAfterLast('/')
             Column(

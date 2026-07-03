@@ -70,6 +70,14 @@ import kotlinx.coroutines.withContext
 data class ChatError(val message: String, val retryable: Boolean = false)
 
 /**
+ * Progress of the current permission within a burst of requests. [total] is the max number
+ * simultaneously pending since the queue was last empty; [position] advances as the user clears
+ * the backlog. A [total] of 0/1 means there's no meaningful backlog to surface.
+ */
+@androidx.compose.runtime.Immutable
+data class PermissionProgress(val position: Int, val total: Int)
+
+/**
  * An attachment staged to send with the next prompt. [previewModel] is a Coil-loadable model
  * for the thumbnail (the source content Uri, as a string) for images, or null for non-image
  * files (rendered with a generic icon). [part] is the wire form (a base64 data URL) sent to
@@ -298,6 +306,14 @@ class ChatViewModel(
     private val _pendingPermission = MutableStateFlow<Permission?>(null)
     val pendingPermission: StateFlow<Permission?> = _pendingPermission.asStateFlow()
 
+    /** Backlog indicator for the permission dialog (see [PermissionProgress]). */
+    private val _permissionProgress = MutableStateFlow(PermissionProgress(0, 0))
+    val permissionProgress: StateFlow<PermissionProgress> = _permissionProgress.asStateFlow()
+
+    /** Max number of permissions simultaneously pending since the queue was last empty. Reset
+     *  to 0 when the queue drains, so a fresh burst starts its count over. */
+    private var maxPendingSeen = 0
+
     // Unanswered permission requests keyed by id, insertion-ordered. The dialog shows the most
     // recent; when one is answered/replied — or a response fails — we fall back to the next so a
     // request that arrived while another was in flight isn't silently dropped (its tool run would
@@ -308,16 +324,36 @@ class ChatViewModel(
     private fun enqueuePermission(permission: Permission) {
         pendingPermissions[permission.id] = permission
         _pendingPermission.value = pendingPermissions.values.lastOrNull()
+        updatePermissionProgress()
     }
 
     private fun resolvePermission(id: String) {
         pendingPermissions.remove(id)
         _pendingPermission.value = pendingPermissions.values.lastOrNull()
+        updatePermissionProgress()
     }
 
     private fun clearPermissions() {
         pendingPermissions.clear()
         _pendingPermission.value = null
+        updatePermissionProgress()
+    }
+
+    /** Recompute the "N of M" backlog indicator. [maxPendingSeen] grows with the queue and
+     *  resets only when it drains, so position = total - remaining + 1 advances as requests are
+     *  answered. */
+    private fun updatePermissionProgress() {
+        val remaining = pendingPermissions.size
+        if (remaining == 0) {
+            maxPendingSeen = 0
+            _permissionProgress.value = PermissionProgress(0, 0)
+            return
+        }
+        if (remaining > maxPendingSeen) maxPendingSeen = remaining
+        _permissionProgress.value = PermissionProgress(
+            position = maxPendingSeen - remaining + 1,
+            total = maxPendingSeen,
+        )
     }
 
     private val _agents = MutableStateFlow<List<Agent>>(emptyList())

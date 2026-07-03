@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -173,7 +174,12 @@ fun ServerListScreen(
         // so the list isn't double-padded at the top.
         Column(modifier = Modifier.fillMaxSize().padding(top = padding.calculateTopPadding())) {
             if (reconnecting && profiles.isNotEmpty()) {
-                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                val reconnectingLabel = stringResource(R.string.reconnecting)
+                LinearProgressIndicator(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .semantics { contentDescription = reconnectingLabel },
+                )
             }
             if (profiles.isEmpty()) {
                 EmptyServers(
@@ -460,7 +466,7 @@ private fun EmptyServers(onAdd: () -> Unit, modifier: Modifier = Modifier) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.size(20.dp))
-            TextButton(onClick = onAdd) {
+            Button(onClick = onAdd) {
                 Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                 Text(stringResource(R.string.add_server), modifier = Modifier.padding(start = 8.dp))
             }

@@ -5,9 +5,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -71,9 +73,16 @@ fun McpScreen(container: AppContainer, onBack: () -> Unit) {
             Box(modifier = Modifier.fillMaxSize()) {
                 val loadingLabel = stringResource(R.string.loading)
                 when (val s = state) {
-                    is McpViewModel.State.Loading -> CircularProgressIndicator(
-                        Modifier.align(Alignment.Center).semantics { contentDescription = loadingLabel },
-                    )
+                    is McpViewModel.State.Loading -> Column(
+                        modifier = Modifier.align(Alignment.Center),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        CircularProgressIndicator(
+                            Modifier.semantics { contentDescription = loadingLabel },
+                        )
+                        Spacer(Modifier.size(12.dp))
+                        Text(loadingLabel, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                     is McpViewModel.State.Disconnected -> EmptyState(
                         icon = Icons.Filled.CloudOff,
                         title = stringResource(R.string.not_connected),
@@ -130,15 +139,15 @@ private fun McpServerCard(server: McpServerInfo) {
                     )
                 }
             }
-            val stateLabel = when {
-                !server.enabled -> stringResource(R.string.mcp_disabled)
-                server.type != null -> server.type
-                else -> stringResource(R.string.mcp_connected)
+            val stateLabel = if (server.enabled) {
+                stringResource(R.string.mcp_enabled)
+            } else {
+                stringResource(R.string.mcp_disabled)
             }
             Text(
                 stateLabel,
                 style = MaterialTheme.typography.labelMedium,
-                color = if (server.enabled) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.error,
+                color = if (server.enabled) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }

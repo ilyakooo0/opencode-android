@@ -59,6 +59,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import soy.iko.opencode.util.runCatchingCancellable
 import soy.iko.opencode.ui.components.AppTopBar
+import soy.iko.opencode.ui.components.copyToClipboard
 import soy.iko.opencode.ui.components.showToast
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -66,6 +67,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
@@ -312,6 +314,14 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
             dismissButton = {
                 Row {
                     TextButton(
+                        // Disable Copy until the report has loaded so it can't copy an empty body.
+                        enabled = content != null,
+                        onClick = {
+                            copyToClipboard(context, context.getString(R.string.crash_report), content.orEmpty())
+                        },
+                    ) { Text(stringResource(R.string.copy)) }
+                    Spacer(Modifier.size(8.dp))
+                    TextButton(
                         // Disable Share until the report has loaded — otherwise tapping it
                         // while the async read is still in flight (content == null) shares an
                         // empty body instead of the report.
@@ -351,7 +361,7 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                     ) {
                         Text(
                             content,
-                            style = MaterialTheme.typography.bodySmall,
+                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
                             modifier = Modifier.fillMaxWidth(),
                         )
                     }

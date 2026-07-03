@@ -754,7 +754,11 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         val previousProfile = container.activeConnection.value?.profile
         val savedUnread = container.unread.value
         _switchingId.value = profile.id
-        _state.update { it.copy(loading = true, error = null) }
+        // Don't flip `loading` here: that would blank the currently-populated list behind a
+        // full-screen spinner. The switch feedback is the per-row spinner in the server
+        // switcher (driven by switchingId); the existing list stays visible until refresh()
+        // replaces it once the new connection lands.
+        _state.update { it.copy(error = null) }
         viewModelScope.launch {
             val result = runCatchingCancellable {
                 val conn = container.connect(profile)

@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -39,6 +40,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -46,8 +48,12 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
@@ -160,6 +166,16 @@ private fun ServerEditForm(
     // isValidUrl parses with OkHttp too; memoize on baseUrl so it runs once per edit instead
     // of re-parsing at each isError/supportingText call site on every keystroke's recomposition.
     val urlValid = remember(state.baseUrl) { isValidUrl(state.baseUrl) }
+    // Focus the Base URL field (and raise the keyboard) on a fresh Add-server form so the
+    // user can start typing the required field immediately.
+    val baseUrlFocus = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    LaunchedEffect(Unit) {
+        if (state.isNew && state.baseUrl.isBlank()) {
+            baseUrlFocus.requestFocus()
+            keyboard?.show()
+        }
+    }
     Column(
         modifier = Modifier
             .padding(padding)
@@ -169,7 +185,8 @@ private fun ServerEditForm(
             .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        // Base URL is the only required field, so it leads the form and takes focus.
+        // Base URL is the only required field, so it leads the form and takes focus on a
+        // fresh add form (via baseUrlFocus above).
         OutlinedTextField(
             value = state.baseUrl,
             onValueChange = { v -> vm.update { it.copy(baseUrl = v) } },
@@ -195,7 +212,7 @@ private fun ServerEditForm(
                 }
             },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done),
-            modifier = Modifier.fillMaxWidth().testTag("server_url"),
+            modifier = Modifier.fillMaxWidth().focusRequester(baseUrlFocus).testTag("server_url"),
         )
         // Auto-expand LAN discovery only on a fresh form (no URL yet) so tapping a found
         // server is the primary path; on edit the populated URL keeps it (and its multicast)
@@ -460,8 +477,10 @@ private fun DiscoverySection(onPick: (String) -> Unit, initiallyExpanded: Boolea
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { onPick(server.baseUrl) }
+                            .heightIn(min = 48.dp)
+                            .clickable(role = Role.Button) { onPick(server.baseUrl) }
                             .padding(vertical = 8.dp),
+                        verticalArrangement = Arrangement.Center,
                     ) {
                         Text(server.name, style = MaterialTheme.typography.bodyMedium)
                         Text(

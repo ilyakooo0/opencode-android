@@ -332,7 +332,11 @@ fun OpencodeApp(container: AppContainer) {
         }
 
         composable(Routes.USAGE) {
-            UsageScreen(container = container, onBack = { navController.popBackStack() })
+            UsageScreen(
+                container = container,
+                onBack = { navController.popBackStack() },
+                onOpenSession = { id -> navController.navigate(Routes.chat(id)) },
+            )
         }
 
         composable(Routes.MCP) {

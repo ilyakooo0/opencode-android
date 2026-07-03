@@ -200,6 +200,10 @@ object NetworkConfig {
     const val twoPaneWidthThresholdDp = 840
     /** Maximum width fraction a user message bubble can occupy (keeps it readable). */
     const val userBubbleWidthFraction = 0.85f
+    /** Minimum number of options in a picker sheet (model/agent/command) before its search
+     *  field auto-focuses and raises the keyboard on open. A tiny catalog is faster to scan by
+     *  eye, so popping the keyboard for it is just friction. */
+    const val pickerSearchAutofocusThreshold = 8
     /** Extra bottom content padding (dp) for the chat message list, reserving room for the
      *  jump-to-latest FAB so it never floats over the last message. */
     const val chatListFabInsetDp = 80

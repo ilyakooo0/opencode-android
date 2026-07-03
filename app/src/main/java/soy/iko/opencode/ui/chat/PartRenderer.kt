@@ -30,6 +30,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -46,6 +47,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import kotlinx.serialization.json.Json
@@ -164,6 +166,15 @@ private fun ReasoningBlock(text: String, streaming: Boolean, keyId: String, modi
     // visible; once complete it collapses. A non-null override records an explicit user
     // toggle and wins over the streaming default, so we don't fight a user who collapsed it.
     var userOverride by rememberSaveable(saveableKey) { mutableStateOf<Boolean?>(null) }
+    // Sticky expand: once a block has streamed this session, pin it open after streaming ends
+    // (until the user explicitly collapses it) so it isn't yanked away mid-read the instant the
+    // stream finishes. A historical block that never streamed this session (streaming is false
+    // from the first composition) never sets streamedThisSession, so it stays collapsed.
+    var streamedThisSession by remember(saveableKey) { mutableStateOf(false) }
+    LaunchedEffect(streaming) {
+        if (streaming) streamedThisSession = true
+        else if (streamedThisSession && userOverride == null) userOverride = true
+    }
     val expanded = userOverride ?: streaming
     val expandedState = stringResource(R.string.state_expanded)
     val collapsedState = stringResource(R.string.state_collapsed)
@@ -217,7 +228,7 @@ private fun ReasoningBlock(text: String, streaming: Boolean, keyId: String, modi
                 TextButton(
                     onClick = {
                         haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        copyToClipboard(context, "reasoning", text)
+                        copyToClipboard(context, context.getString(R.string.clip_label_reasoning), text)
                     },
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp),
                     modifier = Modifier.semantics(mergeDescendants = true) {},
@@ -296,14 +307,19 @@ private fun ToolCallView(part: ToolPart, modifier: Modifier) {
             else -> null
         }
         if (detail != null) {
-            val collapsed = remember(detail) { detail.take(COLLAPSED_LIMIT) }
+            // looksLikeDiff scans the whole string; memoize on `detail` so a recomposition that
+            // doesn't change the content (e.g. the expand/collapse flip) doesn't re-scan.
+            val isDiff = remember(detail) { looksLikeDiff(detail) }
+            val collapsed = remember(detail, isDiff) {
+                val head = detail.take(COLLAPSED_LIMIT)
+                // Truncating a diff mid-line makes DiffView render a malformed final line, so
+                // trim back to the last complete line when the content is a diff.
+                if (isDiff) head.substringBeforeLast('\n') else head
+            }
             var expanded by rememberSaveable(part.id) { mutableStateOf(false) }
             val expandedState = stringResource(R.string.state_expanded)
             val collapsedState = stringResource(R.string.state_collapsed)
             val display = if (expanded || detail.length <= COLLAPSED_LIMIT) detail else collapsed
-            // looksLikeDiff scans the whole string; memoize so a recomposition that doesn't
-            // change `display` (e.g. an unrelated state flip) doesn't re-scan on every pass.
-            val isDiff = remember(display) { looksLikeDiff(display) }
             // How many lines are hidden while collapsed. detail.lines() splits the whole
             // (potentially multi-KB) output, so memoize it — otherwise it re-splits on
             // every recomposition, including each streaming update of a running tool.
@@ -326,7 +342,7 @@ private fun ToolCallView(part: ToolPart, modifier: Modifier) {
                 collapsedState = collapsedState,
                 onCopy = {
                     haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                    copyToClipboard(context, "output", detail)
+                    copyToClipboard(context, context.getString(R.string.clip_label_output), detail)
                 },
                 diffSaveKey = part.id,
             )
@@ -411,7 +427,7 @@ private fun CollapsibleDetail(
                 Text(
                     when {
                         expanded -> stringResource(R.string.show_less)
-                        moreLines > 0 -> stringResource(R.string.show_more_lines, moreLines)
+                        moreLines > 0 -> pluralStringResource(R.plurals.show_more_lines, moreLines, moreLines)
                         else -> stringResource(R.string.show_more)
                     },
                     style = MaterialTheme.typography.labelSmall,
@@ -495,14 +511,14 @@ private fun FileChip(part: FilePart, modifier: Modifier, onOpenFile: ((String) -
                         opener?.invoke(toOpen)
                     } else if (!path.isNullOrBlank()) {
                         haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        copyToClipboard(context, "path", path)
+                        copyToClipboard(context, context.getString(R.string.clip_label_path), path)
                         showCopyToast(context, context.getString(R.string.path_copied))
                     }
                 },
                 onLongClick = {
                     if (!path.isNullOrBlank()) {
                         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                        copyToClipboard(context, "path", path)
+                        copyToClipboard(context, context.getString(R.string.clip_label_path), path)
                         showCopyToast(context, context.getString(R.string.path_copied))
                     }
                 },

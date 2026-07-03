@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -71,13 +72,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
@@ -113,6 +118,9 @@ fun SessionListScreen(
     onOpenSettings: () -> Unit,
     onAddServer: () -> Unit,
     onOpenSearch: () -> Unit = {},
+    // Incremented by a host (the two-pane empty-detail pane) to open the new-session
+    // directory picker, so that pane shares this screen's dialog instead of bypassing it.
+    externalNewSessionTrigger: Int = 0,
     selectedSessionId: String? = null,
 ) {
     val vm: SessionListViewModel = viewModel(factory = vmFactory { SessionListViewModel(container) })
@@ -145,6 +153,11 @@ fun SessionListScreen(
     val openNewSession = {
         if (!creating) { vm.loadDirectoryOptions(); showNewSessionDialog = true }
     }
+    // A host bumps externalNewSessionTrigger to open this exact directory-picker dialog
+    // (e.g. the two-pane detail pane's "New session" button), reusing one dialog path.
+    LaunchedEffect(externalNewSessionTrigger) {
+        if (externalNewSessionTrigger > 0) openNewSession()
+    }
     var pendingDeleteId by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingRenameId by rememberSaveable { mutableStateOf<String?>(null) }
     var showDisconnectConfirm by rememberSaveable { mutableStateOf(false) }
@@ -160,6 +173,13 @@ fun SessionListScreen(
     // Close the open dropdown on back press instead of navigating away.
     BackHandler(enabled = showServerMenu) { showServerMenu = false }
     BackHandler(enabled = showSortMenu) { showSortMenu = false }
+
+    // Dismiss the server switcher once an in-flight switch resolves (switchingId returns to
+    // null), so its per-row spinner stays visible for the whole switch instead of the menu
+    // closing the instant a profile is tapped.
+    LaunchedEffect(switchingId) {
+        if (switchingId == null && showServerMenu) showServerMenu = false
+    }
 
     LaunchedEffect(Unit) {
         vm.transientErrors.collect { msg ->
@@ -222,8 +242,12 @@ fun SessionListScreen(
                         onExpand = { showServerMenu = true },
                         onDismiss = { showServerMenu = false },
                         onSelect = { profile ->
-                            showServerMenu = false
-                            vm.switchServer(profile)
+                            // Keep the switcher open so its per-row spinner (driven by
+                            // switchingId) is visible during the switch; the LaunchedEffect
+                            // above dismisses it once the switch resolves. Tapping the
+                            // already-active server is a no-op, so just close the menu.
+                            if (profile.id == connectedId) showServerMenu = false
+                            else vm.switchServer(profile)
                         },
                         onAddServer = {
                             showServerMenu = false
@@ -689,14 +713,31 @@ private fun RenameSessionDialog(
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val focusRequester = remember { FocusRequester() }
+    // Drive the field with a TextFieldValue seeded with the whole title selected so the
+    // dialog opens with the text highlighted for immediate overtyping; edits sync back to
+    // the hoisted title (capped) that gates the confirm button and the Done action.
+    var fieldValue by remember {
+        mutableStateOf(TextFieldValue(title, selection = TextRange(0, title.length)))
+    }
+    LaunchedEffect(Unit) { focusRequester.requestFocus() }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.rename_session)) },
         text = {
             OutlinedTextField(
-                value = title,
-                onValueChange = { v -> onTitleChange(v.take(NetworkConfig.maxSessionTitleChars)) },
-                modifier = Modifier.fillMaxWidth(),
+                value = fieldValue,
+                onValueChange = { v ->
+                    val capped = if (v.text.length > NetworkConfig.maxSessionTitleChars) {
+                        val t = v.text.take(NetworkConfig.maxSessionTitleChars)
+                        TextFieldValue(t, selection = TextRange(t.length))
+                    } else {
+                        v
+                    }
+                    fieldValue = capped
+                    onTitleChange(capped.text)
+                },
+                modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
                 placeholder = { Text(stringResource(R.string.session_title_hint)) },
                 label = { Text(stringResource(R.string.rename_session)) },
                 singleLine = true,
@@ -742,7 +783,10 @@ private fun SessionCard(
             // Mute an archived row (unless it's the open one) so it reads as backgrounded
             // when "show archived" surfaces it alongside active sessions.
             .then(if (isArchived && !isSelected) Modifier.alpha(0.6f) else Modifier)
-            .clickable { onClick() },
+            // Merge the row's text into one semantics node so TalkBack reads it as a single
+            // item; the overflow menu button stays its own actionable node.
+            .semantics(mergeDescendants = true) {}
+            .clickable(role = Role.Button) { onClick() },
         colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = containerColor),
         border = androidx.compose.foundation.BorderStroke(1.dp, borderColor),
     ) {
@@ -778,7 +822,8 @@ private fun SessionCard(
                                     contentAlignment = Alignment.Center,
                                 ) {
                                     Text(
-                                        unreadCount.toString(),
+                                        if (unreadCount > 99) stringResource(R.string.count_overflow)
+                                        else unreadCount.toString(),
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onPrimary,
                                     )
@@ -823,7 +868,7 @@ private fun SessionCard(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
                                 .padding(top = 2.dp)
-                                .semantics { contentDescription = dirDesc },
+                                .semantics(mergeDescendants = true) { contentDescription = dirDesc },
                         ) {
                             Icon(
                                 Icons.Filled.Folder,
@@ -1033,6 +1078,7 @@ private fun ServerSwitcherMenu(
         Box {
             Row(
                 modifier = Modifier
+                    .heightIn(min = 48.dp)
                     .clickable(role = Role.Button) { onExpand() },
                 verticalAlignment = Alignment.CenterVertically,
             ) {

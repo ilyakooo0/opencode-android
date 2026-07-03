@@ -1,14 +1,17 @@
 package soy.iko.opencode.ui.search
 
+import android.util.Log
 import androidx.compose.runtime.Immutable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import soy.iko.opencode.R
+import soy.iko.opencode.data.model.MessageWithParts
 import soy.iko.opencode.data.model.Session
 import soy.iko.opencode.data.model.TextPart
 import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.util.runCatchingCancellable
+import soy.iko.opencode.util.safeExceptionSummary
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -19,6 +22,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import java.util.concurrent.ConcurrentHashMap
 
 /** One search result: the [session] that matched and a [snippet] of the matching text. */
 @Immutable
@@ -51,6 +55,14 @@ class GlobalSearchViewModel(private val container: AppContainer) : ViewModel() {
 
     private var searchJob: Job? = null
 
+    // In-memory caches for the ViewModel's lifetime so a growing/re-typed query re-filters
+    // locally instead of re-downloading every session's history on each debounced keystroke.
+    // Only successful fetches are cached (a failed one isn't, so a later query retries it); an
+    // explicit retry() clears both to force a fresh fetch. ConcurrentHashMap because the
+    // per-session fetches run concurrently under the semaphore.
+    @Volatile private var sessionsCache: List<Session>? = null
+    private val messageCache = ConcurrentHashMap<String, List<MessageWithParts>>()
+
     fun setQuery(query: String) {
         _state.update { it.copy(query = query) }
         searchJob?.cancel()
@@ -68,10 +80,13 @@ class GlobalSearchViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    /** Re-run the current query immediately (no debounce), used by the error-state Retry. */
+    /** Re-run the current query immediately (no debounce), used by the error-state Retry. Clears
+     *  the caches so the retry actually refetches (the prior attempt may have failed). */
     fun retry() {
         val trimmed = _state.value.query.trim()
         if (trimmed.length < NetworkConfig.minSearchQueryLength) return
+        sessionsCache = null
+        messageCache.clear()
         searchJob?.cancel()
         _state.update { it.copy(searching = true, error = null) }
         searchJob = viewModelScope.launch { runSearch(trimmed) }
@@ -84,10 +99,11 @@ class GlobalSearchViewModel(private val container: AppContainer) : ViewModel() {
             return
         }
         _state.update { it.copy(searching = true, error = null) }
-        val sessions = runCatchingCancellable { conn.repository.listSessions() }.getOrElse {
-            _state.update { s -> s.copy(searching = false, error = container.friendlyError(it)) }
-            return
-        }
+        val sessions = sessionsCache
+            ?: runCatchingCancellable { conn.repository.listSessions() }.getOrElse {
+                _state.update { s -> s.copy(searching = false, error = container.friendlyError(it)) }
+                return
+            }.also { sessionsCache = it }
         val toSearch = sessions.take(NetworkConfig.maxSearchSessions)
         val truncated = sessions.size > toSearch.size
         val hits = java.util.Collections.synchronizedMap(HashMap<String, SearchHit>())
@@ -96,8 +112,15 @@ class GlobalSearchViewModel(private val container: AppContainer) : ViewModel() {
             toSearch.forEach { session ->
                 launch {
                     semaphore.withPermit {
-                        val messages = runCatchingCancellable { conn.api.listMessages(session.id) }
-                            .getOrDefault(emptyList())
+                        // Reuse cached history when present so re-typing a query never re-fetches;
+                        // only sessions not yet cached hit the network.
+                        val messages = messageCache[session.id]
+                            ?: runCatchingCancellable { conn.api.listMessages(session.id) }
+                                .onSuccess { messageCache[session.id] = it }
+                                .getOrElse {
+                                    Log.w("GlobalSearch", "listMessages failed: " + safeExceptionSummary(it))
+                                    emptyList()
+                                }
                         val snippet = matchSnippet(messages, query)
                             ?: session.displayTitle.takeIf { it.contains(query, ignoreCase = true) }
                         if (snippet != null) hits[session.id] = SearchHit(session, snippet)

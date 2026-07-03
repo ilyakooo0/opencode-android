@@ -49,6 +49,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.Box
 import soy.iko.opencode.data.model.Agent
+import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.R
 
 /**
@@ -122,9 +123,14 @@ fun AgentPickerSheet(
             var query by rememberSaveable { mutableStateOf("") }
             val keyboardController = LocalSoftwareKeyboardController.current
             val haptics = LocalHapticFeedback.current
-            // Auto-focus the search field (and raise the keyboard) when the sheet opens.
+            // Auto-focus the search field (and raise the keyboard) when the sheet opens, but skip
+            // it for a short catalog that's faster to scan by eye than to filter.
             val searchFocus = remember { FocusRequester() }
-            LaunchedEffect(Unit) { runCatching { searchFocus.requestFocus() } }
+            LaunchedEffect(Unit) {
+                if (agents.size > NetworkConfig.pickerSearchAutofocusThreshold) {
+                    runCatching { searchFocus.requestFocus() }
+                }
+            }
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },

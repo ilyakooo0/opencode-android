@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -28,6 +29,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
@@ -166,16 +169,22 @@ fun NewSessionDialog(
                     onSelect = { choice = DirChoice.Custom },
                 )
                 if (choice is DirChoice.Custom) {
+                    // Autofocus the path field the moment the Custom row is chosen so the
+                    // keyboard is ready without a second tap.
+                    val customFocus = remember { FocusRequester() }
+                    LaunchedEffect(Unit) { customFocus.requestFocus() }
                     OutlinedTextField(
                         value = customText,
                         onValueChange = { customText = it },
                         modifier = Modifier
                             .fillMaxWidth()
+                            .focusRequester(customFocus)
                             .padding(start = 36.dp, top = 4.dp, bottom = 4.dp),
                         placeholder = { Text(stringResource(R.string.directory_custom_hint)) },
                         singleLine = true,
                         enabled = !creating,
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(onDone = { if (canCreate) onCreate(resolved) }),
                     )
                 }
 

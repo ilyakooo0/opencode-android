@@ -4,7 +4,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material3.AlertDialog
@@ -37,6 +41,8 @@ import soy.iko.opencode.R
 fun PermissionDialog(
     permission: Permission,
     onRespond: (PermissionResponse) -> Unit,
+    position: Int = 0,
+    total: Int = 0,
 ) {
     val haptics = LocalHapticFeedback.current
     // Guard against double-respond: back press + button tap, or rapid double-tap,
@@ -66,19 +72,44 @@ fun PermissionDialog(
         onDismissRequest = { respond(PermissionResponse.REJECT) },
         properties = androidx.compose.ui.window.DialogProperties(dismissOnClickOutside = false),
         icon = { Icon(Icons.Filled.Shield, contentDescription = null) },
-        title = { Text(permission.title ?: stringResource(R.string.permission_title)) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                permission.type?.let {
-                    Text(it, style = MaterialTheme.typography.labelLarge, fontFamily = FontFamily.Monospace)
-                }
-                permission.patternText?.let {
+        title = {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                // A backlog indicator ("N of M") when more than one request is queued, so the
+                // user knows the newest dialog isn't the only pending decision.
+                if (total > 1) {
                     Text(
-                        it,
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontFamily = FontFamily.Monospace,
+                        stringResource(R.string.permission_progress, position, total),
+                        style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                }
+                Text(permission.title ?: stringResource(R.string.permission_title))
+            }
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                // The command / pattern can be long or multi-line; make it selectable and cap
+                // its height with an inner scroll so it can't push the Allow/Reject buttons off
+                // screen. Keeps the monospace styling.
+                SelectionContainer {
+                    Column(
+                        modifier = Modifier
+                            .heightIn(max = 200.dp)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        permission.type?.let {
+                            Text(it, style = MaterialTheme.typography.labelLarge, fontFamily = FontFamily.Monospace)
+                        }
+                        permission.patternText?.let {
+                            Text(
+                                it,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontFamily = FontFamily.Monospace,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
                 }
                 Text(
                     stringResource(R.string.permission_text),

@@ -148,7 +148,10 @@
     <string name="thoughts">Thoughts</string>
     <string name="show_more">Show more</string>
     <string name="show_less">Show less</string>
-    <string name="show_more_lines">Show %1$d more lines</string>
+    <plurals name="show_more_lines">
+        <item quantity="one">Show %1$d more line</item>
+        <item quantity="other">Show %1$d more lines</item>
+    </plurals>
     <string name="tool_completed">Completed</string>
     <string name="tool_error">Error</string>
     <string name="tool_running">Running</string>
@@ -345,7 +348,10 @@
     <string name="search_truncated">Showing results from the most recent sessions only.</string>
     <string name="search_all_start">Search your conversations</string>
     <string name="search_all_start_hint">Type a word or phrase to find it across every session.</string>
-    <string name="search_results_count">%1$d results</string>
+    <plurals name="search_results_count">
+        <item quantity="one">%1$d result</item>
+        <item quantity="other">%1$d results</item>
+    </plurals>
 
     <!-- Sharing / summarize / init / shell -->
     <string name="create_share_link">Create share link</string>
@@ -420,7 +426,10 @@
     <string name="usage_this_session">This session</string>
     <string name="usage_all_sessions">All sessions</string>
     <string name="usage_empty">No usage recorded yet</string>
-    <string name="usage_messages_count">%1$d assistant messages</string>
+    <plurals name="usage_messages_count">
+        <item quantity="one">%1$d assistant message</item>
+        <item quantity="other">%1$d assistant messages</item>
+    </plurals>
     <string name="usage_loading">Calculating usage…</string>
     <string name="usage_failed">Couldn\'t load usage</string>
 
@@ -503,4 +512,32 @@
     <string name="import_confirm_replace">Replace</string>
     <string name="export_passwords_title">Export plaintext passwords?</string>
     <string name="export_passwords_warning">This backup will contain your server passwords in plain text. Anyone who can read the file can read them.</string>
+
+    <!-- UI/UX batch: permissions, confirmations, search prompts, a11y -->
+    <string name="permission_progress">%1$d of %2$d</string>
+    <string name="action_continue">Continue</string>
+    <string name="summarize_confirm_title">Summarize conversation?</string>
+    <string name="summarize_confirm_text">Earlier messages are compacted into a summary to free up context. This can\'t be undone here.</string>
+    <string name="init_confirm_title">Generate AGENTS.md?</string>
+    <string name="init_confirm_text">The agent will create or overwrite AGENTS.md in the project directory. An existing file may be replaced.</string>
+    <string name="composer_hint_running">Message — sends after the current run</string>
+    <string name="clip_label_code">Code</string>
+    <string name="clip_label_diff">Diff</string>
+    <string name="clip_label_reasoning">Reasoning</string>
+    <string name="clip_label_output">Output</string>
+    <string name="clip_label_path">Path</string>
+    <string name="clip_label_message">Message</string>
+    <string name="clip_label_share">Share link</string>
+    <string name="search_contents_hint">Type to search file contents</string>
+    <string name="search_symbols_hint">Type to search symbols</string>
+    <string name="search_keep_typing">Keep typing to search…</string>
+    <string name="theme_using_system_colors">Using system colors (Material You)</string>
+    <string name="tap_to_retry">Tap to retry</string>
+    <string name="count_overflow">99+</string>
+    <string name="mcp_enabled">Enabled</string>
+    <string name="file_truncated">Large file — showing the first %1$d lines.</string>
+    <plurals name="file_search_results">
+        <item quantity="one">%1$d result</item>
+        <item quantity="other">%1$d results</item>
+    </plurals>
 </resources>

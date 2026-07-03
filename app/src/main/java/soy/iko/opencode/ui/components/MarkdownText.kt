@@ -210,23 +210,22 @@ private fun CodeWithCopy(model: MarkdownComponentModel) {
                 modifier = Modifier.weight(1f),
             )
             val wrapLabel = context.getString(if (wrap) R.string.code_no_wrap else R.string.code_wrap)
-            IconButton(onClick = { wrap = !wrap }, modifier = Modifier.size(36.dp)) {
+            IconButton(onClick = { wrap = !wrap }) {
                 Icon(
                     Icons.AutoMirrored.Filled.WrapText,
                     contentDescription = wrapLabel,
-                    modifier = Modifier.size(16.dp),
+                    modifier = Modifier.size(18.dp),
                     tint = if (wrap) MaterialTheme.colorScheme.primary
                         else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             IconButton(
-                onClick = { copyToClipboard(context, "code", code) },
-                modifier = Modifier.size(36.dp),
+                onClick = { copyToClipboard(context, context.getString(R.string.clip_label_code), code) },
             ) {
                 Icon(
                     Icons.Filled.ContentCopy,
                     contentDescription = context.getString(R.string.copy),
-                    modifier = Modifier.size(14.dp),
+                    modifier = Modifier.size(18.dp),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }

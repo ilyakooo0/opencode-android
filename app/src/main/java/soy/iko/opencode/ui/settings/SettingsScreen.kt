@@ -207,6 +207,9 @@ fun SettingsScreen(
                     ThemeRow(
                         mode = mode,
                         selected = s.themeMode == mode,
+                        // When Material You is active the static Tokyo Night swatches would be a
+                        // lie, so ThemeRow hides them and notes that system colors are in use.
+                        usingSystemColors = s.dynamicColor && dynamicColorAvailable,
                         onSelect = { scope.launch { runCatchingCancellable { container.settingsStore.setThemeMode(mode) } } },
                     )
                 }
@@ -646,7 +649,7 @@ private fun ChatTextSizeControl(scale: Float, onScaleChange: (Float) -> Unit) {
 }
 
 @Composable
-private fun ThemeRow(mode: ThemeMode, selected: Boolean, onSelect: () -> Unit) {
+private fun ThemeRow(mode: ThemeMode, selected: Boolean, usingSystemColors: Boolean, onSelect: () -> Unit) {
     // Preview swatches so the user can see what each mode looks like before selecting,
     // instead of choosing from text labels alone. Shows primary/secondary/tertiary +
     // background so the palette character (e.g. Tokyo Night's blue/green) is visible.
@@ -676,15 +679,26 @@ private fun ThemeRow(mode: ThemeMode, selected: Boolean, onSelect: () -> Unit) {
             style = MaterialTheme.typography.bodyLarge,
             modifier = Modifier.weight(1f),
         )
-        // Three small color dots previewing the palette for this mode.
-        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            swatches.forEach { color ->
-                Box(
-                    modifier = Modifier
-                        .size(14.dp)
-                        .clip(CircleShape)
-                        .background(color),
-                )
+        if (usingSystemColors) {
+            // Dynamic color (Material You) overrides the static palettes, so the dots would
+            // misrepresent the actual colors — note that system colors are in use instead.
+            Text(
+                stringResource(R.string.theme_using_system_colors),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.End,
+            )
+        } else {
+            // Three small color dots previewing the palette for this mode.
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                swatches.forEach { color ->
+                    Box(
+                        modifier = Modifier
+                            .size(14.dp)
+                            .clip(CircleShape)
+                            .background(color),
+                    )
+                }
             }
         }
     }

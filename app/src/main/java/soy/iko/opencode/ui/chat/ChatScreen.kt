@@ -44,6 +44,7 @@ import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Restore
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
@@ -154,6 +155,7 @@ fun ChatScreen(
     val selectedModel by vm.selectedModel.collectAsStateWithLifecycle()
     val connectionState by vm.connectionState.collectAsStateWithLifecycle()
     val pendingPermission by vm.pendingPermission.collectAsStateWithLifecycle()
+    val permissionProgress by vm.permissionProgress.collectAsStateWithLifecycle()
     val agents by vm.agents.collectAsStateWithLifecycle()
     val agentsLoading by vm.agentsLoading.collectAsStateWithLifecycle()
     val agentsError by vm.agentsError.collectAsStateWithLifecycle()
@@ -226,6 +228,10 @@ fun ChatScreen(
     var showDeleteDialog by rememberSaveable { mutableStateOf(false) }
     var showShellDialog by rememberSaveable { mutableStateOf(false) }
     var showPalette by rememberSaveable { mutableStateOf(false) }
+    // Summarize and init (generate AGENTS.md) are irreversible, so a single tap is gated behind
+    // a confirmation dialog (from both the overflow menu and the command palette).
+    var showSummarizeConfirm by rememberSaveable { mutableStateOf(false) }
+    var showInitConfirm by rememberSaveable { mutableStateOf(false) }
 
     // Command-palette entries (keyboard-first: Ctrl+K). Labels resolved here so the remembered
     // action list doesn't need a Composable context. Actions map to the same handlers the
@@ -244,7 +250,7 @@ fun ChatScreen(
             add(PaletteAction("model", paletteModelLabel) { showModelPicker = true })
             add(PaletteAction("agent", paletteAgentLabel) { showAgentPicker = true })
             add(PaletteAction("command", paletteCommandLabel) { showCommandPicker = true })
-            if (hasMessages && !running) add(PaletteAction("summarize", paletteSummarizeLabel) { vm.summarize() })
+            if (hasMessages && !running) add(PaletteAction("summarize", paletteSummarizeLabel) { showSummarizeConfirm = true })
             if (!running) add(PaletteAction("shell", paletteShellLabel) { showShellDialog = true })
             add(PaletteAction("rename", paletteRenameLabel) { showRenameDialog = true })
         }
@@ -371,7 +377,7 @@ fun ChatScreen(
     // A freshly-created share link is copied to the clipboard so the user can paste it right away.
     LaunchedEffect(Unit) {
         vm.shareLinkEvents.collect { url ->
-            copyToClipboard(shareContext, "share", url)
+            copyToClipboard(shareContext, shareContext.getString(R.string.clip_label_share), url)
             snackbar.showSnackbar(linkCopiedMsg)
         }
     }
@@ -436,9 +442,17 @@ fun ChatScreen(
                     // the overflow menu despite the title implying otherwise.
                     Box {
                         Row(
+                            // mergeDescendants so TalkBack reads the title/subtitle Texts as one
+                            // node; the click label rides on `clickable` (onClickLabel) instead of
+                            // an explicit contentDescription, which would have SUPPRESSED the child
+                            // Texts and announced only "Change model and agent".
                             modifier = Modifier
-                                .clickable(enabled = models.isNotEmpty(), role = Role.Button) { showTitleMenu = true }
-                                .semantics(mergeDescendants = true) { contentDescription = changeLabel },
+                                .clickable(
+                                    enabled = models.isNotEmpty(),
+                                    role = Role.Button,
+                                    onClickLabel = changeLabel,
+                                ) { showTitleMenu = true }
+                                .semantics(mergeDescendants = true) {},
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Column(modifier = Modifier.weight(1f, fill = false)) {
@@ -532,8 +546,6 @@ fun ChatScreen(
                     val loadingLabel = stringResource(R.string.loading)
                     val shareLabel = stringResource(R.string.share_conversation)
                     val commandsLabel = stringResource(R.string.commands)
-                    val agentLabel = stringResource(R.string.choose_agent)
-                    val modelLabel = stringResource(R.string.choose_model)
                     val renameLabel = stringResource(R.string.rename_session_chat)
                     val deleteLabel = stringResource(R.string.delete_session_chat)
                     val createShareLabel = stringResource(R.string.create_share_link)
@@ -574,16 +586,6 @@ fun ChatScreen(
                                 enabled = !commandsLoading || commands.isNotEmpty(),
                                 onClick = { showOverflowMenu = false; showCommandPicker = true },
                             )
-                            DropdownMenuItem(
-                                text = { Text(agentLabel) },
-                                enabled = !agentsLoading || agents.isNotEmpty(),
-                                onClick = { showOverflowMenu = false; showAgentPicker = true },
-                            )
-                            DropdownMenuItem(
-                                text = { Text(modelLabel) },
-                                enabled = !modelsLoading || models.isNotEmpty(),
-                                onClick = { showOverflowMenu = false; showModelPicker = true },
-                            )
                             androidx.compose.material3.HorizontalDivider()
                             // Session sharing: create a public link, copy an existing one, or revoke it.
                             if (shareUrl == null) {
@@ -598,7 +600,7 @@ fun ChatScreen(
                                     onClick = {
                                         showOverflowMenu = false
                                         shareUrl?.let {
-                                            copyToClipboard(shareContext, "share", it)
+                                            copyToClipboard(shareContext, shareContext.getString(R.string.clip_label_share), it)
                                             scope.launch { snackbar.showSnackbar(linkCopiedMsg) }
                                         }
                                     },
@@ -611,12 +613,12 @@ fun ChatScreen(
                             DropdownMenuItem(
                                 text = { Text(summarizeLabel) },
                                 enabled = hasMessages && !running,
-                                onClick = { showOverflowMenu = false; vm.summarize() },
+                                onClick = { showOverflowMenu = false; showSummarizeConfirm = true },
                             )
                             DropdownMenuItem(
                                 text = { Text(initLabel) },
                                 enabled = !running,
-                                onClick = { showOverflowMenu = false; vm.initProject() },
+                                onClick = { showOverflowMenu = false; showInitConfirm = true },
                             )
                             DropdownMenuItem(
                                 text = { Text(shellLabel) },
@@ -936,6 +938,10 @@ fun ChatScreen(
                         key = { it.key },
                         contentType = { it.contentType },
                     ) { item ->
+                        // Default placement animation so inserted/moved rows glide in. Kept to the
+                        // default (no heavy fade spec) so a streaming message growing in place
+                        // doesn't animate on every token.
+                        Box(Modifier.animateItem()) {
                         when (item) {
                             is MessageListItem.Separator -> DateSeparator(item.label)
                             is MessageListItem.Message -> {
@@ -977,6 +983,7 @@ fun ChatScreen(
                                     onBranch = { text -> vm.branchFrom(text) },
                                 )
                             }
+                        }
                         }
                     }
                     if (running) {
@@ -1021,7 +1028,9 @@ fun ChatScreen(
                                     contentScope.launch { runCatchingCancellable { listState.animateScrollToItem(target) } }
                                 }
                             },
-                            icon = { Icon(Icons.Filled.KeyboardArrowDown, contentDescription = stringResource(R.string.latest)) },
+                            // contentDescription null: the visible "Latest" text already labels
+                            // the FAB, so a description here makes TalkBack announce "Latest" twice.
+                            icon = { Icon(Icons.Filled.KeyboardArrowDown, contentDescription = null) },
                             text = { Text(stringResource(R.string.latest)) },
                         )
                     }
@@ -1065,6 +1074,40 @@ fun ChatScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showStopConfirm = false }) { Text(stringResource(R.string.cancel)) }
+            },
+        )
+    }
+
+    if (showSummarizeConfirm) {
+        AlertDialog(
+            onDismissRequest = { showSummarizeConfirm = false },
+            title = { Text(stringResource(R.string.summarize_confirm_title)) },
+            text = { Text(stringResource(R.string.summarize_confirm_text)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    showSummarizeConfirm = false
+                    vm.summarize()
+                }) { Text(stringResource(R.string.action_continue)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSummarizeConfirm = false }) { Text(stringResource(R.string.cancel)) }
+            },
+        )
+    }
+
+    if (showInitConfirm) {
+        AlertDialog(
+            onDismissRequest = { showInitConfirm = false },
+            title = { Text(stringResource(R.string.init_confirm_title)) },
+            text = { Text(stringResource(R.string.init_confirm_text)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    showInitConfirm = false
+                    vm.initProject()
+                }) { Text(stringResource(R.string.action_continue)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showInitConfirm = false }) { Text(stringResource(R.string.cancel)) }
             },
         )
     }
@@ -1146,6 +1189,8 @@ fun ChatScreen(
     pendingPermission?.let { permission ->
         PermissionDialog(
             permission = permission,
+            position = permissionProgress.position,
+            total = permissionProgress.total,
             onRespond = { response -> vm.respondPermission(permission, response) },
         )
     }
@@ -1272,7 +1317,11 @@ private fun ChatInputBar(
                                 false
                             }
                         },
-                    placeholder = { Text(stringResource(R.string.message_placeholder)) },
+                    // While a run is active a typed message only queues (sends after the run), so
+                    // the placeholder says so instead of the plain "Message…".
+                    placeholder = {
+                        Text(stringResource(if (running) R.string.composer_hint_running else R.string.message_placeholder))
+                    },
                     enabled = enabled,
                     maxLines = 6,
                     // Show a "N / max" countdown once the draft crosses a high fraction of
@@ -1373,8 +1422,10 @@ private fun ComposerTrailingButton(
                     onClick = onQueue,
                     modifier = Modifier.testTag("queue_button"),
                 ) {
+                    // A clock/schedule icon (not Send) so it reads as "queue for later" and
+                    // isn't confused with the send action sitting right beside the Stop button.
                     Icon(
-                        Icons.AutoMirrored.Filled.Send,
+                        Icons.Filled.Schedule,
                         contentDescription = stringResource(R.string.queue_followup),
                     )
                 }

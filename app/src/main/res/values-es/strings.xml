@@ -148,7 +148,10 @@
     <string name="thoughts">Pensamientos</string>
     <string name="show_more">Mostrar más</string>
     <string name="show_less">Mostrar menos</string>
-    <string name="show_more_lines">Mostrar %1$d líneas más</string>
+    <plurals name="show_more_lines">
+        <item quantity="one">Mostrar %1$d línea más</item>
+        <item quantity="other">Mostrar %1$d líneas más</item>
+    </plurals>
     <string name="tool_completed">Completado</string>
     <string name="tool_error">Error</string>
     <string name="tool_running">En ejecución</string>
@@ -364,7 +367,10 @@
     <string name="search_truncated">Mostrando resultados solo de las sesiones más recientes.</string>
     <string name="search_all_start">Busca en tus conversaciones</string>
     <string name="search_all_start_hint">Escribe una palabra o frase para encontrarla en todas las sesiones.</string>
-    <string name="search_results_count">%1$d resultados</string>
+    <plurals name="search_results_count">
+        <item quantity="one">%1$d resultado</item>
+        <item quantity="other">%1$d resultados</item>
+    </plurals>
 
     <!-- Plan de tareas del agente (herramienta todowrite) -->
     <string name="plan">Plan</string>
@@ -418,7 +424,10 @@
     <string name="usage_this_session">Esta sesión</string>
     <string name="usage_all_sessions">Todas las sesiones</string>
     <string name="usage_empty">Aún no hay uso registrado</string>
-    <string name="usage_messages_count">%1$d mensajes del asistente</string>
+    <plurals name="usage_messages_count">
+        <item quantity="one">%1$d mensaje del asistente</item>
+        <item quantity="other">%1$d mensajes del asistente</item>
+    </plurals>
     <string name="usage_loading">Calculando uso…</string>
     <string name="usage_failed">No se pudo cargar el uso</string>
 
@@ -501,4 +510,32 @@
     <string name="import_confirm_replace">Reemplazar</string>
     <string name="export_passwords_title">¿Exportar contraseñas en texto plano?</string>
     <string name="export_passwords_warning">Esta copia de seguridad contendrá las contraseñas de tus servidores en texto plano. Cualquiera que pueda leer el archivo podrá verlas.</string>
+
+    <!-- UI/UX batch: permisos, confirmaciones, indicaciones de búsqueda, accesibilidad -->
+    <string name="permission_progress">%1$d de %2$d</string>
+    <string name="action_continue">Continuar</string>
+    <string name="summarize_confirm_title">¿Resumir la conversación?</string>
+    <string name="summarize_confirm_text">Los mensajes anteriores se compactan en un resumen para liberar contexto. Esto no se puede deshacer aquí.</string>
+    <string name="init_confirm_title">¿Generar AGENTS.md?</string>
+    <string name="init_confirm_text">El agente creará o sobrescribirá AGENTS.md en el directorio del proyecto. Un archivo existente puede ser reemplazado.</string>
+    <string name="composer_hint_running">Mensaje — se enviará al terminar la ejecución actual</string>
+    <string name="clip_label_code">Código</string>
+    <string name="clip_label_diff">Diferencias</string>
+    <string name="clip_label_reasoning">Razonamiento</string>
+    <string name="clip_label_output">Salida</string>
+    <string name="clip_label_path">Ruta</string>
+    <string name="clip_label_message">Mensaje</string>
+    <string name="clip_label_share">Enlace para compartir</string>
+    <string name="search_contents_hint">Escribe para buscar en el contenido del archivo</string>
+    <string name="search_symbols_hint">Escribe para buscar símbolos</string>
+    <string name="search_keep_typing">Sigue escribiendo para buscar…</string>
+    <string name="theme_using_system_colors">Usando los colores del sistema (Material You)</string>
+    <string name="tap_to_retry">Toca para reintentar</string>
+    <string name="count_overflow">99+</string>
+    <string name="mcp_enabled">Activado</string>
+    <string name="file_truncated">Archivo grande — mostrando las primeras %1$d líneas.</string>
+    <plurals name="file_search_results">
+        <item quantity="one">%1$d resultado</item>
+        <item quantity="other">%1$d resultados</item>
+    </plurals>
 </resources>
