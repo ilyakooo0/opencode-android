@@ -59,13 +59,11 @@
     <string name="base_url">URL base</string>
     <string name="base_url_hint">http://192.168.1.10:4096</string>
     <string name="invalid_url">Introduce una URL http:// o https:// válida.</string>
-    <string name="check_connectivity">Comprobar conectividad</string>
-    <string name="checking">Comprobando…</string>
     <string name="auth_required">Este servidor requiere autenticación.</string>
-    <string name="auth_help">Toca "Comprobar conectividad" para probar el servidor. Los campos de autenticación aparecen automáticamente solo si el servidor los requiere.</string>
     <string name="username_optional">Usuario (opcional)</string>
     <string name="password_optional">Contraseña (opcional)</string>
-    <string name="save_and_connect">Guardar y conectar</string>
+    <string name="connect">Conectar</string>
+    <string name="save_without_connecting">Guardar sin conectar</string>
     <string name="discard_title">¿Descartar cambios?</string>
     <string name="discard_text">Se perderán tus cambios.</string>
     <string name="discard">Descartar</string>
@@ -173,7 +171,6 @@
     <string name="no_commands">El servidor no informó de ningún comando.</string>
     <string name="no_commands_match">Ningún comando coincide con "%1$s".</string>
     <string name="load_failed">Error al cargar. Toca reintentar.</string>
-    <string name="saving">Guardando…</string>
     <string name="image_failed">Error al cargar la imagen</string>
     <string name="search_models">Buscar modelos…</string>
     <string name="search_agents">Buscar agentes…</string>
@@ -265,7 +262,6 @@
     <string name="unknown_message">Tipo de mensaje desconocido</string>
     <string name="unknown_part">Contenido no compatible</string>
     <string name="tool_preview">🔧 %1$s</string>
-    <string name="server_reachable">Servidor accesible ✓</string>
     <string name="suggest_scheme">Añadir prefijo http://</string>
     <string name="sort">Ordenar</string>
     <string name="sort_recent">Actividad reciente</string>

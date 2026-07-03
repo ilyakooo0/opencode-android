@@ -259,97 +259,127 @@ class ServerEditViewModelTest {
         assertEquals("Edited", vm.state.value.label)
     }
 
-    // --- probe() auth detection ---
+    // --- connect(): probe folded into the primary action ---
 
     @Test
-    fun probe_reachableServer_hidesAuthFields() = testScope.runTest {
+    fun connect_reachableServer_savesAndConnects() = testScope.runTest {
         val container = FakeAppContainer()
         container.probeResult = ProbeResult.Reachable
         val vm = makeVm(container)
         vm.update { it.copy(baseUrl = "http://localhost:3000") }
-        vm.probe()
+        var doneCalled = false
+        vm.connect { doneCalled = true }
         testScheduler.advanceUntilIdle()
-        assertFalse(vm.state.value.probing)
         assertFalse(vm.state.value.authFieldsVisible)
         assertNull(vm.state.value.error)
         assertEquals(1, container.probeCalls.size)
+        // Reachable → the profile is saved and a connection is opened.
+        assertNotNull(container.fakeProfileStore.savedProfile)
+        assertEquals(1, container.connectCalls.size)
+        assertTrue(doneCalled)
     }
 
     @Test
-    fun probe_needsAuth_showsAuthFields() = testScope.runTest {
+    fun connect_needsAuth_showsAuthFieldsWithoutSaving() = testScope.runTest {
         val container = FakeAppContainer()
         container.probeResult = ProbeResult.NeedsAuth
         val vm = makeVm(container)
         vm.update { it.copy(baseUrl = "http://localhost:3000") }
-        vm.probe()
+        var doneCalled = false
+        vm.connect { doneCalled = true }
         testScheduler.advanceUntilIdle()
-        assertFalse(vm.state.value.probing)
+        assertFalse(vm.state.value.saving)
         assertTrue(vm.state.value.authFieldsVisible)
         assertNull(vm.state.value.error)
+        // Auth needed: reveal the fields; nothing is saved or connected yet.
+        assertNull(container.fakeProfileStore.savedProfile)
+        assertEquals(0, container.connectCalls.size)
+        assertFalse(doneCalled)
     }
 
     @Test
-    fun probe_unreachable_showsErrorAndHidesAuthFields() = testScope.runTest {
+    fun connect_unreachable_showsErrorAndDoesNotSave() = testScope.runTest {
         val container = FakeAppContainer()
         container.probeResult = ProbeResult.Unreachable("Could not reach server")
         val vm = makeVm(container)
         vm.update { it.copy(baseUrl = "http://localhost:3000") }
-        vm.probe()
+        vm.connect { }
         testScheduler.advanceUntilIdle()
-        assertFalse(vm.state.value.probing)
+        assertFalse(vm.state.value.saving)
         assertFalse(vm.state.value.authFieldsVisible)
         assertNotNull(vm.state.value.error)
         assertTrue(vm.state.value.error!!.contains("Could not reach server"))
+        assertNull(container.fakeProfileStore.savedProfile)
     }
 
     @Test
-    fun probe_invalidUrlDoesNotProbe() = testScope.runTest {
+    fun connect_withCredentials_skipsProbeAndSaves() = testScope.runTest {
+        val container = FakeAppContainer()
+        container.probeResult = ProbeResult.NeedsAuth
+        val vm = makeVm(container)
+        vm.update { it.copy(baseUrl = "http://localhost:3000", username = "admin", password = "secret") }
+        var doneCalled = false
+        vm.connect { doneCalled = true }
+        testScheduler.advanceUntilIdle()
+        // Credentials present: no probe, straight to save + connect.
+        assertEquals(0, container.probeCalls.size)
+        assertNotNull(container.fakeProfileStore.savedProfile)
+        assertEquals(1, container.connectCalls.size)
+        assertTrue(doneCalled)
+    }
+
+    @Test
+    fun connect_authFieldsVisible_skipsProbe() = testScope.runTest {
+        val container = FakeAppContainer()
+        container.probeResult = ProbeResult.NeedsAuth
+        val vm = makeVm(container)
+        // Simulate a first Connect that revealed auth, then a second Connect with creds typed.
+        vm.update { it.copy(baseUrl = "http://localhost:3000", authFieldsVisible = true) }
+        vm.connect { }
+        testScheduler.advanceUntilIdle()
+        assertEquals(0, container.probeCalls.size)
+        assertNotNull(container.fakeProfileStore.savedProfile)
+    }
+
+    @Test
+    fun connect_invalidUrlDoesNothing() = testScope.runTest {
         val container = FakeAppContainer()
         container.probeResult = ProbeResult.Reachable
         val vm = makeVm(container)
         vm.update { it.copy(baseUrl = "invalid") }
-        vm.probe()
+        var doneCalled = false
+        vm.connect { doneCalled = true }
         testScheduler.advanceUntilIdle()
         assertEquals(0, container.probeCalls.size)
+        assertNull(container.fakeProfileStore.savedProfile)
+        assertFalse(doneCalled)
     }
 
     @Test
-    fun probe_whileProbingDoesNotProbeAgain() = testScope.runTest {
+    fun connect_whileSavingDoesNotConnectAgain() = testScope.runTest {
         val container = FakeAppContainer()
         container.probeResult = ProbeResult.Reachable
         val vm = makeVm(container)
         vm.update { it.copy(baseUrl = "http://localhost:3000") }
-        vm.probe()
-        vm.probe()
+        vm.connect { }
+        vm.connect { }
         testScheduler.advanceUntilIdle()
         assertEquals(1, container.probeCalls.size)
     }
 
     @Test
-    fun probe_setsProbingFlagDuringCall() = testScope.runTest {
+    fun connect_setsSavingFlagDuringProbeThenClearsOnAuth() = testScope.runTest {
         val container = FakeAppContainer()
-        container.probeResult = ProbeResult.Reachable
-        val vm = makeVm(container)
-        vm.update { it.copy(baseUrl = "http://localhost:3000") }
-        vm.probe()
-        // Before advancing, probing should be true
-        assertTrue(vm.state.value.probing)
-        testScheduler.advanceUntilIdle()
-        assertFalse(vm.state.value.probing)
-    }
-
-    @Test
-    fun editingBaseUrlAfterProbe_resetsAuthVisibility() = testScope.runTest {
-        val container = FakeAppContainer()
+        // NeedsAuth ends the flow (reveals auth) rather than navigating away, so saving
+        // returns to false and is observable — the reachable path stays saving until onDone.
         container.probeResult = ProbeResult.NeedsAuth
         val vm = makeVm(container)
         vm.update { it.copy(baseUrl = "http://localhost:3000") }
-        vm.probe()
+        vm.connect { }
+        // Before advancing, the probe is in flight → saving is true.
+        assertTrue(vm.state.value.saving)
         testScheduler.advanceUntilIdle()
-        assertTrue(vm.state.value.authFieldsVisible)
-        // User edits the URL — auth fields should hide so a re-probe is required
-        vm.update { it.copy(baseUrl = "http://localhost:4000", authFieldsVisible = false, error = null) }
-        assertFalse(vm.state.value.authFieldsVisible)
+        assertFalse(vm.state.value.saving)
     }
 
     @Test
@@ -385,40 +415,6 @@ class ServerEditViewModelTest {
         val container = FakeAppContainer()
         val vm = makeVm(container)
         assertFalse(vm.state.value.authFieldsVisible)
-    }
-
-    @Test
-    fun probe_failure_setsError() = testScope.runTest {
-        val container = FakeAppContainer()
-        container.probeResult = null // probeServer defaults to Reachable, so simulate exception
-        val vm = makeVm(container)
-        vm.update { it.copy(baseUrl = "http://localhost:3000") }
-        vm.probe()
-        testScheduler.advanceUntilIdle()
-        // With default fake, probe succeeds → no error
-        assertNull(vm.state.value.error)
-    }
-
-    @Test
-    fun probe_reachable_setsProbeReachable() = testScope.runTest {
-        val container = FakeAppContainer()
-        container.probeResult = ProbeResult.Reachable
-        val vm = makeVm(container)
-        vm.update { it.copy(baseUrl = "http://localhost:3000") }
-        vm.probe()
-        testScheduler.advanceUntilIdle()
-        assertEquals(true, vm.state.value.probeReachable)
-    }
-
-    @Test
-    fun probe_needsAuth_setsProbeReachableFalse() = testScope.runTest {
-        val container = FakeAppContainer()
-        container.probeResult = ProbeResult.NeedsAuth
-        val vm = makeVm(container)
-        vm.update { it.copy(baseUrl = "http://localhost:3000") }
-        vm.probe()
-        testScheduler.advanceUntilIdle()
-        assertEquals(false, vm.state.value.probeReachable)
     }
 
     @Test

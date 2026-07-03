@@ -19,6 +19,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Wifi
@@ -151,9 +153,9 @@ private fun ServerEditForm(
     onDone: () -> Unit,
 ) {
     val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
-    // canSave parses the base URL with java.net.URI (which throws — and fills a stack trace —
-    // on the common half-typed URL). Memoize on baseUrl so it runs once per edit instead of
-    // being re-parsed at each of the enabled= call sites on every keystroke's recomposition.
+    // canSave parses the base URL with OkHttp's parser (which allocates on the common
+    // half-typed URL). Memoize on baseUrl so it runs once per edit instead of being
+    // re-parsed at each of the enabled= call sites on every keystroke's recomposition.
     val canSave = remember(state.baseUrl, state.certPin) { state.canSave }
     Column(
         modifier = Modifier
@@ -164,17 +166,10 @@ private fun ServerEditForm(
             .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        OutlinedTextField(
-            value = state.label,
-            onValueChange = { v -> vm.update { it.copy(label = v) } },
-            label = { Text(stringResource(R.string.label_optional)) },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
-            modifier = Modifier.fillMaxWidth().testTag("server_label"),
-        )
+        // Base URL is the only required field, so it leads the form and takes focus.
         OutlinedTextField(
             value = state.baseUrl,
-            onValueChange = { v -> vm.update { it.copy(baseUrl = v, error = null, probeReachable = null) } },
+            onValueChange = { v -> vm.update { it.copy(baseUrl = v) } },
             label = { Text(stringResource(R.string.base_url)) },
             placeholder = { Text(stringResource(R.string.base_url_hint)) },
             singleLine = true,
@@ -186,7 +181,7 @@ private fun ServerEditForm(
                     val suggestion = suggestUrlScheme(state.baseUrl)
                     if (suggestion != null) {
                         TextButton(
-                            onClick = { vm.update { it.copy(baseUrl = suggestion, probeReachable = null) } },
+                            onClick = { vm.update { it.copy(baseUrl = suggestion) } },
                             contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp),
                         ) {
                             Text(stringResource(R.string.suggest_scheme))
@@ -199,43 +194,15 @@ private fun ServerEditForm(
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done),
             modifier = Modifier.fillMaxWidth().testTag("server_url"),
         )
-        OutlinedButton(
-            onClick = { vm.probe() },
-            enabled = canSave && !state.probing && !state.saving,
-            modifier = Modifier.fillMaxWidth().testTag("server_probe"),
-        ) {
-            if (state.probing) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(20.dp),
-                    strokeWidth = 2.dp,
-                )
-                Text(stringResource(R.string.checking), modifier = Modifier.padding(start = 8.dp))
-            } else {
-                Text(stringResource(R.string.check_connectivity))
-            }
-        }
-        // Positive feedback when the probe found the server reachable without auth, so
-        // the user knows the connection works before saving (closes the loop that the
-        // prior "silently does nothing" Reachable path left open).
-        if (state.probeReachable == true && !state.authFieldsVisible) {
-            Text(
-                stringResource(R.string.server_reachable),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
+        // Auto-expand LAN discovery only on a fresh form (no URL yet) so tapping a found
+        // server is the primary path; on edit the populated URL keeps it (and its multicast)
+        // collapsed.
         DiscoverySection(
-            onPick = { url -> vm.update { it.copy(baseUrl = url, error = null, probeReachable = null) } },
+            initiallyExpanded = state.baseUrl.isBlank(),
+            onPick = { url -> vm.update { it.copy(baseUrl = url) } },
         )
-        if (!state.authFieldsVisible) {
-            Text(
-                stringResource(R.string.auth_help),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
+        // Auth fields appear only once a connect attempt learns the server requires them
+        // (or an authed profile is loaded) — the common no-auth server never sees them.
         AnimatedVisibility(visible = state.authFieldsVisible) {
             AuthFields(
                 state = state,
@@ -243,43 +210,40 @@ private fun ServerEditForm(
                 onTogglePassword = onTogglePassword,
                 onUpdate = vm::update,
                 onTestCredentials = vm::testCredentials,
-                onImeDone = { if (canSave && !state.saving) vm.saveAndConnect(onDone) },
+                onImeDone = { if (canSave && !state.saving) vm.connect(onDone) },
             )
         }
-        SecurityFields(state = state, onUpdate = vm::update)
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        // Single primary action: probe-then-save-and-connect. Replaces the former
+        // Check-connectivity / Save / Save-&-connect trio.
+        Button(
+            onClick = {
+                haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                vm.connect(onDone)
+            },
+            enabled = canSave && !state.saving,
+            modifier = Modifier.fillMaxWidth().testTag("server_connect"),
         ) {
-            OutlinedButton(
-                onClick = {
-                    haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                    vm.save(onDone)
-                },
-                enabled = canSave && !state.saving,
-                modifier = Modifier.weight(1f),
-            ) {
-                if (state.saving) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(20.dp),
-                        color = MaterialTheme.colorScheme.primary,
-                        strokeWidth = 2.dp,
-                    )
-                    Text(stringResource(R.string.saving), modifier = Modifier.padding(start = 8.dp))
-                } else {
-                    Text(stringResource(R.string.save))
-                }
+            if (state.saving) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(20.dp),
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    strokeWidth = 2.dp,
+                )
+                Text(stringResource(R.string.connecting), modifier = Modifier.padding(start = 8.dp))
+            } else {
+                Text(stringResource(R.string.connect))
             }
-            Button(
-                onClick = {
-                    haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                    vm.saveAndConnect(onDone)
-                },
-                enabled = canSave && !state.saving,
-                modifier = Modifier.weight(1f),
-            ) {
-                Text(stringResource(R.string.save_and_connect))
-            }
+        }
+        // Secondary, low-emphasis: persist without connecting (offline setup).
+        TextButton(
+            onClick = {
+                haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                vm.save(onDone)
+            },
+            enabled = canSave && !state.saving,
+            modifier = Modifier.fillMaxWidth().testTag("server_save"),
+        ) {
+            Text(stringResource(R.string.save_without_connecting))
         }
         state.error?.let { message ->
             Text(
@@ -289,6 +253,17 @@ private fun ServerEditForm(
                 modifier = Modifier.fillMaxWidth(),
             )
         }
+        // De-emphasized optional label at the bottom: displayLabel already falls back to the
+        // URL, so most servers don't need one.
+        OutlinedTextField(
+            value = state.label,
+            onValueChange = { v -> vm.update { it.copy(label = v) } },
+            label = { Text(stringResource(R.string.label_optional)) },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+            modifier = Modifier.fillMaxWidth().testTag("server_label"),
+        )
+        AdvancedSection(state = state, onUpdate = vm::update)
     }
 }
 
@@ -366,20 +341,44 @@ private fun AuthFields(
     }
 }
 
-/** Optional TLS hardening for this server: force HTTPS (upgrade cleartext) and pin the
- *  server certificate. Both are off by default so the common localhost/HTTP setup is
- *  unaffected. */
+/**
+ * Optional TLS hardening, tucked behind a collapsed "Security" expander so the common
+ * localhost/HTTP setup never sees it. Auto-expands when a loaded profile already uses one of
+ * these settings (so an invalid pin can't silently disable Connect from inside a closed
+ * section). Contains: force HTTPS (upgrade cleartext) and pin the server certificate — both
+ * off by default.
+ */
+@Composable
+private fun AdvancedSection(
+    state: ServerEditState,
+    onUpdate: (((ServerEditState) -> ServerEditState)) -> Unit,
+) {
+    var expanded by rememberSaveable { mutableStateOf(state.requireHttps || state.certPin.isNotBlank()) }
+    Column(modifier = Modifier.fillMaxWidth()) {
+        TextButton(
+            onClick = { expanded = !expanded },
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp),
+        ) {
+            Icon(
+                if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+            )
+            Text(stringResource(R.string.server_security), modifier = Modifier.padding(start = 8.dp))
+        }
+        AnimatedVisibility(visible = expanded) {
+            SecurityFields(state = state, onUpdate = onUpdate)
+        }
+    }
+}
+
+/** The actual security controls, rendered inside [AdvancedSection]'s expander. */
 @Composable
 private fun SecurityFields(
     state: ServerEditState,
     onUpdate: (((ServerEditState) -> ServerEditState)) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-        Text(
-            stringResource(R.string.server_security),
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.primary,
-        )
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(stringResource(R.string.require_https), style = MaterialTheme.typography.bodyLarge)
@@ -417,14 +416,15 @@ private fun SecurityFields(
 
 /**
  * Optional LAN discovery: browses for opencode servers advertised via mDNS (`--mdns`) and
- * offers each as a one-tap fill for the base URL. Collapsed by default so the discovery (and
- * its multicast traffic) only runs while the section is expanded — the collection stops when
- * the section is collapsed or the screen leaves composition.
+ * offers each as a one-tap fill for the base URL. Discovery (and its multicast traffic) only
+ * runs while the section is expanded — the collection stops when the section is collapsed or
+ * the screen leaves composition. [initiallyExpanded] starts it open on a fresh add form so the
+ * discovered list is the primary path; an edit form (populated URL) leaves it collapsed.
  */
 @Composable
-private fun DiscoverySection(onPick: (String) -> Unit) {
+private fun DiscoverySection(onPick: (String) -> Unit, initiallyExpanded: Boolean = false) {
     val context = LocalContext.current
-    var expanded by rememberSaveable { mutableStateOf(false) }
+    var expanded by rememberSaveable { mutableStateOf(initiallyExpanded) }
     Column(modifier = Modifier.fillMaxWidth()) {
         TextButton(
             onClick = { expanded = !expanded },

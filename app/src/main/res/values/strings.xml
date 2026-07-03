@@ -59,13 +59,11 @@
     <string name="base_url">Base URL</string>
     <string name="base_url_hint">http://192.168.1.10:4096</string>
     <string name="invalid_url">Enter a valid http:// or https:// URL.</string>
-    <string name="check_connectivity">Check connectivity</string>
-    <string name="checking">Checking…</string>
     <string name="auth_required">This server requires authentication.</string>
-    <string name="auth_help">Tap "Check connectivity" to test the server. Authentication fields appear automatically only if the server requires them.</string>
     <string name="username_optional">Username (optional)</string>
     <string name="password_optional">Password (optional)</string>
-    <string name="save_and_connect">Save &amp; connect</string>
+    <string name="connect">Connect</string>
+    <string name="save_without_connecting">Save without connecting</string>
     <string name="discard_title">Discard changes?</string>
     <string name="discard_text">Your edits will be lost.</string>
     <string name="discard">Discard</string>
@@ -173,7 +171,6 @@
     <string name="no_commands">No commands reported by the server.</string>
     <string name="no_commands_match">No commands match "%1$s".</string>
     <string name="load_failed">Failed to load. Tap retry.</string>
-    <string name="saving">Saving…</string>
     <string name="image_failed">Failed to load image</string>
     <string name="search_models">Search models…</string>
     <string name="search_agents">Search agents…</string>
@@ -265,7 +262,6 @@
     <string name="unknown_message">Unknown message type</string>
     <string name="unknown_part">Unsupported content</string>
     <string name="tool_preview">🔧 %1$s</string>
-    <string name="server_reachable">Server is reachable ✓</string>
     <string name="suggest_scheme">Add http:// prefix</string>
     <string name="sort">Sort</string>
     <string name="sort_recent">Recent activity</string>

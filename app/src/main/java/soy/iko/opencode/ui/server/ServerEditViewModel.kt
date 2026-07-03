@@ -35,17 +35,12 @@ data class ServerEditState(
     val error: String? = null,
     /** Whether the auth (username/password) fields are shown. */
     val authFieldsVisible: Boolean = false,
-    /** Whether a connectivity/auth probe is in progress. */
-    val probing: Boolean = false,
     /** Snapshot of the profile as loaded (for dirty detection). Null until loaded. */
     val initial: InitialProfile? = null,
     /** Whether a credential test is in progress. */
     val testingCredentials: Boolean = false,
     /** Non-null when the last credential test succeeded (true) or failed (false). */
     val credentialsResult: Boolean? = null,
-    /** True when the last connectivity probe found the server reachable without auth.
-     *  Null until a probe runs, and cleared when the base URL is edited. */
-    val probeReachable: Boolean? = null,
 ) {
     val canSave: Boolean get() = baseUrl.isNotBlank() && isValidUrl(baseUrl) && certPinValid
     val isNew: Boolean get() = id == null
@@ -218,48 +213,53 @@ class ServerEditViewModel(
         _state.update { transform(it).copy(credentialsResult = null, error = null) }
     }
 
-    fun probe() {
+    /**
+     * Primary action: save the profile and connect to it. When the server needs auth and the
+     * user hasn't supplied credentials yet, a connectivity probe reveals the username/password
+     * fields instead of connecting with none — folding the former separate "Check connectivity"
+     * step into this single action so the common case is one tap.
+     */
+    fun connect(onDone: () -> Unit) {
         val s = _state.value
-        if (!s.canSave || s.probing) return
-        _state.update { it.copy(probing = true, error = null, credentialsResult = null, probeReachable = null) }
-        // FIX 21(b): probe the trimmed URL that save() would actually store.
-        // FIX 11: remember which URL we probed so a stale result is dropped if the
-        // user edited the base URL away while the probe was in flight.
+        if (!s.canSave || s.saving) return
+        // Credentials already known (an authed profile is loaded, or the user typed some): skip
+        // the probe and go straight to save + connect. A wrong password then surfaces as a
+        // connect error rather than silently re-opening the auth fields.
+        if (s.authFieldsVisible || s.username.isNotBlank() || s.password.isNotBlank()) {
+            saveInternal(connectAfter = true, onDone = onDone)
+            return
+        }
+        _state.update { it.copy(saving = true, error = null, credentialsResult = null) }
+        // FIX 21(b)/FIX 11: probe the trimmed URL save() would store, and remember it so a stale
+        // result is dropped if the user edited the base URL away while the probe was in flight.
         val probedUrl = s.baseUrl.trim()
         val probedRequireHttps = s.requireHttps
         val probedCertPin = s.certPin.trim().takeIf { it.isNotBlank() }
         viewModelScope.launch {
             val result = runCatchingCancellable { container.probeServer(probedUrl, probedRequireHttps, probedCertPin) }
             result.onSuccess { pr ->
-                _state.update {
-                    // Stale result (URL edited away mid-probe): drop the reachability verdict but
-                    // still clear the spinner, else `probing` latches true and blocks re-probing.
-                    if (it.baseUrl.trim() != probedUrl) return@update it.copy(probing = false)
-                    when (pr) {
-                        is ProbeResult.Reachable -> it.copy(
-                            probing = false,
-                            authFieldsVisible = false,
-                            error = null,
-                            probeReachable = true,
-                        )
-                        is ProbeResult.NeedsAuth -> it.copy(
-                            probing = false,
-                            authFieldsVisible = true,
-                            error = null,
-                            probeReachable = false,
-                        )
-                        is ProbeResult.Unreachable -> it.copy(
-                            probing = false,
-                            authFieldsVisible = false,
-                            error = pr.error,
-                            probeReachable = false,
-                        )
+                // Stale result (URL edited away mid-probe): clear the spinner and stop, else
+                // `saving` latches true and blocks re-connecting.
+                if (_state.value.baseUrl.trim() != probedUrl) {
+                    _state.update { it.copy(saving = false) }
+                    return@onSuccess
+                }
+                when (pr) {
+                    is ProbeResult.NeedsAuth ->
+                        _state.update { it.copy(saving = false, authFieldsVisible = true, error = null) }
+                    is ProbeResult.Unreachable ->
+                        _state.update { it.copy(saving = false, error = pr.error) }
+                    is ProbeResult.Reachable -> {
+                        // Reachable without auth: clear the probe-owned saving flag and hand off
+                        // to the normal save+connect path (saveInternal re-sets saving itself).
+                        _state.update { it.copy(saving = false) }
+                        saveInternal(connectAfter = true, onDone = onDone)
                     }
                 }
             }.onFailure { e ->
                 _state.update {
-                    if (it.baseUrl.trim() != probedUrl) return@update it.copy(probing = false)
-                    it.copy(probing = false, error = container.friendlyError(e), probeReachable = false)
+                    if (it.baseUrl.trim() != probedUrl) it.copy(saving = false)
+                    else it.copy(saving = false, error = container.friendlyError(e))
                 }
             }
         }
@@ -311,13 +311,9 @@ class ServerEditViewModel(
         }
     }
 
+    /** Secondary action: persist the profile without connecting (e.g. setting up offline). */
     fun save(onDone: () -> Unit) {
         saveInternal(connectAfter = false, onDone = onDone)
-    }
-
-    /** Save and then connect to the saved profile in one step. */
-    fun saveAndConnect(onDone: () -> Unit) {
-        saveInternal(connectAfter = true, onDone = onDone)
     }
 
     private fun saveInternal(connectAfter: Boolean, onDone: () -> Unit) {
