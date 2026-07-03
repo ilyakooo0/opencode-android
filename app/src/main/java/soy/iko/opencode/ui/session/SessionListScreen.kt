@@ -438,11 +438,22 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
     when {
         state.loading -> {
             val loadingLabel = stringResource(R.string.loading)
-            CircularProgressIndicator(
-                Modifier
-                    .align(Alignment.Center)
-                    .semantics { contentDescription = loadingLabel },
-            )
+            // Match sibling screens (MCP/Usage/Chat) which show a visible "Loading…"
+            // label beneath the spinner; a bare spinner is the weakest loading state
+            // in the app and this is the primary screen.
+            Column(
+                modifier = Modifier.align(Alignment.Center),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                CircularProgressIndicator(
+                    Modifier.semantics { contentDescription = loadingLabel },
+                )
+                Spacer(Modifier.size(12.dp))
+                Text(
+                    loadingLabel,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
         state.sessions.isEmpty() && state.error != null -> Column(
             modifier = Modifier.align(Alignment.Center).padding(24.dp),

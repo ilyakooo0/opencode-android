@@ -88,6 +88,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -108,7 +109,9 @@ import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
@@ -894,9 +897,27 @@ fun ChatScreen(
                     }
                 }
             } else {
+                val bannerVisible = !isOnline || connectionState != EventStreamClient.ConnectionState.Connected
+                // Measure the banner's actual height instead of hardcoding 44dp. At large
+                // accessibility font scales the banner's labelMedium text + spinner + Retry
+                // button exceed 44dp, so a fixed inset lets the first message hide behind it
+                // (the same hazard FileViewScreen's overlay calls out). onSizeChanged only
+                // fires while the banner is composed (visible), so gate the inset on
+                // bannerVisible and fall back to 44dp until the first measurement arrives.
+                var bannerHeightPx by remember { mutableIntStateOf(0) }
+                val density = LocalDensity.current
+                val topPad = if (bannerVisible) {
+                    if (bannerHeightPx > 0) {
+                        with(density) { bannerHeightPx.toDp() } + 4.dp
+                    } else {
+                        44.dp
+                    }
+                } else {
+                    16.dp
+                }
                 ConnectionBanner(
                     state = connectionState,
-                    modifier = Modifier.align(Alignment.TopCenter),
+                    modifier = Modifier.align(Alignment.TopCenter).onSizeChanged { bannerHeightPx = it.height },
                     isOnline = isOnline,
                     // On a hard failure, retry by forcing an SSE reconnect (which
                     // re-seeds from REST). refreshMessages is the right recovery path
@@ -918,9 +939,7 @@ fun ChatScreen(
                         .widthIn(max = NetworkConfig.chatContentMaxWidthDp.dp),
                 ) {
                 // Reserve top space when the banner is visible so it doesn't overlap the
-                // first message / state content.
-                val bannerVisible = !isOnline || connectionState != EventStreamClient.ConnectionState.Connected
-                val topPad = if (bannerVisible) 44.dp else 16.dp
+                // first message / state content. (topPad computed above.)
                 if (loading && messages.isEmpty()) {
                     val loadingLabel = stringResource(R.string.loading)
                     // Attach the a11y label directly to the spinner (a detached zero-size Box

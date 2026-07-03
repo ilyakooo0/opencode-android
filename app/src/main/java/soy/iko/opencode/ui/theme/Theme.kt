@@ -155,6 +155,15 @@ val LightPaletteSwatches: List<Color> = listOf(
     LightColors.tertiary,
     LightColors.background,
 )
+// AMOLED shares the Dark accent colors but uses a pure-black background, so its preview
+// must differ from Dark's (#1A1B26) dot — otherwise the two theme rows are visually
+// indistinguishable in the picker and the user can't tell them apart before selecting.
+val AmoledPaletteSwatches: List<Color> = listOf(
+    AmoledColors.primary,
+    AmoledColors.secondary,
+    AmoledColors.tertiary,
+    AmoledColors.background,
+)
 
 private tailrec fun Context.findActivity(): Activity? = when (this) {
     is Activity -> this

@@ -87,6 +87,7 @@ import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.ui.canAuthenticateForAppLock
 import soy.iko.opencode.ui.theme.LightPaletteSwatches
 import soy.iko.opencode.ui.theme.DarkPaletteSwatches
+import soy.iko.opencode.ui.theme.AmoledPaletteSwatches
 import soy.iko.opencode.util.runCatchingCancellable
 import kotlin.math.roundToInt
 
@@ -716,7 +717,7 @@ private fun ThemeRow(mode: ThemeMode, selected: Boolean, usingSystemColors: Bool
         }
         ThemeMode.LIGHT -> LightSwatches
         ThemeMode.DARK -> DarkSwatches
-        ThemeMode.AMOLED -> DarkSwatches
+        ThemeMode.AMOLED -> AmoledSwatches
     }
     Row(
         modifier = Modifier
@@ -766,6 +767,7 @@ private fun ThemeRow(mode: ThemeMode, selected: Boolean, usingSystemColors: Bool
 // the character of each scheme at a glance without rendering a full sample surface.
 private val DarkSwatches: List<Color> = DarkPaletteSwatches
 private val LightSwatches: List<Color> = LightPaletteSwatches
+private val AmoledSwatches: List<Color> = AmoledPaletteSwatches
 
 // Composable-side read of the system dark setting for the "System" theme row preview.
 // isSystemInDarkTheme() is a @Composable function, so it can't be called inside a plain

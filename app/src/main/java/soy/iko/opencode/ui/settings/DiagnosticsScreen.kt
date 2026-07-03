@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BugReport
@@ -372,11 +373,15 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                             .heightIn(max = 400.dp)
                             .verticalScroll(rememberScrollState()),
                     ) {
-                        Text(
-                            content,
-                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                            modifier = Modifier.fillMaxWidth(),
-                        )
+                        // Wrap in SelectionContainer so a user can select/copy just the
+                        // relevant stack snippet instead of the whole-report Copy button.
+                        SelectionContainer {
+                            Text(
+                                content,
+                                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
                     }
                     loadFailed -> Text(
                         stringResource(R.string.report_load_failed),
