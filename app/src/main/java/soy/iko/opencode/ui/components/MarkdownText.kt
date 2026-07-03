@@ -38,6 +38,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
@@ -188,6 +189,16 @@ private fun CodeWithCopy(model: MarkdownComponentModel) {
     val code = remember(raw, isFenced) { extractCodeText(raw, isFenced) }
     val language = remember(raw, isFenced) { extractFenceLanguage(raw, isFenced) }
     val codeStyle = model.typography.code.copy(fontFamily = FontFamily.Monospace)
+    // Heuristic syntax highlighting, reusing the same highlighter the file viewer uses.
+    // Resolved from the fence's info string (e.g. "kotlin"), not a filename. Memoized so a
+    // scroll-induced recomposition doesn't re-tokenize; during streaming the MarkdownBody
+    // throttle coalesces re-highlights. Falls back to plain text for unknown/missing tags
+    // (NONE) so un-tagged fences render unchanged.
+    val palette = rememberHighlightPalette()
+    val syntax = remember(language) { language?.let { syntaxForLanguageTag(it) } }
+    val highlighted = remember(code, syntax, palette) {
+        if (syntax != null) highlightCode(code, syntax, palette) else AnnotatedString(code)
+    }
     // Default per-block wrap from the global preference; re-seed if the preference changes
     // while this block is composed (rememberSaveable would over-persist across blocks).
     val defaultWrap = LocalCodeWrap.current
@@ -250,7 +261,7 @@ private fun CodeWithCopy(model: MarkdownComponentModel) {
         // scroll so long lines keep their formatting. Selectable so a portion can be copied.
         SelectionContainer {
             Text(
-                text = code,
+                text = highlighted,
                 style = codeStyle,
                 modifier = if (wrap) {
                     Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 12.dp)

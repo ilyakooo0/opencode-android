@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
@@ -84,11 +85,13 @@ import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
 import soy.iko.opencode.ui.components.ConnectionBannerFor
 import soy.iko.opencode.ui.components.DiffView
+import soy.iko.opencode.ui.components.LocalChatTextScale
 import soy.iko.opencode.ui.components.LocalCodeWrap
 import soy.iko.opencode.ui.components.copyToClipboard
 import soy.iko.opencode.ui.components.highlightLine
 import soy.iko.opencode.ui.components.syntaxFor
 import soy.iko.opencode.ui.components.rememberHighlightPalette
+import soy.iko.opencode.ui.components.scaledBy
 import soy.iko.opencode.ui.vmFactory
 import soy.iko.opencode.util.runCatchingCancellable
 import kotlinx.coroutines.Dispatchers
@@ -201,6 +204,7 @@ fun FileViewScreen(
                 },
                 onToggleWrap = { wrap = !wrap },
                 onCopy = { copyToClipboard(context, filename, rawText) },
+                onCopyPath = { copyToClipboard(context, context.getString(R.string.clip_label_path), path) },
                 onShare = {
                     val send = Intent(Intent.ACTION_SEND).apply {
                         type = "text/plain"
@@ -317,6 +321,7 @@ private fun FileViewTopBar(
     onToggleFind: () -> Unit,
     onToggleWrap: () -> Unit,
     onCopy: () -> Unit,
+    onCopyPath: () -> Unit,
     onShare: () -> Unit,
 ) {
     TopAppBar(
@@ -376,6 +381,11 @@ private fun FileViewTopBar(
                         text = { Text(stringResource(R.string.copy)) },
                         onClick = { onCopy(); menuExpanded = false },
                         leadingIcon = { Icon(Icons.Filled.ContentCopy, contentDescription = null) },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.copy_path)) },
+                        onClick = { onCopyPath(); menuExpanded = false },
+                        leadingIcon = { Icon(Icons.Filled.Link, contentDescription = null) },
                     )
                     DropdownMenuItem(
                         text = { Text(stringResource(R.string.share)) },
@@ -637,13 +647,23 @@ private fun FileTextContent(
     highlightLineIndex: Int?,
     listState: LazyListState,
 ) {
+    // Honor the user's chat text-size preference (the same one the chat markdown honors) so
+    // a user who bumped the scale for readability gets the same scale in the code viewer.
+    // Applied by nesting a MaterialTheme with a scaled typography, exactly how MarkdownText
+    // does it — the gutter/code Text below read MaterialTheme.typography.bodySmall, so this
+    // reaches both without per-Text plumbing.
+    val scale = LocalChatTextScale.current
+    val base = MaterialTheme.typography
+    val scaled = remember(scale, base) { base.scaledBy(scale) }
     // Gutter width scales with the digit count and the font scale so accessibility
-    // text scaling (e.g. 1.3x) doesn't make line numbers overflow the gutter and
-    // collide with the code text. 10dp/digit covers bodySmall at 1.0x; scale up
-    // proportionally for larger font scales.
+    // text scaling (e.g. 1.3x) and the app's chat-text scale don't make line numbers overflow
+    // the gutter and collide with the code text. 10dp/digit covers bodySmall at 1.0x; scale up
+    // proportionally for larger font/app scales.
     val fontScale = androidx.compose.ui.platform.LocalDensity.current.fontScale
-    val gutterWidth = remember(lines.size, fontScale) {
-        ((lines.size.toString().length.coerceAtLeast(3) * 10) * fontScale.coerceAtLeast(1f)).dp
+    val gutterWidth = remember(lines.size, fontScale, scale) {
+        ((lines.size.toString().length.coerceAtLeast(3) * 10) *
+            fontScale.coerceAtLeast(1f) *
+            scale.coerceAtLeast(1f)).dp
     }
     val hScrollState = rememberScrollState()
     val palette = rememberHighlightPalette()
@@ -651,51 +671,53 @@ private fun FileTextContent(
     val syntax = remember(filename) { syntaxFor(filename) }
     val q = findQuery.trim()
     val matchSet = remember(matchIndices) { matchIndices.toHashSet() }
-    Column(modifier = Modifier.fillMaxSize().padding(top = topInset)) {
-        if (truncated) {
-            Text(
-                stringResource(R.string.file_truncated, MAX_RENDERED_LINES),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
-            )
-        }
-        LazyColumn(
-            state = listState,
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .padding(8.dp),
-        ) {
-            itemsIndexed(lines, key = { index, _ -> index }) { index, line ->
-                val isMatch = q.isNotEmpty() && index in matchSet
-                // The jump-to-line target keeps the same emphasis as a find match so the line
-                // the viewer landed on is obvious until the user scrolls or starts a find.
-                val isTarget = index == highlightLineIndex
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .then(if (wrap) Modifier else Modifier.horizontalScroll(hScrollState))
-                        .then(if (isMatch || isTarget) Modifier.background(MaterialTheme.colorScheme.secondaryContainer) else Modifier),
-                ) {
-                    Text(
-                        "${index + 1}",
-                        modifier = Modifier.width(gutterWidth),
-                        style = MaterialTheme.typography.bodySmall,
-                        fontFamily = FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    // Heuristic syntax highlighting per line. Falls back to plain text for
-                    // unknown extensions, so non-code files render unchanged. Memoized so the
-                    // O(n) tokenizer + AnnotatedString allocation runs only when the line text,
-                    // file, or palette actually changes — not on every recomposition (e.g. every
-                    // keystroke into find-in-file, which would otherwise re-highlight all visible lines).
-                    val highlighted = remember(line, syntax, palette) { highlightLine(line, syntax, palette) }
-                    Text(
-                        highlighted,
-                        modifier = Modifier.padding(start = 8.dp),
-                        style = MaterialTheme.typography.bodySmall,
-                    )
+    MaterialTheme(typography = scaled) {
+        Column(modifier = Modifier.fillMaxSize().padding(top = topInset)) {
+            if (truncated) {
+                Text(
+                    stringResource(R.string.file_truncated, MAX_RENDERED_LINES),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+                )
+            }
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .padding(8.dp),
+            ) {
+                itemsIndexed(lines, key = { index, _ -> index }) { index, line ->
+                    val isMatch = q.isNotEmpty() && index in matchSet
+                    // The jump-to-line target keeps the same emphasis as a find match so the line
+                    // the viewer landed on is obvious until the user scrolls or starts a find.
+                    val isTarget = index == highlightLineIndex
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .then(if (wrap) Modifier else Modifier.horizontalScroll(hScrollState))
+                            .then(if (isMatch || isTarget) Modifier.background(MaterialTheme.colorScheme.secondaryContainer) else Modifier),
+                    ) {
+                        Text(
+                            "${index + 1}",
+                            modifier = Modifier.width(gutterWidth),
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        // Heuristic syntax highlighting per line. Falls back to plain text for
+                        // unknown extensions, so non-code files render unchanged. Memoized so the
+                        // O(n) tokenizer + AnnotatedString allocation runs only when the line text,
+                        // file, or palette actually changes — not on every recomposition (e.g. every
+                        // keystroke into find-in-file, which would otherwise re-highlight all visible lines).
+                        val highlighted = remember(line, syntax, palette) { highlightLine(line, syntax, palette) }
+                        Text(
+                            highlighted,
+                            modifier = Modifier.padding(start = 8.dp),
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
                 }
             }
         }

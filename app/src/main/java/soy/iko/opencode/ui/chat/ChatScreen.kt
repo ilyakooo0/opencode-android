@@ -145,9 +145,11 @@ import soy.iko.opencode.R
 import soy.iko.opencode.ui.components.CommandPalette
 import soy.iko.opencode.ui.components.ConnectionBanner
 import soy.iko.opencode.ui.components.PaletteAction
+import soy.iko.opencode.ui.components.LocalReducedMotion
 import soy.iko.opencode.ui.components.copyToClipboard
 import soy.iko.opencode.ui.components.LocalRelativeTimeTick
 import soy.iko.opencode.ui.components.rememberRelativeTimeTick
+import soy.iko.opencode.ui.components.rememberVisibilityTransitions
 import soy.iko.opencode.ui.components.showToast
 import soy.iko.opencode.ui.components.toImageContext
 import soy.iko.opencode.ui.vmFactory
@@ -709,10 +711,19 @@ fun ChatScreen(
                 // Pinned above the composer so the agent's plan and progress stay visible
                 // while scrolled up mid-run; renders nothing when there's no plan.
                 TodoPlanBar(todoPlan)
-                AnimatedVisibility(visible = reverted) {
+                val bannerMotion = rememberVisibilityTransitions()
+                AnimatedVisibility(
+                    visible = reverted,
+                    enter = bannerMotion.enter,
+                    exit = bannerMotion.exit,
+                ) {
                     RevertBanner(onUndo = { vm.unrevert() })
                 }
-                AnimatedVisibility(visible = queuedOffline.isNotEmpty()) {
+                AnimatedVisibility(
+                    visible = queuedOffline.isNotEmpty(),
+                    enter = bannerMotion.enter,
+                    exit = bannerMotion.exit,
+                ) {
                     OutboxBanner(
                         count = queuedOffline.size,
                         sending = outboxSending,
@@ -1026,10 +1037,12 @@ fun ChatScreen(
                         key = { it.key },
                         contentType = { it.contentType },
                     ) { item ->
-                        // Default placement animation so inserted/moved rows glide in. Kept to the
-                        // default (no heavy fade spec) so a streaming message growing in place
-                        // doesn't animate on every token.
-                        Box(Modifier.animateItem()) {
+                        // Default placement animation so inserted/moved rows glide in. Skipped
+                        // entirely under reduced motion so a streaming message growing in place
+                        // doesn't animate on every token (and respects the a11y preference).
+                        Box(
+                            if (LocalReducedMotion.current) Modifier else Modifier.animateItem(),
+                        ) {
                         when (item) {
                             is MessageListItem.Separator -> DateSeparator(item.label)
                             is MessageListItem.Message -> {
@@ -1152,8 +1165,11 @@ fun ChatScreen(
                 }
                 }
                 // Jump-to-latest affordance when the user has scrolled away during a stream.
+                val fabMotion = rememberVisibilityTransitions()
                 AnimatedVisibility(
                     visible = !isPinnedToBottom && listItems.isNotEmpty(),
+                    enter = fabMotion.enter,
+                    exit = fabMotion.exit,
                     modifier = Modifier.align(Alignment.BottomEnd),
                 ) {
                     // Badge the FAB when new content arrived while the user was scrolled up, so
@@ -1192,6 +1208,8 @@ fun ChatScreen(
                 }
                 AnimatedVisibility(
                     visible = scrolledDown && listItems.size > 4,
+                    enter = fabMotion.enter,
+                    exit = fabMotion.exit,
                     modifier = Modifier.align(Alignment.BottomStart),
                 ) {
                     SmallFloatingActionButton(

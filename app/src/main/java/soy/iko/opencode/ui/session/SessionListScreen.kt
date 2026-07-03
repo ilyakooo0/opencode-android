@@ -34,6 +34,8 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Refresh
@@ -69,6 +71,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -82,6 +85,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
@@ -808,7 +812,12 @@ private fun SessionCard(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Column(modifier = Modifier.weight(1f)) {
+                // Leading monogram avatar so a long list is scannable at a glance instead of a
+                // wall of identical text rows. Color is derived (stably) from the session id so
+                // the same session always gets the same tint, while staying within tonal theme
+                // roles to match the Tokyo Night palette.
+                SessionAvatar(session)
+                Column(modifier = Modifier.weight(1f).padding(start = 12.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         if (unreadCount > 0) {
                             val unreadLabel = stringResource(R.string.unread_count, unreadCount)
@@ -855,6 +864,25 @@ private fun SessionCard(
                             Icon(
                                 Icons.Filled.Archive,
                                 contentDescription = stringResource(R.string.session_archived_badge),
+                                modifier = Modifier.padding(end = 4.dp).size(14.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        // Server-side state badges (shared / reverted). These are surfaced in
+                        // the chat screen but weren't in the list, so the list never reflected
+                        // them. Muted so they read as status, not as unread emphasis.
+                        if (session.isShared) {
+                            Icon(
+                                Icons.Filled.Link,
+                                contentDescription = stringResource(R.string.session_shared_badge),
+                                modifier = Modifier.padding(end = 4.dp).size(14.dp),
+                                tint = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                        if (session.isReverted) {
+                            Icon(
+                                Icons.Filled.History,
+                                contentDescription = stringResource(R.string.session_reverted_badge),
                                 modifier = Modifier.padding(end = 4.dp).size(14.dp),
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -948,6 +976,45 @@ private fun SessionCard(
                 )
             }
         }
+    }
+}
+
+/**
+ * Leading monogram avatar for a session row: a single letter (preferring the directory's
+ * initial, since directories are usually project names) on a tonal circle whose color is
+ * derived stably from the session id. Gives the list visual identity so a long list is
+ * scannable at a glance, without introducing random non-theme colors.
+ */
+@Composable
+private fun SessionAvatar(session: Session) {
+    val scheme = MaterialTheme.colorScheme
+    val letter = remember(session.id, session.displayDirectory, session.displayTitle) {
+        val source = session.displayDirectory?.firstOrNull()?.takeIf { it.isLetterOrDigit() }
+            ?: session.displayTitle.firstOrNull()?.takeIf { it.isLetterOrDigit() }
+            ?: '·'
+        source.uppercaseChar()
+    }
+    // Stable per-id color picked from a few tonal container roles, so the same session always
+    // gets the same tint while staying within the theme palette (Tokyo Night or dynamic).
+    val (bg, fg) = remember(session.id, scheme) {
+        val options = listOf(
+            scheme.primaryContainer to scheme.onPrimaryContainer,
+            scheme.secondaryContainer to scheme.onSecondaryContainer,
+            scheme.tertiaryContainer to scheme.onTertiaryContainer,
+        )
+        val idx = ((session.id.hashCode() % options.size) + options.size) % options.size
+        options[idx]
+    }
+    Box(
+        modifier = Modifier.size(36.dp).clip(CircleShape).background(bg),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            letter.toString(),
+            color = fg,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+        )
     }
 }
 

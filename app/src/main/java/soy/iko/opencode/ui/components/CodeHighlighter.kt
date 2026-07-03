@@ -1,3 +1,5 @@
+@file:Suppress("TooManyFunctions")
+
 package soy.iko.opencode.ui.components
 
 import androidx.compose.material3.MaterialTheme
@@ -27,27 +29,41 @@ import androidx.compose.ui.text.withStyle
 
 /** Language families recognized by [highlightLine]. The set of keywords is shared
  *  across C-family languages (kotlin, java, js, ts, swift, rust, go, c, cpp) since the
- *  common keywords overlap heavily; python has its own set; shell has its own. */
+ *  common keywords overlap heavily; python, ruby, shell, json each have their own. */
 internal enum class Language {
     C_FAMILY, // kotlin, java, js, ts, swift, rust, go, c, cpp, csharp, scala
     PYTHON,
     SHELL, // sh, bash, zsh
     MARKUP, // html, xml, svg
+    RUBY,
+    JSON,
     NONE,
 }
 
 private fun languageFor(filename: String): Language {
     val ext = filename.substringAfterLast('.', missingDelimiterValue = "").lowercase()
-    return when (ext) {
-        "kt", "kts", "java", "js", "mjs", "cjs", "ts", "tsx",
-        "swift", "rs", "go", "c", "h", "cpp", "cc", "cxx", "hpp", "hh",
-        "cs", "scala", "groovy", "dart", "gradle",
-        -> Language.C_FAMILY
-        "py", "pyw", "rb" -> Language.PYTHON
-        "sh", "bash", "zsh", "fish" -> Language.SHELL
-        "html", "htm", "xml", "svg", "vue" -> Language.MARKUP
-        else -> Language.NONE
-    }
+    return languageForToken(ext)
+}
+
+/**
+ * Resolve a language from a markdown fence info string (e.g. "kotlin" from ```kotlin).
+ * Accepts both full language names and file extensions so a fence tagged either way
+ * (` ```py ` or ` ```python `) highlights. Lowercased by the caller via [languageForToken].
+ */
+internal fun languageForTag(tag: String): Language = languageForToken(tag.trim().lowercase())
+
+private fun languageForToken(token: String): Language = when (token) {
+    "kt", "kotlin", "kts", "ktm", "java", "js", "javascript", "mjs", "cjs",
+    "ts", "typescript", "tsx", "jsx",
+    "swift", "rs", "rust", "go", "golang", "c", "h", "cpp", "c++", "cc", "cxx", "hpp", "hh",
+    "cs", "csharp", "c#", "scala", "groovy", "gradle", "dart",
+    -> Language.C_FAMILY
+    "py", "python", "pyw" -> Language.PYTHON
+    "rb", "ruby" -> Language.RUBY
+    "sh", "bash", "zsh", "fish", "shell", "shellscript", "console" -> Language.SHELL
+    "html", "htm", "xml", "svg", "vue" -> Language.MARKUP
+    "json", "json5", "jsonc" -> Language.JSON
+    else -> Language.NONE
 }
 
 private val cFamilyKeywords = setOf(
@@ -75,6 +91,15 @@ private val shellKeywords = setOf(
     "function", "in", "return", "exit", "echo", "export", "local", "readonly", "unset",
     "set", "shift", "source", "true", "false", "cd", "pwd", "ls", "cp", "mv", "rm",
 )
+
+private val rubyKeywords = setOf(
+    "BEGIN", "END", "alias", "and", "begin", "break", "case", "class", "def", "defined?",
+    "do", "else", "elsif", "end", "ensure", "false", "for", "if", "in", "module", "next",
+    "nil", "not", "or", "redo", "rescue", "retry", "return", "self", "super", "then",
+    "true", "undef", "unless", "until", "when", "while", "yield", "__FILE__", "__LINE__",
+)
+
+private val jsonKeywords = setOf("true", "false", "null")
 
 /** Theme-derived colors for the highlighter. Captured in a @Composable so the styles
  *  re-resolve when the color scheme changes (e.g. dynamic color or a theme switch). */
@@ -134,6 +159,50 @@ class FileSyntax internal constructor(
 fun syntaxFor(filename: String): FileSyntax {
     val lang = languageFor(filename)
     return FileSyntax(lang, keywordsFor(lang))
+}
+
+/**
+ * Resolve the [FileSyntax] from a markdown fence language tag (e.g. "kotlin", "py",
+ * "json"). Used by the chat code-block renderer, which only has the fence's info string
+ * (not a filename). Returns a [FileSyntax] with [Language.NONE] for unknown tags so the
+ * caller can short-circuit to plain text.
+ */
+fun syntaxForLanguageTag(tag: String): FileSyntax {
+    val lang = languageForTag(tag)
+    return FileSyntax(lang, keywordsFor(lang))
+}
+
+/**
+ * Highlight a whole (possibly multi-line) code snippet into a single [AnnotatedString].
+ * Each line is highlighted independently via [highlightLine], because the per-line
+ * scanner carries no state across lines (so multi-line block comments/triple-quoted
+ * strings are not handled — an accepted trade-off documented on [highlightLine]).
+ *
+ * Used by the chat code-block renderer, which renders the whole block in one [Text].
+ * The file viewer renders line-by-line instead and calls [highlightLine] directly.
+ */
+fun highlightCode(code: String, syntax: FileSyntax, palette: HighlightPalette): AnnotatedString {
+    if (syntax.lang == Language.NONE) return AnnotatedString(code)
+    val builder = AnnotatedString.Builder(code.length + 16)
+    val firstNewline = code.indexOf('\n')
+    // Fast path for single-line code (common for short inline-ish fences): skip the
+    // split + per-line append loop and the leading-newline bookkeeping entirely.
+    if (firstNewline == -1) {
+        builder.append(highlightLine(code, syntax, palette))
+        return builder.toAnnotatedString()
+    }
+    var start = 0
+    var first = true
+    while (start <= code.length) {
+        val end = code.indexOf('\n', start)
+        val line = if (end == -1) code.substring(start) else code.substring(start, end)
+        if (!first) builder.append("\n")
+        builder.append(highlightLine(line, syntax, palette))
+        first = false
+        if (end == -1) break
+        start = end + 1
+    }
+    return builder.toAnnotatedString()
 }
 
 /** Highlight a single line using a pre-resolved [FileSyntax]. See [FileSyntax]. */
@@ -211,6 +280,8 @@ private fun keywordsFor(lang: Language): Set<String> = when (lang) {
     Language.C_FAMILY -> cFamilyKeywords
     Language.PYTHON -> pythonKeywords
     Language.SHELL -> shellKeywords
+    Language.RUBY -> rubyKeywords
+    Language.JSON -> jsonKeywords
     Language.MARKUP -> emptySet()
     Language.NONE -> emptySet()
 }
@@ -219,9 +290,9 @@ private fun isLineCommentStart(c: Char, line: String, i: Int, lang: Language): B
     // `//` is a line comment only in C-family languages. Elsewhere it isn't: e.g. Python's
     // `a // b` is floor division, which must not be dimmed as a comment to end-of-line.
     (c == '/' && lang == Language.C_FAMILY && i + 1 < line.length && line[i + 1] == '/') ||
-        // `#` is a line comment only in Python and shell. It is NOT one in C-family
+        // `#` is a line comment in Python, shell and Ruby. It is NOT one in C-family
         // (`#include`, `#define`, C# `#region`, JS/TS `this.#field`) or markup.
-        (c == '#' && (lang == Language.PYTHON || lang == Language.SHELL))
+        (c == '#' && (lang == Language.PYTHON || lang == Language.SHELL || lang == Language.RUBY))
 
 private fun isMarkupDelim(c: Char): Boolean = c == '<' || c == '>' || c == '/' || c == '='
 

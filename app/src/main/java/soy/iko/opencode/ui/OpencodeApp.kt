@@ -44,6 +44,7 @@ import soy.iko.opencode.ui.search.GlobalSearchScreen
 import soy.iko.opencode.ui.components.LargeScreenNavRail
 import soy.iko.opencode.ui.components.LocalChatTextScale
 import soy.iko.opencode.ui.components.LocalCodeWrap
+import soy.iko.opencode.ui.components.LocalReducedMotion
 import soy.iko.opencode.ui.components.isReducedMotion
 import soy.iko.opencode.ui.session.SessionListScreen
 import soy.iko.opencode.ui.session.TwoPaneSessionChat
@@ -153,13 +154,16 @@ fun OpencodeApp(container: AppContainer) {
         )
     }
 
+    // Capture the reduced-motion preference once (in the composable scope) so the
+    // non-composable NavHost transition lambdas can use it to skip animations, and provide
+    // it via LocalReducedMotion so in-composition animations (chat row placement, banners,
+    // image zoom) honor the same accessibility preference.
+    val reducedMotion = isReducedMotion()
     CompositionLocalProvider(
         LocalChatTextScale provides clampedChatTextScale,
         LocalCodeWrap provides codeWrap,
+        LocalReducedMotion provides reducedMotion,
     ) {
-    // Capture the reduced-motion preference once (in the composable scope) so the
-    // non-composable NavHost transition lambdas can use it to skip animations.
-    val reducedMotion = isReducedMotion()
     // Slide direction for push/pop transitions, mirrored in RTL so the animation reads
     // naturally instead of "going the wrong way". +1 = LTR (push from right), -1 = RTL.
     val slideDir = if (LocalLayoutDirection.current == LayoutDirection.Rtl) -1 else 1

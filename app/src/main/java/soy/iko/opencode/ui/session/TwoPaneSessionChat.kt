@@ -94,6 +94,7 @@ fun TwoPaneSessionChat(
         error = sessionListState.error,
         sessions = sessionListState.sessions,
         selected = selected,
+        onAdvance = { id -> selected = id },
         onClear = { selected = null },
     )
 
@@ -216,17 +217,23 @@ private fun containsSession(sessions: List<Session>, id: String): Boolean =
     sessions.any { it.id == id }
 
 /**
- * Clears a stale detail-pane selection. Two guards:
+ * Keeps the detail pane pointed at a real conversation. When the open session disappears from
+ * the list (deleted, or removed server-side), advance to a neighbor instead of blanking the
+ * pane — matches the Gmail/Mail master-detail convention where deleting the open conversation
+ * shows the next one rather than an empty detail. Only falls back to [onClear] when the list
+ * is genuinely empty (nothing to advance to).
  *
- *  - Clear only when the open session is *deleted* — present in the list, then dropped out.
- *    A freshly created session sets `selected` before its async refresh lands, so the id is
+ * Two guards:
+ *
+ *  - Act only when the open session is *removed* — present in the list, then dropped out. A
+ *    freshly created session sets `selected` before its async refresh lands, so the id is
  *    legitimately absent for a moment; the `hasAppeared` latch (reset when `selected` changes)
- *    distinguishes "never appeared yet" (keep) from "appeared, then removed" (clear).
+ *    distinguishes "never appeared yet" (keep) from "appeared, then removed" (advance).
  *  - The `hasAppeared` latch can't survive process death, so a `selected` restored across a
- *    kill whose session was deleted server-side while dead never "appears" and would be kept
- *    forever (permanent load error). Once the first list load completes without the restored
- *    target, clear it. Runs once (non-saveable flag, re-arms after death) and only on a
- *    successful, completed load — not mid-load, and not for a freshly-created pending row.
+ *    kill whose session was deleted server-side while dead never "appears". Once the first list
+ *    load completes without the restored target, advance to an existing session (or clear when
+ *    none). Runs once (non-saveable flag, re-arms after death) and only on a successful,
+ *    completed load — not mid-load, and not for a freshly-created pending row.
  */
 @Composable
 private fun StaleSelectionCleanup(
@@ -234,13 +241,30 @@ private fun StaleSelectionCleanup(
     error: String?,
     sessions: List<Session>,
     selected: String?,
+    onAdvance: (String) -> Unit,
     onClear: () -> Unit,
 ) {
     var hasAppeared by remember(selected) { mutableStateOf(false) }
+    // Snapshot of the list as of the last time the target was present, so when the target
+    // disappears we can advance to the session that took its row (the next neighbor) rather
+    // than jumping to an unrelated row. Tracked here rather than derived, because [sessions]
+    // arriving at this call no longer contains the removed id.
+    var prevList by remember { mutableStateOf<List<Session>>(emptyList()) }
     LaunchedEffect(selected, sessions) {
         val target = selected ?: return@LaunchedEffect
-        if (containsSession(sessions, target)) hasAppeared = true
-        else if (hasAppeared) onClear()
+        if (containsSession(sessions, target)) {
+            hasAppeared = true
+            prevList = sessions
+        } else if (hasAppeared) {
+            // Removed mid-session: advance to the neighbor that now occupies the target's
+            // slot, falling back to the prior slot, then to any remaining session.
+            val prevIndex = prevList.indexOfFirst { it.id == target }.coerceAtLeast(0)
+            val replacement = sessions.getOrNull(prevIndex)?.id
+                ?: sessions.getOrNull(prevIndex - 1)?.id
+                ?: sessions.firstOrNull()?.id
+            if (replacement != null && replacement != target) onAdvance(replacement) else onClear()
+            prevList = sessions
+        }
     }
     var initialSelectionValidated by remember { mutableStateOf(false) }
     LaunchedEffect(loading, error, sessions) {
@@ -248,7 +272,11 @@ private fun StaleSelectionCleanup(
         if (loading || error != null) return@LaunchedEffect
         initialSelectionValidated = true
         val target = selected ?: return@LaunchedEffect
-        if (!containsSession(sessions, target)) onClear()
+        if (!containsSession(sessions, target)) {
+            // Process-death case: prefer advancing to an existing session over a blank pane.
+            val replacement = sessions.firstOrNull()?.id
+            if (replacement != null) onAdvance(replacement) else onClear()
+        }
     }
 }
 

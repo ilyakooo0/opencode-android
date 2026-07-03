@@ -556,6 +556,8 @@
     <string name="session_pinned_msg">Session pinned</string>
     <string name="session_unpinned_msg">Session unpinned</string>
     <string name="session_archived_badge">Archived</string>
+    <string name="session_shared_badge">Shared</string>
+    <string name="session_reverted_badge">Reverted</string>
     <string name="sort_active">Active sort</string>
     <string name="sort_descending">Descending</string>
     <string name="sort_ascending">Ascending</string>

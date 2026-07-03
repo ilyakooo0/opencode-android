@@ -1,6 +1,8 @@
 package soy.iko.opencode.ui.file
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -27,8 +29,11 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Article
+import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -53,6 +58,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
@@ -81,6 +87,7 @@ import soy.iko.opencode.R
 import soy.iko.opencode.ui.components.AppTopBar
 import soy.iko.opencode.ui.components.ConnectionBannerFor
 import soy.iko.opencode.ui.components.EmptyState
+import soy.iko.opencode.ui.components.copyToClipboard
 import soy.iko.opencode.ui.vmFactory
 import soy.iko.opencode.util.runCatchingCancellable
 
@@ -274,6 +281,7 @@ private fun Breadcrumbs(path: String, onNavigate: (String) -> Unit, modifier: Mo
 
 @Composable
 private fun SearchResults(results: List<String>, onOpenFile: (String) -> Unit) {
+    val context = LocalContext.current
     if (results.isEmpty()) {
         EmptyFileState(
             icon = Icons.Filled.Search,
@@ -295,6 +303,9 @@ private fun SearchResults(results: List<String>, onOpenFile: (String) -> Unit) {
                 label = name,
                 sublabel = dir.takeIf { it.isNotEmpty() },
                 onClick = { onOpenFile(path) },
+                onCopyPath = {
+                    copyToClipboard(context, context.getString(R.string.clip_label_path), path)
+                },
                 modifier = Modifier.animateItem(),
             )
             HorizontalDivider()
@@ -477,6 +488,7 @@ private fun DirectoryListing(
     onUp: () -> Unit,
     onOpenFile: (String) -> Unit,
 ) {
+    val context = LocalContext.current
     if (state.entries.isEmpty()) {
         EmptyFileState(
             icon = Icons.Filled.Folder,
@@ -525,6 +537,9 @@ private fun DirectoryListing(
                 icon = node.isDirectory,
                 label = node.name,
                 onClick = { if (node.isDirectory) onOpenDir(node.path) else onOpenFile(node.path) },
+                onCopyPath = {
+                    copyToClipboard(context, context.getString(R.string.clip_label_path), node.path)
+                },
                 status = state.statusMap[node.path],
                 modifier = Modifier.animateItem(),
             )
@@ -540,6 +555,7 @@ private fun EmptyFileState(icon: androidx.compose.ui.graphics.vector.ImageVector
     EmptyState(icon = icon, title = message, modifier = modifier)
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun FileRow(
     icon: Boolean,
@@ -547,8 +563,13 @@ private fun FileRow(
     onClick: () -> Unit,
     status: FileStatusEntry? = null,
     sublabel: String? = null,
+    onCopyPath: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
+    val copyPathLabel = stringResource(R.string.copy_path)
+    // Long-press → "Copy path" dropdown. Rendered only when [onCopyPath] is supplied, so the
+    // parent ".." row (which passes none) stays a plain tap target. Anchored within the row.
+    var menu by remember { mutableStateOf(false) }
     val fileDesc = if (label == "..") stringResource(R.string.parent_dir)
         else if (icon) stringResource(R.string.folder, label)
         else stringResource(R.string.file_label, label)
@@ -568,7 +589,12 @@ private fun FileRow(
         modifier = modifier
             .fillMaxWidth()
             .defaultMinSize(minHeight = 48.dp)
-            .clickable(role = Role.Button, onClick = onClick)
+            .combinedClickable(
+                role = Role.Button,
+                onClick = onClick,
+                onLongClick = onCopyPath?.let { { menu = true } },
+                onLongClickLabel = onCopyPath?.let { copyPathLabel },
+            )
             .semantics(mergeDescendants = true) { contentDescription = fullDesc }
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -597,6 +623,13 @@ private fun FileRow(
             }
         }
         if (status != null) StatusBadge(status)
+        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+            DropdownMenuItem(
+                leadingIcon = { Icon(Icons.Filled.Link, contentDescription = null) },
+                text = { Text(copyPathLabel) },
+                onClick = { menu = false; onCopyPath?.invoke() },
+            )
+        }
     }
 }
 

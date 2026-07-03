@@ -534,6 +534,8 @@
     <string name="session_pinned_msg">Sesión fijada</string>
     <string name="session_unpinned_msg">Sesión desfijada</string>
     <string name="session_archived_badge">Archivada</string>
+    <string name="session_shared_badge">Compartida</string>
+    <string name="session_reverted_badge">Revertida</string>
     <string name="sort_active">Orden activo</string>
     <string name="sort_descending">Descendente</string>
     <string name="sort_ascending">Ascendente</string>

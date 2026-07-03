@@ -14,7 +14,11 @@ import androidx.compose.ui.unit.sp
  *
  * The chat body (markdown text) uses [bodyLarge]/[bodyMedium] with a slightly larger
  * line height than the M3 default so token reflow during streaming doesn't feel
- * cramped, and a comfortable 15–16sp size. Monospace code uses [labelMedium].
+ * cramped, and a comfortable 15–16sp size. Code is rendered with an explicit
+ * [androidx.compose.ui.text.font.FontFamily.Monospace] at its call sites (e.g. the
+ * markdown code block, the tool-call name, the file-browser git-status letter), NOT via
+ * a typography role — keeping [labelMedium] proportional so general small labels
+ * (counts, timestamps' siblings, state text) don't inherit a monospace look.
  */
 val OpencodeTypography = Typography(
     displaySmall = TextStyle(
@@ -72,7 +76,11 @@ val OpencodeTypography = Typography(
         letterSpacing = 0.1.sp,
     ),
     labelMedium = TextStyle(
-        fontFamily = FontFamily.Monospace,
+        // Proportional (not Monospace): this role is used for general small labels across the
+        // app (result counts, connection-banner text, attachment labels, picker headers,
+        // typing indicator, plan progress). Earlier this was FontFamily.Monospace, which
+        // leaked a code-like look into all of those. Code surfaces set Monospace explicitly.
+        fontFamily = FontFamily.Default,
         fontWeight = FontWeight.Normal,
         fontSize = 12.sp,
         lineHeight = 18.sp,

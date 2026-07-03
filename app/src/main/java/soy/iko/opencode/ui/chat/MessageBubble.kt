@@ -402,12 +402,16 @@ private fun UserBubble(
                                 )
                             }
                             if (onDismiss != null) {
+                                // No size override on the IconButton: it keeps the default 48dp
+                                // touch target (only the inner Icon is shrunk to 14dp). An earlier
+                                // `.size(20.dp)` here clamped the target to 20dp — well under the
+                                // M3 minimum — which made the discard action hard to hit. Matches
+                                // the pattern used by every other inline IconButton in this file.
                                 IconButton(
                                     onClick = {
                                         haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                         onDismiss()
                                     },
-                                    modifier = Modifier.size(20.dp),
                                 ) {
                                     Icon(
                                         Icons.Filled.Close,

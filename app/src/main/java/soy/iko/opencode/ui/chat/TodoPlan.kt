@@ -44,6 +44,7 @@ import soy.iko.opencode.R
 import soy.iko.opencode.data.model.TodoItem
 import soy.iko.opencode.data.model.TodoStatus
 import soy.iko.opencode.data.model.statusEnum
+import soy.iko.opencode.ui.components.rememberVisibilityTransitions
 
 /** Renders a task plan as a checklist: a status icon per row plus its description, with
  *  completed/cancelled items struck through and the in-progress item emphasized. */
@@ -151,7 +152,12 @@ fun TodoPlanBar(todos: List<TodoItem>, modifier: Modifier = Modifier) {
                     modifier = Modifier.size(20.dp),
                 )
             }
-            AnimatedVisibility(visible = expanded) {
+            val expandMotion = rememberVisibilityTransitions()
+            AnimatedVisibility(
+                visible = expanded,
+                enter = expandMotion.enter,
+                exit = expandMotion.exit,
+            ) {
                 TodoPlanChecklist(
                     todos,
                     modifier = Modifier

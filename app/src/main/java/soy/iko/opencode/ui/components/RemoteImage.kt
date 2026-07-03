@@ -44,7 +44,6 @@ import coil.request.ImageRequest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.tween
 import kotlinx.coroutines.withContext
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BrokenImage
@@ -252,6 +251,10 @@ private fun FullscreenImageViewer(
     var offsetX by remember { mutableFloatStateOf(0f) }
     var offsetY by remember { mutableFloatStateOf(0f) }
     val scope = rememberCoroutineScope()
+    // Double-tap zoom tween, collapsed to an instant snap under reduced motion. Resolved in
+    // the composable body (not inside the pointerInput coroutine) since it reads the
+    // composition's LocalReducedMotion.
+    val zoomSpec = rememberMotionTween<Float>(IMAGE_ZOOM_ANIM_MS)
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
@@ -287,9 +290,9 @@ private fun FullscreenImageViewer(
                                 if (scale.value > 1.001f) {
                                     offsetX = 0f
                                     offsetY = 0f
-                                    scale.animateTo(1f, tween(IMAGE_ZOOM_ANIM_MS))
+                                    scale.animateTo(1f, zoomSpec)
                                 } else {
-                                    scale.animateTo(DOUBLE_TAP_ZOOM, tween(IMAGE_ZOOM_ANIM_MS))
+                                    scale.animateTo(DOUBLE_TAP_ZOOM, zoomSpec)
                                 }
                             }
                         },

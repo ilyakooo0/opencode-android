@@ -78,6 +78,7 @@ import soy.iko.opencode.ui.components.RemoteImage
 import soy.iko.opencode.ui.components.copyToClipboard
 import soy.iko.opencode.ui.components.isImage
 import soy.iko.opencode.ui.components.looksLikeDiff
+import soy.iko.opencode.ui.components.rememberVisibilityTransitions
 import soy.iko.opencode.ui.components.showCopyToast
 import soy.iko.opencode.R
 
@@ -214,7 +215,12 @@ private fun ReasoningBlock(text: String, streaming: Boolean, keyId: String, modi
                 modifier = Modifier.padding(start = 6.dp),
             )
         }
-        AnimatedVisibility(visible = expanded) {
+        val expandMotion = rememberVisibilityTransitions()
+        AnimatedVisibility(
+            visible = expanded,
+            enter = expandMotion.enter,
+            exit = expandMotion.exit,
+        ) {
             Column {
                 // Wrap in SelectionContainer so the user can select a portion of the
                 // reasoning (e.g. a single step) instead of the all-or-nothing copy
