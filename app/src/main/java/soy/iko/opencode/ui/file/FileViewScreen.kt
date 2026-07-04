@@ -11,10 +11,12 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
@@ -75,6 +77,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
@@ -308,6 +311,7 @@ fun FileViewScreen(
                 // the crossfade's exiting layer to briefly use this unified set until it settles.
                 FileViewStateContent(
                     state = s,
+                    path = path,
                     filename = filename,
                     showToggle = showToggle,
                     showDiff = showDiff,
@@ -577,6 +581,7 @@ private fun FileViewTopBar(
 @Composable
 private fun BoxScope.FileViewStateContent(
     state: FileViewState,
+    path: String,
     filename: String,
     showToggle: Boolean,
     showDiff: Boolean,
@@ -660,6 +665,18 @@ private fun BoxScope.FileViewStateContent(
             Text(state.error ?: "", color = MaterialTheme.colorScheme.error)
             Spacer(Modifier.size(12.dp))
             TextButton(onClick = onRetry) { Text(stringResource(R.string.retry)) }
+        }
+        // Image preview: if the file has an image extension, render it inline instead of
+        // showing "Binary file". The server returns binary content as base64; decode and
+        // display. Falls back to the binary-file label if decoding fails.
+        state.content != null && state.content.isBinary && run {
+            val ext = path.substringAfterLast('.', "").lowercase()
+            ext in setOf("png", "jpg", "jpeg", "gif", "webp", "bmp", "svg")
+        } -> {
+            ImageFilePreview(
+                content = state.content,
+                modifier = Modifier.align(Alignment.Center).padding(16.dp),
+            )
         }
         state.content?.isBinary == true -> Text(
             stringResource(R.string.binary_file),
@@ -1037,6 +1054,47 @@ private fun FileTextContent(
                     }
                 }
             }
+        }
+    }
+}
+
+/**
+ * Renders an image file (PNG/JPG/GIF/WebP/BMP/SVG) inline in the file viewer instead of
+ * the generic "Binary file" label. Decodes the base64 content from [FileContent.content]
+ * into a [Bitmap] and displays it. Falls back to the binary-file label if decoding fails
+ * (corrupt content or an unsupported encoding).
+ */
+@Composable
+private fun ImageFilePreview(
+    content: soy.iko.opencode.data.model.FileContent,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    val bitmap = remember(content.content) {
+        runCatching {
+            val bytes = android.util.Base64.decode(content.content, android.util.Base64.DEFAULT)
+            android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+        }.getOrNull()
+    }
+    if (bitmap == null) {
+        Text(
+            stringResource(R.string.binary_file),
+            modifier = modifier,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    } else {
+        Column(
+            modifier = modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = stringResource(R.string.image_file_preview),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 400.dp)
+                    .clip(MaterialTheme.shapes.medium),
+            )
         }
     }
 }

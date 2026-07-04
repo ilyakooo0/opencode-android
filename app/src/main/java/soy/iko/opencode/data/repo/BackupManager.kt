@@ -31,8 +31,23 @@ data class BackupSettings(
     val dynamicColor: Boolean = true,
     val sendOnEnter: Boolean = true,
     val appLock: Boolean = false,
+    val appLockReLockSeconds: Int = SettingsStore.DEFAULT_APP_LOCK_RELOCK_SECONDS,
     val chatTextScale: Float = SettingsStore.DEFAULT_CHAT_TEXT_SCALE,
     val codeWrap: Boolean = false,
+    val sessionSortMode: String = "RECENT",
+    val sessionSortDescending: Boolean = true,
+    val sessionShowArchived: Boolean = false,
+    val preferredModelId: String = "",
+    val preferredAgentName: String = "",
+    val compactMessageSpacing: Boolean = false,
+    val hapticsEnabled: Boolean = true,
+    val reducedMotion: Boolean = false,
+    val languageOverride: String = "",
+    val notifRunComplete: Boolean = true,
+    val notifPermission: Boolean = true,
+    val notifError: Boolean = true,
+    val swipeLeftAction: String = SwipeAction.DELETE.name,
+    val swipeRightAction: String = SwipeAction.ARCHIVE.name,
 )
 
 /** The full backup document. [version] guards against future format changes. */
@@ -76,8 +91,23 @@ class BackupManager(
             dynamicColor = settingsStore.dynamicColor.first(),
             sendOnEnter = settingsStore.sendOnEnter.first(),
             appLock = settingsStore.appLock.first(),
+            appLockReLockSeconds = settingsStore.appLockReLockSeconds.first(),
             chatTextScale = settingsStore.chatTextScale.first(),
             codeWrap = settingsStore.codeWrap.first(),
+            sessionSortMode = settingsStore.sessionSortMode.first(),
+            sessionSortDescending = settingsStore.sessionSortDescending.first(),
+            sessionShowArchived = settingsStore.sessionShowArchived.first(),
+            preferredModelId = settingsStore.preferredModelId.first(),
+            preferredAgentName = settingsStore.preferredAgentName.first(),
+            compactMessageSpacing = settingsStore.compactMessageSpacing.first(),
+            hapticsEnabled = settingsStore.hapticsEnabled.first(),
+            reducedMotion = settingsStore.reducedMotion.first(),
+            languageOverride = settingsStore.languageOverride.first(),
+            notifRunComplete = settingsStore.notifRunComplete.first(),
+            notifPermission = settingsStore.notifPermission.first(),
+            notifError = settingsStore.notifError.first(),
+            swipeLeftAction = settingsStore.swipeLeftAction.first(),
+            swipeRightAction = settingsStore.swipeRightAction.first(),
         )
         val data = BackupData(
             servers = servers,
@@ -126,8 +156,23 @@ class BackupManager(
             settingsStore.setDynamicColor(settings.dynamicColor)
             settingsStore.setSendOnEnter(settings.sendOnEnter)
             settingsStore.setAppLock(settings.appLock)
+            settingsStore.setAppLockReLockSeconds(settings.appLockReLockSeconds)
             settingsStore.setChatTextScale(settings.chatTextScale)
             settingsStore.setCodeWrap(settings.codeWrap)
+            settingsStore.setSessionSortMode(settings.sessionSortMode)
+            settingsStore.setSessionSortDescending(settings.sessionSortDescending)
+            settingsStore.setSessionShowArchived(settings.sessionShowArchived)
+            settingsStore.setPreferredModelId(settings.preferredModelId)
+            settingsStore.setPreferredAgentName(settings.preferredAgentName)
+            settingsStore.setCompactMessageSpacing(settings.compactMessageSpacing)
+            settingsStore.setHapticsEnabled(settings.hapticsEnabled)
+            settingsStore.setReducedMotion(settings.reducedMotion)
+            settingsStore.setLanguageOverride(settings.languageOverride)
+            settingsStore.setNotifRunComplete(settings.notifRunComplete)
+            settingsStore.setNotifPermission(settings.notifPermission)
+            settingsStore.setNotifError(settings.notifError)
+            SwipeAction.entries.find { it.name == settings.swipeLeftAction }?.let { settingsStore.setSwipeLeftAction(it) }
+            SwipeAction.entries.find { it.name == settings.swipeRightAction }?.let { settingsStore.setSwipeRightAction(it) }
         }
         data.pinned.forEach { sessionPrefsStore.setPinned(it, true) }
         data.archived.forEach { sessionPrefsStore.setArchived(it, true) }

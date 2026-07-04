@@ -217,15 +217,24 @@ fun OpencodeApp(container: AppContainer) {
                 Key.NumPad4, Key.Four -> Routes.USAGE
                 Key.NumPad5, Key.Five -> Routes.MCP
                 Key.NumPad6, Key.Six -> Routes.SETTINGS
+                // Ctrl+7 navigates to the server list (the 7th nav-rail destination).
+                // Previously Ctrl+1..6 covered the other destinations but Servers was
+                // missing, an inconsistency since the nav rail shows 7 destinations.
+                Key.NumPad7, Key.Seven -> Routes.SERVERS
                 else -> null
             }
-            if (route != null && connection != null) {
-                navController.navigate(route) {
-                    popUpTo(navController.graph.findStartDestination().id) { saveState = true }
-                    launchSingleTop = true
-                    restoreState = true
-                }
-                true
+            if (route != null) {
+                // Servers is reachable even without an active connection (it's the start
+                // destination and handles the not-connected state); the other routes
+                // require a connection to be meaningful.
+                if (route == Routes.SERVERS || connection != null) {
+                    navController.navigate(route) {
+                        popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                        launchSingleTop = true
+                        restoreState = true
+                    }
+                    true
+                } else false
             } else false
         },
     ) {

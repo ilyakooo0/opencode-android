@@ -177,11 +177,18 @@ fun PartView(
         is ToolPart -> ToolCallView(part, modifier)
         is FilePart -> if (part.isImage && imageContext != null && (part.source != null || !part.url.isNullOrBlank())) {
             RemoteImage(part, imageContext, modifier)
+        } else if (part.isImage) {
+            // The part is an image but no active connection/profile is available to fetch
+            // it (imageContext is null) or it carries no source/url. Render a chip that
+            // identifies it as an image rather than silently degrading to a generic file
+            // chip, so a user who disconnects mid-conversation understands why the image
+            // isn't shown and knows to reconnect to view it.
+            FileChip(part, modifier, onOpenFile, isImageUnavailable = true)
         } else {
             FileChip(part, modifier, onOpenFile)
         }
         is StepStartPart -> {} // boundary marker — nothing to draw
-        is StepFinishPart -> {} // metrics handled at message level
+        is StepFinishPart -> StepFinishSummary(part)
         is AgentPart -> {} // agent name is surfaced in the assistant header, not the body
         is UnknownPart -> UnknownPartNote(modifier)
     }
@@ -635,12 +642,18 @@ private fun ToolStatusIcon(state: ToolState) {
 
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-private fun FileChip(part: FilePart, modifier: Modifier, onOpenFile: ((String) -> Unit)?) {
+private fun FileChip(
+    part: FilePart,
+    modifier: Modifier,
+    onOpenFile: ((String) -> Unit)?,
+    isImageUnavailable: Boolean = false,
+) {
     val context = LocalContext.current
     val haptics = LocalHapticFeedback.current
     val path = part.sourcePath ?: part.url ?: part.filename
     val copyLabel = stringResource(R.string.copy_path)
     val openLabel = stringResource(R.string.open_file)
+    val imageUnavailableLabel = stringResource(R.string.image_unavailable)
     // When a source path is available and a navigation callback is wired, tapping the
     // chip opens the file in the viewer (the action a user tapping a file reference
     // most likely expects). Long-press still copies the path to the clipboard, so the
@@ -650,7 +663,12 @@ private fun FileChip(part: FilePart, modifier: Modifier, onOpenFile: ((String) -
     val opener = onOpenFile
     val openPath: String? = if (opener != null && !source.isNullOrBlank()) source else null
     val canOpen = openPath != null
-    val semanticsLabel = if (canOpen) openLabel else copyLabel
+    val semanticsLabel = when {
+        isImageUnavailable -> imageUnavailableLabel
+        canOpen -> openLabel
+        else -> copyLabel
+    }
+    val displayName = part.filename ?: part.url ?: stringResource(R.string.file)
     Row(
         modifier = modifier
             .clip(MaterialTheme.shapes.small)
@@ -687,9 +705,39 @@ private fun FileChip(part: FilePart, modifier: Modifier, onOpenFile: ((String) -
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Text(
-            part.filename ?: part.url ?: stringResource(R.string.file),
+            if (isImageUnavailable) imageUnavailableLabel else displayName,
             style = MaterialTheme.typography.bodyMedium,
             modifier = Modifier.padding(start = 6.dp),
         )
     }
+}
+
+/**
+ * Renders a [StepFinishPart]'s per-step cost/tokens inline at the end of a step.
+ * The per-message aggregate summary in [MessageBubble.AssistantBlock] covers the
+ * whole assistant message; this surfaces per-step usage so a multi-step run (e.g.
+ * a main agent + a sub-agent) shows the cost breakdown per step. Compact and muted
+ * to read as a footnote rather than a primary element. Returns nothing when the
+ * step reported neither cost nor tokens (some steps report no usage).
+ */
+@Composable
+private fun StepFinishSummary(part: StepFinishPart) {
+    val cost = part.cost
+    val tokens = part.tokens
+    if (cost == null && tokens == null) return
+    val tokenFormat = stringResource(R.string.tokens_in_out)
+    val costShort = stringResource(R.string.step_cost_short)
+    val costLong = stringResource(R.string.step_cost_long)
+    val summary = remember(cost, tokens, tokenFormat, costShort, costLong) {
+        buildList {
+            tokens?.takeIf { it.input > 0 || it.output > 0 }?.let { add(formatTokens(it, tokenFormat)) }
+            cost?.takeIf { it > 0 }?.let { add(formatCost(it, costShort, costLong)) }
+        }.takeIf { it.isNotEmpty() }?.joinToString("  •  ")
+    } ?: return
+    Text(
+        summary,
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(top = 2.dp),
+    )
 }

@@ -24,6 +24,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ChatBubbleOutline
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
@@ -66,6 +67,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
@@ -91,6 +93,7 @@ import soy.iko.opencode.data.model.FileStatusEntry
 import soy.iko.opencode.data.model.FindMatch
 import soy.iko.opencode.data.model.SymbolResult
 import soy.iko.opencode.data.model.symbolKindLabel
+import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
 import soy.iko.opencode.ui.components.AppTopBar
@@ -115,8 +118,25 @@ fun FileBrowserScreen(
     val snackbar = remember { SnackbarHostState() }
 
     // System-back navigates up the directory tree while inside a subfolder (matching every
-    // other file manager's muscle memory), only exiting the screen at the root.
-    androidx.activity.compose.BackHandler(enabled = state.path.isNotBlank()) { vm.up() }
+    // other file manager's muscle memory), only exiting the screen at the root. Uses
+    // PredictiveBackHandler so the Android 14 predictive-back gesture animates as the user
+    // swipes — a plain BackHandler consumes the gesture without visual feedback, which reads
+    // as "nothing happened" mid-swipe. The handler navigates up on completion; the progress
+    // is used to drive a subtle scale on the content so the gesture feels connected.
+    val backProgress = remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
+    androidx.activity.compose.PredictiveBackHandler(
+        enabled = state.path.isNotBlank(),
+    ) { flow ->
+        try {
+            flow.collect { event ->
+                backProgress.floatValue = event.progress
+            }
+            // Gesture completed: navigate up.
+            vm.up()
+        } finally {
+            backProgress.floatValue = 0f
+        }
+    }
 
     LaunchedEffect(Unit) {
         vm.transientErrors.collect { msg ->
@@ -130,7 +150,17 @@ fun FileBrowserScreen(
         },
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
-        Column(modifier = Modifier.fillMaxSize().imePadding().padding(padding)) {
+        // Apply a subtle scale driven by the predictive-back progress so the up-navigation
+        // gesture feels connected to the content (the content shrinks slightly as the user
+        // swipes, then snaps back if cancelled or navigates up if completed).
+        val scale = 1f - (backProgress.floatValue * 0.05f)
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .imePadding()
+                .padding(padding)
+                .graphicsLayer { scaleX = scale; scaleY = scale },
+        ) {
             // Surface SSE connection state so a dropped stream is visible while browsing
             // files, not just on the chat/session screens.
             Box(modifier = Modifier.fillMaxWidth()) {
@@ -255,6 +285,10 @@ fun FileBrowserScreen(
                             onOpenDir = vm::open,
                             onUp = vm::up,
                             onOpenFile = { onOpenFile(it, null) },
+                            onOpenInChat = { path ->
+                                container.setPendingShare("@$path")
+                                container.requestNewSession()
+                            },
                         )
                     }
                     // Slim progress bar for an in-flight search; the results list stays visible
@@ -539,12 +573,14 @@ private fun highlightMatchLine(match: FindMatch): androidx.compose.ui.text.Annot
     }
 }
 
+@Suppress("CyclomaticComplexMethod")
 @Composable
 private fun DirectoryListing(
     state: FileBrowserState,
     onOpenDir: (String) -> Unit,
     onUp: () -> Unit,
     onOpenFile: (String) -> Unit,
+    onOpenInChat: ((String) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     if (state.entries.isEmpty()) {
@@ -586,6 +622,16 @@ private fun DirectoryListing(
         } else {
             visible.sortedWith(comparator)
         }
+    }
+    // Windowed render: compose only the first `renderCap` rows, growing as the user
+    // scrolls near the bottom, so a directory with thousands of entries doesn't
+    // compose every row on the first frame (the sort still runs over the full list,
+    // so the order is correct — only the composed slice is capped). Mirrors the
+    // session list's windowed render pattern. Hoisted above the LazyColumn because
+    // state reads must be in a @Composable scope (LazyListScope is not one).
+    var renderCap by remember { mutableStateOf(NetworkConfig.fileListInitialPage) }
+    val visibleSorted = remember(sorted, renderCap) {
+        if (sorted.size <= renderCap) sorted else sorted.take(renderCap)
     }
     LazyColumn(modifier = Modifier.fillMaxSize()) {
         if (state.path.isNotBlank()) {
@@ -664,7 +710,12 @@ private fun DirectoryListing(
                 )
             }
         }
-        items(sorted, key = { it.path + "_" + it.name }) { node ->
+        // Windowed render: compose only the first `renderCap` rows, growing as the user
+        // scrolls near the bottom, so a directory with thousands of entries doesn't
+        // compose every row on the first frame (the sort still runs over the full list,
+        // so the order is correct — only the composed slice is capped). Mirrors the
+        // session list's windowed render pattern.
+        items(visibleSorted, key = { it.path + "_" + it.name }) { node ->
             FileRow(
                 icon = node.isDirectory,
                 label = node.name,
@@ -672,12 +723,21 @@ private fun DirectoryListing(
                 onCopyPath = {
                     copyToClipboard(context, context.getString(R.string.clip_label_path), node.path)
                 },
+                onOpenInChat = onOpenInChat?.let { cb -> { cb(node.path) } },
                 size = node.size,
                 mtime = node.mtime,
                 status = state.statusMap[node.path],
                 modifier = reducedMotionAnimateItem(),
             )
             HorizontalDivider()
+        }
+        // Grow the render window as the user nears the last visible row.
+        if (sorted.size > visibleSorted.size) {
+            item(key = "__load_more") {
+                LaunchedEffect(sorted.size, visibleSorted.size) {
+                    renderCap = (renderCap + NetworkConfig.fileListPageStep).coerceAtMost(sorted.size)
+                }
+            }
         }
     }
 }
@@ -691,6 +751,7 @@ private fun EmptyFileState(icon: androidx.compose.ui.graphics.vector.ImageVector
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
+@Suppress("CyclomaticComplexMethod")
 private fun FileRow(
     icon: Boolean,
     label: String,
@@ -700,6 +761,7 @@ private fun FileRow(
     size: Long? = null,
     mtime: Long? = null,
     onCopyPath: (() -> Unit)? = null,
+    onOpenInChat: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -794,6 +856,16 @@ private fun FileRow(
                 text = { Text(copyPathLabel) },
                 onClick = { menu = false; onCopyPath?.invoke() },
             )
+            // "Open in chat": attach this file's path to a new chat prompt so the user
+            // can ask the agent about a file they were just browsing. Only for files
+            // (not directories) and when the callback is wired.
+            if (onOpenInChat != null && !icon) {
+                DropdownMenuItem(
+                    leadingIcon = { Icon(Icons.Filled.ChatBubbleOutline, contentDescription = null) },
+                    text = { Text(stringResource(R.string.open_in_chat)) },
+                    onClick = { menu = false; onOpenInChat.invoke() },
+                )
+            }
         }
     }
 }

@@ -15,6 +15,7 @@ enum class ThemeMode { SYSTEM, LIGHT, DARK, AMOLED }
 private val Context.settingsDataStore by preferencesDataStore(name = "settings")
 
 /** App-preferences store: theme mode, dynamic color (Material You), input behavior. */
+@Suppress("TooManyFunctions")
 class SettingsStore(context: Context) {
 
     private val appContext = context.applicationContext
@@ -31,6 +32,14 @@ class SettingsStore(context: Context) {
     private val preferredModelIdKey = stringPreferencesKey("preferred_model_id")
     private val preferredAgentNameKey = stringPreferencesKey("preferred_agent_name")
     private val compactMessageSpacingKey = booleanPreferencesKey("compact_message_spacing")
+    private val hapticsEnabledKey = booleanPreferencesKey("haptics_enabled")
+    private val reducedMotionKey = booleanPreferencesKey("reduced_motion")
+    private val languageOverrideKey = stringPreferencesKey("language_override")
+    private val notifRunCompleteKey = booleanPreferencesKey("notif_run_complete")
+    private val notifPermissionKey = booleanPreferencesKey("notif_permission")
+    private val notifErrorKey = booleanPreferencesKey("notif_error")
+    private val swipeLeftActionKey = stringPreferencesKey("swipe_left_action")
+    private val swipeRightActionKey = stringPreferencesKey("swipe_right_action")
 
     companion object {
         /** Bounds for the chat text-size multiplier so the UI can't be scaled into
@@ -125,6 +134,51 @@ class SettingsStore(context: Context) {
         prefs[compactMessageSpacingKey] ?: false
     }
 
+    /** When true, haptic feedback is fired on taps and confirmations. Defaults to true (the
+     *  existing behavior). An in-app toggle lets users disable haptics without turning off
+     *  system-wide vibration. Read by a CompositionLocal that gates haptic calls. */
+    val hapticsEnabled: Flow<Boolean> = appContext.settingsDataStore.data.map { prefs ->
+        prefs[hapticsEnabledKey] ?: true
+    }
+
+    /** When true, animations and transitions are limited (collapsed to instant/snap).
+     *  Defaults to false — the app already honors the system Developer Options animator
+     *  scale, but this gives users an in-app toggle without disabling motion OS-wide.
+     *  Read by a CompositionLocal that gates animation specs. */
+    val reducedMotion: Flow<Boolean> = appContext.settingsDataStore.data.map { prefs ->
+        prefs[reducedMotionKey] ?: false
+    }
+
+    /** Override the app language (an ISO 639-1 code like "en" or "es", or empty for the
+     *  system default). Applied via AppCompat's per-app language API so the OS can
+     *  handle locale resolution without an app restart on Android 13+. */
+    val languageOverride: Flow<String> = appContext.settingsDataStore.data.map { prefs ->
+        prefs[languageOverrideKey] ?: ""
+    }
+
+    /** Granular notification toggles. Each gates a notification channel's posting so a user
+     *  can mute specific notification types in-app (in addition to the OS channel controls).
+     *  Default true for all (matching the prior "always post" behavior). */
+    val notifRunComplete: Flow<Boolean> = appContext.settingsDataStore.data.map { prefs ->
+        prefs[notifRunCompleteKey] ?: true
+    }
+    val notifPermission: Flow<Boolean> = appContext.settingsDataStore.data.map { prefs ->
+        prefs[notifPermissionKey] ?: true
+    }
+    val notifError: Flow<Boolean> = appContext.settingsDataStore.data.map { prefs ->
+        prefs[notifErrorKey] ?: true
+    }
+
+    /** Remappable swipe actions for the session list. Stored as the SwipeAction enum name;
+     *  an unknown value falls back to the default. Defaults: left=DELETE, right=ARCHIVE
+     *  (matching the prior hardcoded behavior). */
+    val swipeLeftAction: Flow<String> = appContext.settingsDataStore.data.map { prefs ->
+        prefs[swipeLeftActionKey] ?: SwipeAction.DELETE.name
+    }
+    val swipeRightAction: Flow<String> = appContext.settingsDataStore.data.map { prefs ->
+        prefs[swipeRightActionKey] ?: SwipeAction.ARCHIVE.name
+    }
+
     suspend fun setThemeMode(mode: ThemeMode) {
         appContext.settingsDataStore.edit { it[themeKey] = mode.name }
     }
@@ -188,4 +242,38 @@ class SettingsStore(context: Context) {
             it[compactMessageSpacingKey] = enabled
         }
     }
+
+    suspend fun setHapticsEnabled(enabled: Boolean) {
+        appContext.settingsDataStore.edit { it[hapticsEnabledKey] = enabled }
+    }
+
+    suspend fun setReducedMotion(enabled: Boolean) {
+        appContext.settingsDataStore.edit { it[reducedMotionKey] = enabled }
+    }
+
+    suspend fun setLanguageOverride(code: String) {
+        appContext.settingsDataStore.edit {
+            if (code.isEmpty()) it.remove(languageOverrideKey) else it[languageOverrideKey] = code
+        }
+    }
+
+    suspend fun setNotifRunComplete(enabled: Boolean) {
+        appContext.settingsDataStore.edit { it[notifRunCompleteKey] = enabled }
+    }
+    suspend fun setNotifPermission(enabled: Boolean) {
+        appContext.settingsDataStore.edit { it[notifPermissionKey] = enabled }
+    }
+    suspend fun setNotifError(enabled: Boolean) {
+        appContext.settingsDataStore.edit { it[notifErrorKey] = enabled }
+    }
+
+    suspend fun setSwipeLeftAction(action: SwipeAction) {
+        appContext.settingsDataStore.edit { it[swipeLeftActionKey] = action.name }
+    }
+    suspend fun setSwipeRightAction(action: SwipeAction) {
+        appContext.settingsDataStore.edit { it[swipeRightActionKey] = action.name }
+    }
 }
+
+/** Remappable swipe actions for the session list. NONE disables the swipe entirely. */
+enum class SwipeAction { DELETE, ARCHIVE, MARK_READ, NONE }

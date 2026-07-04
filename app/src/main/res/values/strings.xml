@@ -833,4 +833,65 @@
     <string name="test_connection_desc">Testing connection to %1$s</string>
     <string name="test_connection_success">Connected (%1$dms)</string>
     <string name="test_connection_failed">Failed: %1$s</string>
+
+    <!-- UI/UX improvements batch -->
+    <!-- Permission metadata: tool-specific detail (command, file scope) extracted from
+         Permission.metadata. Shown in a collapsible "Details" section of the dialog. -->
+    <string name="permission_details">Details</string>
+    <!-- Step-finish per-step cost/tokens (distinct from the per-message aggregate).
+         Shown inline at the end of a step. -->
+    <string name="step_cost_short">$%1$.4f</string>
+    <string name="step_cost_long">$%1$.6f</string>
+    <!-- Image FilePart degraded to a chip because no active connection can fetch it. -->
+    <string name="image_unavailable">Image · connect to view</string>
+    <!-- Draft indicator on session list rows. -->
+    <string name="draft_indicator">Draft</string>
+    <!-- Outbox sending indicator (persistent banner/toolbar). -->
+    <string name="sending_queued">Sending queued messages…</string>
+    <!-- A11y: role announcement for message bubbles so TalkBack reads the speaker. -->
+    <string name="role_user_message">You</string>
+    <string name="role_assistant_message">Assistant</string>
+    <!-- Slash-command autocomplete (composer). -->
+    <string name="command_autocomplete_hint">Run command</string>
+    <!-- Continue a partial assistant reply (vs regenerate, which re-runs from scratch). -->
+    <string name="continue_run">Continue</string>
+    <!-- Session list skeleton loader. -->
+    <string name="loading_sessions">Loading sessions…</string>
+    <!-- Persistent load-error indicator (vs the one-shot snackbar). -->
+    <string name="load_error_persistent">Couldn\'t load messages. Reconnect to retry.</string>
+    <!-- Open a browsed file as an attachment in a new chat prompt. -->
+    <string name="open_in_chat">Open in chat</string>
+    <!-- Duplicate server detection. -->
+    <string name="duplicate_server_warning">A server with this URL and label already exists.</string>
+    <!-- Image preview not available for non-image file types in the file viewer. -->
+    <!-- Per-code-block copy button. -->
+    <string name="copy_code">Copy code</string>
+    <string name="code_copied">Code copied</string>
+    <!-- Settings: in-app toggles for accessibility/motion preferences. -->
+    <string name="settings_motion">Motion &amp; feedback</string>
+    <string name="settings_reduced_motion">Reduced motion</string>
+    <string name="settings_reduced_motion_desc">Limit animations and transitions.</string>
+    <string name="settings_haptics">Haptic feedback</string>
+    <string name="settings_haptics_desc">Vibrate on taps and confirmations.</string>
+    <string name="settings_language">Language</string>
+    <string name="settings_language_desc">Override the system language for the app.</string>
+    <string name="settings_language_system">System default</string>
+    <!-- Settings: granular notification toggles. -->
+    <string name="settings_notifications">Notifications</string>
+    <string name="settings_notif_run_complete">Run completed</string>
+    <string name="settings_notif_run_complete_desc">Notify when an agent run finishes.</string>
+    <string name="settings_notif_permission">Permission requests</string>
+    <string name="settings_notif_permission_desc">Heads-up notification when a tool needs approval.</string>
+    <string name="settings_notif_error">Run errors</string>
+    <string name="settings_notif_error_desc">Notify when an agent run fails.</string>
+    <!-- Settings: swipe-action customization. -->
+    <string name="settings_swipe_actions">Swipe actions</string>
+    <string name="settings_swipe_left">Swipe left</string>
+    <string name="settings_swipe_right">Swipe right</string>
+    <string name="swipe_action_delete">Delete</string>
+    <string name="swipe_action_archive">Archive</string>
+    <string name="swipe_action_mark_read">Mark read / unread</string>
+    <string name="swipe_action_none">None</string>
+    <!-- Open the file viewer with an image preview for image extensions. -->
+    <string name="image_file_preview">Image preview</string>
 </resources>

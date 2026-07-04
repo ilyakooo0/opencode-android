@@ -113,6 +113,7 @@ fun MessageBubble(
     onQuote: ((String) -> Unit)? = null,
     onBranch: ((String) -> Unit)? = null,
     onRegenerate: (() -> Unit)? = null,
+    onContinue: (() -> Unit)? = null,
     sendStatus: MessageSendStatus? = null,
     isEdited: Boolean = false,
     onRetry: (() -> Unit)? = null,
@@ -122,7 +123,7 @@ fun MessageBubble(
     when (message.info) {
         is UserMessage -> UserBubble(message, imageContext, modifier, onOpenFile, onRevert, onEdit, onQuote, onBranch, sendStatus, isEdited, onRetry, onDismiss, onShare)
         is UnknownMessage -> UnknownMessageBlock(message, imageContext, modifier, onOpenFile)
-        else -> AssistantBlock(message, isRunning, imageContext, modifier, modelLabel, agentLabel, onOpenFile, onRevert, onSpeak, isSpeaking, ttsState, onPause, onResume, onStop, onQuote, onBranch, onRegenerate, isEdited, onShare)
+        else -> AssistantBlock(message, isRunning, imageContext, modifier, modelLabel, agentLabel, onOpenFile, onRevert, onSpeak, isSpeaking, ttsState, onPause, onResume, onStop, onQuote, onBranch, onRegenerate, onContinue, isEdited, onShare)
     }
 }
 
@@ -388,6 +389,10 @@ private fun UserBubble(
     val editLabel = stringResource(R.string.edit_message)
     val dropsAttachmentsMsg = stringResource(R.string.edit_drops_attachments)
     val hasAttachments = message.parts.any { it is FilePart }
+    // A11y: announce the speaker role so a screen-reader user can tell user from
+    // assistant bubbles without inferring from bubble position. Prefixed onto the
+    // bubble's merged semantics so TalkBack reads "You, <message text>".
+    val roleLabel = stringResource(R.string.role_user_message)
     // Long-press context menu state: consolidates copy/quote/branch/revert into a standard
     // Android long-press menu so the actions are discoverable without spotting the 18dp icons.
     // The menu anchors at the actual touch point rather than a fixed corner.
@@ -416,6 +421,10 @@ private fun UserBubble(
                 .widthIn(max = maxWidth * NetworkConfig.userBubbleWidthFraction)
                 .clip(MaterialTheme.shapes.medium)
                 .background(MaterialTheme.colorScheme.primaryContainer)
+                // Merge descendants and prefix the role so TalkBack reads "You, <text>"
+                // instead of just the message text — letting a screen-reader user tell
+                // user from assistant bubbles without inferring from position.
+                .semantics(mergeDescendants = true) { contentDescription = roleLabel }
                 // Long-press anywhere on the bubble (body or footer) opens the context menu —
                 // the conventional Android pattern — so the actions are discoverable without
                 // spotting the 18dp inline icons. detectTapGestures with only onLongPress does
@@ -627,6 +636,7 @@ private fun AssistantBlock(
     onQuote: ((String) -> Unit)? = null,
     onBranch: ((String) -> Unit)? = null,
     onRegenerate: (() -> Unit)? = null,
+    onContinue: (() -> Unit)? = null,
     isEdited: Boolean = false,
     onShare: (() -> Unit)? = null,
 ) {
@@ -637,9 +647,14 @@ private fun AssistantBlock(
     val assistantDensity = androidx.compose.ui.platform.LocalDensity.current
     var longPressMenu by remember { mutableStateOf(false) }
     var longPressOffset by remember { mutableStateOf(androidx.compose.ui.unit.DpOffset(0.dp, 0.dp)) }
+    // A11y: announce the speaker role so TalkBack reads "Assistant, <text>" instead of
+    // only the model/agent label — giving a screen-reader user an explicit role signal
+    // matching the user bubble's "You" prefix.
+    val assistantRoleLabel = stringResource(R.string.role_assistant_message)
     Column(
         modifier = modifier
             .fillMaxWidth()
+            .semantics(mergeDescendants = true) { contentDescription = assistantRoleLabel }
             .pointerInput(Unit) {
                 detectTapGestures(onLongPress = { offset ->
                     assistantHaptics.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -757,6 +772,7 @@ private fun AssistantBlock(
                     onQuote = onQuote,
                     onBranch = onBranch,
                     onRegenerate = onRegenerate,
+                    onContinue = onContinue,
                 )
             }
             AssistantMessageLongPressMenu(
@@ -900,11 +916,30 @@ private fun AssistantActions(
     onQuote: ((String) -> Unit)? = null,
     onBranch: ((String) -> Unit)? = null,
     onRegenerate: (() -> Unit)? = null,
+    onContinue: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val haptics = LocalHapticFeedback.current
     val copyLabel = stringResource(R.string.copy)
     Row(verticalAlignment = Alignment.CenterVertically) {
+        // Continue: resume a partial assistant reply by sending "continue" without
+        // reverting (unlike regenerate, which re-runs from scratch). Shown alongside
+        // regenerate so the user can choose between "pick up where it left off" and
+        // "start over".
+        if (onContinue != null) {
+            val continueLabel = stringResource(R.string.continue_run)
+            IconButton(onClick = {
+                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onContinue()
+            }) {
+                Icon(
+                    Icons.Filled.PlayArrow,
+                    contentDescription = continueLabel,
+                    modifier = Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
         // Regenerate: re-run the preceding user prompt to get a fresh reply. Only meaningful
         // for a completed, non-streaming message, so the caller gates it on !isRunning.
         if (onRegenerate != null) {

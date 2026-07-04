@@ -51,6 +51,7 @@ import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -78,6 +79,7 @@ import soy.iko.opencode.ui.components.reducedMotionAnimateItem
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
@@ -208,11 +210,14 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
         }
     }
 
+    // TopAppBar scroll behavior: collapse/raise the app bar as the report list scrolls.
+    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     Scaffold(
         topBar = {
             AppTopBar(
                 title = stringResource(R.string.diagnostics),
                 onBack = onBack,
+                scrollBehavior = scrollBehavior,
                 actions = {
                     if (reports.isNotEmpty()) {
                         IconButton(onClick = {
@@ -241,7 +246,7 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
         },
     ) { padding ->
         CompositionLocalProvider(LocalRelativeTimeTick provides timeTick) {
-        Column(modifier = Modifier.fillMaxSize().imePadding().padding(padding)) {
+        Column(modifier = Modifier.fillMaxSize().imePadding().padding(padding).nestedScroll(scrollBehavior.nestedScrollConnection)) {
             Text(
                 stringResource(R.string.diagnostics_desc),
                 style = MaterialTheme.typography.bodySmall,

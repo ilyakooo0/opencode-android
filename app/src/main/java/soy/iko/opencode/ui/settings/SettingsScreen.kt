@@ -38,7 +38,10 @@ import androidx.compose.material.icons.filled.QueryStats
 import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
@@ -59,6 +62,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -71,6 +75,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.pluralStringResource
@@ -92,6 +97,7 @@ import kotlinx.coroutines.launch
 import soy.iko.opencode.data.network.EventStreamClient
 import soy.iko.opencode.data.repo.CrashLogger
 import soy.iko.opencode.data.repo.SettingsStore
+import soy.iko.opencode.data.repo.SwipeAction
 import soy.iko.opencode.data.repo.ThemeMode
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
@@ -150,6 +156,14 @@ fun SettingsScreen(
         .collectAsStateWithLifecycle(initialValue = false)
     val appLockReLockSeconds by container.settingsStore.appLockReLockSeconds
         .collectAsStateWithLifecycle(initialValue = SettingsStore.DEFAULT_APP_LOCK_RELOCK_SECONDS)
+    val hapticsEnabled by container.settingsStore.hapticsEnabled.collectAsStateWithLifecycle(initialValue = true)
+    val reducedMotion by container.settingsStore.reducedMotion.collectAsStateWithLifecycle(initialValue = false)
+    val languageOverride by container.settingsStore.languageOverride.collectAsStateWithLifecycle(initialValue = "")
+    val notifRunComplete by container.settingsStore.notifRunComplete.collectAsStateWithLifecycle(initialValue = true)
+    val notifPermission by container.settingsStore.notifPermission.collectAsStateWithLifecycle(initialValue = true)
+    val notifError by container.settingsStore.notifError.collectAsStateWithLifecycle(initialValue = true)
+    val swipeLeftAction by container.settingsStore.swipeLeftAction.collectAsStateWithLifecycle(initialValue = "DELETE")
+    val swipeRightAction by container.settingsStore.swipeRightAction.collectAsStateWithLifecycle(initialValue = "ARCHIVE")
     val dynamicColorAvailable = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
     val activeProfile = container.activeConnection.collectAsStateWithLifecycle().value?.profile
     // SSE connection state so the Settings screen can show a dropped stream (the
@@ -237,6 +251,10 @@ fun SettingsScreen(
         return "opencode-backup-$now.json"
     }
 
+    // TopAppBar scroll behavior: collapse/raise the app bar as the user scrolls the
+    // settings list, matching the standard M3 large-screen affordance. Without this the
+    // top bar is static and doesn't lift on scroll, missing a familiar M3 pattern.
+    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     Scaffold(
         topBar = {
             TopAppBar(
@@ -246,6 +264,7 @@ fun SettingsScreen(
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
                     }
                 },
+                scrollBehavior = scrollBehavior,
             )
         },
         snackbarHost = { SnackbarHost(snackbar) },
@@ -257,6 +276,10 @@ fun SettingsScreen(
                 .wrapContentWidth(Alignment.CenterHorizontally)
                 .widthIn(max = 600.dp)
                 .verticalScroll(rememberScrollState())
+                // Wire the scroll behavior so the TopAppBar collapses/lifts as this
+                // column scrolls. nestedScroll connects the child scroll to the parent
+                // app bar's scroll behavior.
+                .nestedScroll(scrollBehavior.nestedScrollConnection)
                 .padding(16.dp),
         ) {
             val s = settings
@@ -460,6 +483,261 @@ fun SettingsScreen(
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
 
+            // Motion & feedback: in-app toggles for haptics and reduced motion. The app
+            // already honors the system Developer Options animator scale for reduced motion,
+            // but this gives users an in-app control without disabling motion OS-wide.
+            // Haptics default on (the existing behavior); an in-app toggle lets users
+            // disable them without turning off system vibration.
+            Text(
+                stringResource(R.string.settings_motion),
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.semantics { heading() },
+            )
+            val hapticsScope = rememberCoroutineScope()
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .defaultMinSize(minHeight = 48.dp)
+                    .clickable(role = Role.Switch) {
+                        hapticsScope.launch {
+                            container.settingsStore.setHapticsEnabled(!hapticsEnabled)
+                        }
+                    }
+                    .padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(stringResource(R.string.settings_haptics))
+                    Text(
+                        stringResource(R.string.settings_haptics_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(checked = hapticsEnabled, onCheckedChange = null)
+            }
+            val motionScope = rememberCoroutineScope()
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .defaultMinSize(minHeight = 48.dp)
+                    .clickable(role = Role.Switch) {
+                        motionScope.launch {
+                            container.settingsStore.setReducedMotion(!reducedMotion)
+                        }
+                    }
+                    .padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(stringResource(R.string.settings_reduced_motion))
+                    Text(
+                        stringResource(R.string.settings_reduced_motion_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(checked = reducedMotion, onCheckedChange = null)
+            }
+            // Language override: an in-app language picker so a user can use the app in a
+            // different language without changing the system locale. Uses Android 13's
+            // per-app language API; on older versions a restart is needed.
+            val langScope = rememberCoroutineScope()
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .defaultMinSize(minHeight = 48.dp)
+                    .padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(stringResource(R.string.settings_language))
+                    Text(
+                        if (languageOverride.isEmpty()) stringResource(R.string.settings_language_desc)
+                        else languageOverride,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                val langOptions = remember {
+                    listOf("" to R.string.settings_language_system, "en" to R.string.app_name, "es" to R.string.app_name)
+                }
+                var langMenu by remember { mutableStateOf(false) }
+                Box {
+                    TextButton(onClick = { langMenu = true }) {
+                        Text(if (languageOverride.isEmpty()) stringResource(R.string.settings_language_system) else languageOverride)
+                    }
+                    DropdownMenu(expanded = langMenu, onDismissRequest = { langMenu = false }) {
+                        langOptions.forEach { (code, _) ->
+                            DropdownMenuItem(
+                                text = { Text(if (code.isEmpty()) stringResource(R.string.settings_language_system) else code) },
+                                onClick = {
+                                    langMenu = false
+                                    langScope.launch {
+                                        container.settingsStore.setLanguageOverride(code)
+                                    }
+                                },
+                            )
+                        }
+                    }
+                }
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
+
+            // Notifications: granular toggles for each notification type, so a user can
+            // mute specific types in-app (in addition to the OS channel controls). Each
+            // toggle gates whether the app posts that notification type at all.
+            Text(
+                stringResource(R.string.settings_notifications),
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.semantics { heading() },
+            )
+            val notifScope = rememberCoroutineScope()
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .defaultMinSize(minHeight = 48.dp)
+                    .clickable(role = Role.Switch) {
+                        notifScope.launch { container.settingsStore.setNotifRunComplete(!notifRunComplete) }
+                    }
+                    .padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(stringResource(R.string.settings_notif_run_complete))
+                    Text(
+                        stringResource(R.string.settings_notif_run_complete_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(checked = notifRunComplete, onCheckedChange = null)
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .defaultMinSize(minHeight = 48.dp)
+                    .clickable(role = Role.Switch) {
+                        notifScope.launch { container.settingsStore.setNotifPermission(!notifPermission) }
+                    }
+                    .padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(stringResource(R.string.settings_notif_permission))
+                    Text(
+                        stringResource(R.string.settings_notif_permission_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(checked = notifPermission, onCheckedChange = null)
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .defaultMinSize(minHeight = 48.dp)
+                    .clickable(role = Role.Switch) {
+                        notifScope.launch { container.settingsStore.setNotifError(!notifError) }
+                    }
+                    .padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(stringResource(R.string.settings_notif_error))
+                    Text(
+                        stringResource(R.string.settings_notif_error_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(checked = notifError, onCheckedChange = null)
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
+
+            // Swipe actions: remappable left/right swipe on session list rows. Defaults
+            // match the prior hardcoded behavior (left=delete, right=archive). NONE
+            // disables the swipe entirely.
+            Text(
+                stringResource(R.string.settings_swipe_actions),
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.semantics { heading() },
+            )
+            val swipeScope = rememberCoroutineScope()
+            val swipeOptions = remember {
+                listOf(
+                    SwipeAction.DELETE to R.string.swipe_action_delete,
+                    SwipeAction.ARCHIVE to R.string.swipe_action_archive,
+                    SwipeAction.MARK_READ to R.string.swipe_action_mark_read,
+                    SwipeAction.NONE to R.string.swipe_action_none,
+                )
+            }
+            var swipeLeftMenu by remember { mutableStateOf(false) }
+            var swipeRightMenu by remember { mutableStateOf(false) }
+            val swipeLeftParsed = remember(swipeLeftAction) {
+                runCatching { SwipeAction.valueOf(swipeLeftAction) }.getOrDefault(SwipeAction.DELETE)
+            }
+            val swipeRightParsed = remember(swipeRightAction) {
+                runCatching { SwipeAction.valueOf(swipeRightAction) }.getOrDefault(SwipeAction.ARCHIVE)
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .defaultMinSize(minHeight = 48.dp)
+                    .padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(stringResource(R.string.settings_swipe_left), modifier = Modifier.weight(1f))
+                Box {
+                    TextButton(onClick = { swipeLeftMenu = true }) {
+                        Text(stringResource(swipeOptions.first { it.first == swipeLeftParsed }.second))
+                    }
+                    DropdownMenu(expanded = swipeLeftMenu, onDismissRequest = { swipeLeftMenu = false }) {
+                        swipeOptions.forEach { (action, label) ->
+                            DropdownMenuItem(
+                                text = { Text(stringResource(label)) },
+                                onClick = {
+                                    swipeLeftMenu = false
+                                    swipeScope.launch { container.settingsStore.setSwipeLeftAction(action) }
+                                },
+                            )
+                        }
+                    }
+                }
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .defaultMinSize(minHeight = 48.dp)
+                    .padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(stringResource(R.string.settings_swipe_right), modifier = Modifier.weight(1f))
+                Box {
+                    TextButton(onClick = { swipeRightMenu = true }) {
+                        Text(stringResource(swipeOptions.first { it.first == swipeRightParsed }.second))
+                    }
+                    DropdownMenu(expanded = swipeRightMenu, onDismissRequest = { swipeRightMenu = false }) {
+                        swipeOptions.forEach { (action, label) ->
+                            DropdownMenuItem(
+                                text = { Text(stringResource(label)) },
+                                onClick = {
+                                    swipeRightMenu = false
+                                    swipeScope.launch { container.settingsStore.setSwipeRightAction(action) }
+                                },
+                            )
+                        }
+                    }
+                }
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
+
             Text(
                 stringResource(R.string.connection),
                 style = MaterialTheme.typography.titleSmall,
@@ -654,9 +932,18 @@ fun SettingsScreen(
                 Icon(Icons.Filled.BugReport, contentDescription = null, tint = MaterialTheme.colorScheme.error)
                 Text(stringResource(R.string.diagnostics), modifier = Modifier.weight(1f).padding(start = 8.dp))
                 // Badge with the crash count so the user can tell at a glance whether
-                // there's something worth investigating.
+                // there's something worth investigating. Uses M3 BadgedBox+Badge for
+                // consistency with the nav rail's badge (which already uses the real M3
+                // components) instead of a hand-rolled Box.
                 if (crashCount > 0) {
-                    Badge(count = crashCount)
+                    BadgedBox(
+                        badge = {
+                            Badge {
+                                val overflow = stringResource(R.string.crash_count_overflow)
+                                Text(if (crashCount > 99) overflow else crashCount.toString())
+                            }
+                        },
+                    ) {}
                     Spacer(Modifier.size(8.dp))
                 }
                 Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -930,26 +1217,6 @@ private data class SettingsValues(
     val sendOnEnter: Boolean,
     val appLock: Boolean,
 )
-
-/** Small circular count badge used to indicate pending crash reports. */
-@Composable
-private fun Badge(count: Int) {
-    val overflow = stringResource(R.string.crash_count_overflow)
-    Box(
-        modifier = Modifier
-            .size(20.dp)
-            .clip(CircleShape)
-            .background(MaterialTheme.colorScheme.error),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            if (count > 99) overflow else count.toString(),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onError,
-            textAlign = TextAlign.Center,
-        )
-    }
-}
 
 /** Dropdown selecting how long after backgrounding the app re-locks. Only shown when app lock
  *  is on. The grace period avoids a re-prompt on every quick app-switch (the most common reason

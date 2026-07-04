@@ -137,6 +137,14 @@ class ChatViewModel(
     private val _loadError = MutableStateFlow(false)
     val loadError: StateFlow<Boolean> = _loadError.asStateFlow()
 
+    /** Set when a re-fetch fails mid-conversation (messages already visible). Distinct
+     *  from [loadError] (which replaces the whole content with an error screen): this
+     *  surfaces as a persistent inline banner above the message list so a persistent
+     *  outage doesn't go silent after the one-shot snackbar. Cleared on the next
+     *  successful emission. */
+    private val _loadErrorInline = MutableStateFlow(false)
+    val loadErrorInline: StateFlow<Boolean> = _loadErrorInline.asStateFlow()
+
     /** Tracks whether the messages flow has ever emitted a non-empty list, so
      *  [messages]' retryWhen can decide whether a re-fetch failure should set
      *  [loadError] (nothing shown yet → error screen) or just emit a snackbar
@@ -195,6 +203,7 @@ class ChatViewModel(
                 // emission couldn't clear the flag. hasShownMessages stays gated on non-empty
                 // (an empty session has genuinely shown nothing yet).
                 _loadError.value = false
+                _loadErrorInline.value = false
                 if (it.isNotEmpty()) {
                     hasShownMessages = true
                 }
@@ -210,6 +219,10 @@ class ChatViewModel(
                 // is better surfaced as a snackbar (via errorEvents) than by
                 // replacing the visible conversation with an error screen.
                 if (!hasShownMessages) _loadError.value = true
+                // Mid-conversation failure: surface a persistent inline banner so
+                // the user knows the stream is broken (the one-shot snackbar alone
+                // reads as "recovered" once it dismisses). Cleared on recovery.
+                if (hasShownMessages) _loadErrorInline.value = true
                 // Surface the snackbar only once per failure streak — retryWhen loops on a
                 // backoff, so emitting here unconditionally would spam a new snackbar every
                 // retry on a persistent load failure.
@@ -1230,6 +1243,7 @@ class ChatViewModel(
     fun refreshMessages() {
         val conn = connection ?: return
         _loadError.value = false
+        _loadErrorInline.value = false
         _refreshing.value = true
         conn.events.triggerReconnect()
         viewModelScope.launch {
@@ -1361,6 +1375,21 @@ class ChatViewModel(
             runCatchingCancellable { conn.api.revert(sessionId, assistantMessageId) }
                 .onSuccess { send(precedingUserText, includeAttachments = false) }
                 .onFailure { _errorEvents.trySend(ChatError(container.friendlyError(it))) }
+        }
+    }
+
+    /** Continue a partially-generated assistant reply by sending a "continue" prompt
+     *  without reverting (unlike [regenerate], which re-runs from the preceding user
+     *  prompt and loses the partial). The partial reply stays as context so the model
+     *  can pick up where it left off. This is the standard chat-app "continue" pattern
+     *  for a reply that was aborted mid-stream. */
+    fun continueRun(@Suppress("UNUSED_PARAMETER") assistantMessageId: String) {
+        val conn = connection ?: return
+        if (running.value || aborting.value) return
+        viewModelScope.launch {
+            runCatchingCancellable {
+                conn.api.sendPrompt(sessionId, text = "continue")
+            }.onFailure { _errorEvents.trySend(ChatError(container.friendlyError(it))) }
         }
     }
 

@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.ime
@@ -46,6 +47,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Delete
@@ -131,13 +133,17 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.invisibleToUser
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
@@ -153,6 +159,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import soy.iko.opencode.data.model.Part
 import soy.iko.opencode.data.model.MessageWithParts
+import soy.iko.opencode.data.model.AssistantMessage
+import soy.iko.opencode.data.model.Command
 import soy.iko.opencode.data.model.ReasoningPart
 import soy.iko.opencode.data.model.TextPart
 import soy.iko.opencode.data.model.ToolCompleted
@@ -197,6 +205,7 @@ fun ChatScreen(
     val aborting by vm.aborting.collectAsStateWithLifecycle()
     val loading by vm.loading.collectAsStateWithLifecycle()
     val loadError by vm.loadError.collectAsStateWithLifecycle()
+    val loadErrorInline by vm.loadErrorInline.collectAsStateWithLifecycle()
     val refreshing by vm.refreshing.collectAsStateWithLifecycle()
     val models by vm.models.collectAsStateWithLifecycle()
     val modelsLoading by vm.modelsLoading.collectAsStateWithLifecycle()
@@ -226,6 +235,7 @@ fun ChatScreen(
     val compactSpacing by container.settingsStore.compactMessageSpacing.collectAsStateWithLifecycle(initialValue = false)
     val isOnline by container.isOnline.collectAsStateWithLifecycle()
     val haptics = LocalHapticFeedback.current
+    val layoutDirection = LocalLayoutDirection.current
     val scope = rememberCoroutineScope()
     val shareContext = LocalContext.current
     val defaultShareSubject = stringResource(R.string.share_subject)
@@ -849,6 +859,14 @@ fun ChatScreen(
                     onCamera = { launchCamera() },
                     onVoice = { launchVoice() },
                     onPasteImage = { stageUris(it) },
+                    commands = commands,
+                    onRunCommand = { cmd ->
+                        vm.runCommand(cmd)
+                        // Clear the draft so the typed /prefix doesn't linger after the
+                        // command fires (the command picker confirmation, if any, is
+                        // handled inside runCommand).
+                        vm.updateDraft("")
+                    },
                 )
             }
         },
@@ -879,28 +897,47 @@ fun ChatScreen(
         val yesterdayLabel = stringResource(R.string.yesterday)
         // In-conversation search: when active, narrow to messages whose text contains the query.
         // Computed on the filtered set so day separators still align with the visible messages.
+        // Debounced + off-main-thread so a keystroke-by-keystroke filter walk over a long
+        // conversation (with many tool parts whose state stringification is non-trivial)
+        // doesn't jank the UI. produceState yields the empty list immediately and publishes
+        // the filtered result once the debounce settles.
         val searchQuery = chatSearch.trim()
-        val searchMessages = remember(messages, searchQuery) {
-            if (searchQuery.isEmpty()) messages
-            else messages.filter { m ->
-                m.parts.any { p ->
-                    when (p) {
-                        is TextPart -> p.text.contains(searchQuery, ignoreCase = true)
-                        is ReasoningPart -> p.text.contains(searchQuery, ignoreCase = true)
-                        is ToolPart -> {
-                            // Match the tool name plus its running/completed/error text and the
-                            // stringified input, so searching for an error string or a file the
-                            // tool touched actually finds the message it appeared in.
-                            p.tool.contains(searchQuery, ignoreCase = true) ||
-                                (p.state is ToolRunning && p.state.title?.contains(searchQuery, ignoreCase = true) == true) ||
-                                (p.state is ToolCompleted && (p.state.title?.contains(searchQuery, ignoreCase = true) == true ||
-                                    p.state.output?.contains(searchQuery, ignoreCase = true) == true)) ||
-                                (p.state is ToolError && p.state.error?.contains(searchQuery, ignoreCase = true) == true) ||
-                                p.state.inputElement()?.toString()?.contains(searchQuery, ignoreCase = true) == true
+        val searchMessages by produceState(
+            initialValue = if (searchQuery.isEmpty()) messages else emptyList(),
+            messages,
+            searchQuery,
+        ) {
+            if (searchQuery.isEmpty()) {
+                value = messages
+            } else {
+                // Debounce: wait for the user to stop typing before running the filter,
+                // so each keystroke doesn't kick off a fresh scan.
+                kotlinx.coroutines.delay(NetworkConfig.chatSearchDebounceMs)
+                // Run the filter off the main thread — the walk stringifies tool state
+                // and scans every part of every message, which is non-trivial work for a
+                // long conversation.
+                value = withContext(Dispatchers.Default) {
+                    messages.filter { m ->
+                        m.parts.any { p ->
+                            when (p) {
+                                is TextPart -> p.text.contains(searchQuery, ignoreCase = true)
+                                is ReasoningPart -> p.text.contains(searchQuery, ignoreCase = true)
+                                is ToolPart -> {
+                                    // Match the tool name plus its running/completed/error text and the
+                                    // stringified input, so searching for an error string or a file the
+                                    // tool touched actually finds the message it appeared in.
+                                    p.tool.contains(searchQuery, ignoreCase = true) ||
+                                        (p.state is ToolRunning && p.state.title?.contains(searchQuery, ignoreCase = true) == true) ||
+                                        (p.state is ToolCompleted && (p.state.title?.contains(searchQuery, ignoreCase = true) == true ||
+                                            p.state.output?.contains(searchQuery, ignoreCase = true) == true)) ||
+                                        (p.state is ToolError && p.state.error?.contains(searchQuery, ignoreCase = true) == true) ||
+                                        p.state.inputElement()?.toString()?.contains(searchQuery, ignoreCase = true) == true
+                                }
+                                is FilePart -> p.filename?.contains(searchQuery, ignoreCase = true) == true ||
+                                    p.sourcePath?.contains(searchQuery, ignoreCase = true) == true
+                                else -> false
+                            }
                         }
-                        is FilePart -> p.filename?.contains(searchQuery, ignoreCase = true) == true ||
-                            p.sourcePath?.contains(searchQuery, ignoreCase = true) == true
-                        else -> false
                     }
                 }
             }
@@ -1102,6 +1139,48 @@ fun ChatScreen(
                     // separate "Not connected" state below).
                     onRetry = { vm.refreshMessages() },
                 )
+                // Persistent inline error banner for a mid-conversation load failure.
+                // Unlike the one-shot snackbar (which fires once per streak then goes
+                // silent), this stays visible until the stream recovers, so a persistent
+                // outage doesn't read as "everything is fine" after the snackbar dismisses.
+                // Anchored at the top, below the connection banner, so it doesn't overlap
+                // the message list.
+                if (loadErrorInline && hasMessages) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.errorContainer,
+                        shape = MaterialTheme.shapes.small,
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .padding(top = if (bannerVisible) topPad else 8.dp)
+                            .padding(horizontal = 16.dp)
+                            .semantics { liveRegion = LiveRegionMode.Polite },
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Icon(
+                                Icons.Filled.ErrorOutline,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                                tint = MaterialTheme.colorScheme.onErrorContainer,
+                            )
+                            Text(
+                                stringResource(R.string.load_error_persistent),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                modifier = Modifier.weight(1f),
+                            )
+                            TextButton(
+                                onClick = { vm.refreshMessages() },
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp),
+                            ) {
+                                Text(stringResource(R.string.retry))
+                            }
+                        }
+                    }
+                }
                 // Pull-to-refresh wraps ALL content states (loading, error, empty, list) so
                 // recovery is a swipe away everywhere — not just when the message list is
                 // populated. Previously PTR was only around the populated list, leaving the
@@ -1247,7 +1326,12 @@ fun ChatScreen(
                                 // capture horizontal drags (e.g. inside a horizontally-scrollable code block).
                                 val swipeState = rememberSwipeToDismissBoxState(
                                     confirmValueChange = { value ->
-                                        if (value == SwipeToDismissBoxValue.StartToEnd && quoteText != null) {
+                                        val replyValue = if (layoutDirection == LayoutDirection.Rtl) {
+                                            SwipeToDismissBoxValue.EndToStart
+                                        } else {
+                                            SwipeToDismissBoxValue.StartToEnd
+                                        }
+                                        if (value == replyValue && quoteText != null) {
                                             haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
                                             vm.quoteReply(quoteText)
                                             runCatching { inputFocusRequester.requestFocus() }
@@ -1255,14 +1339,19 @@ fun ChatScreen(
                                         false
                                     },
                                 )
+                                // In RTL locales, mirror the swipe direction so the reply
+                                // gesture reads naturally (swipe from the trailing edge
+                                // toward the leading edge), matching how LTR users swipe
+                                // left-to-right. Without this, RTL users had no reply swipe.
+                                val replyFromStartToEnd = layoutDirection != LayoutDirection.Rtl
                                 SwipeToDismissBox(
                                     state = swipeState,
-                                    enableDismissFromEndToStart = false,
-                                    enableDismissFromStartToEnd = quoteText != null,
+                                    enableDismissFromEndToStart = !replyFromStartToEnd && quoteText != null,
+                                    enableDismissFromStartToEnd = replyFromStartToEnd && quoteText != null,
                                     backgroundContent = {
                                         Box(
                                             Modifier.fillMaxSize().padding(horizontal = 16.dp),
-                                            contentAlignment = Alignment.CenterStart,
+                                            contentAlignment = if (replyFromStartToEnd) Alignment.CenterStart else Alignment.CenterEnd,
                                         ) {
                                             Icon(
                                                 Icons.AutoMirrored.Filled.Reply,
@@ -1317,6 +1406,12 @@ fun ChatScreen(
                                     // (not the actively-streaming one), so gate it on !running.
                                     onRegenerate = if (!running) {
                                         { vm.regenerate(message.info.id) }
+                                    } else null,
+                                    // Continue: resume a partial reply. Shown only for
+                                    // incomplete assistant messages (a partial reply that
+                                    // was aborted) and not while a run is active.
+                                    onContinue = if (!running && message.info is AssistantMessage && !message.info.isComplete) {
+                                        { vm.continueRun(message.info.id) }
                                     } else null,
                                     sendStatus = optimisticStatuses[message.info.id]?.let { failed ->
                                         if (failed) soy.iko.opencode.ui.chat.MessageSendStatus.FAILED
@@ -1821,7 +1916,99 @@ private fun ShortcutRow(keys: String, desc: String) {
     }
 }
 
+/**
+ * Slash-command autocomplete: when the draft starts with "/", show a filtered dropdown
+ * of matching commands above the composer. Tapping a command fires it immediately.
+ * Extracted from [ChatInputBar] to keep that function's cyclomatic complexity under
+ * the detekt threshold. Suppressed while running or when the command catalog is empty.
+ */
+@Composable
+private fun SlashCommandAutocomplete(
+    value: String,
+    commands: List<Command>,
+    running: Boolean,
+    onRunCommand: (Command) -> Unit,
+) {
+    if (running || commands.isEmpty()) return
+    val slashQuery = remember(value) {
+        if (value.startsWith("/")) value.removePrefix("/") else null
+    } ?: return
+    val matchingCommands = remember(slashQuery, commands) {
+        commands.filter { cmd ->
+            slashQuery.isEmpty() ||
+                cmd.name.contains(slashQuery, ignoreCase = true) ||
+                (cmd.description?.contains(slashQuery, ignoreCase = true) == true)
+        }.take(8)
+    }
+    if (matchingCommands.isNotEmpty()) {
+        CommandAutocompleteDropdown(
+            commands = matchingCommands,
+            onPick = onRunCommand,
+        )
+    }
+}
+
+/**
+ * Slash-command autocomplete dropdown shown above the composer when the draft starts
+ * with "/". Renders up to 8 matching commands as a scrollable, elevated surface so the
+ * user can discover and invoke commands by typing the conventional "/" prefix instead
+ * of opening the overflow menu / command palette. Tapping a row fires the command.
+ */
+@Composable
+private fun CommandAutocompleteDropdown(
+    commands: List<Command>,
+    onPick: (Command) -> Unit,
+) {
+    val haptics = LocalHapticFeedback.current
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 3.dp,
+        shape = MaterialTheme.shapes.medium,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 4.dp)
+            .heightIn(max = 240.dp),
+    ) {
+        LazyColumn {
+            items(
+                count = commands.size,
+                key = { commands[it].name },
+            ) { i ->
+                val cmd = commands[i]
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(role = Role.Button) {
+                            haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                            onPick(cmd)
+                        }
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text(
+                        "/${cmd.name}",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    cmd.description?.takeIf { it.isNotBlank() }?.let { desc ->
+                        Text(
+                            desc,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Suppress("CyclomaticComplexMethod")
 @Composable
 private fun ChatInputBar(
     value: String,
@@ -1845,6 +2032,8 @@ private fun ChatInputBar(
     onCamera: () -> Unit,
     onVoice: () -> Unit,
     onPasteImage: (List<Uri>) -> Unit,
+    commands: List<Command> = emptyList(),
+    onRunCommand: (Command) -> Unit = {},
 ) {
     // Sendable when there's text OR at least one attachment (an image-only prompt is valid).
     val hasContent = value.isNotBlank() || attachments.isNotEmpty()
@@ -1895,6 +2084,15 @@ private fun ChatInputBar(
             }
             // Staged attachments: horizontally-scrollable thumbnails/chips, each removable.
             AttachmentStrip(attachments, onRemove = onRemoveAttachment, staging = staging, stagingFileCount = stagingFileCount)
+            // Slash-command autocomplete: extracted to a helper to keep this function's
+            // complexity under the detekt threshold. Returns no-op when the draft doesn't
+            // start with "/" or the command catalog is empty.
+            SlashCommandAutocomplete(
+                value = value,
+                commands = commands,
+                running = running,
+                onRunCommand = onRunCommand,
+            )
             Row(
                 modifier = Modifier.fillMaxWidth().padding(8.dp),
                 verticalAlignment = Alignment.Bottom,

@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -115,6 +116,7 @@ import soy.iko.opencode.data.model.Session
 import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.data.repo.RecentSession
 import soy.iko.opencode.data.repo.RecentSessionsStore
+import soy.iko.opencode.data.repo.SwipeAction
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.platform.AppShortcuts
 import soy.iko.opencode.platform.SessionsWidgetProvider
@@ -124,11 +126,20 @@ import soy.iko.opencode.ui.components.EmptyState
 import soy.iko.opencode.ui.components.LoadingSize
 import soy.iko.opencode.ui.components.LoadingSpinner
 import soy.iko.opencode.ui.components.LocalRelativeTimeTick
+import soy.iko.opencode.ui.components.LocalReducedMotion
 import soy.iko.opencode.ui.components.copyToClipboard
 import soy.iko.opencode.ui.components.reducedMotionAnimateItem
 import soy.iko.opencode.ui.components.RelativeTimeText
 import soy.iko.opencode.ui.components.rememberRelativeTimeTick
 import soy.iko.opencode.ui.vmFactory
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.shape.RoundedCornerShape
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -160,6 +171,18 @@ fun SessionListScreen(
     val runningSessionIds by container.runningSessionIds.collectAsStateWithLifecycle()
     val activeConnection by container.activeConnection.collectAsStateWithLifecycle()
     val isOnline by container.isOnline.collectAsStateWithLifecycle()
+    // Outbox sending state: shows a "sending queued…" indicator in the top bar when the
+    // app is flushing queued messages from the offline outbox, so the user knows their
+    // messages are being delivered (not just sitting in the outbox silently).
+    val outboxSending by container.outboxSending.collectAsStateWithLifecycle()
+    // Swipe-action customization: read the user's configured left/right swipe actions.
+    // Defaults match the prior hardcoded behavior (left=delete, right=archive).
+    val swipeLeftActionStr by container.settingsStore.swipeLeftAction.collectAsStateWithLifecycle(initialValue = "DELETE")
+    val swipeRightActionStr by container.settingsStore.swipeRightAction.collectAsStateWithLifecycle(initialValue = "ARCHIVE")
+    // Drafts map (session id -> draft text) so each list row can show a "Draft" chip
+    // when the user has unsaved input for that conversation. DraftStore.drafts is an
+    // observable StateFlow that already maintains the full map; we only read it here.
+    val drafts by container.draftStore.drafts.collectAsStateWithLifecycle()
     val connectedId = activeConnection?.profile?.id
     val haptics = LocalHapticFeedback.current
     val snackbar = remember { SnackbarHostState() }
@@ -350,6 +373,25 @@ fun SessionListScreen(
                     )
                 },
                 actions = {
+                    // Outbox sending indicator: a small text + spinner so the user knows
+                    // queued messages are being flushed (not sitting silently in the outbox).
+                    if (outboxSending) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier.padding(end = 8.dp),
+                        ) {
+                            CircularProgressIndicator(
+                                Modifier.size(14.dp),
+                                strokeWidth = 2.dp,
+                            )
+                            Text(
+                                stringResource(R.string.sending_queued),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
                     IconButton(onClick = onOpenSearch) {
                         Icon(Icons.Filled.Search, contentDescription = stringResource(R.string.search_all))
                     }
@@ -475,6 +517,9 @@ fun SessionListScreen(
                     selectedIds = selectedIds,
                     onToggleSelect = ::toggleSelected,
                     runningSessionIds = runningSessionIds,
+                    drafts = drafts,
+                    swipeLeftAction = swipeLeftActionStr,
+                    swipeRightAction = swipeRightActionStr,
                 )
             }
         }
@@ -566,6 +611,7 @@ fun SessionListScreen(
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
+@Suppress("CyclomaticComplexMethod")
 @Composable
 private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
     state: SessionListState,
@@ -593,28 +639,93 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
     selectedIds: Set<String>,
     onToggleSelect: (String) -> Unit,
     runningSessionIds: Set<String> = emptySet(),
+    drafts: Map<String, String> = emptyMap(),
+    swipeLeftAction: String = "DELETE",
+    swipeRightAction: String = "ARCHIVE",
 ) {
-    when {
-        state.loading -> {
-            val loadingLabel = stringResource(R.string.loading)
-            // Match sibling screens (MCP/Usage/Chat) which show a visible "Loading…"
-            // label beneath the spinner; a bare spinner is the weakest loading state
-            // in the app and this is the primary screen.
+    // Crossfade between content states (loading/error/empty/list) so the transition
+    // reads as a smooth fade instead of an instant snap. Matches the file viewer's
+    // AnimatedContent pattern. Reduced motion is honored by Crossfade's default spec.
+    val stateKey = when {
+        state.loading -> "loading"
+        state.sessions.isEmpty() && state.error != null -> "error"
+        state.sessions.isEmpty() -> "empty"
+        else -> "list"
+    }
+    Crossfade(
+        targetState = stateKey,
+        animationSpec = tween(NetworkConfig.motionFadeDurationMs.toInt()),
+        label = "session_list_state",
+    ) { key ->
+        when (key) {
+        "loading" -> {
+            // Skeleton loader: pulse-animated placeholder rows that mirror the eventual
+            // session-card layout (avatar circle + title bar + subtitle bar) so the user
+            // sees a structured preview of the list instead of a bare spinner. Matches
+            // the chat screen's skeleton pattern. Respects reduced-motion (static 0.5
+            // alpha instead of pulsing). The whole column is one semantics node so
+            // TalkBack announces "Loading sessions…" once.
+            val loadingLabel = stringResource(R.string.loading_sessions)
+            val reducedMotion = LocalReducedMotion.current
+            val transition = rememberInfiniteTransition(label = "session_skeleton")
+            val pulse by transition.animateFloat(
+                initialValue = 0.35f,
+                targetValue = 0.7f,
+                animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
+                label = "session_skeleton_alpha",
+            )
+            val skeletonAlpha = if (reducedMotion) 0.5f else pulse
+            val skeletonColor = MaterialTheme.colorScheme.surfaceVariant
             Column(
-                modifier = Modifier.align(Alignment.Center),
-                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(16.dp)
+                    .fillMaxWidth()
+                    .semantics { contentDescription = loadingLabel },
+                verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                CircularProgressIndicator(
-                    Modifier.semantics { contentDescription = loadingLabel },
-                )
-                Spacer(Modifier.size(12.dp))
-                Text(
-                    loadingLabel,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                repeat(6) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        // Avatar circle placeholder.
+                        Box(
+                            Modifier
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(20.dp))
+                                .background(skeletonColor)
+                                .alpha(skeletonAlpha),
+                        )
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            // Title bar placeholder.
+                            Box(
+                                Modifier
+                                    .fillMaxWidth(0.7f)
+                                    .height(14.dp)
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(skeletonColor)
+                                    .alpha(skeletonAlpha),
+                            )
+                            // Subtitle bar placeholder (shorter, for directory/time).
+                            Box(
+                                Modifier
+                                    .fillMaxWidth(0.45f)
+                                    .height(12.dp)
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(skeletonColor)
+                                    .alpha(skeletonAlpha),
+                            )
+                        }
+                    }
+                }
             }
         }
-        state.sessions.isEmpty() && state.error != null -> Column(
+        "error" -> Column(
             modifier = Modifier.align(Alignment.Center).padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
@@ -635,7 +746,7 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
                 Text(stringResource(R.string.retry))
             }
         }
-        state.sessions.isEmpty() -> EmptyState(
+        "empty" -> EmptyState(
             icon = Icons.Filled.ChatBubbleOutline,
             title = stringResource(R.string.no_sessions_yet),
             description = stringResource(R.string.no_sessions_hint),
@@ -795,25 +906,35 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
                             // the dismissal (always reset to Settled) so the card snaps back
                             // and the dialog guards against accidental data loss.
                             val isArchivedForSwipe = session.id in state.archivedIds
+                            // Parse the configured swipe actions, falling back to the
+                            // defaults on an unknown value.
+                            val swipeLeft = remember(swipeLeftAction) {
+                                runCatching { SwipeAction.valueOf(swipeLeftAction) }.getOrDefault(SwipeAction.DELETE)
+                            }
+                            val swipeRight = remember(swipeRightAction) {
+                                runCatching { SwipeAction.valueOf(swipeRightAction) }.getOrDefault(SwipeAction.ARCHIVE)
+                            }
+                            // Apply a swipe action to the session. NONE is a no-op.
+                            val applySwipe: (SwipeAction) -> Unit = { action ->
+                                when (action) {
+                                    SwipeAction.DELETE -> onDelete(session.id)
+                                    SwipeAction.ARCHIVE -> onArchive(session)
+                                    SwipeAction.MARK_READ -> onMarkUnread(session.id)
+                                    SwipeAction.NONE -> {}
+                                }
+                            }
                             val swipeState = rememberSwipeToDismissBoxState(
                                 confirmValueChange = { value ->
-                                    // Haptic at the trigger so both swipe paths match the icon
-                                    // paths, which vibrate on confirm. Always returns false (snap
-                                    // back): delete is guarded by a dialog, archive is instantly
-                                    // undoable via snackbar, so neither commits the dismissal.
+                                    haptics.performHapticFeedback(
+                                        androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress,
+                                    )
                                     when (value) {
                                         SwipeToDismissBoxValue.EndToStart -> {
-                                            haptics.performHapticFeedback(
-                                                androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress,
-                                            )
-                                            onDelete(session.id)
+                                            applySwipe(swipeLeft)
                                             false
                                         }
                                         SwipeToDismissBoxValue.StartToEnd -> {
-                                            haptics.performHapticFeedback(
-                                                androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress,
-                                            )
-                                            onArchive(session)
+                                            applySwipe(swipeRight)
                                             false
                                         }
                                         SwipeToDismissBoxValue.Settled -> false
@@ -895,6 +1016,7 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
                                     isArchived = isArchived,
                                     isMuted = isMuted,
                                     isRunning = session.id in runningSessionIds,
+                                    hasDraft = session.id in drafts,
                                     onClick = onCardClick,
                                     onRename = onCardRename,
                                     onDelete = onCardDelete,
@@ -915,6 +1037,7 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
                 }
             }
         }
+    }
     }
 }
 
@@ -1043,6 +1166,7 @@ private fun SessionTitle(text: String, unread: Boolean) {
 }
 
 @OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Suppress("CyclomaticComplexMethod")
 @Composable
 private fun SessionCard(
     session: Session,
@@ -1061,6 +1185,7 @@ private fun SessionCard(
     isPinned: Boolean = false,
     isArchived: Boolean = false,
     isRunning: Boolean = false,
+    hasDraft: Boolean = false,
     onFilterByDirectory: ((String) -> Unit)? = null,
     isDirectoryFiltered: Boolean = false,
     inSelection: Boolean = false,
@@ -1185,6 +1310,28 @@ private fun SessionCard(
                                 modifier = Modifier.padding(end = 4.dp).size(14.dp),
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
+                        }
+                        // Draft chip: a muted "Draft" label when the user has unsent input
+                        // for this session, so a user scanning the list can tell which
+                        // conversations have a half-written reply waiting. Sourced from the
+                        // observable DraftStore.drafts map. Reads as a status, not unread
+                        // emphasis, so it doesn't compete with the unread badge.
+                        if (hasDraft) {
+                            val draftLabel = stringResource(R.string.draft_indicator)
+                            Box(
+                                modifier = Modifier
+                                    .padding(end = 6.dp)
+                                    .clip(MaterialTheme.shapes.extraSmall)
+                                    .background(MaterialTheme.colorScheme.tertiaryContainer)
+                                    .padding(horizontal = 6.dp, vertical = 1.dp)
+                                    .semantics { contentDescription = draftLabel },
+                            ) {
+                                Text(
+                                    draftLabel,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                )
+                            }
                         }
                         // Server-side state badges (shared / reverted). These are surfaced in
                         // the chat screen but weren't in the list, so the list never reflected

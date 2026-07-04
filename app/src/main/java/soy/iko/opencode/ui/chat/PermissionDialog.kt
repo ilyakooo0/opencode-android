@@ -6,14 +6,18 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -24,9 +28,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
@@ -141,6 +149,14 @@ fun PermissionDialog(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
+                        // Tool-specific detail (command, file scope, etc.) extracted from
+                        // Permission.metadata. The server may attach structured detail
+                        // beyond the type+pattern that helps the user decide (e.g. the exact
+                        // command a bash tool will run, or a file scope). Render it as a
+                        // collapsible monospace block so a verbose metadata object doesn't
+                        // dominate the dialog but remains reachable. Tolerant of any JSON
+                        // shape (object/array/primitive) since the field is JsonElement.
+                        permission.metadata?.let { PermissionMetadataBlock(it) }
                     }
                 }
                 Text(
@@ -225,4 +241,61 @@ fun PermissionDialog(
             }
         },
     )
+}
+
+/**
+ * Collapsible monospace block rendering [Permission.metadata] — tool-specific detail
+ * (e.g. the exact command a bash tool will run, a file scope) the server attaches
+ * beyond type+pattern. Tolerant of any JSON shape: a bare string primitive is shown
+ * as-is; an object/array is pretty-printed. Collapsed by default so a verbose metadata
+ * object doesn't dominate the dialog, but reachable in one tap.
+ */
+@Composable
+private fun PermissionMetadataBlock(metadata: kotlinx.serialization.json.JsonElement) {
+    val pretty = remember(metadata) {
+        if (metadata is kotlinx.serialization.json.JsonPrimitive && metadata.isString) {
+            metadata.content
+        } else {
+            runCatching {
+                soy.iko.opencode.data.network.OpencodeJson.encodeToString(
+                    kotlinx.serialization.json.JsonElement.serializer(),
+                    metadata,
+                )
+            }.getOrDefault(metadata.toString())
+        }
+    }.takeIf { it.isNotBlank() } ?: return
+    var expanded by remember(metadata) { mutableStateOf(false) }
+    val detailsLabel = stringResource(R.string.permission_details)
+    val expandedState = stringResource(R.string.state_expanded)
+    val collapsedState = stringResource(R.string.state_collapsed)
+    Column {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .semantics { stateDescription = if (expanded) expandedState else collapsedState }
+                .padding(vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                detailsLabel,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 4.dp),
+            )
+        }
+        if (expanded) {
+            Text(
+                pretty,
+                style = MaterialTheme.typography.bodySmall,
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
 }

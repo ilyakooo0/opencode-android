@@ -63,6 +63,13 @@ object NetworkConfig {
     const val sessionListInitialPage = 60
     /** How many additional rows to reveal when the session list render window is exhausted. */
     const val sessionListPageStep = 60
+    /** Initial render window for the file-browser directory listing. A huge directory
+     *  (10k+ entries) sorts/filters in full on each recomposition; windowing the render
+     *  bounds the composed-row count while the sort still runs over the full list (so the
+     *  order is correct, just the visible slice is capped). Grows as the user scrolls. */
+    const val fileListInitialPage = 100
+    /** How many additional file rows to reveal when the render window is exhausted. */
+    const val fileListPageStep = 100
     /** Max concurrent preview fetches (prevents flooding the server with parallel requests). */
     const val maxConcurrentPreviews = 8
     /** Max characters of a session's last message to keep as a list preview. */
@@ -124,6 +131,12 @@ object NetworkConfig {
 
     /** Debounce delay before firing a file-search request after the user stops typing. */
     const val fileSearchDebounceMs = 250L
+
+    /** Debounce delay before re-running the in-conversation message search after the user
+     *  stops typing. The search walks every part of every message (including stringifying
+     *  tool state), so debouncing avoids jank on long conversations. The filter itself runs
+     *  off the main thread; this delay coalesces rapid keystrokes. */
+    const val chatSearchDebounceMs = 200L
 
     // --- Attachments (chat composer) ---
 

@@ -384,11 +384,19 @@ class ServerEditViewModel(
         _state.update { it.copy(saving = true) }
         viewModelScope.launch {
             val result = runCatchingCancellable {
+                // Duplicate detection: warn when a different profile with the same URL
+                // and label already exists, so the user doesn't silently create a second
+                // entry identical to an existing one. The check excludes the profile
+                // being edited (by id) so re-saving an existing profile doesn't trigger.
+                val existing = withTimeoutOrNull(NetworkConfig.profileLoadTimeoutMs) {
+                    container.profileStore.profiles.first()
+                } ?: emptyList()
+                val duplicate = existing.any { it.id != s.id && it.baseUrl == s.baseUrl.trim() && it.label == s.label.trim() }
+                if (duplicate) {
+                    throw java.io.IOException(container.string(R.string.duplicate_server_warning))
+                }
                 val existingLastUsed = if (s.id != null) {
-                    withTimeoutOrNull(NetworkConfig.profileLoadTimeoutMs) {
-                        container.profileStore.profiles.first()
-                            .firstOrNull { it.id == s.id }?.lastUsed
-                    } ?: 0L
+                    existing.firstOrNull { it.id == s.id }?.lastUsed ?: 0L
                 } else 0L
                 val saved = ServerProfile(
                     id = s.id ?: UUID.randomUUID().toString(),
