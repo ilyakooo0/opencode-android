@@ -39,7 +39,19 @@ jobs:
       - name: Build debug APK
         run: ./gradlew assembleDebug --no-daemon
 
+      - name: Decode release keystore
+        run: |
+          mkdir -p keystore
+          printf '%s' "$OPENCODE_STORE_BASE64" | base64 -d > keystore/opencode-release.jks
+        env:
+          OPENCODE_STORE_BASE64: ${{ secrets.OPENCODE_STORE_BASE64 }}
+
       - name: Build release APK
+        env:
+          OPENCODE_STORE_FILE: ${{ github.workspace }}/keystore/opencode-release.jks
+          OPENCODE_STORE_PASSWORD: ${{ secrets.OPENCODE_STORE_PASSWORD }}
+          OPENCODE_KEY_ALIAS: ${{ secrets.OPENCODE_KEY_ALIAS }}
+          OPENCODE_KEY_PASSWORD: ${{ secrets.OPENCODE_KEY_PASSWORD }}
         run: ./gradlew assembleRelease --no-daemon
 
       - name: Upload debug APK
