@@ -2,6 +2,10 @@ package soy.iko.opencode.ui.file
 
 import android.content.Intent
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -17,6 +21,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -29,7 +34,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.WrapText
@@ -72,6 +76,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -596,13 +602,56 @@ private fun BoxScope.FileViewStateContent(
     onToggleCaseSensitive: () -> Unit,
 ) {
     when {
-        // Full-screen spinner only on the initial load (no content yet). A reload keeps the
+        // Full-screen skeleton only on the initial load (no content yet). A reload keeps the
         // existing content on screen; the top-bar reload button shows the in-flight progress.
+        // Skeleton "code line" rows pre-structure the layout so a large file's load feels
+        // faster than a bare spinner and the real content cross-fades into an already-shaped
+        // gutter+text area.
         state.loading && state.content == null -> {
             val loadingLabel = stringResource(R.string.loading)
-            CircularProgressIndicator(
-                Modifier.align(Alignment.Center).semantics { contentDescription = loadingLabel },
+            val reducedMotion = soy.iko.opencode.ui.components.LocalReducedMotion.current
+            val transition = rememberInfiniteTransition(label = "file_skeleton")
+            val pulse by transition.animateFloat(
+                initialValue = 0.35f,
+                targetValue = 0.7f,
+                animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
+                label = "fileSkeletonAlpha",
             )
+            val skeletonAlpha = if (reducedMotion) 0.5f else pulse
+            val skeletonColor = MaterialTheme.colorScheme.surfaceVariant
+            Column(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 24.dp)
+                    .padding(horizontal = 16.dp)
+                    .fillMaxWidth()
+                    .semantics { contentDescription = loadingLabel },
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                repeat(10) { i ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Box(
+                            Modifier
+                                .width(36.dp)
+                                .height(14.dp)
+                                .clip(MaterialTheme.shapes.small)
+                                .background(skeletonColor)
+                                .alpha(skeletonAlpha),
+                        )
+                        Box(
+                            Modifier
+                                .fillMaxWidth(if (i % 3 == 0) 0.9f else 0.7f)
+                                .height(14.dp)
+                                .clip(MaterialTheme.shapes.small)
+                                .background(skeletonColor)
+                                .alpha(skeletonAlpha),
+                        )
+                    }
+                }
+            }
         }
         state.error != null -> Column(
             modifier = Modifier.align(Alignment.Center).padding(24.dp),
@@ -735,12 +784,13 @@ private fun BoxScope.FileViewContentBody(
         }
     }
     if (showDiff && content?.diff != null && content.diff.isNotBlank()) {
-        DiffView(
+        // Use LazyDiffView so a 5000-line diff composes only the visible rows. The previous
+        // DiffView + verticalScroll composed every row eagerly, which OOM'd on large diffs.
+        soy.iko.opencode.ui.components.LazyDiffView(
             diff = content.diff,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(top = topInset)
-                .verticalScroll(rememberScrollState())
                 .padding(8.dp),
         )
     } else {
@@ -876,6 +926,32 @@ private fun FileTextContent(
     val palette = rememberHighlightPalette()
     // Resolve the file's language once instead of re-parsing the extension for every line.
     val syntax = remember(filename) { syntaxFor(filename) }
+    // Pre-compute per-line block-comment/triple-string state snapshots so a LazyColumn row
+    // can highlight its line correctly without re-walking every preceding line on each
+    // recomposition. Each snapshot is two booleans; for a 5000-line file that's ~10KB,
+    // trivial next to the line strings themselves. highlightLine(line, syntax, palette, state)
+    // mutates the passed state in place, so we give each line its own snapshot derived from
+    // the prior line's end state — this is what makes a 50-line block comment color correctly
+    // on every line, not just the opener.
+    val lineStates = remember(lines, syntax) {
+        if (syntax.lang == soy.iko.opencode.ui.components.Language.NONE) {
+            emptyList()
+        } else {
+            val states = ArrayList<soy.iko.opencode.ui.components.BlockCommentState>(lines.size)
+            var current = soy.iko.opencode.ui.components.BlockCommentState()
+            for (line in lines) {
+                val snapshot = soy.iko.opencode.ui.components.BlockCommentState().also {
+                    it.inBlockComment = current.inBlockComment
+                    it.inTripleString = current.inTripleString
+                }
+                states.add(snapshot)
+                // Advance the running state by highlighting into a throwaway builder — the
+                // side effect on `current` is what we need. We discard the AnnotatedString.
+                soy.iko.opencode.ui.components.highlightLine(line, syntax, palette, current)
+            }
+            states
+        }
+    }
     val q = findQuery.trim()
     val matchSet = remember(matchIndices) { matchIndices.toHashSet() }
     MaterialTheme(typography = scaled) {
@@ -937,7 +1013,21 @@ private fun FileTextContent(
                             // O(n) tokenizer + AnnotatedString allocation runs only when the line text,
                             // file, or palette actually changes — not on every recomposition (e.g. every
                             // keystroke into find-in-file, which would otherwise re-highlight all visible lines).
-                            val highlighted = remember(line, syntax, palette) { highlightLine(line, syntax, palette) }
+                            // Uses the stateful highlightLine so multi-line block comments and triple-quoted
+                            // strings color correctly on every line they span (the per-line snapshot in
+                            // lineStates carries the in-block/in-trString flag for this line's position).
+                            val highlighted = remember(line, syntax, palette, index) {
+                                val state = lineStates.getOrNull(index)
+                                if (state != null) {
+                                    val s = soy.iko.opencode.ui.components.BlockCommentState().also {
+                                        it.inBlockComment = state.inBlockComment
+                                        it.inTripleString = state.inTripleString
+                                    }
+                                    soy.iko.opencode.ui.components.highlightLine(line, syntax, palette, s)
+                                } else {
+                                    soy.iko.opencode.ui.components.highlightLine(line, syntax, palette)
+                                }
+                            }
                             Text(
                                 highlighted,
                                 modifier = Modifier.padding(start = 8.dp),

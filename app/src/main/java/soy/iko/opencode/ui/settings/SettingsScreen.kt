@@ -45,6 +45,7 @@ import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedTextField
@@ -145,6 +146,8 @@ fun SettingsScreen(
     val chatTextScale by container.settingsStore.chatTextScale
         .collectAsStateWithLifecycle(initialValue = SettingsStore.DEFAULT_CHAT_TEXT_SCALE)
     val codeWrap by container.settingsStore.codeWrap.collectAsStateWithLifecycle(initialValue = false)
+    val compactSpacing by container.settingsStore.compactMessageSpacing
+        .collectAsStateWithLifecycle(initialValue = false)
     val appLockReLockSeconds by container.settingsStore.appLockReLockSeconds
         .collectAsStateWithLifecycle(initialValue = SettingsStore.DEFAULT_APP_LOCK_RELOCK_SECONDS)
     val dynamicColorAvailable = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
@@ -185,6 +188,11 @@ fun SettingsScreen(
     // import reads a chosen file and applies it. Feedback goes through the snackbar host so it's
     // accessible to TalkBack and consistent with the rest of the app (Toast isn't).
     var includePasswords by rememberSaveable { mutableStateOf(false) }
+    // True while an export or import is in flight. Used to disable both NavRow triggers so a
+    // double-tap (or a slow device) can't launch a second file picker or start a second
+    // operation while the first is still reading/writing. Mirrors the busy-flag pattern used
+    // by other slow actions in the app.
+    var backupBusy by remember { mutableStateOf(false) }
     // Import overwrites all profiles/settings with no undo, so a picked file is staged here
     // and only applied once the user confirms the replace dialog below. Export with passwords
     // included warns first (plaintext credentials leave the app).
@@ -201,12 +209,17 @@ fun SettingsScreen(
     ) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         scope.launch {
-            val ok = runCatchingCancellable {
-                val text = container.backupManager.export(includePasswords)
-                context.contentResolver.openOutputStream(uri)?.use { it.write(text.toByteArray()) }
-                    ?: error("no output stream")
-            }.isSuccess
-            snackbar.showSnackbar(if (ok) exportedMsg else exportFailedMsg)
+            backupBusy = true
+            try {
+                val ok = runCatchingCancellable {
+                    val text = container.backupManager.export(includePasswords)
+                    context.contentResolver.openOutputStream(uri)?.use { it.write(text.toByteArray()) }
+                        ?: error("no output stream")
+                }.isSuccess
+                snackbar.showSnackbar(if (ok) exportedMsg else exportFailedMsg)
+            } finally {
+                backupBusy = false
+            }
         }
     }
     val importLauncher = rememberLauncherForActivityResult(
@@ -420,6 +433,31 @@ fun SettingsScreen(
                 Switch(checked = codeWrap, onCheckedChange = null)
             }
 
+            // Compact message spacing: a power-user toggle to fit more conversation on screen.
+            Spacer(Modifier.size(4.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .defaultMinSize(minHeight = 48.dp)
+                    .toggleable(
+                        value = compactSpacing,
+                        onValueChange = { scope.launch { runCatchingCancellable { container.settingsStore.setCompactMessageSpacing(it) } } },
+                        role = Role.Switch,
+                    )
+                    .padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(stringResource(R.string.compact_message_spacing), style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        stringResource(R.string.compact_message_spacing_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(checked = compactSpacing, onCheckedChange = null)
+            }
+
             HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
 
             Text(
@@ -559,7 +597,7 @@ fun SettingsScreen(
             NavRow(
                 icon = Icons.Filled.Upload,
                 label = stringResource(R.string.export_backup),
-                enabled = true,
+                enabled = !backupBusy,
                 // Warn before writing plaintext credentials out of the app; confirm then launches
                 // the file picker. Without passwords, export straight away.
                 onClick = {
@@ -570,13 +608,19 @@ fun SettingsScreen(
             NavRow(
                 icon = Icons.Filled.Download,
                 label = stringResource(R.string.import_backup),
-                enabled = true,
+                enabled = !backupBusy,
                 onClick = {
                     runCatching {
                         importLauncher.launch(arrayOf("application/json", "text/plain", "application/octet-stream"))
                     }
                 },
             )
+            // Surface an inline progress indicator while a backup write/read is in flight so
+            // the user gets immediate feedback that the (potentially slow on a big file)
+            // operation is running, and isn't tempted to tap again.
+            if (backupBusy) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(top = 4.dp))
+            }
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
 
@@ -657,28 +701,33 @@ fun SettingsScreen(
                 TextButton(onClick = {
                     pendingImportUri = null
                     scope.launch {
-                        val ok = runCatchingCancellable {
-                            val text = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
-                                ?: error("no input stream")
-                            container.backupManager.import(text)
-                        }.isSuccess
-                        if (ok) {
-                            val result = snackbar.showSnackbar(
-                                message = importedMsg,
-                                actionLabel = restartLabel,
-                            )
-                            if (result == SnackbarResult.ActionPerformed) {
-                                // Shut down the container (cancels the app scope, closes the
-                                // active connection, flushes stores) before the hard kill so
-                                // in-flight work is cleaned up rather than abruptly severed.
-                                // The JVM shutdown hook in OpencodeApp would catch this, but
-                                // calling shutdown explicitly is cleaner and avoids relying on
-                                // the hook's ordering under a kill.
-                                runCatchingCancellable { container.shutdown() }
-                                android.os.Process.killProcess(android.os.Process.myPid())
+                        backupBusy = true
+                        try {
+                            val ok = runCatchingCancellable {
+                                val text = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                                    ?: error("no input stream")
+                                container.backupManager.import(text)
+                            }.isSuccess
+                            if (ok) {
+                                val result = snackbar.showSnackbar(
+                                    message = importedMsg,
+                                    actionLabel = restartLabel,
+                                )
+                                if (result == SnackbarResult.ActionPerformed) {
+                                    // Shut down the container (cancels the app scope, closes the
+                                    // active connection, flushes stores) before the hard kill so
+                                    // in-flight work is cleaned up rather than abruptly severed.
+                                    // The JVM shutdown hook in OpencodeApp would catch this, but
+                                    // calling shutdown explicitly is cleaner and avoids relying on
+                                    // the hook's ordering under a kill.
+                                    runCatchingCancellable { container.shutdown() }
+                                    android.os.Process.killProcess(android.os.Process.myPid())
+                                }
+                            } else {
+                                snackbar.showSnackbar(importFailedMsg)
                             }
-                        } else {
-                            snackbar.showSnackbar(importFailedMsg)
+                        } finally {
+                            backupBusy = false
                         }
                     }
                 }) { Text(stringResource(R.string.import_confirm_replace), color = MaterialTheme.colorScheme.error) }

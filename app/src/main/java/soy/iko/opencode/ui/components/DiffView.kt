@@ -13,6 +13,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
@@ -45,6 +48,7 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import soy.iko.opencode.R
 import soy.iko.opencode.data.network.NetworkConfig
+import soy.iko.opencode.ui.theme.diffColors
 
 /** A single line of a parsed unified diff. */
 sealed interface DiffLine {
@@ -162,14 +166,15 @@ private fun syntaxForHeader(headerText: String): FileSyntax? {
 @Composable
 fun DiffView(diff: String, modifier: Modifier = Modifier, saveKey: String? = null) {
     val lines = remember(diff) { parseDiff(diff) }
-    // Derive the four row colors once per color scheme instead of allocating fresh Color
-    // objects (the .copy() calls) on every recomposition — a diff re-parses/recomposes
-    // per token while its output streams under the collapse limit.
+    // Use dedicated diff add/remove colors (a fixed green/red pair tuned to the theme) so the
+    // diff semantics stay consistent under Material You — where the primary role may not be
+    // green-tinted, an "added" line would otherwise read as a primary-tinted highlight.
     val scheme = MaterialTheme.colorScheme
-    val addColor = remember(scheme) { scheme.primary.copy(alpha = 0.15f) }
-    val removeColor = remember(scheme) { scheme.error.copy(alpha = 0.15f) }
-    val addText = scheme.primary
-    val removeText = scheme.error
+    val diffColors = diffColors()
+    val addColor = remember(scheme) { diffColors.addBg }
+    val removeColor = remember(scheme) { diffColors.removeBg }
+    val addText = diffColors.addText
+    val removeText = diffColors.removeText
     val context = LocalContext.current
     val hScrollState = rememberScrollState()
     // Key on a stable id (the part id) when available so streaming updates that grow `diff`
@@ -189,110 +194,236 @@ fun DiffView(diff: String, modifier: Modifier = Modifier, saveKey: String? = nul
             .clip(MaterialTheme.shapes.small)
             .background(MaterialTheme.colorScheme.surfaceVariant),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(top = 2.dp, start = 4.dp, end = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            // Expand/collapse toggle in the header (matching CodeWithCopy's pattern) so the
-            // user doesn't have to scroll to the bottom of a collapsed diff to expand it.
-            if (lines.size > NetworkConfig.collapsedDiffLineThreshold) {
-                val moreLines = lines.size - NetworkConfig.collapsedDiffLineThreshold
-                IconButton(onClick = { expanded = !expanded }) {
-                    Icon(
-                        if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                        contentDescription = if (expanded) stringResource(R.string.show_less)
-                            else context.resources.getQuantityString(
-                                R.plurals.show_more_lines, moreLines, moreLines,
-                            ),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-            Spacer(Modifier.weight(1f))
-            IconButton(onClick = { copyToClipboard(context, context.getString(R.string.clip_label_diff), diff) }) {
-                Icon(Icons.Filled.ContentCopy, contentDescription = stringResource(R.string.copy), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
+        DiffHeader(
+            lineCount = lines.size,
+            expanded = expanded,
+            onToggle = { expanded = !expanded },
+            onCopy = { copyToClipboard(context, context.getString(R.string.clip_label_diff), diff) },
+        )
         val visibleLines = if (lines.size <= NetworkConfig.collapsedDiffLineThreshold || expanded) lines
             else lines.subList(0, NetworkConfig.collapsedDiffLineThreshold)
         // One horizontalScroll on the container instead of one per row: each modifier
         // adds a layout node + clip + offset pass, so a 200-line collapsed diff was
         // paying for 200 of them. The shared scroll state still synchronizes all rows.
-        // oldLine/newLine track the current line numbers derived from each @@ hunk header
-        // so the gutter can show absolute line numbers (a big readability win for review).
-        var oldLine = 0
-        var newLine = 0
-        val hunkRegex = Regex("""@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@""")
+        val rows = remember(visibleLines, addColor, removeColor, addText, removeText, scheme) {
+            buildDiffRows(
+                visibleLines,
+                addColor, removeColor, addText, removeText,
+                scheme.tertiary, scheme.onSurface, scheme.onSurfaceVariant,
+            )
+        }
         Column(modifier = Modifier.horizontalScroll(hScrollState)) {
-            visibleLines.forEach { line ->
-                when (line) {
-                    is DiffLine.Hunk -> {
-                        val m = hunkRegex.find(line.text)
-                        if (m != null) {
-                            oldLine = m.groupValues[1].toInt()
-                            newLine = m.groupValues[2].toInt()
-                        }
-                        Text(
-                            line.text,
-                            style = MaterialTheme.typography.bodySmall,
-                            fontFamily = FontFamily.Monospace,
-                            color = MaterialTheme.colorScheme.tertiary,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp),
-                        )
-                    }
-                    is DiffLine.FileHeader -> {
-                        // Render the display path (e.g. `src/Foo.kt`) as a bold header rather
-                        // than the raw `+++ b/src/Foo.kt`, so file boundaries are scannable in
-                        // a long multi-file diff. The raw line is still copied with the diff.
-                        val displayPath = extractDisplayPath(line.text)
-                        val isHeader = displayPath != line.text
-                        Text(
-                            displayPath,
-                            style = MaterialTheme.typography.labelMedium,
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = if (isHeader) FontWeight.SemiBold else FontWeight.Normal,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 10.dp, vertical = 3.dp)
-                                .semantics { heading() },
-                        )
-                    }
-                    is DiffLine.Meta -> Text(
-                        line.text,
-                        style = MaterialTheme.typography.bodySmall,
-                        fontFamily = FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(vertical = 1.dp),
-                    )
-                    is DiffLine.Add -> {
-                        val n = newLine++
-                        DiffRow(line.text, "+", addColor, addText, oldLine = null, newLine = n, syntax = syntax, palette = palette)
-                    }
-                    is DiffLine.Remove -> {
-                        val o = oldLine++
-                        DiffRow(line.text, "-", removeColor, removeText, oldLine = o, newLine = null, syntax = syntax, palette = palette)
-                    }
-                    is DiffLine.Context -> {
-                        val o = oldLine++; val n = newLine++
-                        DiffRow(line.text, " ", Color.Transparent, MaterialTheme.colorScheme.onSurface, oldLine = o, newLine = n, syntax = syntax, palette = palette)
-                    }
-                }
+            rows.forEach { row -> RenderDiffRow(row, syntax, palette) }
+        }
+        DiffExpandFooter(lines = lines, expanded = expanded, onToggle = { expanded = !expanded })
+    }
+}
+
+/**
+ * Lazy variant of [DiffView] for callers that need the diff to scroll on its own (e.g. the
+ * file viewer) WITHOUT an enclosing verticalScroll. A 5000-line diff in [DiffView] would
+ * compose every row eagerly; this variant uses a [LazyColumn] so only the visible rows
+ * compose. The collapse threshold still applies for the *initial* view, but expanding
+ * switches to lazy rendering so a huge expanded diff doesn't OOM.
+ */
+@Composable
+fun LazyDiffView(diff: String, modifier: Modifier = Modifier, saveKey: String? = null) {
+    val lines = remember(diff) { parseDiff(diff) }
+    val scheme = MaterialTheme.colorScheme
+    val diffColors = diffColors()
+    val addColor = remember(scheme) { diffColors.addBg }
+    val removeColor = remember(scheme) { diffColors.removeBg }
+    val addText = diffColors.addText
+    val removeText = diffColors.removeText
+    val context = LocalContext.current
+    val hScrollState = rememberScrollState()
+    var expanded by rememberSaveable(saveKey ?: diff) { mutableStateOf(false) }
+    val syntax = remember(lines) {
+        lines.firstOrNull { it is DiffLine.FileHeader }?.let { syntaxForHeader(it.text) }
+    }
+    val palette = rememberHighlightPalette()
+    val lazyListState = androidx.compose.foundation.lazy.rememberLazyListState()
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.small)
+            .background(MaterialTheme.colorScheme.surfaceVariant),
+    ) {
+        DiffHeader(
+            lineCount = lines.size,
+            expanded = expanded,
+            onToggle = { expanded = !expanded },
+            onCopy = { copyToClipboard(context, context.getString(R.string.clip_label_diff), diff) },
+        )
+        val visibleLines = if (lines.size <= NetworkConfig.collapsedDiffLineThreshold || expanded) lines
+            else lines.subList(0, NetworkConfig.collapsedDiffLineThreshold)
+        val rows = remember(visibleLines, addColor, removeColor, addText, removeText, scheme) {
+            buildDiffRows(
+                visibleLines,
+                addColor, removeColor, addText, removeText,
+                scheme.tertiary, scheme.onSurface, scheme.onSurfaceVariant,
+            )
+        }
+        // One horizontalScroll wrapping the LazyColumn synchronizes horizontal panning across
+        // visible rows (the same trick DiffView uses on its Column). LazyColumn handles the
+        // vertical scrolling.
+        LazyColumn(
+            state = lazyListState,
+            modifier = Modifier.horizontalScroll(hScrollState),
+        ) {
+            itemsIndexed(
+                rows,
+                key = { i, row -> "${row.kind::class.simpleName}:$i:${row.text.hashCode()}" },
+            ) { _, row ->
+                RenderDiffRow(row, syntax, palette)
             }
         }
-        if (lines.size > NetworkConfig.collapsedDiffLineThreshold) {
-            val hidden = lines.size - NetworkConfig.collapsedDiffLineThreshold
-            TextButton(
-                onClick = { expanded = !expanded },
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp),
-                modifier = Modifier.defaultMinSize(minHeight = 48.dp),
-            ) {
-                Text(
-                    if (expanded) stringResource(R.string.show_less)
-                    else pluralStringResource(R.plurals.show_more_lines, hidden, hidden),
+        DiffExpandFooter(lines = lines, expanded = expanded, onToggle = { expanded = !expanded })
+    }
+}
+
+/** Header row with the expand/collapse toggle (when applicable) and a copy action. */
+@Composable
+private fun DiffHeader(lineCount: Int, expanded: Boolean, onToggle: () -> Unit, onCopy: () -> Unit) {
+    val context = LocalContext.current
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(top = 2.dp, start = 4.dp, end = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (lineCount > NetworkConfig.collapsedDiffLineThreshold) {
+            val moreLines = lineCount - NetworkConfig.collapsedDiffLineThreshold
+            IconButton(onClick = onToggle) {
+                Icon(
+                    if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                    contentDescription = if (expanded) stringResource(R.string.show_less)
+                        else context.resources.getQuantityString(
+                            R.plurals.show_more_lines, moreLines, moreLines,
+                        ),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }
+        Spacer(Modifier.weight(1f))
+        IconButton(onClick = onCopy) {
+            Icon(Icons.Filled.ContentCopy, contentDescription = stringResource(R.string.copy), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+/** Footer "show more/less" button when the diff was collapsed. */
+@Composable
+private fun DiffExpandFooter(lines: List<DiffLine>, expanded: Boolean, onToggle: () -> Unit) {
+    if (lines.size > NetworkConfig.collapsedDiffLineThreshold) {
+        val hidden = lines.size - NetworkConfig.collapsedDiffLineThreshold
+        TextButton(
+            onClick = onToggle,
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp),
+            modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+        ) {
+            Text(
+                if (expanded) stringResource(R.string.show_less)
+                else pluralStringResource(R.plurals.show_more_lines, hidden, hidden),
+            )
+        }
+    }
+}
+
+/** A pre-resolved diff row carrying its kind, text, line numbers, and resolved colors. This
+ *  lets both [DiffView] and [LazyDiffView] share the rendering path without re-deriving the
+ *  per-row state (line numbers advance as a side effect of walking the list). */
+private data class DiffRowItem(
+    val kind: DiffLine,
+    val text: String,
+    val bg: Color,
+    val textColor: Color,
+    val oldLine: Int?,
+    val newLine: Int?,
+)
+
+/** Walk [visibleLines] advancing the old/new line counters per hunk, producing a list of
+ *  [DiffRowItem]s that the renderers can iterate without per-row state. Theme colors for the
+ *  non-add/remove rows (tertiary for hunk headers, onSurface/onSurfaceVariant for context
+ *  and meta) are passed in by the @Composable caller so the row-builder stays a plain
+ *  function that doesn't read MaterialTheme directly. */
+private fun buildDiffRows(
+    visibleLines: List<DiffLine>,
+    addColor: Color,
+    removeColor: Color,
+    addText: Color,
+    removeText: Color,
+    tertiary: Color,
+    onSurface: Color,
+    onSurfaceVariant: Color,
+): List<DiffRowItem> {
+    var oldLine = 0
+    var newLine = 0
+    val hunkRegex = Regex("""@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@""")
+    return visibleLines.map { line ->
+        when (line) {
+            is DiffLine.Hunk -> {
+                val m = hunkRegex.find(line.text)
+                if (m != null) {
+                    oldLine = m.groupValues[1].toInt()
+                    newLine = m.groupValues[2].toInt()
+                }
+                DiffRowItem(line, line.text, Color.Transparent, tertiary, null, null)
+            }
+            is DiffLine.FileHeader -> DiffRowItem(line, line.text, Color.Transparent, onSurface, null, null)
+            is DiffLine.Meta -> DiffRowItem(line, line.text, Color.Transparent, onSurfaceVariant, null, null)
+            is DiffLine.Add -> {
+                val n = newLine++
+                DiffRowItem(line, line.text, addColor, addText, null, n)
+            }
+            is DiffLine.Remove -> {
+                val o = oldLine++
+                DiffRowItem(line, line.text, removeColor, removeText, o, null)
+            }
+            is DiffLine.Context -> {
+                val o = oldLine++; val n = newLine++
+                DiffRowItem(line, line.text, Color.Transparent, onSurface, o, n)
+            }
+        }
+    }
+}
+
+/** Render a single [DiffRowItem]. Hunk and FileHeader rows get their own styling; Add/Remove/
+ *  Context delegate to [DiffRow]. */
+@Composable
+private fun RenderDiffRow(row: DiffRowItem, syntax: FileSyntax?, palette: HighlightPalette) {
+    when (row.kind) {
+        is DiffLine.Hunk -> Text(
+            row.text,
+            style = MaterialTheme.typography.bodySmall,
+            fontFamily = FontFamily.Monospace,
+            color = MaterialTheme.colorScheme.tertiary,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp),
+        )
+        is DiffLine.FileHeader -> {
+            val displayPath = extractDisplayPath(row.text)
+            val isHeader = displayPath != row.text
+            Text(
+                displayPath,
+                style = MaterialTheme.typography.labelMedium,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = if (isHeader) FontWeight.SemiBold else FontWeight.Normal,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 10.dp, vertical = 3.dp)
+                    .semantics { heading() },
+            )
+        }
+        is DiffLine.Meta -> Text(
+            row.text,
+            style = MaterialTheme.typography.bodySmall,
+            fontFamily = FontFamily.Monospace,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(vertical = 1.dp),
+        )
+        is DiffLine.Add -> DiffRow(row.text, "+", row.bg, row.textColor, oldLine = row.oldLine, newLine = row.newLine, syntax = syntax, palette = palette)
+        is DiffLine.Remove -> DiffRow(row.text, "-", row.bg, row.textColor, oldLine = row.oldLine, newLine = row.newLine, syntax = syntax, palette = palette)
+        is DiffLine.Context -> DiffRow(row.text, " ", row.bg, row.textColor, oldLine = row.oldLine, newLine = row.newLine, syntax = syntax, palette = palette)
     }
 }
 

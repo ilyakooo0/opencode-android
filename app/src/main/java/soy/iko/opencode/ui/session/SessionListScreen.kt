@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.MarkChatRead
+import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Link
@@ -102,6 +103,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -145,6 +147,7 @@ fun SessionListScreen(
     val switchingId by vm.switchingId.collectAsStateWithLifecycle()
     val connectionState by vm.connectionState.collectAsStateWithLifecycle()
     val unread by vm.unread.collectAsStateWithLifecycle()
+    val mutedSessions by container.mutedSessions.collectAsStateWithLifecycle()
     val creating by vm.creating.collectAsStateWithLifecycle()
     val directoryOptions by vm.directoryOptions.collectAsStateWithLifecycle()
     val anyRunActive by container.anyRunActive.collectAsStateWithLifecycle()
@@ -435,6 +438,7 @@ fun SessionListScreen(
                 SessionListBody(
                     state = state,
                     unread = unread,
+                    mutedSessions = mutedSessions,
                     refreshing = refreshing,
                     haptics = haptics,
                     selectedSessionId = selectedSessionId,
@@ -446,6 +450,8 @@ fun SessionListScreen(
                     onDelete = { pendingDeleteId = it },
                     onPin = { vm.togglePin(it) },
                     onArchive = { vm.toggleArchive(it) },
+                    onMarkUnread = { vm.markUnread(it) },
+                    onToggleMute = { container.toggleSessionMute(it) },
                     onFilterByDirectory = vm::setDirectoryFilter,
                     inSelection = inSelection,
                     selectedIds = selectedIds,
@@ -545,6 +551,7 @@ fun SessionListScreen(
 private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
     state: SessionListState,
     unread: Map<String, Int>,
+    mutedSessions: Set<String>,
     refreshing: Boolean,
     haptics: androidx.compose.ui.hapticfeedback.HapticFeedback,
     selectedSessionId: String?,
@@ -556,6 +563,8 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
     onDelete: (String) -> Unit,
     onPin: (Session) -> Unit,
     onArchive: (Session) -> Unit,
+    onMarkUnread: (String) -> Unit,
+    onToggleMute: (String) -> Unit,
     onFilterByDirectory: (String) -> Unit,
     inSelection: Boolean,
     selectedIds: Set<String>,
@@ -674,17 +683,41 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
                 // Order child (sub-)sessions immediately under their parent, tracking depth
                 // so the UI can indent them into a tree.
                 val nodes = remember(sessions) { buildSessionTree(sessions) }
+                // Windowed render: compose only the first `renderCap` rows, growing as the
+                // user scrolls near the bottom. Bounds the LazyColumn's key+arrange work on a
+                // huge list and keeps the tree-build + filter cost proportional to what's seen.
+                var renderCap by remember {
+                    mutableStateOf(NetworkConfig.sessionListInitialPage)
+                }
+                val visibleNodes = remember(nodes, renderCap) {
+                    if (nodes.size <= renderCap) nodes else nodes.take(renderCap)
+                }
                 PullToRefreshBox(
                     isRefreshing = refreshing,
                     onRefresh = onRefresh,
                     modifier = Modifier.fillMaxSize(),
                 ) {
+                    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+                    // Grow the window when the user scrolls within a page of the cap so the
+                    // "infinite scroll" feels seamless (no spinner — the next batch is already
+                    // in the list by the time they reach the bottom).
+                    androidx.compose.runtime.LaunchedEffect(listState, nodes.size) {
+                        androidx.compose.runtime.snapshotFlow {
+                            val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+                            lastVisible >= renderCap - NetworkConfig.sessionListPageStep / 2
+                        }.distinctUntilChanged().collect { nearEnd ->
+                            if (nearEnd && renderCap < nodes.size) {
+                                renderCap = (renderCap + NetworkConfig.sessionListPageStep).coerceAtMost(nodes.size)
+                            }
+                        }
+                    }
                     LazyColumn(
+                        state = listState,
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 96.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        items(nodes, key = { it.session.id }) { node ->
+                        items(visibleNodes, key = { it.session.id }) { node ->
                             val session = node.session
                             // Swipe end-to-start reveals a delete affordance and opens the
                             // same confirmation dialog as the trash icon. We never commit
@@ -726,6 +759,9 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
                             val onCardDelete = remember(session.id) { { onDelete(session.id) } }
                             val onCardPin = remember(session.id) { { onPin(session) } }
                             val onCardArchive = remember(session.id) { { onArchive(session) } }
+                            val onCardMarkUnread = remember(session.id) { { onMarkUnread(session.id) } }
+                            val onCardToggleMute = remember(session.id) { { onToggleMute(session.id) } }
+                            val isMuted = session.id in mutedSessions
                             val isPinned = session.id in state.pinnedIds
                             val isArchived = session.id in state.archivedIds
                             SwipeToDismissBox(
@@ -786,11 +822,14 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
                                         else session.id == selectedSessionId,
                                     isPinned = isPinned,
                                     isArchived = isArchived,
+                                    isMuted = isMuted,
                                     onClick = onCardClick,
                                     onRename = onCardRename,
                                     onDelete = onCardDelete,
                                     onPin = onCardPin,
                                     onArchive = onCardArchive,
+                                    onMarkUnread = onCardMarkUnread,
+                                    onToggleMute = onCardToggleMute,
                                     onFilterByDirectory = onFilterByDirectory,
                                     isDirectoryFiltered = state.directoryFilter != null &&
                                         session.directory?.trimEnd('/') == state.directoryFilter,
@@ -942,6 +981,9 @@ private fun SessionCard(
     onDelete: () -> Unit,
     onPin: () -> Unit,
     onArchive: () -> Unit,
+    onMarkUnread: () -> Unit,
+    onToggleMute: () -> Unit,
+    isMuted: Boolean,
     modifier: Modifier = Modifier,
     isSelected: Boolean = false,
     isPinned: Boolean = false,
@@ -1003,11 +1045,13 @@ private fun SessionCard(
                 }
                 Column(modifier = Modifier.weight(1f).padding(start = 12.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (unreadCount > 0) {
+                        if (unreadCount > 0 && !isMuted) {
                             val unreadLabel = stringResource(R.string.unread_count, unreadCount)
                             // Count badge: shows the number of unread messages so the user
                             // can tell a single reply from a burst. Falls back to a dot for
                             // a count of 1 (the common "one reply" case) to avoid clutter.
+                            // Suppressed when the session is muted (the count is still tracked
+                            // internally so unmuting restores the badge).
                             if (unreadCount == 1) {
                                 Box(
                                     modifier = Modifier
@@ -1048,6 +1092,14 @@ private fun SessionCard(
                             Icon(
                                 Icons.Filled.Archive,
                                 contentDescription = stringResource(R.string.session_archived_badge),
+                                modifier = Modifier.padding(end = 4.dp).size(14.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        if (isMuted) {
+                            Icon(
+                                Icons.Filled.NotificationsOff,
+                                contentDescription = stringResource(R.string.session_muted_badge),
                                 modifier = Modifier.padding(end = 4.dp).size(14.dp),
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -1144,6 +1196,8 @@ private fun SessionCard(
                 val moreLabel = stringResource(R.string.more_options_for, session.displayTitle)
                 val pinLabel = stringResource(if (isPinned) R.string.session_unpin else R.string.session_pin)
                 val archiveLabel = stringResource(if (isArchived) R.string.session_unarchive else R.string.session_archive)
+                val markUnreadLabel = stringResource(R.string.session_mark_unread)
+                val muteLabel = stringResource(if (isMuted) R.string.session_unmute else R.string.session_mute)
                 Box {
                     IconButton(onClick = { showRowMenu = true }) {
                         Icon(Icons.Filled.MoreVert, contentDescription = moreLabel)
@@ -1159,6 +1213,18 @@ private fun SessionCard(
                         DropdownMenuItem(
                             text = { Text(archiveLabel) },
                             onClick = { showRowMenu = false; onArchive() },
+                        )
+                        // Only offer "Mark as unread" when the session isn't already badged —
+                        // re-marking an unread session is a no-op that would just clutter the menu.
+                        if (unreadCount == 0) {
+                            DropdownMenuItem(
+                                text = { Text(markUnreadLabel) },
+                                onClick = { showRowMenu = false; onMarkUnread() },
+                            )
+                        }
+                        DropdownMenuItem(
+                            text = { Text(muteLabel) },
+                            onClick = { showRowMenu = false; onToggleMute() },
                         )
                         DropdownMenuItem(
                             text = { Text(renameLabel) },

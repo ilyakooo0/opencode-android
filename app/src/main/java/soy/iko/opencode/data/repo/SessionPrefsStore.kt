@@ -28,6 +28,7 @@ open class SessionPrefsStore private constructor(
 
     private val pinnedKey = stringSetPreferencesKey("pinned")
     private val archivedKey = stringSetPreferencesKey("archived")
+    private val mutedKey = stringSetPreferencesKey("muted")
 
     open val pinned: Flow<Set<String>>
         get() = appContext?.sessionPrefsDataStore?.data?.map { it[pinnedKey] ?: emptySet() }
@@ -37,16 +38,24 @@ open class SessionPrefsStore private constructor(
         get() = appContext?.sessionPrefsDataStore?.data?.map { it[archivedKey] ?: emptySet() }
             ?: flowOf(emptySet())
 
+    /** Session ids the user has muted (suppress unread badge + completion notification). */
+    open val muted: Flow<Set<String>>
+        get() = appContext?.sessionPrefsDataStore?.data?.map { it[mutedKey] ?: emptySet() }
+            ?: flowOf(emptySet())
+
     open suspend fun setPinned(sessionId: String, pinned: Boolean) = toggle(pinnedKey, sessionId, pinned)
 
     open suspend fun setArchived(sessionId: String, archived: Boolean) = toggle(archivedKey, sessionId, archived)
 
-    /** Drop a session from both sets — call on deletion so ids don't accumulate forever. */
+    open suspend fun setMuted(sessionId: String, muted: Boolean) = toggle(mutedKey, sessionId, muted)
+
+    /** Drop a session from all sets — call on deletion so ids don't accumulate forever. */
     open suspend fun forget(sessionId: String) {
         val ctx = appContext ?: return
         ctx.sessionPrefsDataStore.edit { prefs ->
             prefs[pinnedKey] = (prefs[pinnedKey] ?: emptySet()) - sessionId
             prefs[archivedKey] = (prefs[archivedKey] ?: emptySet()) - sessionId
+            prefs[mutedKey] = (prefs[mutedKey] ?: emptySet()) - sessionId
         }
     }
 

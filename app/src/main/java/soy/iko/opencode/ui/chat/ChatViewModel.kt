@@ -686,7 +686,7 @@ class ChatViewModel(
         loading: MutableStateFlow<Boolean>,
         error: MutableStateFlow<Boolean>,
         fetch: suspend (soy.iko.opencode.data.network.OpencodeApiClient) -> T,
-        onSuccess: (T) -> Unit,
+        onSuccess: suspend (T) -> Unit,
         onNull: () -> Unit,
         reloadTrigger: StateFlow<Int>,
     ) {
@@ -701,7 +701,7 @@ class ChatViewModel(
                     // ClientRequestException whose message embeds the full request URL
                     // (may contain auth/paths). Log only a scrubbed summary.
                     .onFailure { Log.w("ChatViewModel", "Failed to load $tag: ${safeExceptionSummary(it)}"); error.value = true }
-                    .getOrNull()?.let(onSuccess)
+                    .getOrNull()?.let { onSuccess(it) }
                 loading.value = false
             }
         }
@@ -758,6 +758,16 @@ class ChatViewModel(
                 // this collector does, including transient SSE drops and the cold-start
                 // restore path — would drop a legitimately queued/recovered follow-up.
                 _selectedAgent.value = null
+                // Apply the user's persisted preferred-agent for this new session/load, so a
+                // user who always runs a specific agent doesn't have to pick it every session.
+                // No-op when the preference is empty (the server default applies). Read here
+                // (not in the agent-catalog onSuccess) because the catalog loads once per
+                // connection while this reset fires per-session-open; setting it once on
+                // connect is enough and avoids re-applying it on every catalog refresh.
+                runCatchingCancellable {
+                    val pref = container.settingsStore.preferredAgentName.first()
+                    if (pref.isNotEmpty()) _selectedAgent.value = pref
+                }
                 _sessionTitle.value = null
                 // Resolve the app-bar title via REST for THIS connection. Launched from the same
                 // block that just nulled _sessionTitle (and cancelled the previous fetch) so it can
@@ -864,12 +874,21 @@ class ChatViewModel(
             onSuccess = { resp ->
                 val options = resp.toOptions()
                 _models.value = options
-                // Only (re)apply the server default when there's no valid current
-                // selection. On re-fetch/reconnect/Retry the user's chosen model must
-                // survive — keep it as long as it's still present in the refreshed list.
+                // Only (re)apply the default when there's no valid current selection. On
+                // re-fetch/reconnect/Retry the user's chosen model must survive — keep it as
+                // long as it's still present in the refreshed list. When there's no current
+                // selection, prefer the user's persisted default-model preference (if it's in
+                // the list) over the server default, so a user who always picks a specific
+                // model doesn't have to pick it every new session.
                 val current = _selectedModel.value
                 if (current == null || options.none { it.ref == current.ref }) {
-                    _selectedModel.value = resp.defaultOption(options)
+                    val prefId = runCatchingCancellable {
+                        container.settingsStore.preferredModelId.first()
+                    }.getOrDefault("")
+                    val preferredOption = if (prefId.isNotEmpty()) {
+                        options.firstOrNull { it.modelID == prefId }
+                    } else null
+                    _selectedModel.value = preferredOption ?: resp.defaultOption(options)
                 }
             },
             onNull = { _models.value = emptyList(); _selectedModel.value = null },

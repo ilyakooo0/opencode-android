@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -39,7 +40,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.invisibleToUser
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -53,12 +56,14 @@ import kotlinx.coroutines.withContext
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BrokenImage
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.MoreVert
 import soy.iko.opencode.R
 import soy.iko.opencode.data.model.FilePart
 import soy.iko.opencode.data.model.ServerProfile
 import soy.iko.opencode.data.model.sourcePath
 import soy.iko.opencode.data.network.HttpClientFactory
 import soy.iko.opencode.data.network.NetworkConfig
+import soy.iko.opencode.util.runCatchingCancellable
 
 /**
  * Carries the bits needed to load an image off the opencode server: the base URL (for
@@ -243,7 +248,7 @@ fun RemoteImage(part: FilePart, ctx: ImageLoadContext, modifier: Modifier = Modi
  * Fullscreen zoomable image viewer opened by tapping an inline [RemoteImage]. Supports
  * pinch-to-zoom and pan via [detectTransformGestures], double-tap to toggle zoom, and
  * re-centers when zoom returns to 1×. Uses a non-interactive Dialog window so it overlays
- * the whole screen.
+ * the whole screen. Offers Save-to-gallery and Share actions via the top bar.
  */
 @Composable
 private fun FullscreenImageViewer(
@@ -257,6 +262,7 @@ private fun FullscreenImageViewer(
     var offsetX by remember { mutableFloatStateOf(0f) }
     var offsetY by remember { mutableFloatStateOf(0f) }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     // Double-tap zoom tween, collapsed to an instant snap under reduced motion. Resolved in
     // the composable body (not inside the pointerInput coroutine) since it reads the
     // composition's LocalReducedMotion.
@@ -267,6 +273,11 @@ private fun FullscreenImageViewer(
     // a continuous motion rather than a snap.
     var dragOffsetY by remember { mutableFloatStateOf(0f) }
     val dismissThreshold = NetworkConfig.imageViewerSwipeDismissThreshold
+    var showOverflow by remember { mutableStateOf(false) }
+    val saveLabel = stringResource(R.string.save_image)
+    val shareLabel = stringResource(R.string.share_image)
+    val savedLabel = stringResource(R.string.image_saved)
+    val saveFailedLabel = stringResource(R.string.image_save_failed)
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
@@ -365,6 +376,71 @@ private fun FullscreenImageViewer(
                     tint = androidx.compose.ui.graphics.Color.White,
                 )
             }
+            // Overflow with Save-to-gallery and Share. Save decodes the request's bytes via
+            // Coil and writes them to MediaStore (Pictures/opencode); Share fires ACTION_SEND
+            // with a content Uri. Both run off the main thread on the coroutine scope.
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .windowInsetsPadding(WindowInsets.statusBars)
+                    .padding(start = 8.dp),
+            ) {
+                androidx.compose.material3.IconButton(onClick = { showOverflow = true }) {
+                    Icon(
+                        Icons.Filled.MoreVert,
+                        contentDescription = stringResource(R.string.more_options),
+                        tint = androidx.compose.ui.graphics.Color.White,
+                    )
+                }
+                androidx.compose.material3.DropdownMenu(
+                    expanded = showOverflow,
+                    onDismissRequest = { showOverflow = false },
+                ) {
+                    androidx.compose.material3.DropdownMenuItem(
+                        text = { Text(saveLabel) },
+                        onClick = {
+                            showOverflow = false
+                            scope.launch {
+                                val ok = runCatchingCancellable { saveImageToGallery(context, request, contentDescription) }.isSuccess
+                                showToast(context, if (ok) savedLabel else saveFailedLabel)
+                            }
+                        },
+                    )
+                    androidx.compose.material3.DropdownMenuItem(
+                        text = { Text(shareLabel) },
+                        onClick = {
+                            showOverflow = false
+                            scope.launch {
+                                runCatchingCancellable { shareImage(context, request, contentDescription) }
+                                    .onFailure { showToast(context, saveFailedLabel) }
+                            }
+                        },
+                    )
+                }
+            }
+            // Show the alt text / filename as a caption at the bottom of the viewer so a user
+            // can tell what the image is (e.g. an agent-named diagram) without leaving fullscreen.
+            // The contentDescription is already used by the image itself for TalkBack; the caption
+            // is hidden from a11y here to avoid double-announcing.
+            if (contentDescription.isNotBlank() && contentDescription != stringResource(R.string.image)) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.5f))
+                        .windowInsetsPadding(WindowInsets.navigationBars)
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                ) {
+                    Text(
+                        contentDescription,
+                        color = androidx.compose.ui.graphics.Color.White,
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 2,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        modifier = Modifier.semantics { invisibleToUser() },
+                    )
+                }
+            }
         }
     }
 }
@@ -414,4 +490,71 @@ private fun BrokenImageIcon() {
         contentDescription = stringResource(R.string.image_failed),
         tint = MaterialTheme.colorScheme.onSurfaceVariant,
     )
+}
+
+/** Decode the image behind [request] via Coil and write it to the system MediaStore
+ *  (Pictures/opencode) so it appears in the gallery. Returns true on success. Runs on a
+ *  background dispatcher; callers should use runCatchingCancellable. */
+private suspend fun saveImageToGallery(
+    context: android.content.Context,
+    request: ImageRequest,
+    displayName: String,
+): Boolean {
+    val bitmap = decodeRequestBitmap(context, request) ?: return false
+    val resolver = context.contentResolver
+    val name = (displayName.ifBlank { "opencode-image" }).take(100)
+    val timestamp = System.currentTimeMillis() / 1000
+    val values = android.content.ContentValues().apply {
+        put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, "$name-${timestamp}.png")
+        put(android.provider.MediaStore.Images.Media.MIME_TYPE, "image/png")
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, "Pictures/opencode")
+            put(android.provider.MediaStore.Images.Media.IS_PENDING, 1)
+        }
+    }
+    val uri = resolver.insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+        ?: return false
+    return runCatching {
+        resolver.openOutputStream(uri)?.use { out ->
+            bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
+        } ?: error("no output stream")
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            values.clear()
+            values.put(android.provider.MediaStore.Images.Media.IS_PENDING, 0)
+            resolver.update(uri, values, null, null)
+        }
+        true
+    }.getOrDefault(false)
+}
+
+/** Decode the image behind [request] to a Bitmap via Coil's ImageLoader. Returns null on
+ *  failure. Suspending so callers run it on a background dispatcher. */
+private suspend fun decodeRequestBitmap(context: android.content.Context, request: ImageRequest): android.graphics.Bitmap? {
+    return soy.iko.opencode.util.runCatchingCancellableSuspend {
+        val loader = coil.Coil.imageLoader(context)
+        val result = loader.execute(request)
+        (result.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
+    }.getOrNull()
+}
+
+/** Share the image behind [request] via ACTION_SEND. Writes a temp file to the cache dir and
+ *  grants the chooser read access via FileProvider. */
+private suspend fun shareImage(
+    context: android.content.Context,
+    request: ImageRequest,
+    displayName: String,
+) {
+    val bitmap = decodeRequestBitmap(context, request) ?: error("decode failed")
+    val name = (displayName.ifBlank { "opencode-image" }).take(80)
+    val file = java.io.File(context.cacheDir, "share/$name-${System.currentTimeMillis()}.png")
+    file.parentFile?.mkdirs()
+    file.outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+    val authority = "${context.packageName}.fileprovider"
+    val uri = androidx.core.content.FileProvider.getUriForFile(context, authority, file)
+    val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+        type = "image/png"
+        putExtra(android.content.Intent.EXTRA_STREAM, uri)
+        addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    context.startActivity(android.content.Intent.createChooser(intent, displayName))
 }

@@ -31,6 +31,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -132,10 +133,12 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.invisibleToUser
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -218,6 +221,8 @@ fun ChatScreen(
     val shareUrl by vm.shareUrl.collectAsStateWithLifecycle()
     val reconnecting by vm.reconnecting.collectAsStateWithLifecycle()
     val sendOnEnter by container.settingsStore.sendOnEnter.collectAsStateWithLifecycle(initialValue = true)
+    val preferredModelId by container.settingsStore.preferredModelId.collectAsStateWithLifecycle(initialValue = "")
+    val compactSpacing by container.settingsStore.compactMessageSpacing.collectAsStateWithLifecycle(initialValue = false)
     val isOnline by container.isOnline.collectAsStateWithLifecycle()
     val haptics = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
@@ -952,6 +957,28 @@ fun ChatScreen(
             if (index >= 0) runCatchingCancellable { listState.animateScrollToItem(index) }
         }
 
+        // Scroll to bottom when the IME opens and the user was already pinned to bottom, so the
+        // latest reply stays visible as the composer rises. Without this the IME can obscure the
+        // last message even though the user was reading it a moment ago. WindowInsets.ime is a
+        // @Composable property, so we read it inside a snapshotFlow registered in the composable
+        // scope; the flow re-emits whenever the IME inset changes (open/close transitions).
+        val density = androidx.compose.ui.platform.LocalDensity.current
+        var wasImeOpen by remember { mutableStateOf(false) }
+        val imeBottomPx = WindowInsets.ime.getBottom(density)
+        androidx.compose.runtime.LaunchedEffect(imeBottomPx, listItems.isNotEmpty(), isPinnedToBottom) {
+            if (listItems.isEmpty()) return@LaunchedEffect
+            val imeOpen = imeBottomPx > 0
+            // Scroll to bottom only on the open transition (not close) and only when the user
+            // was already pinned to bottom — otherwise we'd yank them out of a mid-history read.
+            val shouldScroll = imeOpen && !wasImeOpen && isPinnedToBottom
+            if (shouldScroll) {
+                runCatchingCancellable {
+                    listState.animateScrollToItem(if (running) listItems.size else listItems.lastIndex)
+                }
+            }
+            wasImeOpen = imeOpen
+        }
+
         LaunchedEffect(Unit) {
             var prevSize = 0
             var prevLen = 0
@@ -1062,57 +1089,10 @@ fun ChatScreen(
                 // Reserve top space when the banner is visible so it doesn't overlap the
                 // first message / state content. (topPad computed above.)
                 if (loading && messages.isEmpty()) {
-                    val loadingLabel = stringResource(R.string.loading)
                     // Skeleton bubbles pre-structure the layout so the perceived load is faster
                     // than a bare centered spinner and the first real messages pop into an
-                    // already-shaped list instead of a blank-then-pop. Alpha pulses (gated by
-                    // reduced-motion) to convey ongoing work; the column carries the a11y label.
-                    val reducedMotion = LocalReducedMotion.current
-                    val transition = rememberInfiniteTransition(label = "skeleton")
-                    val pulse by transition.animateFloat(
-                        initialValue = 0.35f,
-                        targetValue = 0.7f,
-                        animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
-                        label = "skeletonAlpha",
-                    )
-                    val skeletonAlpha = if (reducedMotion) 0.5f else pulse
-                    val skeletonColor = MaterialTheme.colorScheme.surfaceVariant
-                    @Composable
-                    fun bar(widthFraction: Float) {
-                        Box(
-                            Modifier
-                                .fillMaxWidth(widthFraction)
-                                .height(14.dp)
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(skeletonColor)
-                                .alpha(skeletonAlpha),
-                        )
-                    }
-                    Column(
-                        modifier = Modifier
-                            .align(Alignment.TopCenter)
-                            .padding(top = topPad)
-                            .padding(16.dp)
-                            .fillMaxWidth()
-                            .semantics { contentDescription = loadingLabel },
-                        verticalArrangement = Arrangement.spacedBy(14.dp),
-                    ) {
-                        repeat(4) { i ->
-                            val left = i % 2 == 0
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = if (left) Arrangement.Start else Arrangement.End,
-                            ) {
-                                Column(
-                                    modifier = Modifier.fillMaxWidth(if (left) 0.7f else 0.55f),
-                                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                                ) {
-                                    bar(1f)
-                                    bar(0.8f)
-                                }
-                            }
-                        }
-                    }
+                    // already-shaped list instead of a blank-then-pop.
+                    ChatSkeleton(topPad = topPad)
                 } else if (loadError && messages.isEmpty()) {
                     // A failed load with nothing to show. Distinct from the empty
                     // conversation state below — the conversation isn't empty, it
@@ -1132,18 +1112,11 @@ fun ChatScreen(
                         }
                     }
                 } else if (messages.isEmpty() && running) {
-                    // A run just started but no parts have arrived yet — the empty
-                    // list with only the trailing "working…" row looks broken, so
-                    // surface a clear starting state until the first part streams in.
-                    val workingText = stringResource(R.string.working)
-                    Column(
-                        modifier = Modifier.align(Alignment.Center).padding(top = topPad).padding(24.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 3.dp)
-                        Spacer(Modifier.size(12.dp))
-                        Text(workingText, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
+                    // A run just started but no parts have arrived yet — the empty list with
+                    // only the trailing "working…" row looks broken. Reuse the skeleton bubbles
+                    // from the initial-load branch so the perceived start latency is lower and
+                    // the first real assistant part pops into an already-shaped list.
+                    ChatSkeleton(topPad = topPad)
                 } else if (messages.isEmpty()) {
                     EmptyConversation(
                         onSuggestion = {
@@ -1178,7 +1151,9 @@ fun ChatScreen(
                         end = 16.dp,
                         bottom = 16.dp + NetworkConfig.chatListFabInsetDp.dp,
                     ),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                    // Compact spacing (8dp) vs the default 16dp — a power-user toggle to fit
+                    // more conversation on screen without scrolling as much.
+                    verticalArrangement = Arrangement.spacedBy(if (compactSpacing) 8.dp else 16.dp),
                 ) {
                     items(
                         items = listItems,
@@ -1442,9 +1417,18 @@ fun ChatScreen(
                     BadgedBox(
                         badge = {
                             if (newContentCount > 0) {
-                                val newContentLabel = stringResource(R.string.new_messages)
+                                // Merge the count into the badge announcement so TalkBack reads
+                                // "5 new messages" instead of the bare label and a separate number.
+                                val newContentLabel = pluralStringResource(
+                                    R.plurals.plurals_new_messages,
+                                    newContentCount,
+                                    newContentCount,
+                                )
                                 Badge(modifier = Modifier.semantics { contentDescription = newContentLabel }) {
-                                    Text(if (newContentCount > 99) "99+" else newContentCount.toString())
+                                    Text(
+                                        if (newContentCount > 99) "99+" else newContentCount.toString(),
+                                        modifier = Modifier.semantics { invisibleToUser() },
+                                    )
                                 }
                             }
                         },
@@ -1706,6 +1690,10 @@ fun ChatScreen(
             onSelect = { vm.selectModel(it) },
             onRetry = { vm.reloadModels() },
             onDismiss = { showModelPicker = false },
+            preferredModelId = preferredModelId,
+            onSetPreferredModel = { id ->
+                scope.launch { runCatchingCancellable { container.settingsStore.setPreferredModelId(id) } }
+            },
         )
     }
 
@@ -2691,6 +2679,61 @@ private fun DateSeparator(label: String) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
             )
+        }
+    }
+}
+
+/** Skeleton placeholder bubbles for the chat loading and run-started states. Alpha pulses
+ *  (gated by reduced-motion) to convey ongoing work; the column carries the a11y label so
+ *  TalkBack announces "Loading" instead of reading the skeleton bars. Rendered as a
+ *  [BoxScope] extension so it can align itself to the top center of its host box. */
+@Composable
+private fun androidx.compose.foundation.layout.BoxScope.ChatSkeleton(topPad: androidx.compose.ui.unit.Dp) {
+    val loadingLabel = stringResource(R.string.loading)
+    val reducedMotion = LocalReducedMotion.current
+    val transition = rememberInfiniteTransition(label = "skeleton")
+    val pulse by transition.animateFloat(
+        initialValue = 0.35f,
+        targetValue = 0.7f,
+        animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
+        label = "skeletonAlpha",
+    )
+    val skeletonAlpha = if (reducedMotion) 0.5f else pulse
+    val skeletonColor = MaterialTheme.colorScheme.surfaceVariant
+    @Composable
+    fun bar(widthFraction: Float) {
+        Box(
+            Modifier
+                .fillMaxWidth(widthFraction)
+                .height(14.dp)
+                .clip(RoundedCornerShape(4.dp))
+                .background(skeletonColor)
+                .alpha(skeletonAlpha),
+        )
+    }
+    Column(
+        modifier = Modifier
+            .align(Alignment.TopCenter)
+            .padding(top = topPad)
+            .padding(16.dp)
+            .fillMaxWidth()
+            .semantics { contentDescription = loadingLabel },
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        repeat(4) { i ->
+            val left = i % 2 == 0
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = if (left) Arrangement.Start else Arrangement.End,
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth(if (left) 0.7f else 0.55f),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    bar(1f)
+                    bar(0.8f)
+                }
+            }
         }
     }
 }

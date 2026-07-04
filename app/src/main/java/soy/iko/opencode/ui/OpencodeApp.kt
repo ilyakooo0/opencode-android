@@ -17,10 +17,12 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.LayoutDirection
@@ -172,8 +174,29 @@ fun OpencodeApp(container: AppContainer) {
     val slideDir = if (LocalLayoutDirection.current == LayoutDirection.Rtl) -1 else 1
     // Adaptive: on wide screens (tablets / unfolded foldables) show the session list and
     // the open conversation side by side instead of a single-pane back stack.
+    // Posture-aware: a foldable in HALF_OPENED (tabletop/book) mode has a hinge across the
+    // content area — splitting there would place the list/detail boundary on the hinge, which
+    // is hard to read and interact with. Detect a FoldingFeature and suppress two-pane in
+    // those postures so the app falls back to a single-pane layout that respects the fold.
+    val windowContext = LocalContext.current
+    var foldState by remember { mutableStateOf<androidx.window.layout.FoldingFeature?>(null) }
+    androidx.compose.runtime.LaunchedEffect(windowContext) {
+        val activity = windowContext.findActivity()
+        if (activity != null) {
+            androidx.window.layout.WindowInfoTracker.getOrCreate(windowContext)
+                .windowLayoutInfo(activity)
+                .collect { info ->
+                    foldState = info.displayFeatures
+                        .filterIsInstance<androidx.window.layout.FoldingFeature>()
+                        .firstOrNull()
+                }
+        }
+    }
+    val isHalfOpened = foldState?.state == androidx.window.layout.FoldingFeature.State.HALF_OPENED
     BoxWithConstraints {
-        val isTwoPane = maxWidth >= NetworkConfig.twoPaneWidthThresholdDp.dp && connection != null
+        val isTwoPane = maxWidth >= NetworkConfig.twoPaneWidthThresholdDp.dp &&
+            connection != null &&
+            !isHalfOpened
         // On large screens, surface a navigation rail alongside the content so top-level
         // destinations (Sessions, Files, Search, …) are one tap away instead of buried in a
         // screen's overflow menu. Mirrors the standard large-screen M3 layout.
@@ -485,4 +508,13 @@ fun OpencodeApp(container: AppContainer) {
         }
     }
     }
+}
+
+/** Walk the Context wrapper chain to find the hosting Activity, so WindowInfoTracker can
+ *  observe the fold state. Returns null when the composable isn't hosted in an Activity
+ *  (e.g. a preview), in which case fold-awareness is skipped. */
+private tailrec fun android.content.Context.findActivity(): android.app.Activity? = when (this) {
+    is android.app.Activity -> this
+    is android.content.ContextWrapper -> baseContext.findActivity()
+    else -> null
 }

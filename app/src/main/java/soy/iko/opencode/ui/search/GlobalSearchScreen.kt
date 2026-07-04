@@ -168,12 +168,25 @@ fun GlobalSearchScreen(
                         }
                         if (state.truncated) {
                             item(key = "__truncated") {
-                                Text(
-                                    stringResource(R.string.search_truncated),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.padding(vertical = 4.dp),
-                                )
+                                // Surface that the search was capped AND offer a one-tap "search
+                                // more" so users with >50 sessions can page through older matches
+                                // instead of being stuck at the cap.
+                                Column(
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                ) {
+                                    Text(
+                                        stringResource(R.string.search_truncated),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    androidx.compose.material3.TextButton(
+                                        onClick = { vm.searchMore() },
+                                        enabled = !state.searching,
+                                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp),
+                                    ) {
+                                        Text(stringResource(R.string.search_more))
+                                    }
+                                }
                             }
                         }
                         items(state.results, key = { it.session.id }) { hit ->

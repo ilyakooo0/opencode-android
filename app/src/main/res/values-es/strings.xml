@@ -189,11 +189,19 @@
     <string name="no_commands_match">Ningún comando coincide con "%1$s".</string>
     <string name="load_failed">Error al cargar. Toca reintentar.</string>
     <string name="image_failed">Error al cargar la imagen</string>
+    <string name="save_image">Guardar en galería</string>
+    <string name="share_image">Compartir imagen</string>
+    <string name="image_saved">Imagen guardada en la galería</string>
+    <string name="image_save_failed">No se pudo guardar la imagen</string>
     <string name="search_models">Buscar modelos…</string>
     <string name="search_agents">Buscar agentes…</string>
     <string name="search_commands">Buscar comandos…</string>
     <string name="no_models_match">Ningún modelo coincide con "%1$s".</string>
     <string name="no_agents_match">Ningún agente coincide con "%1$s".</string>
+    <string name="set_as_default_model">Modelo predeterminado: %1$s</string>
+    <string name="default_model_current">Modelo predeterminado actual: %1$s</string>
+    <string name="set_as_default">Establecer como predeterminado</string>
+    <string name="clear_default">Quitar predeterminado</string>
 
     <!-- File browser -->
     <string name="search_files">Buscar archivos…</string>
@@ -389,6 +397,10 @@
     <string name="session_archive">Archivar</string>
     <string name="session_unarchive">Desarchivar</string>
     <string name="session_pinned">Fijada</string>
+    <string name="session_mark_unread">Marcar como no leída</string>
+    <string name="session_mute">Silenciar notificaciones</string>
+    <string name="session_unmute">Activar notificaciones</string>
+    <string name="session_muted_badge">Silenciada</string>
     <string name="show_archived">Mostrar archivadas</string>
     <string name="hide_archived">Ocultar archivadas</string>
     <string name="search_all">Buscar en todas las sesiones</string>
@@ -396,6 +408,7 @@
     <string name="search_all_hint">Buscar en todas las conversaciones…</string>
     <string name="search_no_matches">No hay mensajes coincidentes</string>
     <string name="search_truncated">Mostrando resultados solo de las sesiones más recientes.</string>
+    <string name="search_more">Buscar en más sesiones</string>
     <string name="search_all_start">Busca en tus conversaciones</string>
     <string name="search_all_start_hint">Escribe una palabra o frase para encontrarla en todas las sesiones.</string>
     <plurals name="search_results_count">
@@ -422,6 +435,8 @@
     <string name="chat_text_size_desc">Escala el texto de mensajes y código</string>
     <string name="wrap_code_blocks">Ajustar bloques de código</string>
     <string name="wrap_code_blocks_desc">Ajusta las líneas largas en vez de desplazarlas</string>
+    <string name="compact_message_spacing">Espaciado compacto de mensajes</string>
+    <string name="compact_message_spacing_desc">Menos espacio entre mensajes para mostrar más en pantalla.</string>
     <string name="reset">Restablecer</string>
     <string name="text_size_sample">El veloz murciélago hindú comía feliz cardillo.</string>
     <string name="text_scale_value">%1$d%%</string>
@@ -537,6 +552,10 @@
     <!-- Chat -->
     <string name="attachment_staging">Adjuntando…</string>
     <string name="new_messages">Mensajes nuevos</string>
+    <plurals name="plurals_new_messages">
+        <item quantity="one">%1$d mensaje nuevo</item>
+        <item quantity="other">%1$d mensajes nuevos</item>
+    </plurals>
 
     <!-- Session list -->
     <string name="session_archived">Sesión archivada</string>
@@ -567,6 +586,7 @@
 
     <!-- UI/UX batch: permisos, confirmaciones, indicaciones de búsqueda, accesibilidad -->
     <string name="permission_progress">%1$d de %2$d</string>
+    <string name="permission_waiting">El agente está esperando. Se rechazará automáticamente en %1$d min si no eliges.</string>
     <string name="action_continue">Continuar</string>
     <string name="summarize_confirm_title">¿Resumir la conversación?</string>
     <string name="summarize_confirm_text">Los mensajes anteriores se compactan en un resumen para liberar contexto. Esto no se puede deshacer aquí.</string>

@@ -308,11 +308,20 @@ fun ServerListScreen(
                         }
                         if (filtered.isEmpty()) {
                             item(key = "__no_match") {
-                                EmptyState(
-                                    icon = Icons.Filled.Search,
-                                    title = stringResource(R.string.no_server_matches),
+                                Column(
                                     modifier = Modifier.fillMaxWidth().padding(24.dp),
-                                )
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                ) {
+                                    EmptyState(
+                                        icon = Icons.Filled.Search,
+                                        title = stringResource(R.string.no_server_matches),
+                                    )
+                                    if (serverQuery.isNotEmpty()) {
+                                        TextButton(onClick = { serverQuery = "" }) {
+                                            Text(stringResource(R.string.clear_search))
+                                        }
+                                    }
+                                }
                             }
                         }
                         items(filtered, key = { it.id }) { profile ->

@@ -28,6 +28,9 @@ class SettingsStore(context: Context) {
     private val sessionSortModeKey = stringPreferencesKey("session_sort_mode")
     private val sessionSortDescendingKey = booleanPreferencesKey("session_sort_descending")
     private val sessionShowArchivedKey = booleanPreferencesKey("session_show_archived")
+    private val preferredModelIdKey = stringPreferencesKey("preferred_model_id")
+    private val preferredAgentNameKey = stringPreferencesKey("preferred_agent_name")
+    private val compactMessageSpacingKey = booleanPreferencesKey("compact_message_spacing")
 
     companion object {
         /** Bounds for the chat text-size multiplier so the UI can't be scaled into
@@ -105,6 +108,23 @@ class SettingsStore(context: Context) {
         prefs[sessionShowArchivedKey] ?: false
     }
 
+    /** Preferred default model id for new sessions. Empty means "use the server default".
+     *  A user who always picks a specific model doesn't have to pick it every session. */
+    val preferredModelId: Flow<String> = appContext.settingsDataStore.data.map { prefs ->
+        prefs[preferredModelIdKey] ?: ""
+    }
+
+    /** Preferred default agent name for new sessions. Empty means "use the server default". */
+    val preferredAgentName: Flow<String> = appContext.settingsDataStore.data.map { prefs ->
+        prefs[preferredAgentNameKey] ?: ""
+    }
+
+    /** When true, chat message bubbles use a tighter vertical spacing (8dp vs the default 16dp)
+     *  so power users can fit more conversation on screen. Defaults to false (the design default). */
+    val compactMessageSpacing: Flow<Boolean> = appContext.settingsDataStore.data.map { prefs ->
+        prefs[compactMessageSpacingKey] ?: false
+    }
+
     suspend fun setThemeMode(mode: ThemeMode) {
         appContext.settingsDataStore.edit { it[themeKey] = mode.name }
     }
@@ -145,8 +165,27 @@ class SettingsStore(context: Context) {
     suspend fun setSessionSortDescending(descending: Boolean) {
         appContext.settingsDataStore.edit { it[sessionSortDescendingKey] = descending }
     }
-
     suspend fun setSessionShowArchived(show: Boolean) {
-        appContext.settingsDataStore.edit { it[sessionShowArchivedKey] = show }
+        appContext.settingsDataStore.edit {
+            it[sessionShowArchivedKey] = show
+        }
+    }
+
+    suspend fun setPreferredModelId(modelId: String) {
+        appContext.settingsDataStore.edit {
+            if (modelId.isEmpty()) it.remove(preferredModelIdKey) else it[preferredModelIdKey] = modelId
+        }
+    }
+
+    suspend fun setPreferredAgentName(agentName: String) {
+        appContext.settingsDataStore.edit {
+            if (agentName.isEmpty()) it.remove(preferredAgentNameKey) else it[preferredAgentNameKey] = agentName
+        }
+    }
+
+    suspend fun setCompactMessageSpacing(enabled: Boolean) {
+        appContext.settingsDataStore.edit {
+            it[compactMessageSpacingKey] = enabled
+        }
     }
 }

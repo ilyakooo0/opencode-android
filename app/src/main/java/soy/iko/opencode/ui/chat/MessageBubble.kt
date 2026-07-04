@@ -44,6 +44,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.animation.togetherWith
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -443,79 +444,90 @@ private fun UserBubble(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    when (sendStatus) {
-                        MessageSendStatus.SENDING -> {
-                            CircularProgressIndicator(
-                                Modifier.size(12.dp),
-                                strokeWidth = 1.5.dp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            Text(
-                                stringResource(R.string.message_sending),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        MessageSendStatus.FAILED -> {
-                            // Tap-to-retry: the whole failed label is tappable to re-send (far more
-                            // discoverable than relying on the transient snackbar). A dismiss (×) button
-                            // removes the abandoned message entirely, since its text will never match a
-                            // real server message and would otherwise linger forever.
-                            val retryModifier = if (onRetry != null) {
-                                Modifier.clickable(
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    indication = ripple(),
-                                    role = Role.Button,
-                                    onClick = {
-                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                        onRetry()
-                                    },
-                                ).padding(vertical = 2.dp)
-                            } else {
-                                Modifier.padding(vertical = 2.dp)
-                            }
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = retryModifier.semantics(mergeDescendants = true) {
-                                    contentDescription = context.getString(R.string.message_send_failed) +
-                                        ". " + context.getString(R.string.tap_to_retry)
-                                },
-                            ) {
-                                Icon(
-                                    Icons.Filled.Error,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(12.dp),
-                                    tint = MaterialTheme.colorScheme.error,
+                    // Crossfade the send-status slot so SENDING → FAILED → null transitions
+                    // don't snap; a subtle fade reads as a polish detail rather than a pop.
+                    androidx.compose.animation.AnimatedContent(
+                        targetState = sendStatus,
+                        transitionSpec = {
+                            androidx.compose.animation.fadeIn() togetherWith
+                                androidx.compose.animation.fadeOut()
+                        },
+                        label = "send_status",
+                    ) { status ->
+                        when (status) {
+                            MessageSendStatus.SENDING -> {
+                                CircularProgressIndicator(
+                                    Modifier.size(12.dp),
+                                    strokeWidth = 1.5.dp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                                 Text(
-                                    stringResource(R.string.message_send_failed),
+                                    stringResource(R.string.message_sending),
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.padding(start = 4.dp),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
-                            if (onDismiss != null) {
-                                // No size override on the IconButton: it keeps the default 48dp
-                                // touch target (only the inner Icon is shrunk to 14dp). An earlier
-                                // `.size(20.dp)` here clamped the target to 20dp — well under the
-                                // M3 minimum — which made the discard action hard to hit. Matches
-                                // the pattern used by every other inline IconButton in this file.
-                                IconButton(
-                                    onClick = {
-                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                        onDismiss()
+                            MessageSendStatus.FAILED -> {
+                                // Tap-to-retry: the whole failed label is tappable to re-send (far more
+                                // discoverable than relying on the transient snackbar). A dismiss (×) button
+                                // removes the abandoned message entirely, since its text will never match a
+                                // real server message and would otherwise linger forever.
+                                val retryModifier = if (onRetry != null) {
+                                    Modifier.clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = ripple(),
+                                        role = Role.Button,
+                                        onClick = {
+                                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            onRetry()
+                                        },
+                                    ).padding(vertical = 2.dp)
+                                } else {
+                                    Modifier.padding(vertical = 2.dp)
+                                }
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = retryModifier.semantics(mergeDescendants = true) {
+                                        contentDescription = context.getString(R.string.message_send_failed) +
+                                            ". " + context.getString(R.string.tap_to_retry)
                                     },
                                 ) {
                                     Icon(
-                                        Icons.Filled.Close,
-                                        contentDescription = stringResource(R.string.outbox_discard),
-                                        modifier = Modifier.size(14.dp),
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        Icons.Filled.Error,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(12.dp),
+                                        tint = MaterialTheme.colorScheme.error,
+                                    )
+                                    Text(
+                                        stringResource(R.string.message_send_failed),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.error,
+                                        modifier = Modifier.padding(start = 4.dp),
                                     )
                                 }
+                                if (onDismiss != null) {
+                                    // No size override on the IconButton: it keeps the default 48dp
+                                    // touch target (only the inner Icon is shrunk to 14dp). An earlier
+                                    // `.size(20.dp)` here clamped the target to 20dp — well under the
+                                    // M3 minimum — which made the discard action hard to hit. Matches
+                                    // the pattern used by every other inline IconButton in this file.
+                                    IconButton(
+                                        onClick = {
+                                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            onDismiss()
+                                        },
+                                    ) {
+                                        Icon(
+                                            Icons.Filled.Close,
+                                            contentDescription = stringResource(R.string.outbox_discard),
+                                            modifier = Modifier.size(14.dp),
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                }
                             }
+                            null -> {}
                         }
-                        null -> {}
                     }
                     if (isEdited && sendStatus == null) {
                         Text(

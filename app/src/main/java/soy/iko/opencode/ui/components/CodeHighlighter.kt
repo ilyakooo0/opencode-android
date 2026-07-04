@@ -228,6 +228,183 @@ fun highlightLine(line: String, syntax: FileSyntax, palette: HighlightPalette): 
     return builder.toAnnotatedString()
 }
 
+/**
+ * State carried across lines while highlighting a multi-line file, so block comments
+ * (C-family slash-star, Ruby =begin/=end) and triple-quoted strings (Python/Kotlin)
+ * are colored correctly on every line they span, not just the opening line.
+ *
+ * The per-line [highlightLine] carries no state and is still the right call for chat
+ * code fences (which render a whole snippet in one Text). The file viewer renders
+ * line-by-line and should use the stateful [highlightLine] overload instead so a
+ * C-family file with a 50-line block comment doesn't lose highlighting on lines 2..49.
+ */
+class BlockCommentState {
+    /** True when the previous line ended inside an unclosed C-family block comment. */
+    internal var inBlockComment: Boolean = false
+    /** True when the previous line ended inside an unclosed triple-quoted string. */
+    internal var inTripleString: Boolean = false
+}
+
+/** Highlight a single line, carrying [state] across calls so multi-line block comments and
+ *  triple-quoted strings stay colored on every line they span. Mutates [state] in place.
+ *  Use this from line-by-line renderers (the file viewer); use [highlightLine] / [highlightCode]
+ *  for self-contained snippets (chat code fences) where cross-line state isn't worth tracking. */
+fun highlightLine(line: String, syntax: FileSyntax, palette: HighlightPalette, state: BlockCommentState): AnnotatedString {
+    val lang = syntax.lang
+    if (lang == Language.NONE) return AnnotatedString(line)
+    val keywords = syntax.keywords
+    val builder = AnnotatedString.Builder(line.length + 8)
+    val baseStyle = SpanStyle(color = palette.base, fontFamily = FontFamily.Monospace)
+    val mono = FontFamily.Monospace
+    val commentStyle = SpanStyle(color = palette.comment, fontStyle = FontStyle.Italic, fontFamily = mono)
+    val stringStyle = SpanStyle(color = palette.string, fontFamily = mono)
+
+    // If we're continuing inside an open block comment, scan for the closing `*/` first;
+    // everything before it is comment-colored. If none exists on this line, the whole line
+    // is comment-colored and we stay in the block.
+    if (state.inBlockComment) {
+        val closeIdx = line.indexOf("*/")
+        if (closeIdx < 0) {
+            builder.withStyle(commentStyle) { append(line) }
+            return builder.toAnnotatedString()
+        }
+        val end = closeIdx + 2
+        builder.withStyle(commentStyle) { append(line.substring(0, end)) }
+        state.inBlockComment = false
+        // Continue highlighting the remainder of the line normally.
+        var i = end
+        val n = line.length
+        while (i < n) {
+            val c = line[i]
+            // An opening `/*` inside the remainder re-enters the block.
+            if (isCBlockCommentOpen(c, line, i, n, lang)) {
+                val close = findBlockCommentEnd(line, i + 2)
+                if (close < 0) {
+                    builder.withStyle(commentStyle) { append(line.substring(i)) }
+                    state.inBlockComment = true
+                    return builder.toAnnotatedString()
+                }
+                builder.withStyle(commentStyle) { append(line.substring(i, close)) }
+                i = close
+                continue
+            }
+            val emitted = emitToken(builder, line, i, lang, keywords, palette, baseStyle, mono)
+            if (emitted.consumed) {
+                i = emitted.nextIndex
+            } else {
+                builder.withStyle(baseStyle) { append(c) }
+                i++
+            }
+        }
+        return builder.toAnnotatedString()
+    }
+
+    // If we're continuing inside a triple-quoted string, scan for the closing `"""`.
+    if (state.inTripleString) {
+        val closeIdx = line.indexOf("\"\"\"")
+        if (closeIdx < 0) {
+            builder.withStyle(stringStyle) { append(line) }
+            return builder.toAnnotatedString()
+        }
+        val end = closeIdx + 3
+        builder.withStyle(stringStyle) { append(line.substring(0, end)) }
+        state.inTripleString = false
+        var i = end
+        val n = line.length
+        while (i < n) {
+            val c = line[i]
+            val emitted = emitToken(builder, line, i, lang, keywords, palette, baseStyle, mono)
+            if (emitted.consumed) {
+                i = emitted.nextIndex
+            } else {
+                builder.withStyle(baseStyle) { append(c) }
+                i++
+            }
+        }
+        return builder.toAnnotatedString()
+    }
+
+    // Not currently in a block — run the normal per-line scanner, but intercept `/*` and `"""`
+    // openings so we can flip state and color the rest of the line accordingly.
+    var i = 0
+    val n = line.length
+    while (i < n) {
+        val c = line[i]
+        // Block comment open: C-family `/* ... */`. (Ruby's `=begin`/`=end` is handled below.)
+        if (isCBlockCommentOpen(c, line, i, n, lang)) {
+            val close = findBlockCommentEnd(line, i + 2)
+            if (close < 0) {
+                builder.withStyle(commentStyle) { append(line.substring(i)) }
+                state.inBlockComment = true
+                return builder.toAnnotatedString()
+            }
+            builder.withStyle(commentStyle) { append(line.substring(i, close)) }
+            i = close
+            continue
+        }
+        // Triple-quoted string open: Python/Kotlin `""" ... """`. Only track for languages
+        // that actually have triple-quoted strings; in plain C/JS a `"` run is just adjacent
+        // string literals.
+        if (isTripleStringOpen(c, line, i, n, lang)) {
+            val close = line.indexOf("\"\"\"", i + 3)
+            if (close < 0) {
+                builder.withStyle(stringStyle) { append(line.substring(i)) }
+                state.inTripleString = true
+                return builder.toAnnotatedString()
+            }
+            val end = close + 3
+            builder.withStyle(stringStyle) { append(line.substring(i, end)) }
+            i = end
+            continue
+        }
+        // Ruby `=begin` … `=end` block comment (must be at the start of the line per Ruby
+        // syntax; we check the leading-run here).
+        if (isRubyBlockCommentOpen(c, line, i, lang)) {
+            val close = line.indexOf("=end", i + 6)
+            if (close < 0) {
+                builder.withStyle(commentStyle) { append(line.substring(i)) }
+                state.inBlockComment = true
+                return builder.toAnnotatedString()
+            }
+            val end = close + 4
+            builder.withStyle(commentStyle) { append(line.substring(i, end)) }
+            i = end
+            continue
+        }
+        val emitted = emitToken(builder, line, i, lang, keywords, palette, baseStyle, mono)
+        if (emitted.consumed) {
+            i = emitted.nextIndex
+        } else {
+            builder.withStyle(baseStyle) { append(c) }
+            i++
+        }
+    }
+    return builder.toAnnotatedString()
+}
+
+/** Index just past the closing block-comment delimiter for a block comment opened at [from],
+ *  or -1 if the line ends before the block closes. */
+private fun findBlockCommentEnd(line: String, from: Int): Int {
+    val idx = line.indexOf("*/", from)
+    return if (idx < 0) -1 else idx + 2
+}
+
+/** True when [line] at [i] opens a C-family block comment (`/` followed by `*`). */
+private fun isCBlockCommentOpen(c: Char, line: String, i: Int, n: Int, lang: Language): Boolean =
+    c == '/' && i + 1 < n && line[i + 1] == '*' && lang == Language.C_FAMILY
+
+/** True when [line] at [i] opens a triple-quoted string (three double-quotes), for languages
+ *  that support it (Python, Kotlin/C-family). */
+private fun isTripleStringOpen(c: Char, line: String, i: Int, n: Int, lang: Language): Boolean =
+    c == '"' && i + 2 < n && line[i + 1] == '"' && line[i + 2] == '"' &&
+        (lang == Language.PYTHON || lang == Language.C_FAMILY)
+
+/** True when [line] at [i] opens a Ruby `=begin` block comment. Must be at the start of the
+ *  line or preceded by whitespace per Ruby syntax. */
+private fun isRubyBlockCommentOpen(c: Char, line: String, i: Int, lang: Language): Boolean =
+    lang == Language.RUBY && c == '=' && line.startsWith("=begin", i) &&
+        (i == 0 || line[i - 1] == ' ' || line[i - 1] == '\t')
+
 /** Result of attempting to emit one token starting at [start]: the next scan index and
  *  whether a token was consumed (vs. falling through to the default plain-text emit). */
 private data class EmitResult(val nextIndex: Int, val consumed: Boolean)

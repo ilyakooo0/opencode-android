@@ -233,6 +233,13 @@ open class AppContainer private constructor(
     private val _unread = MutableStateFlow<Map<String, Int>>(emptyMap())
     open val unread: StateFlow<Map<String, Int>> = _unread.asStateFlow()
 
+    /** Session ids the user has muted. A muted session doesn't badge unread (the count is
+     *  still tracked internally so unmuting can restore it, but the badge and completion
+     *  notification are suppressed). Persisted via SessionPrefsStore so the choice survives
+     *  process death. */
+    private val _mutedSessions = MutableStateFlow<Set<String>>(emptySet())
+    open val mutedSessions: StateFlow<Set<String>> = _mutedSessions.asStateFlow()
+
     /** True when any assistant run is actively streaming across all sessions. Drives the
      *  disconnect confirmation on the session list (disconnecting mid-run kills it). */
     private val _anyRunActive = MutableStateFlow(false)
@@ -288,6 +295,34 @@ open class AppContainer private constructor(
 
     /** Mark a session as read (clear its unread badge) — the "Mark read" notification action. */
     open fun markSessionRead(id: String) = clearUnread(id)
+
+    /** Mark a session as unread with a count of 1 (or restore a prior count). Used by the
+     *  session list's "Mark as unread" overflow action so a user can re-flag a conversation
+     *  they want to revisit. No-op when the session is the one currently being viewed — a
+     *  viewed session clears its own unread badge via [setCurrentSession], so marking it
+     *  unread would race and immediately clear. Muted sessions are still marked (the count is
+     *  tracked so unmuting restores it) but the list UI hides the badge while muted. */
+    open fun markSessionUnread(id: String, count: Int = 1) {
+        if (id == _currentSession.value) return
+        _unread.update { it + (id to count) }
+    }
+
+    /** Toggle a session's mute state. A muted session suppresses the unread badge and the
+     *  completion notification so a noisy conversation doesn't keep interrupting. Persisted
+     *  via SessionPrefsStore so it survives process death. */
+    fun toggleSessionMute(id: String) {
+        val muted = id in _mutedSessions.value
+        val next = if (muted) _mutedSessions.value - id else _mutedSessions.value + id
+        _mutedSessions.value = next
+        appContext?.let {
+            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                runCatchingCancellable { sessionPrefsStore.setMuted(id, !muted) }
+            }
+        }
+    }
+
+    /** True when [id] is muted (unread badge and completion notification suppressed). */
+    fun isSessionMuted(id: String): Boolean = id in _mutedSessions.value
 
     /** Clear every session's unread badge at once — the session list's "Mark all read" action. */
     open fun clearAllUnread() {
@@ -678,21 +713,28 @@ open class AppContainer private constructor(
                     // A stale earlier check would race a badge — and a dedup entry — back
                     // in for the session that's actually on screen.
                     if (sid != _currentSession.value) {
-                        // Increment the unread count once per distinct *message*, not per
-                        // event: a single reply emits many message.updated / message.part.
-                        // updated events (one per streamed token, plus cost/token refreshes),
-                        // which would otherwise inflate the badge into the dozens/hundreds.
-                        val messageId = messageIdOfEvent(event)
-                        val counted = unreadMessageIds.getOrPut(sid) {
-                            java.util.Collections.synchronizedSet(mutableSetOf())
-                        }
-                        if (messageId == null || counted.add(messageId)) {
-                            _unread.update { current ->
-                                // Guard again inside the atomic update lambda so a retry
-                                // (or an open that landed just now) can't reintroduce the
-                                // badge for the session on screen.
-                                if (sid == _currentSession.value) current
-                                else current + (sid to (current[sid] ?: 0) + 1)
+                        // Skip the unread badge for muted sessions — the count is still tracked
+                        // in unreadMessageIds (so unmuting can't re-count the same messages),
+                        // but the visible badge is suppressed so a muted conversation doesn't
+                        // interrupt. The completion notification is also gated on isSessionMuted
+                        // (see notifySessionCompleted).
+                        if (sid !in _mutedSessions.value) {
+                            // Increment the unread count once per distinct *message*, not per
+                            // event: a single reply emits many message.updated / message.part.
+                            // updated events (one per streamed token, plus cost/token refreshes),
+                            // which would otherwise inflate the badge into the dozens/hundreds.
+                            val messageId = messageIdOfEvent(event)
+                            val counted = unreadMessageIds.getOrPut(sid) {
+                                java.util.Collections.synchronizedSet(mutableSetOf())
+                            }
+                            if (messageId == null || counted.add(messageId)) {
+                                _unread.update { current ->
+                                    // Guard again inside the atomic update lambda so a retry
+                                    // (or an open that landed just now) can't reintroduce the
+                                    // badge for the session on screen.
+                                    if (sid == _currentSession.value) current
+                                    else current + (sid to (current[sid] ?: 0) + 1)
+                                }
                             }
                         }
                     }
@@ -789,6 +831,9 @@ open class AppContainer private constructor(
         // prior notification — posting a fresh one here would leave a "session ready" heads-up
         // lingering while they're already looking at the finished run.
         if (isActivelyViewing(sessionId)) return
+        // Suppress the completion notification for muted sessions — the whole point of muting
+        // is that a noisy conversation doesn't interrupt.
+        if (sessionId in _mutedSessions.value) return
         appContext?.let { SessionNotifications.postCompleted(it, sessionId, title, originProfileId) }
     }
 
@@ -1350,6 +1395,13 @@ open class AppContainer private constructor(
             observeMessageActivity()
             observeRunReconcileOnReconnect()
             observeRunForegroundService()
+            // Load the persisted muted-sessions set so isSessionMuted() reflects the choice
+            // immediately on cold start (before any session list composition).
+            appScope.launch {
+                runCatchingCancellable {
+                    sessionPrefsStore.muted.collect { ids -> _mutedSessions.value = ids }
+                }
+            }
             // Flush right after load() populates the queue. observeOutbox()'s combine is keyed
             // on activeConnection/isOnline/_outboxFlushTrigger — NOT on outboxStore.messages — so
             // if connect() sets activeConnection before load() finishes reading a (possibly

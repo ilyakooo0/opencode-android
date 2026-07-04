@@ -187,6 +187,31 @@ val AmoledPaletteSwatches: List<Color> = listOf(
     AmoledColors.background,
 )
 
+// Fixed diff add/remove colors per theme (Tokyo Night green/red), exposed so DiffView can
+// render consistent diff semantics regardless of the active palette. Under Material You the
+// primary/error roles can land on hues that don't read as "added" or "removed" (a yellow
+// primary makes an "added" line look like a warning) — a dedicated diff pair preserves the
+// green/red convention every diff viewer uses while staying tuned to the theme's lightness.
+private val DarkDiffAdd = Color(0xFF9ECE6A)
+private val DarkDiffAddBg = Color(0xFF1F3A1F)
+private val DarkDiffRemove = Color(0xFFF7768E)
+private val DarkDiffRemoveBg = Color(0xFF3A1F24)
+private val LightDiffAdd = Color(0xFF485E30)
+private val LightDiffAddBg = Color(0xFFE6F2D0)
+private val LightDiffRemove = Color(0xFF9B1C2E)
+private val LightDiffRemoveBg = Color(0xFFF6D9DD)
+
+/** A (text, background) pair for added lines in a unified diff. Theme-aware so the green
+ *  reads correctly in light/dark/AMOLED instead of relying on the dynamic-color primary. */
+data class DiffColors(val addText: Color, val addBg: Color, val removeText: Color, val removeBg: Color)
+
+@Composable
+fun diffColors(): DiffColors {
+    val dark = androidx.compose.foundation.isSystemInDarkTheme()
+    return if (dark) DiffColors(DarkDiffAdd, DarkDiffAddBg, DarkDiffRemove, DarkDiffRemoveBg)
+    else DiffColors(LightDiffAdd, LightDiffAddBg, LightDiffRemove, LightDiffRemoveBg)
+}
+
 private tailrec fun Context.findActivity(): Activity? = when (this) {
     is Activity -> this
     is ContextWrapper -> baseContext.findActivity()

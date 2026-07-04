@@ -19,6 +19,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
@@ -28,14 +29,21 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 import soy.iko.opencode.data.model.Permission
 import soy.iko.opencode.data.model.PermissionResponse
+import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.R
 
 /**
  * Modal asking the user to approve a tool the agent wants to run. The agent run is
  * paused until one of these responses is sent. Non-dismissable by tap-outside so the
  * decision is explicit.
+ *
+ * After [NetworkConfig.permissionAutoRejectMs] the prompt auto-rejects so a forgotten
+ * prompt doesn't hold the run open indefinitely (the foreground service keeps the process
+ * alive, so without a timeout a walked-away user blocks the run forever). A "still waiting"
+ * reminder appears after [NetworkConfig.permissionReminderThresholdMs].
  */
 @Composable
 fun PermissionDialog(
@@ -58,12 +66,29 @@ fun PermissionDialog(
     // remember resets to false on every fresh composition, so a re-queued permission is
     // always answerable.
     var responded by remember(permission.id) { mutableStateOf(false) }
+    // Elapsed ms since the dialog opened for this permission, used to surface a "still
+    // waiting" reminder after the threshold. Caps at the auto-reject deadline.
+    var elapsedMs by remember(permission.id) { mutableStateOf(0L) }
     val respond: (PermissionResponse) -> Unit = { response ->
         if (!responded) {
             responded = true
             onRespond(response)
         }
     }
+    // Auto-reject after the configured timeout. A forgotten prompt otherwise blocks the run
+    // indefinitely (the foreground service holds the process alive). LaunchedEffect keyed on
+    // permission.id so a fresh prompt resets the timer. Disabled when the timeout is 0.
+    val autoRejectMs = NetworkConfig.permissionAutoRejectMs
+    LaunchedEffect(permission.id, autoRejectMs) {
+        if (autoRejectMs <= 0L) return@LaunchedEffect
+        val tickMs = 1000L
+        while (elapsedMs < autoRejectMs) {
+            delay(tickMs)
+            elapsedMs = (elapsedMs + tickMs).coerceAtMost(autoRejectMs)
+        }
+        respond(PermissionResponse.REJECT)
+    }
+    val showReminder = elapsedMs >= NetworkConfig.permissionReminderThresholdMs
     AlertDialog(
         // Back press routes here (dismissOnBackPress defaults true) and is treated as an
         // explicit reject — the safe default. Tap-outside is disabled below so it can't
@@ -116,6 +141,16 @@ fun PermissionDialog(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                // After the reminder threshold, surface that the run is waiting so the user
+                // understands their inaction is holding up the agent. A nudge, not a force.
+                if (showReminder && autoRejectMs > 0L) {
+                    val remainingMin = ((autoRejectMs - elapsedMs) / 60_000L).coerceAtLeast(0L)
+                    Text(
+                        stringResource(R.string.permission_waiting, remainingMin),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.tertiary,
+                    )
+                }
             }
         },
         confirmButton = {

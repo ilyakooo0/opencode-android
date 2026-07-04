@@ -280,13 +280,20 @@ private fun Breadcrumbs(path: String, onNavigate: (String) -> Unit, modifier: Mo
     // Scroll to the deepest segment when the path changes so the current directory stays in
     // view instead of hiding off the right edge behind the earlier segments on a deep path.
     LaunchedEffect(path) { scrollState.animateScrollTo(scrollState.maxValue) }
+    // Haptic on breadcrumb navigation for consistency with the session cards / message actions,
+    // which all fire TextHandleMove on tap.
+    val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
+    val onSegmentClick: (String) -> Unit = { target ->
+        haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+        onNavigate(target)
+    }
     Row(
         modifier = modifier
             .horizontalScroll(scrollState)
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        IconButton(onClick = { onNavigate("") }) {
+        IconButton(onClick = { onSegmentClick("") }) {
             Icon(Icons.Filled.Home, contentDescription = stringResource(R.string.root), modifier = Modifier.size(24.dp))
         }
         var acc = ""
@@ -312,7 +319,7 @@ private fun Breadcrumbs(path: String, onNavigate: (String) -> Unit, modifier: Mo
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier
                     .widthIn(max = segMaxWidth)
-                    .clickable(role = Role.Button) { onNavigate(target) }
+                    .clickable(role = Role.Button) { onSegmentClick(target) }
                     .defaultMinSize(minHeight = 48.dp)
                     .padding(horizontal = 6.dp, vertical = 14.dp),
             )
@@ -374,6 +381,7 @@ private fun searchEmptyMessage(searching: Boolean, queryBlank: Boolean, hint: In
 /** Content (ripgrep) search results: file + line number, with the matched line highlighted. */
 @Composable
 private fun TextResults(results: List<FindMatch>, emptyMessage: String?, onOpen: (String, Int?) -> Unit) {
+    val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
     if (results.isEmpty()) {
         if (emptyMessage != null) {
             EmptyFileState(
@@ -403,7 +411,10 @@ private fun TextResults(results: List<FindMatch>, emptyMessage: String?, onOpen:
                 modifier = Modifier
                     .fillMaxWidth()
                     .defaultMinSize(minHeight = 48.dp)
-                    .clickable(role = Role.Button) { onOpen(match.filePath, match.lineNumber) }
+                    .clickable(role = Role.Button) {
+                        haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                        onOpen(match.filePath, match.lineNumber)
+                    }
                     .padding(horizontal = 16.dp, vertical = 10.dp),
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -448,6 +459,7 @@ private fun TextResults(results: List<FindMatch>, emptyMessage: String?, onOpen:
 /** Workspace symbol results: symbol name + kind, and the file:line it's defined at. */
 @Composable
 private fun SymbolResults(results: List<SymbolResult>, emptyMessage: String?, onOpen: (String, Int?) -> Unit) {
+    val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
     if (results.isEmpty()) {
         if (emptyMessage != null) {
             EmptyFileState(
@@ -475,7 +487,10 @@ private fun SymbolResults(results: List<SymbolResult>, emptyMessage: String?, on
                 modifier = Modifier
                     .fillMaxWidth()
                     .defaultMinSize(minHeight = 48.dp)
-                    .clickable(role = Role.Button) { onOpen(symbol.filePath, symbol.displayLine) }
+                    .clickable(role = Role.Button) {
+                        haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                        onOpen(symbol.filePath, symbol.displayLine)
+                    }
                     .padding(horizontal = 16.dp, vertical = 10.dp),
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -688,6 +703,12 @@ private fun FileRow(
     modifier: Modifier = Modifier,
 ) {
     val copyPathLabel = stringResource(R.string.copy_path)
+    // Haptic on row open for consistency with the breadcrumb taps and other screens.
+    val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
+    val onRowClick: () -> Unit = {
+        haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+        onClick()
+    }
     // Long-press → "Copy path" dropdown. Rendered only when [onCopyPath] is supplied, so the
     // parent ".." row (which passes none) stays a plain tap target. Anchored within the row.
     // rememberSaveable so an open row menu survives a rotation instead of closing.
@@ -716,7 +737,7 @@ private fun FileRow(
             .defaultMinSize(minHeight = 48.dp)
             .combinedClickable(
                 role = Role.Button,
-                onClick = onClick,
+                onClick = onRowClick,
                 onLongClick = onCopyPath?.let { { menu = true } },
                 onLongClickLabel = onCopyPath?.let { copyPathLabel },
             )

@@ -52,8 +52,9 @@ data class GlobalSearchState(
     /** True once a search has run for the current query (distinguishes "no results" from
      *  "nothing searched yet" so the UI shows the right empty state). */
     val hasSearched: Boolean = false,
-    /** True when there were more sessions than [NetworkConfig.maxSearchSessions], so the
-     *  search only covered the most recent ones. */
+    /** True when there were more sessions than the current cap, so the search only covered
+     *  the most recent ones. The cap starts at [NetworkConfig.maxSearchSessions] and grows
+     *  via [searchMore] so the user can page through older sessions. */
     val truncated: Boolean = false,
     /** How many sessions have been scanned so far in the current pass, for progress feedback
      *  (a global search downloads each session's history, so a 50-session pass can take a
@@ -61,6 +62,8 @@ data class GlobalSearchState(
     val searchedCount: Int = 0,
     /** Total sessions being scanned in the current pass ([searchedCount] / [totalCount]). */
     val totalCount: Int = 0,
+    /** The cap applied to this pass. Grows when the user taps "Search more". */
+    val sessionCap: Int = NetworkConfig.maxSearchSessions,
 )
 
 /**
@@ -109,11 +112,24 @@ class GlobalSearchViewModel(private val container: AppContainer) : ViewModel() {
         sessionsCache = null
         messageCache.clear()
         searchJob?.cancel()
-        _state.update { it.copy(searching = true, error = null) }
+        _state.update { it.copy(searching = true, error = null, sessionCap = NetworkConfig.maxSearchSessions) }
         searchJob = viewModelScope.launch { runSearch(trimmed) }
     }
 
-    private suspend fun runSearch(query: String) {
+    /** Expand the search to cover more sessions (the next [NetworkConfig.maxSearchSessions] batch)
+     *  and re-run. No-op when the prior pass wasn't truncated (there's nothing more to search).
+     *  The message cache is preserved so already-downloaded sessions aren't re-fetched. */
+    fun searchMore() {
+        if (!_state.value.truncated) return
+        val trimmed = _state.value.query.trim()
+        if (trimmed.length < NetworkConfig.minSearchQueryLength) return
+        val newCap = _state.value.sessionCap + NetworkConfig.maxSearchSessions
+        searchJob?.cancel()
+        _state.update { it.copy(searching = true, error = null, sessionCap = newCap) }
+        searchJob = viewModelScope.launch { runSearch(trimmed, newCap) }
+    }
+
+    private suspend fun runSearch(query: String, cap: Int = _state.value.sessionCap) {
         val conn = container.activeConnection.value
         if (conn == null) {
             _state.update { it.copy(searching = false, error = container.string(R.string.not_connected)) }
@@ -125,9 +141,9 @@ class GlobalSearchViewModel(private val container: AppContainer) : ViewModel() {
                 _state.update { s -> s.copy(searching = false, error = container.friendlyError(it)) }
                 return
             }.also { sessionsCache = it }
-        val toSearch = sessions.take(NetworkConfig.maxSearchSessions)
+        val toSearch = sessions.take(cap)
         val truncated = sessions.size > toSearch.size
-        _state.update { it.copy(totalCount = toSearch.size, searchedCount = 0) }
+        _state.update { it.copy(totalCount = toSearch.size, searchedCount = 0, truncated = truncated) }
         val hits = java.util.Collections.synchronizedMap(HashMap<String, SearchHit>())
         val semaphore = Semaphore(NetworkConfig.maxConcurrentPreviews)
         val searched = java.util.concurrent.atomic.AtomicInteger(0)

@@ -92,6 +92,8 @@ fun ModelPickerSheet(
     onSelect: (ModelOption) -> Unit,
     onRetry: () -> Unit,
     onDismiss: () -> Unit,
+    preferredModelId: String = "",
+    onSetPreferredModel: (String) -> Unit = {},
 ) {
     // Hoist SheetState + skipPartiallyExpanded so the sheet opens full-height and selection
     // animates out (see AgentPickerSheet for the full rationale).
@@ -252,6 +254,39 @@ fun ModelPickerSheet(
                     }
                 }
                     }
+            }
+            // Footer: a "set as default" toggle for the currently-selected model, so a user
+            // who always picks a specific model doesn't have to pick it every new session.
+            // Only shown when there's a selection; tapping clears the preference if it's
+            // already the default (toggle behavior).
+            if (selected != null) {
+                val isDefault = preferredModelId == selected.modelID
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp, vertical = 8.dp)
+                        .navigationBarsPadding(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        stringResource(
+                            if (isDefault) R.string.default_model_current else R.string.set_as_default_model,
+                            selected.modelLabel,
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(
+                        onClick = {
+                            onSetPreferredModel(if (isDefault) "" else selected.modelID)
+                        },
+                    ) {
+                        Text(
+                            stringResource(if (isDefault) R.string.clear_default else R.string.set_as_default),
+                        )
+                    }
+                }
             }
         }
         }

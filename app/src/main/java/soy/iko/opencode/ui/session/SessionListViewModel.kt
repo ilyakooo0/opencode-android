@@ -793,6 +793,11 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         ids.forEach { container.markSessionRead(it) }
     }
 
+    /** Mark a single session as unread (re-badges it in the list). */
+    fun markUnread(id: String) {
+        container.markSessionUnread(id)
+    }
+
     /**
      * Permanently delete the given sessions. Unlike a single swipe-delete this is NOT undoable
      * (the batch undo would need to cancel N deferred deletes); the caller confirms via a dialog

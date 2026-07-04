@@ -17,6 +17,18 @@ inline fun <T> runCatchingCancellable(block: () -> T): Result<T> = try {
 }
 
 /**
+ * Suspend variant of [runCatchingCancellable] for blocks that themselves call suspend
+ * functions. The non-suspend overload can't accept a suspend lambda.
+ */
+suspend inline fun <T> runCatchingCancellableSuspend(crossinline block: suspend () -> T): Result<T> = try {
+    Result.success(block())
+} catch (e: CancellationException) {
+    throw e
+} catch (e: Exception) {
+    Result.failure(e)
+}
+
+/**
  * A log-safe exception summary that avoids leaking the request URL (which
  * [ClientRequestException] embeds in its message and may contain auth or paths).
  * Use this instead of logging the full exception object when it may originate

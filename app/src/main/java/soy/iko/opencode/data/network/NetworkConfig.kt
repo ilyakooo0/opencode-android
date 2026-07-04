@@ -57,6 +57,12 @@ object NetworkConfig {
 
     /** Max sessions to fetch previews for in one batch. */
     const val maxPreviewSessions = 50
+    /** Initial render window for the session list — the number of rows composed before the
+     *  user scrolls to reveal more. Grows by [sessionListPageStep] as the user nears the
+     *  bottom, bounding the sort/filter work on a huge list while keeping scrolling seamless. */
+    const val sessionListInitialPage = 60
+    /** How many additional rows to reveal when the session list render window is exhausted. */
+    const val sessionListPageStep = 60
     /** Max concurrent preview fetches (prevents flooding the server with parallel requests). */
     const val maxConcurrentPreviews = 8
     /** Max characters of a session's last message to keep as a list preview. */
@@ -247,8 +253,11 @@ object NetworkConfig {
     const val twoPaneRightWeight = 0.62f
 
     /** Minimum window width (dp) at which a NavigationRail is shown alongside the
-     *  two-pane layout for top-level destination discoverability on large screens. */
-    const val navigationRailThresholdDp = 840
+     *  two-pane layout for top-level destination discoverability on large screens. Sits below
+     *  [twoPaneWidthThresholdDp] (M3's WindowWidthSizeClass.Medium breakpoint ~600dp) so a
+     *  tablet or landscape phone gets the rail while staying single-pane until 840dp, where the
+     *  two-pane master/detail split takes over. */
+    const val navigationRailThresholdDp = 600
 
     /** Maximum width (dp) for the chat message list on large screens. On a tablet or
      *  unfolded foldable, full-width message bubbles stretch edge-to-edge, hurting
@@ -300,6 +309,17 @@ object NetworkConfig {
 
     /** Blink period (ms) of the streaming caret at the tail of a live assistant reply. */
     const val streamingCaretPeriodMs = 550
+
+    /** Auto-reject a tool-permission prompt after this many ms if the user hasn't responded,
+     *  so a forgotten prompt doesn't block the run indefinitely. The foreground service keeps
+     *  the process alive, so without a timeout a prompt that the user walked away from holds
+     *  the run open forever. The timeout is long (10 minutes) so a deliberate pause to read
+     *  the prompt doesn't trip it; a reminder toast-style line appears in the dialog after
+     *  [permissionReminderThresholdMs] to surface that the run is waiting. Set to 0 to disable. */
+    const val permissionAutoRejectMs = 10L * 60 * 1000
+
+    /** Show a "still waiting" reminder in the permission dialog after this many ms. */
+    const val permissionReminderThresholdMs = 60L * 1000
 
     /** Duration (ms) the copy button shows its checkmark confirmation before reverting. */
     const val copyFeedbackMs = 1200
