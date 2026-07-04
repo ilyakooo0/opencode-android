@@ -189,6 +189,17 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
     )
     val transientErrors: SharedFlow<String> = _transientErrors.asSharedFlow()
 
+    /** A transient error paired with a retry action (create/rename). The retry lambda lets
+     *  the snackbar offer a "Retry" button so a transient network failure doesn't force the
+     *  user back through the dialog/FAB to re-attempt — matching the server list's connect
+     *  error retry. The lambda is one-shot (consumed by the snackbar action). */
+    data class RetryableError(val message: String, val retry: () -> Unit)
+    private val _retryableErrors = MutableSharedFlow<RetryableError>(
+        extraBufferCapacity = NetworkConfig.snackbarEventBufferCapacity,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+    val retryableErrors: SharedFlow<RetryableError> = _retryableErrors.asSharedFlow()
+
     /** One-shot events carrying the id of a session marked for deferred deletion, so the
      *  UI can show an Undo snackbar. */
     private val _undoEvents = MutableSharedFlow<String>(
@@ -661,7 +672,13 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
                      .onSuccess { lastChosenDirectory = dir; onCreated(it.id); refresh() }
                     .onFailure {
                         _state.update { it.copy(error = null) }
-                        _transientErrors.tryEmit(container.friendlyError(it))
+                        // Offer a retry so a transient failure doesn't lose the user's chosen
+                        // directory/title and force them back through the picker.
+                        _retryableErrors.tryEmit(
+                            RetryableError(container.friendlyError(it)) {
+                                createSession(directory = directory, title = title, onCreated = onCreated)
+                            },
+                        )
                     }
             } finally {
                 _creating.value = false
@@ -844,7 +861,12 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
                 .onSuccess { refresh() }
                 .onFailure {
                     _state.update { it.copy(error = null) }
-                    _transientErrors.tryEmit(container.friendlyError(it))
+                    // Offer a retry so a transient rename failure is recoverable in one tap.
+                    _retryableErrors.tryEmit(
+                        RetryableError(container.friendlyError(it)) {
+                            renameSession(session, newTitle)
+                        },
+                    )
                 }
         }
     }

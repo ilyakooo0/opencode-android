@@ -154,10 +154,12 @@ fun FileViewScreen(
     }
     // Split the raw text exactly once here (the line viewer and find-in-file both consume this
     // list) and cap it so a huge file doesn't get split twice or overwhelm the LazyColumn.
+    // `take()` (not `subList()`) so the cap actually releases the tail: subList returns a view
+    // backed by the full list, which would keep every line (and the full rawText) in memory.
     val allLines = remember(rawText) { rawText.split("\n") }
     val truncated = allLines.size > MAX_RENDERED_LINES
-    val lines = remember(allLines) {
-        if (allLines.size > MAX_RENDERED_LINES) allLines.subList(0, MAX_RENDERED_LINES) else allLines
+    val lines = remember(rawText) {
+        if (allLines.size > MAX_RENDERED_LINES) allLines.take(MAX_RENDERED_LINES) else allLines
     }
     // The line the viewer was opened at (from a search hit), highlighted until the user scrolls
     // or starts an in-file find so the landed line stands out. Null once cleared.

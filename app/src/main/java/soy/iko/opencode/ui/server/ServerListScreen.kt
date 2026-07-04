@@ -97,6 +97,7 @@ fun ServerListScreen(
 ) {
     val vm: ServerListViewModel = viewModel(factory = vmFactory { ServerListViewModel(container) })
     val profiles by vm.profiles.collectAsStateWithLifecycle()
+    val loading by vm.loading.collectAsStateWithLifecycle()
     val connectingId by vm.connectingId.collectAsStateWithLifecycle()
     val activeConnection by container.activeConnection.collectAsStateWithLifecycle()
     val reconnecting by container.reconnecting.collectAsStateWithLifecycle()
@@ -253,7 +254,22 @@ fun ServerListScreen(
                         .semantics { contentDescription = reconnectingLabel },
                 )
             }
-            if (profiles.isEmpty()) {
+            if (loading) {
+                // Initial DataStore read in flight: show a spinner rather than flashing the
+                // "No servers yet" empty state, which would appear then vanish once profiles
+                // arrive. Mirrors the session list's explicit loading state.
+                val loadingLabel = stringResource(R.string.loading)
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        CircularProgressIndicator(Modifier.semantics { contentDescription = loadingLabel })
+                        Spacer(Modifier.size(12.dp))
+                        Text(loadingLabel, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            } else if (profiles.isEmpty()) {
                 EmptyServers(
                     onAdd = onAddProfile,
                     modifier = Modifier.fillMaxSize(),
@@ -508,7 +524,9 @@ private fun ServerCardContent(
             val editLabel = stringResource(R.string.edit)
             val duplicateLabel = stringResource(R.string.duplicate_server)
             val removeLabel = stringResource(R.string.remove)
-            val moreLabel = stringResource(R.string.more)
+            // Tie the overflow button's a11y label to this server so a TalkBack user scrolling
+            // a long list can tell the rows apart (a bare "More" on every row is ambiguous).
+            val moreLabel = stringResource(R.string.more_options_for, profile.displayLabel)
             Box {
                 IconButton(onClick = { showRowMenu = true }) {
                     Icon(Icons.Filled.MoreVert, contentDescription = moreLabel)

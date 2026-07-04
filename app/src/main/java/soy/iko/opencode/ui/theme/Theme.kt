@@ -100,11 +100,25 @@ private val LightColors = lightColorScheme(
  * displays power off pixels in large black areas, extending battery life. The accent
  * colours stay the same so the brand identity is preserved; only the backgrounds and
  * surfaces drop to true black.
+ *
+ * Every Material 3 surface role is overridden — not just `background`/`surface` — because
+ * stock M3 components (Card, ModalBottomSheet, AlertDialog, MenuItem) read the
+ * `surfaceContainer*` / `surfaceBright` / `surfaceDim` tiers internally. Leaving those at
+ * the Tokyo-Night-dark values would leak non-black dialogs and sheets, undercutting the
+ * OLED power-off promise. The container tiers step up from pure black so elevated surfaces
+ * (cards over the list, dialogs) still read as a distinct layer without powering pixels on.
  */
 private val AmoledColors = DarkColors.copy(
     background = Color(0xFF000000),
     surface = Color(0xFF000000),
     surfaceVariant = Color(0xFF1A1F2E),
+    surfaceDim = Color(0xFF000000),
+    surfaceBright = Color(0xFF1A1F2E),
+    surfaceContainerLowest = Color(0xFF000000),
+    surfaceContainerLow = Color(0xFF000000),
+    surfaceContainer = Color(0xFF0A0B10),
+    surfaceContainerHigh = Color(0xFF12141C),
+    surfaceContainerHighest = Color(0xFF1A1F2E),
     inverseOnSurface = Color(0xFF000000),
 )
 

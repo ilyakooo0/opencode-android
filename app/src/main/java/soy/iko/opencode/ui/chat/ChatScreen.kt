@@ -133,6 +133,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -268,6 +269,11 @@ fun ChatScreen(
     var showShortcutsDialog by rememberSaveable { mutableStateOf(false) }
     var searchActive by rememberSaveable { mutableStateOf(false) }
     var chatSearch by rememberSaveable { mutableStateOf("") }
+    // Index of the currently-focused in-conversation search match (into the filtered list).
+    // Drives the up/down navigation: the search bar's arrows step through matches and scroll
+    // the list to each one, mirroring desktop chat apps (the bare filtered list previously
+    // required reading each message to find the term).
+    var searchPos by rememberSaveable { mutableIntStateOf(0) }
     // Summarize and init (generate AGENTS.md) are irreversible, so a single tap is gated behind
     // a confirmation dialog (from both the overflow menu and the command palette).
     var showSummarizeConfirm by rememberSaveable { mutableStateOf(false) }
@@ -490,7 +496,11 @@ fun ChatScreen(
             if (ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
             when {
                 ev.isCtrlPressed && ev.key == Key.K -> { showPalette = true; true }
+                // Ctrl+F opens in-conversation search (the standard find shortcut), focusing
+                // the field so the user can type immediately.
+                ev.isCtrlPressed && ev.key == Key.F -> { searchActive = true; true }
                 ev.key == Key.Escape && showPalette -> { showPalette = false; true }
+                ev.key == Key.Escape && searchActive -> { searchActive = false; chatSearch = ""; true }
                 ev.key == Key.Escape && running && !showStopConfirm && !showExitConfirm -> {
                     showStopConfirm = true; true
                 }
@@ -824,6 +834,11 @@ fun ChatScreen(
                 m.parts.any { p -> (p as? TextPart)?.text?.contains(searchQuery, ignoreCase = true) == true }
             }
         }
+        // Keep the focused-match index in range as the query (and thus the match set) changes.
+        // A new query resets to the first match; a shrunk set clamps to the last valid index.
+        LaunchedEffect(searchQuery, searchMessages.size) {
+            if (searchPos >= searchMessages.size) searchPos = 0
+        }
         val listItems = remember(searchMessages, todayLabel, yesterdayLabel) {
             buildMessageListItems(searchMessages, todayLabel, yesterdayLabel)
         }
@@ -885,6 +900,18 @@ fun ChatScreen(
                     runCatchingCancellable { listState.animateScrollToItem(listItems.size) }
                 }
             }
+        }
+
+        // Scroll the focused search match into view whenever the user steps through results with
+        // the up/down arrows. Resolves the filtered message to its slot in listItems (which
+        // includes date separators) and animates there.
+        LaunchedEffect(searchPos, searchQuery, listItems) {
+            if (!searchActive || searchQuery.isEmpty()) return@LaunchedEffect
+            val target = searchMessages.getOrNull(searchPos) ?: return@LaunchedEffect
+            val index = listItems.indexOfFirst {
+                it is MessageListItem.Message && it.message.info.id == target.info.id
+            }
+            if (index >= 0) runCatchingCancellable { listState.animateScrollToItem(index) }
         }
 
         LaunchedEffect(Unit) {
@@ -1114,11 +1141,33 @@ fun ChatScreen(
                         key = { it.key },
                         contentType = { it.contentType },
                     ) { item ->
+                        // When in-conversation search is stepping through matches, highlight the
+                        // focused one's row so the user can spot it at a glance among the filtered
+                        // results (full in-text term highlighting would require threading the query
+                        // through the markdown renderer; the row highlight + scroll-to-match covers
+                        // the navigation use case desktop chat apps solve with next/prev).
+                        val focusedMatchId = if (searchActive && searchQuery.isNotEmpty()) {
+                            searchMessages.getOrNull(searchPos)?.info?.id
+                        } else null
+                        val isFocusedMatch = focusedMatchId != null &&
+                            item is MessageListItem.Message &&
+                            item.message.info.id == focusedMatchId
                         // Default placement animation so inserted/moved rows glide in. Skipped
                         // entirely under reduced motion so a streaming message growing in place
                         // doesn't animate on every token (and respects the a11y preference).
                         Box(
-                            if (LocalReducedMotion.current) Modifier else Modifier.animateItem(),
+                            Modifier
+                                .then(if (LocalReducedMotion.current) Modifier else Modifier.animateItem())
+                                .then(
+                                    if (isFocusedMatch) {
+                                        Modifier.background(
+                                            MaterialTheme.colorScheme.secondaryContainer,
+                                            MaterialTheme.shapes.medium,
+                                        )
+                                    } else {
+                                        Modifier
+                                    },
+                                ),
                         ) {
                         when (item) {
                             is MessageListItem.Separator -> DateSeparator(item.label)
@@ -1256,30 +1305,48 @@ fun ChatScreen(
                             }
                             val elapsedText = remember(elapsedMs) {
                                 val total = elapsedMs / 1000
-                                "%d:%02d".format(total / 60, total % 60)
+                                // Locale.US for stable digit formatting: on locales with
+                                // non-ASCII digits (ar-/fa-) the default locale would render
+                                // localized digits inside the Monospace block, breaking the
+                                // fixed-width alignment the monospace family was chosen for.
+                                String.format(java.util.Locale.US, "%d:%02d", total / 60, total % 60)
                             }
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.semantics {
-                                    contentDescription = workingText
-                                },
+                                // Animate this slot in/out so the working row doesn't pop in and
+                                // jolt the message list when a run starts/stops — matching the
+                                // AnimatedVisibility used by every other transient banner/FAB here.
+                                modifier = Modifier
+                                    .animateItem()
+                                    .padding(vertical = 4.dp),
                             ) {
-                                CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                                Text(workingText, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 6.dp))
-                                Spacer(Modifier.size(8.dp))
-                                Icon(
-                                    Icons.Filled.Schedule,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(14.dp),
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                                Text(
-                                    elapsedText,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.padding(start = 4.dp),
-                                )
+                                // Merge the indicator + label + clock into one TalkBack node so
+                                // it's announced once (the working label, then the elapsed time)
+                                // instead of "working… / working… / 0:14" with the label read
+                                // twice. The Stop IconButton below stays separately focusable.
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.semantics(mergeDescendants = true) {
+                                        contentDescription = "$workingText $elapsedText"
+                                    },
+                                ) {
+                                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                                    Text(workingText, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 6.dp))
+                                    Spacer(Modifier.size(8.dp))
+                                    Icon(
+                                        Icons.Filled.Schedule,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(14.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    Text(
+                                        elapsedText,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(start = 4.dp),
+                                    )
+                                }
                                 // A trailing Stop on the working row so the run can be aborted
                                 // without scrolling back to the composer (which may be off-screen
                                 // while the user reads the streaming output up-thread).
@@ -1387,14 +1454,44 @@ fun ChatScreen(
                                 leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                             )
+                            // Match counter: "N of M" where N is the focused match (1-based) and
+                            // M is the total matching messages. Only shown when there's a query.
+                            val matchCount = searchMessages.size
                             Text(
-                                if (searchQuery.isNotEmpty()) {
-                                    stringResource(R.string.search_match_count, searchMessages.size, messages.size)
+                                if (searchQuery.isNotEmpty() && matchCount > 0) {
+                                    stringResource(R.string.search_match_count, searchPos + 1, matchCount)
+                                } else if (searchQuery.isNotEmpty()) {
+                                    stringResource(R.string.search_match_count, 0, messages.size)
                                 } else "",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(horizontal = 4.dp),
                             )
+                            // Step through matches (Previous / Next), disabled when there are
+                            // fewer than two to navigate. Wrap around at the ends so repeated
+                            // taps cycle through every hit.
+                            val prevLabel = stringResource(R.string.find_previous)
+                            val nextLabel = stringResource(R.string.find_next)
+                            IconButton(
+                                onClick = {
+                                    if (matchCount > 0) {
+                                        searchPos = (searchPos - 1 + matchCount) % matchCount
+                                    }
+                                },
+                                enabled = matchCount > 1,
+                            ) {
+                                Icon(Icons.Filled.KeyboardArrowUp, contentDescription = prevLabel)
+                            }
+                            IconButton(
+                                onClick = {
+                                    if (matchCount > 0) {
+                                        searchPos = (searchPos + 1) % matchCount
+                                    }
+                                },
+                                enabled = matchCount > 1,
+                            ) {
+                                Icon(Icons.Filled.KeyboardArrowDown, contentDescription = nextLabel)
+                            }
                             IconButton(onClick = {
                                 searchActive = false
                                 chatSearch = ""
@@ -1845,6 +1942,7 @@ private fun ChatInputBar(
                 },
                 canSend = enabled && hasContent,
                 running = running,
+                sendOnEnter = sendOnEnter,
                 attachments = attachments,
                 onRemoveAttachment = onRemoveAttachment,
                 staging = staging,
@@ -1864,6 +1962,7 @@ private fun FullScreenEditor(
     onSend: () -> Unit,
     canSend: Boolean,
     running: Boolean = false,
+    sendOnEnter: Boolean = false,
     attachments: List<PendingAttachment> = emptyList(),
     onRemoveAttachment: (String) -> Unit = {},
     staging: Boolean = false,
@@ -1904,10 +2003,35 @@ private fun FullScreenEditor(
                 OutlinedTextField(
                     value = value,
                     onValueChange = { v -> onValueChange(v.take(NetworkConfig.maxDraftLengthChars)) },
-                    modifier = Modifier.fillMaxSize().weight(1f),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .weight(1f)
+                        // Honor the "Send on Enter" setting here too, so the full-screen
+                        // editor matches the inline composer: Enter sends (Shift+Enter
+                        // newlines) when on; Enter inserts a newline and Ctrl+Enter sends
+                        // when off. Previously this hard-coded ImeAction.Default and had no
+                        // key handler, so a hardware-keyboard user got a different behaviour
+                        // from the inline composer depending on which they happened to open.
+                        .onPreviewKeyEvent { event ->
+                            if (event.type != KeyEventType.KeyDown || event.key != Key.Enter) return@onPreviewKeyEvent false
+                            val send = enterShouldSend(
+                                enabled = canSend,
+                                hasContent = canSend,
+                                sendOnEnter = sendOnEnter,
+                                shift = event.isShiftPressed,
+                                ctrl = event.isCtrlPressed,
+                            )
+                            if (send) { onSend(); true } else false
+                        },
                     placeholder = { Text(stringResource(R.string.message_placeholder)) },
                     maxLines = Int.MAX_VALUE,
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default, capitalization = KeyboardCapitalization.Sentences),
+                    keyboardOptions = KeyboardOptions(
+                        imeAction = if (sendOnEnter) ImeAction.Send else ImeAction.Default,
+                        capitalization = KeyboardCapitalization.Sentences,
+                    ),
+                    keyboardActions = KeyboardActions(
+                        onSend = { if (canSend) onSend() },
+                    ),
                 )
             }
         }
@@ -2054,6 +2178,7 @@ private fun EmptyConversation(
 /** A banner shown while a revert checkpoint is active, offering an Undo (unrevert). */
 @Composable
 private fun RevertBanner(onUndo: () -> Unit) {
+    val haptics = LocalHapticFeedback.current
     Surface(
         color = MaterialTheme.colorScheme.tertiaryContainer,
         tonalElevation = 2.dp,
@@ -2078,7 +2203,12 @@ private fun RevertBanner(onUndo: () -> Unit) {
                     modifier = Modifier.padding(start = 8.dp),
                 )
             }
-            TextButton(onClick = onUndo) { Text(stringResource(R.string.undo)) }
+            TextButton(onClick = {
+                // Haptic on undo to match the other destructive/important confirmations: a
+                // revert restores potentially hundreds of hidden messages.
+                haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                onUndo()
+            }) { Text(stringResource(R.string.undo)) }
         }
     }
 }
@@ -2123,8 +2253,14 @@ private fun OutboxBanner(
                 )
             }
             if (!sending) {
+                val haptics = LocalHapticFeedback.current
                 TextButton(onClick = onFlush) { Text(stringResource(R.string.outbox_flush)) }
-                TextButton(onClick = onDiscard) {
+                TextButton(onClick = {
+                    // Haptic on the irreversible "Discard queued" (drops every queued message
+                    // for this session), matching the error-colored destructive actions.
+                    haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                    onDiscard()
+                }) {
                     Text(stringResource(R.string.outbox_discard_all), color = MaterialTheme.colorScheme.error)
                 }
             }
@@ -2377,6 +2513,9 @@ private fun DateSeparator(label: String) {
         Surface(
             color = MaterialTheme.colorScheme.surfaceVariant,
             shape = MaterialTheme.shapes.small,
+            // Marked as a heading so TalkBack users can navigate day-by-day with the
+            // heading-skip gesture — the canonical affordance for date dividers in a list.
+            modifier = Modifier.semantics(mergeDescendants = true) { heading() },
         ) {
             Text(
                 label,

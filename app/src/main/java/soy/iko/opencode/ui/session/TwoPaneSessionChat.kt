@@ -100,13 +100,15 @@ fun TwoPaneSessionChat(
     )
 
     // Auto-select the most-recent session into the detail pane so a wide screen doesn't
-    // open on a blank right pane. Runs at most once per composition (the `autoSelected`
-    // latch, non-saveable so it re-arms after process death), and only once the first list
-    // load has completed. It defers to any explicit selection already present — a restored
-    // `selected`, a deep-link/notification (pendingOpenSession), or a user pick — and, since
-    // the latch is set the moment any of those wins, it never re-selects after a user clears
-    // the pane (BackHandler) or a server switch nulls `selected`.
-    var autoSelected by remember { mutableStateOf(false) }
+    // open on a blank right pane. Runs at most once per Activity instance (the `autoSelected`
+    // latch, saveable so an explicit "clear detail pane" via BackHandler survives a rotation
+    // — otherwise rotation resets the latch, re-arms the effect, and re-selects a session the
+    // user just cleared), and only once the first list load has completed. It defers to any
+    // explicit selection already present — a restored `selected`, a deep-link/notification
+    // (pendingOpenSession), or a user pick — and, since the latch is set the moment any of
+    // those wins, it never re-selects after a user clears the pane (BackHandler) or a server
+    // switch nulls `selected`.
+    var autoSelected by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(
         sessionListState.loading,
         sessionListState.sessions,

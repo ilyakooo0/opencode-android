@@ -51,6 +51,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import soy.iko.opencode.R
@@ -528,7 +529,7 @@ private fun AssistantBlock(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     modifier = Modifier
-                        .size(20.dp)
+                        .size(28.dp)
                         .clip(MaterialTheme.shapes.extraSmall)
                         .background(MaterialTheme.colorScheme.secondaryContainer),
                     contentAlignment = Alignment.Center,
@@ -536,7 +537,7 @@ private fun AssistantBlock(
                     Icon(
                         Icons.Filled.SmartToy,
                         contentDescription = null,
-                        modifier = Modifier.size(14.dp),
+                        modifier = Modifier.size(18.dp),
                         tint = MaterialTheme.colorScheme.onSecondaryContainer,
                     )
                 }
@@ -545,7 +546,11 @@ private fun AssistantBlock(
                         label,
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(start = 6.dp),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .padding(start = 6.dp)
+                            .weight(1f, fill = false),
                     )
                 }
             }
@@ -624,6 +629,10 @@ private fun AssistantBlock(
                             it,
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            // Cap to a single line so a long "1.2k in · 540 out • $0.012"
+                            // summary doesn't wrap the "•" awkwardly at narrow widths.
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
                     }
                     if (isEdited) {

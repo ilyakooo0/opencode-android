@@ -671,4 +671,14 @@
     <string name="clear_project_filter">Quitar filtro de proyecto</string>
     <string name="empty_file_detail_title">Ningún archivo seleccionado</string>
     <string name="empty_file_detail_desc">Elige un archivo de la lista para verlo aquí.</string>
+
+    <!-- UI/UX batch 4: file browser label, a11y, bulk confirmations -->
+    <string name="folders_first">Carpetas primero</string>
+    <string name="more_options_for">Más opciones para “%1$s”</string>
+    <string name="bulk_delete_title">¿Eliminar sesiones?</string>
+    <string name="bulk_delete_text">Estas %1$d sesiones se eliminarán permanentemente. No se puede deshacer.</string>
+    <plurals name="reasoning_word_count">
+        <item quantity="one">%1$d palabra oculta</item>
+        <item quantity="other">%1$d palabras ocultas</item>
+    </plurals>
 </resources>

@@ -553,7 +553,9 @@ private fun DirectoryListing(
         }
         item(key = "__sort") {
             Row(
-                modifier = Modifier.fillMaxWidth().padding(end = 8.dp, top = 2.dp, bottom = 2.dp),
+                modifier = Modifier.fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(end = 8.dp, top = 2.dp, bottom = 2.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -610,7 +612,7 @@ private fun DirectoryListing(
                             Icon(Icons.Filled.Folder, contentDescription = null, modifier = Modifier.size(16.dp))
                         }
                     },
-                    label = { Text(stringResource(R.string.sort_name), style = MaterialTheme.typography.labelSmall) },
+                    label = { Text(stringResource(R.string.folders_first), style = MaterialTheme.typography.labelSmall) },
                 )
             }
         }

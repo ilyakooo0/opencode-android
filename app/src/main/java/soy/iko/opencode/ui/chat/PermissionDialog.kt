@@ -119,8 +119,16 @@ fun PermissionDialog(
             }
         },
         confirmButton = {
+            // At very large font scales (200%+ accessibility text scale) the four full-width
+            // buttons can overflow the dialog's max height, pushing Reject off-screen and
+            // making it unreachable — the opposite of safe. Scroll + cap the column so the
+            // full set stays answerable; vertically centering when it fits keeps the look
+            // unchanged at normal scales.
             Column(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 320.dp)
+                    .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 Button(

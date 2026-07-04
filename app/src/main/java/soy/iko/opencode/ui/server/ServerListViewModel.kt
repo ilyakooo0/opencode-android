@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -63,6 +64,17 @@ class ServerListViewModel(private val container: AppContainer) : ViewModel() {
 
     private val _connecting = MutableStateFlow<String?>(null)
     val connectingId: StateFlow<String?> = _connecting.asStateFlow()
+
+    /** True until the first batch of profiles lands from DataStore, so the screen can render a
+     *  loading spinner instead of flashing the empty state (the [profiles] flow's initial value
+     *  is an empty list, which is indistinguishable from "loaded, no servers" without this). */
+    val loading: StateFlow<Boolean> =
+        container.profileStore.profiles.map { false }
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(NetworkConfig.stateFlowSubscriptionTimeoutMs),
+                initialValue = true,
+            )
 
     /** One-shot error events surfaced as snackbars. A SharedFlow (not StateFlow) so each
      *  emission is delivered independently. */

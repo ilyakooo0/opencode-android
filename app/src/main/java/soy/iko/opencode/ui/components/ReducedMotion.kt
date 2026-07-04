@@ -11,9 +11,16 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 
 /**
  * Whether the user has reduced motion enabled at the system level (animator duration scale
@@ -23,11 +30,24 @@ import androidx.compose.ui.platform.LocalContext
  * Note: Compose's animation system does NOT honor [Settings.Global.ANIMATOR_DURATION_SCALE]
  * (that setting only gates the View-system ValueAnimator/ObjectAnimator), so each Compose
  * animation must opt in via [LocalReducedMotion].
+ *
+ * Re-reads on each ON_RESUME so toggling "Remove animations" / animator scale in Developer
+ * Options takes effect without a process restart (keying only on `context`, which is stable
+ * for the activity's lifetime, would otherwise cache the first read forever).
  */
 @Composable
 fun isReducedMotion(): Boolean {
     val context = LocalContext.current
-    return remember(context) {
+    var resumeTick by remember { mutableIntStateOf(0) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) resumeTick++
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    return remember(context, resumeTick) {
         runCatching {
             Settings.Global.getFloat(
                 context.contentResolver,

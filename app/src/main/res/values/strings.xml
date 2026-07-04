@@ -671,4 +671,14 @@
     <string name="clear_project_filter">Clear project filter</string>
     <string name="empty_file_detail_title">No file selected</string>
     <string name="empty_file_detail_desc">Pick a file from the list to view it here.</string>
+
+    <!-- UI/UX batch 4: file browser label, a11y, bulk confirmations -->
+    <string name="folders_first">Folders first</string>
+    <string name="more_options_for">More options for “%1$s”</string>
+    <string name="bulk_delete_title">Delete sessions?</string>
+    <string name="bulk_delete_text">These %1$d sessions will be permanently deleted. This cannot be undone.</string>
+    <plurals name="reasoning_word_count">
+        <item quantity="one">%1$d word hidden</item>
+        <item quantity="other">%1$d words hidden</item>
+    </plurals>
 </resources>

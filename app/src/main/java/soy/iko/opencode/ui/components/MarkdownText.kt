@@ -48,6 +48,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
@@ -244,6 +245,7 @@ private fun CodeWithCopy(model: MarkdownComponentModel) {
     // visible confirmation even on Android 13+, where the copy toast is suppressed in favor of
     // the platform's tiny (and easy to miss) confirmation chip.
     var copied by remember { mutableStateOf(false) }
+    val haptics = LocalHapticFeedback.current
     LaunchedEffect(copied) {
         if (copied) {
             delay(1200)
@@ -294,6 +296,9 @@ private fun CodeWithCopy(model: MarkdownComponentModel) {
                 onClick = {
                     copyToClipboard(context, context.getString(R.string.clip_label_code), code)
                     copied = true
+                    // Haptic to match every other copy affordance in the app (the code-fence
+                    // copy is the most-used copy action in a coding assistant).
+                    haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
                 },
             ) {
                 Icon(

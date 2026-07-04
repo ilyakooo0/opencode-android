@@ -182,6 +182,20 @@ private fun ReasoningBlock(text: String, streaming: Boolean, keyId: String, modi
     val collapsedState = stringResource(R.string.state_collapsed)
     val thinkingLabel = stringResource(R.string.thinking)
     val thoughtsLabel = stringResource(R.string.thoughts)
+    // Hoist the collapsed word count so it can drive both the visible "(N)" label and the
+    // row's a11y stateDescription. Previously the count rendered as a bare "(12)" that
+    // TalkBack read as "12" with no context; folding it into the stateDescription makes the
+    // hidden-content size reachable to screen-reader users.
+    val collapsedWordCount = remember(text) {
+        text.trim().split(Regex("\\s+")).count { it.isNotEmpty() }
+    }
+    // Resolve the readable "N words hidden" form once (in the composable body — the semantics
+    // lambda below is not a composable scope, so it can't call pluralStringResource itself).
+    val collapsedWordsLabel = pluralStringResource(
+        R.plurals.reasoning_word_count,
+        collapsedWordCount,
+        collapsedWordCount,
+    )
     Column(modifier = modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier
@@ -190,7 +204,14 @@ private fun ReasoningBlock(text: String, streaming: Boolean, keyId: String, modi
                 .clickable(role = Role.Button) { userOverride = !expanded }
                 .padding(vertical = 4.dp)
                 .semantics {
-                    stateDescription = if (expanded) expandedState else collapsedState
+                    // When collapsed (and not streaming), append how much reasoning is hidden
+                    // so the state reads e.g. "Collapsed, 42 words hidden" — giving a TalkBack
+                    // user the same size signal the visible "(42)" gives a sighted user.
+                    stateDescription = when {
+                        expanded -> expandedState
+                        streaming -> collapsedState
+                        else -> "$collapsedState, $collapsedWordsLabel"
+                    }
                 },
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -218,11 +239,8 @@ private fun ReasoningBlock(text: String, streaming: Boolean, keyId: String, modi
             // content is hidden before deciding to expand. Skipped while streaming (the
             // content is growing and the label already says "Thinking…").
             if (!streaming && !expanded) {
-                val wordCount = remember(text) {
-                    text.trim().split(Regex("\\s+")).count { it.isNotEmpty() }
-                }
                 Text(
-                    "($wordCount)",
+                    "($collapsedWordCount)",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                     modifier = Modifier.padding(start = 4.dp),

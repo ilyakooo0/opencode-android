@@ -151,6 +151,7 @@ fun SessionListScreen(
     val haptics = LocalHapticFeedback.current
     val snackbar = remember { SnackbarHostState() }
     val undoLabel = stringResource(R.string.undo)
+    val retryLabel = stringResource(R.string.retry)
     val sessionDeletedLabel = stringResource(R.string.session_deleted)
     // One shared timer drives every relative-time label in the session list instead of
     // each card spinning up its own coroutine + lifecycle observer while scrolling.
@@ -210,6 +211,19 @@ fun SessionListScreen(
     LaunchedEffect(Unit) {
         vm.transientErrors.collect { msg ->
             snackbar.showSnackbar(msg)
+        }
+    }
+
+    // Retryable failures (create/rename): offer a Retry action so a transient network error
+    // is recoverable in one tap instead of forcing the user back through the dialog/FAB.
+    LaunchedEffect(Unit) {
+        vm.retryableErrors.collect { err ->
+            val result = snackbar.showSnackbar(
+                message = err.message,
+                actionLabel = retryLabel,
+                duration = androidx.compose.material3.SnackbarDuration.Long,
+            )
+            if (result == androidx.compose.material3.SnackbarResult.ActionPerformed) err.retry()
         }
     }
 
@@ -403,32 +417,37 @@ fun SessionListScreen(
         // Exit selection mode on the system back gesture instead of navigating away.
         androidx.activity.compose.BackHandler(enabled = inSelection) { selectedIds = emptySet() }
         CompositionLocalProvider(LocalRelativeTimeTick provides timeTick) {
-        Box(modifier = Modifier.fillMaxSize().padding(padding)) {
+        // Banner sits in the column flow (not overlaid via TopCenter) so it pushes the list
+        // down when it appears instead of covering the search field and top cards. Its own
+        // AnimatedVisibility collapses it to zero height when the stream is healthy, so the
+        // body fills the space normally.
+        Column(modifier = Modifier.fillMaxSize().padding(padding)) {
             ConnectionBanner(
                 state = connectionState,
-                modifier = Modifier.align(Alignment.TopCenter),
                 isOnline = isOnline,
                 onRetry = { vm.retryConnection() },
             )
-            SessionListBody(
-                state = state,
-                unread = unread,
-                refreshing = refreshing,
-                haptics = haptics,
-                selectedSessionId = selectedSessionId,
-                onRefresh = vm::refresh,
-                onQueryChange = vm::setQuery,
-                onOpenSession = onOpenSession,
-                onCreateSession = openNewSession,
-                onRename = { pendingRenameId = it },
-                onDelete = { pendingDeleteId = it },
-                onPin = { vm.togglePin(it) },
-                onArchive = { vm.toggleArchive(it) },
-                onFilterByDirectory = vm::setDirectoryFilter,
-                inSelection = inSelection,
-                selectedIds = selectedIds,
-                onToggleSelect = ::toggleSelected,
-            )
+            Box(modifier = Modifier.fillMaxSize()) {
+                SessionListBody(
+                    state = state,
+                    unread = unread,
+                    refreshing = refreshing,
+                    haptics = haptics,
+                    selectedSessionId = selectedSessionId,
+                    onRefresh = vm::refresh,
+                    onQueryChange = vm::setQuery,
+                    onOpenSession = onOpenSession,
+                    onCreateSession = openNewSession,
+                    onRename = { pendingRenameId = it },
+                    onDelete = { pendingDeleteId = it },
+                    onPin = { vm.togglePin(it) },
+                    onArchive = { vm.toggleArchive(it) },
+                    onFilterByDirectory = vm::setDirectoryFilter,
+                    inSelection = inSelection,
+                    selectedIds = selectedIds,
+                    onToggleSelect = ::toggleSelected,
+                )
+            }
         }
         }
     }
@@ -476,8 +495,11 @@ fun SessionListScreen(
         val count = selectedIds.size
         AlertDialog(
             onDismissRequest = { showBulkDelete = false },
-            title = { Text(stringResource(R.string.delete)) },
-            text = { Text(pluralStringResource(R.plurals.selected_count, count, count)) },
+            title = { Text(stringResource(R.string.bulk_delete_title)) },
+            // Bulk delete is NOT undoable (unlike single delete which offers Undo), so the
+            // warning must be explicit — matching the single-delete dialog's irreversibility text
+            // rather than the bare "%d selected" count.
+            text = { Text(stringResource(R.string.bulk_delete_text, count)) },
             confirmButton = {
                 TextButton(onClick = {
                     showBulkDelete = false
@@ -634,6 +656,14 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                        // An empty filtered list is recoverable in one tap; offer it inline
+                        // rather than making the user hunt for the field's trailing clear icon.
+                        if (state.query.isNotEmpty()) {
+                            Spacer(Modifier.size(8.dp))
+                            TextButton(onClick = { onQueryChange("") }) {
+                                Text(stringResource(R.string.clear_search))
+                            }
+                        }
                     }
                 }
             } else {
@@ -698,8 +728,12 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
                                 state = swipeState,
                                 // Swipe end-to-start deletes (dialog-guarded); start-to-end
                                 // archives/unarchives (instantly undoable via snackbar).
-                                enableDismissFromStartToEnd = true,
-                                enableDismissFromEndToStart = true,
+                                // Disabled entirely during selection mode so a swipe can't
+                                // trigger delete/archive while the user is multi-selecting —
+                                // the gestures would conflict and an errant swipe could drop
+                                // a session that was merely being selected.
+                                enableDismissFromStartToEnd = !inSelection,
+                                enableDismissFromEndToStart = !inSelection,
                                 // Indent sub-sessions under their parent (capped so deep
                                 // nesting doesn't squeeze the card off-screen).
                                 modifier = Modifier
@@ -1051,13 +1085,16 @@ private fun SessionCard(
                         val filterLabel = stringResource(
                             if (isDirectoryFiltered) R.string.clear_project_filter else R.string.filter_by_project,
                         )
+                        // Disable the chip during selection mode so a tap toggles selection rather
+                        // than silently applying a directory filter mid-multi-select.
+                        val chipEnabled = onFilterByDirectory != null && !inSelection
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
                                 .padding(top = 2.dp)
                                 .clip(MaterialTheme.shapes.small)
                                 .then(
-                                    if (onFilterByDirectory != null) {
+                                    if (chipEnabled) {
                                         Modifier.clickable(role = Role.Button, onClickLabel = filterLabel) {
                                             onFilterByDirectory(session.directory ?: dir)
                                         }
@@ -1093,7 +1130,10 @@ private fun SessionCard(
                 var showRowMenu by rememberSaveable(session.id) { mutableStateOf(false) }
                 val renameLabel = stringResource(R.string.rename)
                 val deleteLabel = stringResource(R.string.delete)
-                val moreLabel = stringResource(R.string.more)
+                // Include the session title in the overflow button's a11y label so a TalkBack
+                // user scrolling a long list doesn't hear an undifferentiated run of "More"
+                // buttons with no indication of which session each belongs to.
+                val moreLabel = stringResource(R.string.more_options_for, session.displayTitle)
                 val pinLabel = stringResource(if (isPinned) R.string.session_unpin else R.string.session_pin)
                 val archiveLabel = stringResource(if (isArchived) R.string.session_unarchive else R.string.session_archive)
                 Box {

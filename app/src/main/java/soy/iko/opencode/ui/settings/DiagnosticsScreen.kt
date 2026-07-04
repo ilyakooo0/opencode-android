@@ -54,6 +54,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -71,7 +72,6 @@ import soy.iko.opencode.util.runCatchingCancellable
 import soy.iko.opencode.ui.components.AppTopBar
 import soy.iko.opencode.ui.components.EmptyState
 import soy.iko.opencode.ui.components.copyToClipboard
-import soy.iko.opencode.ui.components.showToast
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -135,7 +135,7 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                     context.contentResolver.openOutputStream(uri)?.use { it.write(all.toByteArray()) }
                 }
             }.isSuccess
-            if (ok) showToast(context, context.getString(R.string.export_all))
+            if (ok) snackbar.showSnackbar(context.getString(R.string.export_all))
         }
     }
 
@@ -327,7 +327,7 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                                                 // failures (e.g. an oversized report exceeding the Binder limit →
                                                 // TransactionTooLargeException) get a generic toast, not that misleading one.
                                                 val msg = if (it is ActivityNotFoundException) R.string.no_share_app else R.string.error_generic
-                                                showToast(context, context.getString(msg))
+                                                shareScope.launch { snackbar.showSnackbar(context.getString(msg)) }
                                             }
                                     }
                                 }) {
@@ -370,7 +370,12 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
     if (reportName != null) {
         var reportContent by remember(reportName) { mutableStateOf<String?>(null) }
         var loadFailed by remember(reportName) { mutableStateOf(false) }
-        LaunchedEffect(reportName) {
+        // A retry trigger: bumping this re-runs the load LaunchedEffect (keyed on it) and
+        // clears the failure state, so a transient read error is recoverable without closing
+        // and reopening the report — matching the file viewer's error-retry pattern.
+        var retryKey by remember(reportName) { mutableIntStateOf(0) }
+        LaunchedEffect(reportName, retryKey) {
+            if (retryKey > 0) { reportContent = null; loadFailed = false }
             val loaded = withContext(Dispatchers.IO) {
                 // runCatchingCancellable (not runCatching) so dismissing the dialog or
                 // switching reports mid-read lets the CancellationException propagate
@@ -420,7 +425,7 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                                                 // (e.g. an oversized report exceeding the Binder limit → TransactionTooLargeException)
                                                 // get a generic toast, not that misleading one.
                                                 val msg = if (it is ActivityNotFoundException) R.string.no_share_app else R.string.error_generic
-                                                showToast(context, context.getString(msg))
+                                                shareScope.launch { snackbar.showSnackbar(context.getString(msg)) }
                                             }
                                     },
                                 ) { Icon(Icons.Filled.Share, contentDescription = stringResource(R.string.share)) }
@@ -450,10 +455,18 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                             modifier = Modifier.fillMaxSize().padding(padding),
                             contentAlignment = Alignment.Center,
                         ) {
-                            Text(
-                                stringResource(R.string.report_load_failed),
-                                color = MaterialTheme.colorScheme.error,
-                            )
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
+                            ) {
+                                Text(
+                                    stringResource(R.string.report_load_failed),
+                                    color = MaterialTheme.colorScheme.error,
+                                )
+                                TextButton(onClick = { retryKey++ }) {
+                                    Text(stringResource(R.string.retry))
+                                }
+                            }
                         }
                         else -> {
                             val loadingLabel = stringResource(R.string.loading)

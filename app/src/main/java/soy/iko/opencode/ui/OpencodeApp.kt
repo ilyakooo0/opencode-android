@@ -219,10 +219,18 @@ fun OpencodeApp(container: AppContainer) {
 
         // Deep-linked file open (opencode://file/{path}): navigate to the file viewer once a
         // connection exists (the viewer fetches content from the server). Path comes pre-validated
-        // by MainActivity's deep-link guard.
-        LaunchedEffect(pendingOpenFile, connection) {
+        // by MainActivity's deep-link guard. In two-pane mode the detail pane (TwoPaneFileBrowser,
+        // hosted on the FILES route) consumes the request into its detail pane, mirroring how
+        // session deep links are routed — so don't consume or push the full-screen viewer here.
+        LaunchedEffect(pendingOpenFile, connection, isTwoPane) {
             val path = pendingOpenFile ?: return@LaunchedEffect
             if (connection == null) return@LaunchedEffect
+            if (isTwoPane) {
+                if (!navController.popBackStack(Routes.FILES, inclusive = false)) {
+                    navController.navigate(Routes.FILES) { launchSingleTop = true }
+                }
+                return@LaunchedEffect
+            }
             container.consumePendingOpenFile()
             if (!navController.popBackStack(Routes.FILES, inclusive = false)) {
                 navController.navigate(Routes.FILES) { launchSingleTop = true }
