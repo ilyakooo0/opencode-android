@@ -9,6 +9,8 @@ import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.QueryStats
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
@@ -19,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import soy.iko.opencode.R
+import soy.iko.opencode.ui.Routes
 
 /** A top-level destination surfaced on the large-screen navigation rail. */
 private data class RailDest(
@@ -30,13 +33,13 @@ private data class RailDest(
 )
 
 private val RAIL_DESTINATIONS = listOf(
-    RailDest("sessions", R.string.sessions_title, Icons.AutoMirrored.Filled.Chat, true),
-    RailDest("search", R.string.search_all_title, Icons.Filled.Search, true),
-    RailDest("files", R.string.files, Icons.Filled.Folder, true),
-    RailDest("usage", R.string.usage_title, Icons.Filled.QueryStats, true),
-    RailDest("mcp", R.string.mcp_servers, Icons.Filled.Hub, true),
-    RailDest("settings", R.string.settings, Icons.Filled.Settings, false),
-    RailDest("servers", R.string.servers_title, Icons.Filled.Dns, false),
+    RailDest(Routes.SESSIONS, R.string.sessions_title, Icons.AutoMirrored.Filled.Chat, true),
+    RailDest(Routes.SEARCH, R.string.search_all_title, Icons.Filled.Search, true),
+    RailDest(Routes.FILES, R.string.files, Icons.Filled.Folder, true),
+    RailDest(Routes.USAGE, R.string.usage_title, Icons.Filled.QueryStats, true),
+    RailDest(Routes.MCP, R.string.mcp_servers, Icons.Filled.Hub, true),
+    RailDest(Routes.SETTINGS, R.string.settings, Icons.Filled.Settings, false),
+    RailDest(Routes.SERVERS, R.string.servers_title, Icons.Filled.Dns, false),
 )
 
 /**
@@ -46,6 +49,8 @@ private val RAIL_DESTINATIONS = listOf(
  * @param currentRoute the current NavHost destination route, used to highlight the active item.
  * @param connected whether a server connection is active; connection-dependent items (sessions,
  *  files, …) are disabled until one exists.
+ * @param unreadCount total unread messages across sessions, shown as a badge on the Sessions item.
+ * @param runActive whether any agent run is active, shown as a dot badge on the Sessions item.
  * @param onNavigate invoked with the destination's route when an item is selected.
  */
 @Composable
@@ -54,6 +59,8 @@ fun LargeScreenNavRail(
     connected: Boolean,
     onNavigate: (String) -> Unit,
     modifier: Modifier = Modifier,
+    unreadCount: Int = 0,
+    runActive: Boolean = false,
 ) {
     NavigationRail(modifier = modifier.fillMaxHeight()) {
         RAIL_DESTINATIONS.forEach { dest ->
@@ -62,13 +69,32 @@ fun LargeScreenNavRail(
             // file_view?path=… is a detail of `files`. Without this, drilling into a file
             // loses the FILES highlight and the user loses their place in the rail.
             val selected = currentRoute == dest.route ||
-                (dest.route == "sessions" && currentRoute != null && currentRoute.startsWith("chat/")) ||
-                (dest.route == "files" && currentRoute != null && currentRoute.startsWith("file_view"))
+                (dest.route == Routes.SESSIONS && currentRoute != null && currentRoute.startsWith("${Routes.CHAT}/")) ||
+                (dest.route == Routes.FILES && currentRoute != null && currentRoute.startsWith(Routes.FILE_VIEW))
+            // Badge the Sessions item with unread count and/or a running dot, so a user on
+            // Files/Settings can see at a glance that sessions need attention or a run is
+            // active — mirroring the launcher badge but in-app.
+            val showUnreadBadge = dest.route == Routes.SESSIONS && unreadCount > 0
+            val showRunBadge = dest.route == Routes.SESSIONS && runActive
             NavigationRailItem(
                 selected = selected,
                 enabled = !dest.requiresConnection || connected,
                 onClick = { onNavigate(dest.route) },
-                icon = { Icon(dest.icon, contentDescription = null) },
+                icon = {
+                    if (showUnreadBadge || showRunBadge) {
+                        BadgedBox(
+                            badge = {
+                                if (showUnreadBadge) {
+                                    Badge { Text(unreadCount.coerceAtMost(99).toString()) }
+                                } else if (showRunBadge) {
+                                    Badge()
+                                }
+                            },
+                        ) { Icon(dest.icon, contentDescription = null) }
+                    } else {
+                        Icon(dest.icon, contentDescription = null)
+                    }
+                },
                 label = { Text(stringResource(dest.labelRes)) },
                 colors = NavigationRailItemDefaults.colors(),
             )

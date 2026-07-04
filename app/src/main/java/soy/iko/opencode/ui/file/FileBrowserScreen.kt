@@ -702,6 +702,7 @@ private fun FileRow(
     onCopyPath: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
+    val context = LocalContext.current
     val copyPathLabel = stringResource(R.string.copy_path)
     // Haptic on row open for consistency with the breadcrumb taps and other screens.
     val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
@@ -765,7 +766,7 @@ private fun FileRow(
                 if (sublabel != null) add(sublabel)
                 if (!icon) {
                     size?.let { add(formatFileSize(it)) }
-                    mtime?.let { add(relativeTime(it)) }
+                    mtime?.let { add(relativeTime(context, it)) }
                 }
             }
             if (detailParts.isNotEmpty()) {

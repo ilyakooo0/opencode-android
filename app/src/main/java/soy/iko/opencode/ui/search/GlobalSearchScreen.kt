@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
@@ -19,17 +21,21 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SearchOff
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -60,11 +66,12 @@ import soy.iko.opencode.ui.components.AppTopBar
 import soy.iko.opencode.ui.components.ConnectionBannerFor
 import soy.iko.opencode.ui.components.EmptyState
 import soy.iko.opencode.ui.components.RelativeTimeText
+import soy.iko.opencode.ui.components.reducedMotionAnimateItem
 import soy.iko.opencode.ui.vmFactory
 import soy.iko.opencode.util.runCatchingCancellable
 
 /** Cross-session message search: type a query, tap a result to open that conversation. */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun GlobalSearchScreen(
     container: AppContainer,
@@ -75,6 +82,7 @@ fun GlobalSearchScreen(
     val state by vm.state.collectAsStateWithLifecycle()
     val focusRequester = remember { androidx.compose.ui.focus.FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
+    val matchCaseLabel = stringResource(R.string.match_case)
 
     LaunchedEffect(Unit) {
         runCatchingCancellable { focusRequester.requestFocus() }
@@ -97,15 +105,45 @@ fun GlobalSearchScreen(
                 singleLine = true,
                 leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                 trailingIcon = {
-                    if (state.query.isNotEmpty()) {
-                        IconButton(onClick = { vm.setQuery("") }) {
-                            Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.clear_search))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        // "Aa" toggle: a FilterChip beside the clear (x) so the case-sensitivity
+                        // control sits with the query it modifies, not in the type-filter row.
+                        FilterChip(
+                            selected = state.matchCase,
+                            onClick = { vm.setMatchCase(!state.matchCase) },
+                            label = { Text("Aa") },
+                            modifier = Modifier.semantics { contentDescription = matchCaseLabel },
+                        )
+                        if (state.query.isNotEmpty()) {
+                            IconButton(onClick = { vm.setQuery("") }) {
+                                Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.clear_search))
+                            }
                         }
                     }
                 },
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 keyboardActions = KeyboardActions(onSearch = { keyboard?.hide() }),
             )
+            // Type-filter row: All / Messages / Tool calls / Reasoning. Wraps via FlowRow so a
+            // long localized label doesn't overflow on narrow screens.
+            FlowRow(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                val filters = listOf(
+                    SearchTypeFilter.ALL to R.string.search_filter_all,
+                    SearchTypeFilter.MESSAGES to R.string.search_filter_messages,
+                    SearchTypeFilter.TOOLS to R.string.search_filter_tools,
+                    SearchTypeFilter.REASONING to R.string.search_filter_reasoning,
+                )
+                filters.forEach { (filter, labelRes) ->
+                    FilterChip(
+                        selected = state.typeFilter == filter,
+                        onClick = { vm.setTypeFilter(filter) },
+                        label = { Text(stringResource(labelRes)) },
+                    )
+                }
+            }
             Box(modifier = Modifier.fillMaxSize()) {
                 ConnectionBannerFor(container)
                 val searchingLabel = stringResource(R.string.searching)
@@ -147,6 +185,17 @@ fun GlobalSearchScreen(
                         title = stringResource(R.string.search_keep_typing),
                         modifier = Modifier.align(Alignment.Center),
                     )
+                    // Empty query + persisted history: surface suggestions so a returning user can
+                    // re-run a prior search in one tap instead of retyping it.
+                    state.query.isBlank() && state.history.isNotEmpty() -> HistorySuggestions(
+                        history = state.history,
+                        onPick = { query ->
+                            vm.setQuery(query)
+                            keyboard?.hide()
+                        },
+                        onClear = vm::clearHistory,
+                        modifier = Modifier.fillMaxSize(),
+                    )
                     state.results.isEmpty() -> EmptyState(
                         icon = Icons.Filled.Search,
                         title = stringResource(R.string.search_all_start),
@@ -179,10 +228,10 @@ fun GlobalSearchScreen(
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
-                                    androidx.compose.material3.TextButton(
+                                    TextButton(
                                         onClick = { vm.searchMore() },
                                         enabled = !state.searching,
-                                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp),
+                                        contentPadding = PaddingValues(horizontal = 0.dp),
                                     ) {
                                         Text(stringResource(R.string.search_more))
                                     }
@@ -193,7 +242,9 @@ fun GlobalSearchScreen(
                             SearchResultCard(
                                 hit = hit,
                                 query = state.query.trim(),
+                                ignoreCase = !state.matchCase,
                                 onClick = { onOpenSession(hit.session.id) },
+                                modifier = Modifier.then(reducedMotionAnimateItem()),
                             )
                         }
                     }
@@ -203,16 +254,57 @@ fun GlobalSearchScreen(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun SearchResultCard(hit: SearchHit, query: String, onClick: () -> Unit) {
+private fun HistorySuggestions(
+    history: List<String>,
+    onPick: (String) -> Unit,
+    onClear: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier.padding(16.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                stringResource(R.string.recent_searches),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.semantics { heading() },
+            )
+            Spacer(Modifier.weight(1f))
+            TextButton(onClick = onClear) {
+                Text(stringResource(R.string.clear_history))
+            }
+        }
+        Spacer(Modifier.size(8.dp))
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            history.forEach { query ->
+                AssistChip(
+                    onClick = { onPick(query) },
+                    leadingIcon = { Icon(Icons.Filled.History, contentDescription = null) },
+                    label = { Text(query, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SearchResultCard(hit: SearchHit, query: String, ignoreCase: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val highlightColor = MaterialTheme.colorScheme.primary
     // Highlight the title too when the match was in the title (otherwise the body snippet below
     // is highlighted but the title above stays plain — an inconsistency).
-    val title = remember(hit.session.displayTitle, query, hit.matchedTitle, highlightColor) {
-        if (hit.matchedTitle) highlightMatches(hit.session.displayTitle, query, highlightColor)
+    val title = remember(hit.session.displayTitle, query, hit.matchedTitle, highlightColor, ignoreCase) {
+        if (hit.matchedTitle) highlightMatches(hit.session.displayTitle, query, highlightColor, ignoreCase)
         else AnnotatedString(hit.session.displayTitle)
     }
-    Card(modifier = Modifier.fillMaxWidth().clickable(role = Role.Button) { onClick() }) {
+    Card(modifier = modifier.fillMaxWidth().clickable(role = Role.Button) { onClick() }) {
         Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
@@ -239,8 +331,8 @@ private fun SearchResultCard(hit: SearchHit, query: String, onClick: () -> Unit)
                 modifier = Modifier.padding(top = 2.dp),
             )
             if (hit.snippet.isNotEmpty()) {
-                val snippet = remember(hit.snippet, query, highlightColor) {
-                    highlightMatches(hit.snippet, query, highlightColor)
+                val snippet = remember(hit.snippet, query, highlightColor, ignoreCase) {
+                    highlightMatches(hit.snippet, query, highlightColor, ignoreCase)
                 }
                 Text(
                     snippet,
@@ -255,18 +347,20 @@ private fun SearchResultCard(hit: SearchHit, query: String, onClick: () -> Unit)
     }
 }
 
-/** Bold + tint every case-insensitive occurrence of [query] within [text] so the user can
- *  see where the hit is in the surrounding snippet. */
+/** Bold + tint every occurrence of [query] within [text] so the user can see where the hit is
+ *  in the surrounding snippet. [ignoreCase] matches the search's case mode so highlights and
+ *  matches never diverge. */
 private fun highlightMatches(
     text: String,
     query: String,
     color: androidx.compose.ui.graphics.Color,
+    ignoreCase: Boolean,
 ): AnnotatedString {
     if (query.isEmpty()) return AnnotatedString(text)
     return buildAnnotatedString {
         var start = 0
         while (true) {
-            val idx = text.indexOf(query, start, ignoreCase = true)
+            val idx = text.indexOf(query, start, ignoreCase = ignoreCase)
             if (idx < 0) {
                 append(text.substring(start))
                 break

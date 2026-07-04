@@ -54,6 +54,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
+import soy.iko.opencode.data.model.AgentPart
 import soy.iko.opencode.data.model.FilePart
 import soy.iko.opencode.data.model.Part
 import soy.iko.opencode.data.model.ReasoningPart
@@ -181,6 +182,7 @@ fun PartView(
         }
         is StepStartPart -> {} // boundary marker — nothing to draw
         is StepFinishPart -> {} // metrics handled at message level
+        is AgentPart -> {} // agent name is surfaced in the assistant header, not the body
         is UnknownPart -> UnknownPartNote(modifier)
     }
 }

@@ -49,6 +49,7 @@ internal fun AttachmentStrip(
     attachments: List<PendingAttachment>,
     onRemove: (String) -> Unit,
     staging: Boolean = false,
+    stagingFileCount: Int = 0,
 ) {
     // Show the strip while an encode is in flight even before the first chip exists, so the
     // user gets immediate feedback that their pick is being processed.
@@ -66,14 +67,20 @@ internal fun AttachmentStrip(
         }
         // A placeholder chip with an indeterminate spinner while any pick is still being
         // read + base64-encoded off the main thread (chips only materialize once done).
-        if (staging) StagingChip()
+        if (staging) StagingChip(stagingFileCount)
     }
 }
 
 /** A placeholder chip shown while an attachment is being encoded. */
 @Composable
-private fun StagingChip() {
-    val stagingLabel = stringResource(R.string.attachment_staging)
+private fun StagingChip(stagingFileCount: Int) {
+    // Show "Staging N files…" when a multi-file count is known; fall back to the generic
+    // "Attaching…" for the single/unknown case so the label never reads "Staging 1 files".
+    val label = if (stagingFileCount > 1) {
+        stringResource(R.string.staging_n_files, stagingFileCount)
+    } else {
+        stringResource(R.string.attachment_staging)
+    }
     Surface(
         shape = MaterialTheme.shapes.small,
         color = MaterialTheme.colorScheme.surfaceVariant,
@@ -84,11 +91,11 @@ private fun StagingChip() {
             modifier = Modifier.padding(horizontal = 10.dp),
         ) {
             CircularProgressIndicator(
-                Modifier.size(18.dp).semantics { contentDescription = stagingLabel },
+                Modifier.size(18.dp).semantics { contentDescription = label },
                 strokeWidth = 2.dp,
             )
             Text(
-                stagingLabel,
+                label,
                 style = MaterialTheme.typography.labelMedium,
                 maxLines = 1,
                 modifier = Modifier.padding(start = 8.dp, top = 10.dp, bottom = 10.dp),

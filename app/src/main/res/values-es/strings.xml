@@ -19,6 +19,7 @@
     <string name="settings">Ajustes</string>
     <string name="files">Archivos</string>
     <string name="share">Compartir</string>
+    <string name="copy_as_markdown">Copiar como Markdown</string>
     <string name="share_subject">Sesión de opencode</string>
     <string name="send">Enviar</string>
     <string name="stop">Detener</string>
@@ -462,6 +463,7 @@
     <string name="usage">Uso</string>
     <string name="usage_title">Uso y coste</string>
     <string name="usage_total_cost">Coste total</string>
+    <string name="usage_total_cost_with_range">Coste total (%1$s)</string>
     <string name="usage_total_tokens">Tokens totales</string>
     <string name="usage_input">Entrada</string>
     <string name="usage_output">Salida</string>
@@ -565,6 +567,10 @@
     <string name="session_archived_badge">Archivada</string>
     <string name="session_shared_badge">Compartida</string>
     <string name="session_reverted_badge">Revertida</string>
+    <string name="session_running_badge">Agente en ejecución</string>
+    <string name="bulk_archived">%1$d sesiones archivadas</string>
+    <string name="bulk_unarchived">%1$d sesiones desarchivadas</string>
+    <string name="bulk_marked_read">%1$d sesiones marcadas como leídas</string>
     <string name="sort_active">Orden activo</string>
     <string name="sort_descending">Descendente</string>
     <string name="sort_ascending">Ascendente</string>
@@ -587,6 +593,7 @@
     <!-- UI/UX batch: permisos, confirmaciones, indicaciones de búsqueda, accesibilidad -->
     <string name="permission_progress">%1$d de %2$d</string>
     <string name="permission_waiting">El agente está esperando. Se rechazará automáticamente en %1$d min si no eliges.</string>
+    <string name="permission_warning_seconds">Rechazo automático en %1$d s</string>
     <string name="action_continue">Continuar</string>
     <string name="summarize_confirm_title">¿Resumir la conversación?</string>
     <string name="summarize_confirm_text">Los mensajes anteriores se compactan en un resumen para liberar contexto. Esto no se puede deshacer aquí.</string>
@@ -601,6 +608,7 @@
     <string name="clip_label_path">Ruta</string>
     <string name="clip_label_message">Mensaje</string>
     <string name="clip_label_share">Enlace para compartir</string>
+    <string name="clip_label_session_id">ID de sesión</string>
     <string name="search_contents_hint">Escribe para buscar en el contenido del archivo</string>
     <string name="search_symbols_hint">Escribe para buscar símbolos</string>
     <string name="search_keep_typing">Sigue escribiendo para buscar…</string>
@@ -653,7 +661,6 @@
     <string name="regenerate">Regenerar</string>
     <string name="find_in_conversation">Buscar en la conversación</string>
     <string name="search_in_conversation">Buscar en la conversación</string>
-    <string name="search_match_count">%1$d de %2$d</string>
     <string name="keyboard_shortcuts">Atajos de teclado</string>
     <string name="keyboard_shortcuts_title">Atajos de teclado</string>
     <string name="shortcut_open_palette">Abrir paleta de comandos</string>
@@ -694,6 +701,10 @@
     <string name="file_details_size_date">%1$s · %2$s</string>
     <string name="filter_by_project">Filtrar por este proyecto</string>
     <string name="clear_project_filter">Quitar filtro de proyecto</string>
+    <string name="directory_filter_chip">Directorio: %1$s</string>
+    <string name="clear_filter">Quitar filtro</string>
+    <string name="no_sessions_in_directory">No hay sesiones en este directorio</string>
+    <string name="no_sessions_archived_hidden">No hay sesiones</string>
     <string name="empty_file_detail_title">Ningún archivo seleccionado</string>
     <string name="empty_file_detail_desc">Elige un archivo de la lista para verlo aquí.</string>
 
@@ -772,6 +783,7 @@
     <string name="mark_unread">Marcar como no leído</string>
     <string name="search_progress">Buscadas %1$d / %2$d sesiones</string>
     <string name="recent_searches">Búsquedas recientes</string>
+    <string name="clear_history">Borrar historial</string>
     <string name="load_more_lines">Cargar %1$d líneas más</string>
     <string name="detect_from_server">Detectar desde el servidor</string>
     <string name="detecting_pin">Detectando pin de certificado…</string>
@@ -784,6 +796,9 @@
     <string name="mcp_remove_title">¿Quitar servidor MCP?</string>
     <string name="mcp_remove_text">“%1$s” se quitará de tus servidores MCP.</string>
     <string name="mcp_disabled_locally">Desactivado en este dispositivo</string>
+    <string name="mcp_view_tools">Ver herramientas</string>
+    <string name="mcp_no_tools">No hay herramientas disponibles</string>
+    <string name="mcp_add_server">Añadir servidor MCP</string>
     <string name="file_share_too_large">El archivo es demasiado grande para compartir</string>
     <string name="search_filter_all">Todo</string>
     <string name="search_filter_messages">Mensajes</string>
@@ -795,4 +810,22 @@
     <string name="server_http">HTTP · no seguro</string>
     <string name="server_https">HTTPS</string>
     <string name="server_https_pinned">HTTPS · cert fijado</string>
+
+    <string name="time_now">ahora</string>
+    <string name="time_minutes_abbrev">%1$d min</string>
+    <string name="time_hours_abbrev">%1$d h</string>
+    <string name="time_days_abbrev">%1$d d</string>
+    <string name="time_weeks_abbrev">%1$d sem</string>
+    <string name="time_months_abbrev">%1$d mes</string>
+    <string name="time_years_abbrev">%1$d a</string>
+
+    <string name="search_match_count">Mensaje %1$d de %2$d</string>
+
+    <string name="copy_session_id">Copiar ID de sesión</string>
+    <string name="staging_n_files">Preparando %1$d archivos…</string>
+    <string name="recent_models">Recientes</string>
+    <string name="test_connection">Probar conexión</string>
+    <string name="test_connection_desc">Probando conexión a %1$s</string>
+    <string name="test_connection_success">Conectado (%1$dms)</string>
+    <string name="test_connection_failed">Error: %1$s</string>
 </resources>

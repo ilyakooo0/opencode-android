@@ -57,6 +57,7 @@ import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.invisibleToUser
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
@@ -260,7 +261,7 @@ private fun MarkdownBody(
             SelectionContainer {
                 Markdown(
                     content = markdown,
-                    modifier = modifier,
+                    modifier = modifier.semantics { liveRegion = LiveRegionMode.Polite },
                     components = components,
                 )
             }
@@ -603,6 +604,7 @@ private fun StreamingCaret() {
         "▋",
         style = MaterialTheme.typography.bodyLarge,
         color = MaterialTheme.colorScheme.primary.copy(alpha = alpha),
+        modifier = Modifier.semantics { invisibleToUser() },
     )
 }
 

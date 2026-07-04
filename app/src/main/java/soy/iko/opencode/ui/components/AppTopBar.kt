@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -69,9 +68,8 @@ fun AppTopBar(
         actions = {
             if (loading) {
                 Box(modifier = Modifier.size(40.dp), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(
-                        Modifier.size(20.dp),
-                        strokeWidth = 2.dp,
+                    LoadingSpinner(
+                        size = LoadingSize.Small,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }

@@ -5,34 +5,47 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import soy.iko.opencode.data.model.Session
 import soy.iko.opencode.data.model.TimeInfo
-import soy.iko.opencode.ui.components.relativeTime
+import soy.iko.opencode.ui.components.RelativeTimeUnit
+import soy.iko.opencode.ui.components.relativeTimeUnit
 import soy.iko.opencode.ui.session.SessionListState
 import java.util.concurrent.TimeUnit
 
 class UxTest {
 
-    // --- relativeTime ---
+    // --- relativeTimeUnit (pure logic, locale-independent) ---
 
     @Test
     fun relativeTimeHandlesNullAndZero() {
-        assertEquals("", relativeTime(null))
-        assertEquals("", relativeTime(0))
-        assertEquals("", relativeTime(-1))
+        assertEquals(null, relativeTimeUnit(null))
+        assertEquals(null, relativeTimeUnit(0))
+        assertEquals(null, relativeTimeUnit(-1))
     }
 
     @Test
     fun relativeTimeFormatsMinutes() {
         val now = System.currentTimeMillis()
-        assertEquals("now", relativeTime(now))
-        assertEquals("5m", relativeTime(now - TimeUnit.MINUTES.toMillis(5)))
+        assertEquals(RelativeTimeUnit.Now(), relativeTimeUnit(now))
+        assertEquals(
+            RelativeTimeUnit.Minutes(5),
+            relativeTimeUnit(now - TimeUnit.MINUTES.toMillis(5)),
+        )
     }
 
     @Test
     fun relativeTimeFormatsHoursAndDays() {
         val now = System.currentTimeMillis()
-        assertEquals("3h", relativeTime(now - TimeUnit.HOURS.toMillis(3)))
-        assertEquals("2d", relativeTime(now - TimeUnit.DAYS.toMillis(2)))
-        assertEquals("1w", relativeTime(now - TimeUnit.DAYS.toMillis(7)))
+        assertEquals(
+            RelativeTimeUnit.Hours(3),
+            relativeTimeUnit(now - TimeUnit.HOURS.toMillis(3)),
+        )
+        assertEquals(
+            RelativeTimeUnit.Days(2),
+            relativeTimeUnit(now - TimeUnit.DAYS.toMillis(2)),
+        )
+        assertEquals(
+            RelativeTimeUnit.Weeks(1),
+            relativeTimeUnit(now - TimeUnit.DAYS.toMillis(7)),
+        )
     }
 
     // --- Session search/filter ---

@@ -97,6 +97,16 @@ data class StepStartPart(
 
 @Immutable
 @Serializable
+@SerialName("agent")
+data class AgentPart(
+    override val id: String = "",
+    override val messageID: String? = null,
+    override val sessionID: String? = null,
+    val name: String = "",
+) : Part
+
+@Immutable
+@Serializable
 @SerialName("step-finish")
 data class StepFinishPart(
     override val id: String = "",

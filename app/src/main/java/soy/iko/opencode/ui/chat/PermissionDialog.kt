@@ -79,6 +79,9 @@ fun PermissionDialog(
     // indefinitely (the foreground service holds the process alive). LaunchedEffect keyed on
     // permission.id so a fresh prompt resets the timer. Disabled when the timeout is 0.
     val autoRejectMs = NetworkConfig.permissionAutoRejectMs
+    // Final-warning threshold: show a per-second countdown in the last 10s so the user isn't
+    // surprised by a silent auto-reject.
+    val warningThresholdMs = (autoRejectMs - 10_000L).coerceAtLeast(0L)
     LaunchedEffect(permission.id, autoRejectMs) {
         if (autoRejectMs <= 0L) return@LaunchedEffect
         val tickMs = 1000L
@@ -86,9 +89,13 @@ fun PermissionDialog(
             delay(tickMs)
             elapsedMs = (elapsedMs + tickMs).coerceAtMost(autoRejectMs)
         }
+        // Haptic on auto-reject so a walked-away user is signaled that the decision was made.
+        haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
         respond(PermissionResponse.REJECT)
     }
     val showReminder = elapsedMs >= NetworkConfig.permissionReminderThresholdMs
+    // In the final 10 seconds, show a per-second countdown instead of the minute reminder.
+    val showSecondsWarning = autoRejectMs > 0L && elapsedMs >= warningThresholdMs
     AlertDialog(
         // Back press routes here (dismissOnBackPress defaults true) and is treated as an
         // explicit reject — the safe default. Tap-outside is disabled below so it can't
@@ -143,7 +150,16 @@ fun PermissionDialog(
                 )
                 // After the reminder threshold, surface that the run is waiting so the user
                 // understands their inaction is holding up the agent. A nudge, not a force.
-                if (showReminder && autoRejectMs > 0L) {
+                // In the final 10 seconds, switch to a per-second countdown so the imminent
+                // auto-reject isn't a surprise.
+                if (showSecondsWarning) {
+                    val remainingSec = ((autoRejectMs - elapsedMs) / 1000L).coerceAtLeast(0L)
+                    Text(
+                        stringResource(R.string.permission_warning_seconds, remainingSec),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                } else if (showReminder && autoRejectMs > 0L) {
                     val remainingMin = ((autoRejectMs - elapsedMs) / 60_000L).coerceAtLeast(0L)
                     Text(
                         stringResource(R.string.permission_waiting, remainingMin),

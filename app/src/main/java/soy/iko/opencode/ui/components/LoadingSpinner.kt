@@ -2,8 +2,10 @@ package soy.iko.opencode.ui.components
 
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -20,6 +22,7 @@ import soy.iko.opencode.R
 fun LoadingSpinner(
     size: LoadingSize = LoadingSize.Medium,
     modifier: Modifier = Modifier,
+    color: Color = CircularProgressIndicatorDefaults.color,
 ) {
     val label = stringResource(R.string.loading)
     CircularProgressIndicator(
@@ -27,5 +30,11 @@ fun LoadingSpinner(
             .size(size.sizeDp.dp)
             .semantics { contentDescription = label },
         strokeWidth = size.strokeDp.dp,
+        color = color,
     )
+}
+
+private object CircularProgressIndicatorDefaults {
+    val color: Color
+        @Composable get() = MaterialTheme.colorScheme.primary
 }

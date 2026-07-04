@@ -392,6 +392,9 @@ class FakeAppContainer : AppContainer() {
     val fakeSessionPrefsStore = FakeSessionPrefsStore()
     val fakeAttachmentDraftStore = FakeAttachmentDraftStore()
     val fakeMessageCacheStore = FakeMessageCacheStore()
+    // In-memory search history (no Context / disk).
+    val fakeSearchHistoryStore = object : soy.iko.opencode.data.repo.SearchHistoryStore() {}
+    val fakeRecentModelsStore = object : soy.iko.opencode.data.repo.RecentModelsStore() {}
     // In-memory outbox (no Context / disk); exercises the same reduce logic the app uses.
     val fakeOutboxStore = object : OutboxStore() {}
     val fakeUnread = MutableStateFlow<Map<String, Int>>(emptyMap())
@@ -402,6 +405,8 @@ class FakeAppContainer : AppContainer() {
     override val sessionPrefsStore: SessionPrefsStore = fakeSessionPrefsStore
     override val attachmentDraftStore: AttachmentDraftStore = fakeAttachmentDraftStore
     override val messageCacheStore: MessageCacheStore = fakeMessageCacheStore
+    override val searchHistoryStore: soy.iko.opencode.data.repo.SearchHistoryStore = fakeSearchHistoryStore
+    override val recentModelsStore: soy.iko.opencode.data.repo.RecentModelsStore = fakeRecentModelsStore
     override val outboxStore: OutboxStore = fakeOutboxStore
     override val activeConnection: StateFlow<OpencodeConnection?> = fakeActiveConnection.asStateFlow()
     override val unread: StateFlow<Map<String, Int>> = fakeUnread.asStateFlow()

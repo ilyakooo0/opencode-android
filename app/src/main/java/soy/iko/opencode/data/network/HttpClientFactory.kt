@@ -28,17 +28,14 @@ import java.util.concurrent.TimeUnit
 object HttpClientFactory {
 
     fun create(profile: ServerProfile): HttpClient {
-        // Resolve per-profile TLS options up front so they're available inside the engine
-        // config: optionally upgrade a cleartext http:// URL to https:// ("Require HTTPS"),
-        // and pin the server certificate(s) for HTTPS connections.
-        val normalizedUrl = effectiveBaseUrl(profile)
+        val normalizedUrl = CertPinUtil.effectiveBaseUrl(profile)
         val isHttps = normalizedUrl.lowercase().startsWith("https://")
         // Parse the host with OkHttp's own parser (not java.net.URI, which rejects hosts OkHttp
         // accepts, e.g. underscores in "my_server.local"). If pinning is configured over HTTPS
         // but the host can't be parsed, fail closed: never build an unpinned client — that would
         // be a silent security downgrade for a user who opted into pinning.
         val pinHost = normalizedUrl.toHttpUrlOrNull()?.host
-        val pins = parsePins(profile.certPin)
+        val pins = CertPinUtil.parseCertPins(profile.certPin)
         if (pins.isNotEmpty() && isHttps && pinHost == null) {
             throw IllegalStateException(
                 "Certificate pinning is configured but the server host could not be parsed from $normalizedUrl",
@@ -151,26 +148,6 @@ object HttpClientFactory {
         }
         }
     }
-
-    /** The base URL after applying [ServerProfile.requireHttps]: a cleartext http:// URL is
-     *  upgraded to https:// so the "Require HTTPS" choice is enforced at the transport layer.
-     *  A configured certificate pin also forces TLS: a pin is meaningless over cleartext and
-     *  would otherwise be silently dropped, so we honor the opt-in security control by upgrading
-     *  rather than connecting unpinned in the clear. */
-    private fun effectiveBaseUrl(profile: ServerProfile): String {
-        val normalized = normalizeBaseUrl(profile.baseUrl)
-        val forceHttps = profile.requireHttps || parsePins(profile.certPin).isNotEmpty()
-        return if (forceHttps && normalized.lowercase().startsWith("http://")) {
-            "https://" + normalized.substring("http://".length)
-        } else {
-            normalized
-        }
-    }
-
-    /** Split a certificate-pin field into individual OkHttp pins. Accepts whitespace- or
-     *  comma-separated "sha256/<base64>" entries; blank entries are dropped. */
-    private fun parsePins(raw: String?): List<String> =
-        raw?.split(Regex("[\\s,]+"))?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList()
 
     /** Ensure a scheme and a single trailing slash so relative paths resolve correctly.
      *  Defaults to [https] when no scheme is given so credentials aren't accidentally

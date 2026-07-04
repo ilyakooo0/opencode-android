@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,6 +20,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -55,6 +57,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -118,7 +121,10 @@ import soy.iko.opencode.platform.SessionsWidgetProvider
 import soy.iko.opencode.R
 import soy.iko.opencode.ui.components.ConnectionBanner
 import soy.iko.opencode.ui.components.EmptyState
+import soy.iko.opencode.ui.components.LoadingSize
+import soy.iko.opencode.ui.components.LoadingSpinner
 import soy.iko.opencode.ui.components.LocalRelativeTimeTick
+import soy.iko.opencode.ui.components.copyToClipboard
 import soy.iko.opencode.ui.components.reducedMotionAnimateItem
 import soy.iko.opencode.ui.components.RelativeTimeText
 import soy.iko.opencode.ui.components.rememberRelativeTimeTick
@@ -151,6 +157,7 @@ fun SessionListScreen(
     val creating by vm.creating.collectAsStateWithLifecycle()
     val directoryOptions by vm.directoryOptions.collectAsStateWithLifecycle()
     val anyRunActive by container.anyRunActive.collectAsStateWithLifecycle()
+    val runningSessionIds by container.runningSessionIds.collectAsStateWithLifecycle()
     val activeConnection by container.activeConnection.collectAsStateWithLifecycle()
     val isOnline by container.isOnline.collectAsStateWithLifecycle()
     val connectedId = activeConnection?.profile?.id
@@ -221,6 +228,12 @@ fun SessionListScreen(
         }
     }
 
+    LaunchedEffect(Unit) {
+        vm.transientInfo.collect { msg ->
+            snackbar.showSnackbar(msg)
+        }
+    }
+
     // Retryable failures (create/rename): offer a Retry action so a transient network error
     // is recoverable in one tap instead of forcing the user back through the dialog/FAB.
     LaunchedEffect(Unit) {
@@ -275,6 +288,7 @@ fun SessionListScreen(
     }
 
     SessionActionUndoEffect(vm, snackbar)
+    BulkSessionActionUndoEffect(vm, snackbar)
 
     Scaffold(
         topBar = {
@@ -442,7 +456,9 @@ fun SessionListScreen(
                     refreshing = refreshing,
                     haptics = haptics,
                     selectedSessionId = selectedSessionId,
+                    connected = activeConnection != null,
                     onRefresh = vm::refresh,
+                    onReconnect = vm::retryConnection,
                     onQueryChange = vm::setQuery,
                     onOpenSession = onOpenSession,
                     onCreateSession = openNewSession,
@@ -453,9 +469,12 @@ fun SessionListScreen(
                     onMarkUnread = { vm.markUnread(it) },
                     onToggleMute = { container.toggleSessionMute(it) },
                     onFilterByDirectory = vm::setDirectoryFilter,
+                    onClearDirectoryFilter = { vm.setDirectoryFilter(null) },
+                    onShowArchived = { vm.setShowArchived(true) },
                     inSelection = inSelection,
                     selectedIds = selectedIds,
                     onToggleSelect = ::toggleSelected,
+                    runningSessionIds = runningSessionIds,
                 )
             }
         }
@@ -555,7 +574,9 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
     refreshing: Boolean,
     haptics: androidx.compose.ui.hapticfeedback.HapticFeedback,
     selectedSessionId: String?,
+    connected: Boolean,
     onRefresh: () -> Unit,
+    onReconnect: () -> Unit,
     onQueryChange: (String) -> Unit,
     onOpenSession: (String) -> Unit,
     onCreateSession: () -> Unit,
@@ -566,9 +587,12 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
     onMarkUnread: (String) -> Unit,
     onToggleMute: (String) -> Unit,
     onFilterByDirectory: (String) -> Unit,
+    onClearDirectoryFilter: () -> Unit,
+    onShowArchived: () -> Unit,
     inSelection: Boolean,
     selectedIds: Set<String>,
     onToggleSelect: (String) -> Unit,
+    runningSessionIds: Set<String> = emptySet(),
 ) {
     when {
         state.loading -> {
@@ -607,7 +631,7 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,
             )
             Spacer(Modifier.size(12.dp))
-            TextButton(onClick = onRefresh) {
+            TextButton(onClick = if (connected) onRefresh else onReconnect) {
                 Text(stringResource(R.string.retry))
             }
         }
@@ -644,11 +668,45 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
                     keyboardActions = KeyboardActions(onSearch = { keyboardController?.hide() }),
                 )
             }
+            // List-level indicator that a directory filter is scoping the list. Tapping the
+            // trailing X clears it (equivalent to tapping the active card chip again). The
+            // Row scrolls horizontally so a long path doesn't clip the clear action.
+            state.directoryFilter?.let { dir ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                ) {
+                    FilterChip(
+                        selected = true,
+                        onClick = onClearDirectoryFilter,
+                        label = { Text(stringResource(R.string.directory_filter_chip, dir)) },
+                        trailingIcon = {
+                            Icon(
+                                Icons.Filled.Close,
+                                contentDescription = stringResource(R.string.clear_filter),
+                            )
+                        },
+                    )
+                }
+            }
             val sessions = remember(
                 state.sessions, state.query, state.previews,
                 state.pinnedIds, state.archivedIds, state.showArchived,
             ) { state.filtered }
             if (sessions.isEmpty()) {
+                // Distinguish why the list is empty so the offered recovery action matches
+                // the active filter: a query clears the search, a directory filter clears
+                // the project scope, and an all-archived list reveals archived sessions.
+                val message = when {
+                    state.query.isNotEmpty() ->
+                        stringResource(R.string.no_sessions_match, state.query)
+                    state.directoryFilter != null ->
+                        stringResource(R.string.no_sessions_in_directory)
+                    else ->
+                        stringResource(R.string.no_sessions_archived_hidden)
+                }
                 Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center,
@@ -665,16 +723,29 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
                         )
                         Spacer(Modifier.size(12.dp))
                         Text(
-                            stringResource(R.string.no_sessions_match, state.query),
+                            message,
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                         )
-                        // An empty filtered list is recoverable in one tap; offer it inline
-                        // rather than making the user hunt for the field's trailing clear icon.
-                        if (state.query.isNotEmpty()) {
-                            Spacer(Modifier.size(8.dp))
-                            TextButton(onClick = { onQueryChange("") }) {
-                                Text(stringResource(R.string.clear_search))
+                        when {
+                            state.query.isNotEmpty() -> {
+                                Spacer(Modifier.size(8.dp))
+                                TextButton(onClick = { onQueryChange("") }) {
+                                    Text(stringResource(R.string.clear_search))
+                                }
+                            }
+                            state.directoryFilter != null -> {
+                                Spacer(Modifier.size(8.dp))
+                                TextButton(onClick = onClearDirectoryFilter) {
+                                    Text(stringResource(R.string.clear_filter))
+                                }
+                            }
+                            state.hiddenArchivedCount > 0 -> {
+                                Spacer(Modifier.size(8.dp))
+                                TextButton(onClick = onShowArchived) {
+                                    Text(stringResource(R.string.show_archived))
+                                }
                             }
                         }
                     }
@@ -823,6 +894,7 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
                                     isPinned = isPinned,
                                     isArchived = isArchived,
                                     isMuted = isMuted,
+                                    isRunning = session.id in runningSessionIds,
                                     onClick = onCardClick,
                                     onRename = onCardRename,
                                     onDelete = onCardDelete,
@@ -988,6 +1060,7 @@ private fun SessionCard(
     isSelected: Boolean = false,
     isPinned: Boolean = false,
     isArchived: Boolean = false,
+    isRunning: Boolean = false,
     onFilterByDirectory: ((String) -> Unit)? = null,
     isDirectoryFiltered: Boolean = false,
     inSelection: Boolean = false,
@@ -1045,6 +1118,15 @@ private fun SessionCard(
                 }
                 Column(modifier = Modifier.weight(1f).padding(start = 12.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (isRunning) {
+                            val runningLabel = stringResource(R.string.session_running_badge)
+                            LoadingSpinner(
+                                size = LoadingSize.Inline,
+                                modifier = Modifier
+                                    .padding(end = 8.dp)
+                                    .semantics { contentDescription = runningLabel },
+                            )
+                        }
                         if (unreadCount > 0 && !isMuted) {
                             val unreadLabel = stringResource(R.string.unread_count, unreadCount)
                             // Count badge: shows the number of unread messages so the user
@@ -1198,6 +1280,9 @@ private fun SessionCard(
                 val archiveLabel = stringResource(if (isArchived) R.string.session_unarchive else R.string.session_archive)
                 val markUnreadLabel = stringResource(R.string.session_mark_unread)
                 val muteLabel = stringResource(if (isMuted) R.string.session_unmute else R.string.session_mute)
+                val copyIdLabel = stringResource(R.string.copy_session_id)
+                val rowContext = LocalContext.current
+                val clipLabelSessionId = stringResource(R.string.clip_label_session_id)
                 Box {
                     IconButton(onClick = { showRowMenu = true }) {
                         Icon(Icons.Filled.MoreVert, contentDescription = moreLabel)
@@ -1225,6 +1310,13 @@ private fun SessionCard(
                         DropdownMenuItem(
                             text = { Text(muteLabel) },
                             onClick = { showRowMenu = false; onToggleMute() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text(copyIdLabel) },
+                            onClick = {
+                                showRowMenu = false
+                                copyToClipboard(rowContext, clipLabelSessionId, session.id)
+                            },
                         )
                         DropdownMenuItem(
                             text = { Text(renameLabel) },
@@ -1315,6 +1407,32 @@ private fun SessionActionUndoEffect(vm: SessionListViewModel, snackbar: Snackbar
             )
             if (result == androidx.compose.material3.SnackbarResult.ActionPerformed) {
                 vm.undoSessionAction(event)
+            }
+        }
+    }
+}
+
+// Confirmation + Undo for bulk archive actions. Mirrors SessionActionUndoEffect but for
+// the bulk path, so archiving N sessions at once shows a single snackbar (not N) with Undo.
+@Composable
+private fun BulkSessionActionUndoEffect(vm: SessionListViewModel, snackbar: SnackbarHostState) {
+    val undoLabel = stringResource(R.string.undo)
+    val archived = stringResource(R.string.bulk_archived)
+    val unarchived = stringResource(R.string.bulk_unarchived)
+    LaunchedEffect(Unit) {
+        vm.bulkSessionActionEvents.collectLatest { event ->
+            val message = when (event.kind) {
+                SessionActionKind.ARCHIVED -> archived.format(event.ids.size)
+                SessionActionKind.UNARCHIVED -> unarchived.format(event.ids.size)
+                SessionActionKind.PINNED, SessionActionKind.UNPINNED -> return@collectLatest
+            }
+            val result = snackbar.showSnackbar(
+                message = message,
+                actionLabel = undoLabel,
+                duration = androidx.compose.material3.SnackbarDuration.Short,
+            )
+            if (result == androidx.compose.material3.SnackbarResult.ActionPerformed) {
+                vm.undoBulkAction(event)
             }
         }
     }

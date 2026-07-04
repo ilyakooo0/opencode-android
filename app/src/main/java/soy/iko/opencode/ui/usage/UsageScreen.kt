@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -67,6 +68,7 @@ import soy.iko.opencode.ui.components.AppTopBar
 import soy.iko.opencode.ui.components.ConnectionBannerFor
 import soy.iko.opencode.ui.components.EmptyState
 import soy.iko.opencode.ui.components.SectionHeader
+import soy.iko.opencode.ui.components.reducedMotionAnimateItem
 import soy.iko.opencode.ui.vmFactory
 import java.text.NumberFormat
 import java.util.Locale
@@ -96,7 +98,7 @@ fun UsageScreen(container: AppContainer, onBack: () -> Unit, onOpenSession: (Str
         PullToRefreshBox(
             isRefreshing = refreshing,
             onRefresh = { vm.load() },
-            modifier = Modifier.fillMaxSize().padding(padding),
+            modifier = Modifier.fillMaxSize().imePadding().padding(padding),
         ) {
             Box(modifier = Modifier.fillMaxSize()) {
                 ConnectionBannerFor(container)
@@ -198,7 +200,7 @@ private fun UsageContent(
                 }
             }
         }
-        item { TotalsCard(report) }
+        item { TotalsCard(report, timeRange) }
         item { TokenBreakdownCard(report.totalTokens) }
         if (report.byModel.isNotEmpty()) {
             item { SectionHeader(stringResource(R.string.usage_by_model), Modifier.semantics { heading() }) }
@@ -211,6 +213,7 @@ private fun UsageContent(
                     tokens = m.tokens,
                     messages = m.messages,
                     costFraction = fractionOf(m.cost, report.totalCost),
+                    modifier = Modifier.then(reducedMotionAnimateItem()),
                 )
             }
         }
@@ -254,6 +257,7 @@ private fun UsageContent(
                     messages = s.messages,
                     costFraction = fractionOf(s.cost, report.totalCost),
                     onClick = { onOpenSession(s.sessionId) },
+                    modifier = Modifier.then(reducedMotionAnimateItem()),
                 )
             }
         }
@@ -291,11 +295,17 @@ private fun CostBar(fraction: Float) {
 }
 
 @Composable
-private fun TotalsCard(report: UsageReport) {
+private fun TotalsCard(report: UsageReport, timeRange: UsageTimeRange) {
+    val rangeLabelRes = when (timeRange) {
+        UsageTimeRange.TWENTY_FOUR_HOURS -> R.string.usage_range_24h
+        UsageTimeRange.SEVEN_DAYS -> R.string.usage_range_7d
+        UsageTimeRange.THIRTY_DAYS -> R.string.usage_range_30d
+        UsageTimeRange.ALL_TIME -> R.string.usage_range_all
+    }
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
             Text(
-                stringResource(R.string.usage_total_cost),
+                stringResource(R.string.usage_total_cost_with_range, stringResource(rangeLabelRes)),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -352,8 +362,9 @@ private fun UsageRow(
     messages: Int,
     costFraction: Float,
     onClick: (() -> Unit)? = null,
+    modifier: Modifier = Modifier,
 ) {
-    val rowModifier = Modifier
+    val rowModifier = modifier
         .fillMaxWidth()
         .let { if (onClick != null) it.clickable(role = Role.Button, onClick = onClick) else it }
         .padding(vertical = 6.dp)

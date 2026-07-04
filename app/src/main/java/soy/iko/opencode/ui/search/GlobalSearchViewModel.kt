@@ -64,7 +64,17 @@ data class GlobalSearchState(
     val totalCount: Int = 0,
     /** The cap applied to this pass. Grows when the user taps "Search more". */
     val sessionCap: Int = NetworkConfig.maxSearchSessions,
+    /** Message-type filter; ALL matches everything, the others restrict which parts are
+     *  searchable so a user can scope "just tool calls" vs "just reasoning". */
+    val typeFilter: SearchTypeFilter = SearchTypeFilter.ALL,
+    /** When true the query matches case-sensitively (the default is case-insensitive). */
+    val matchCase: Boolean = false,
+    /** Persisted recent queries shown as suggestions when the search field is empty. */
+    val history: List<String> = emptyList(),
 )
+
+/** Scopes a global search to a category of message part. */
+enum class SearchTypeFilter { ALL, MESSAGES, TOOLS, REASONING }
 
 /**
  * Cross-session message search. opencode's `/find` searches project *files*, not chat
@@ -74,7 +84,9 @@ data class GlobalSearchState(
  */
 class GlobalSearchViewModel(private val container: AppContainer) : ViewModel() {
 
-    private val _state = MutableStateFlow(GlobalSearchState())
+    private val _state = MutableStateFlow(
+        GlobalSearchState(history = container.searchHistoryStore.queries.value),
+    )
     val state: StateFlow<GlobalSearchState> = _state.asStateFlow()
 
     private var searchJob: Job? = null
@@ -101,7 +113,42 @@ class GlobalSearchViewModel(private val container: AppContainer) : ViewModel() {
         searchJob = viewModelScope.launch {
             delay(NetworkConfig.searchDebounceMs)
             runSearch(trimmed)
+            // Record the query only after a search actually ran (not on every keystroke that
+            // crossed the min-length threshold), so history reflects real searches.
+            if (_state.value.query.trim() == trimmed) {
+                container.searchHistoryStore.add(trimmed)
+                _state.update { it.copy(history = container.searchHistoryStore.queries.value) }
+            }
         }
+    }
+
+    /** Swap the message-type filter and re-run the current query (no debounce) so the chip
+     *  change is reflected immediately. The message cache is preserved. */
+    fun setTypeFilter(filter: SearchTypeFilter) {
+        if (_state.value.typeFilter == filter) return
+        _state.update { it.copy(typeFilter = filter) }
+        relaunchCurrent()
+    }
+
+    /** Toggle case-sensitivity and re-run the current query (no debounce). */
+    fun setMatchCase(matchCase: Boolean) {
+        if (_state.value.matchCase == matchCase) return
+        _state.update { it.copy(matchCase = matchCase) }
+        relaunchCurrent()
+    }
+
+    /** Drop all persisted search history (the "Clear history" action). */
+    fun clearHistory() {
+        container.searchHistoryStore.clear()
+        _state.update { it.copy(history = emptyList()) }
+    }
+
+    private fun relaunchCurrent() {
+        val trimmed = _state.value.query.trim()
+        if (trimmed.length < NetworkConfig.minSearchQueryLength) return
+        searchJob?.cancel()
+        _state.update { it.copy(searching = true, error = null) }
+        searchJob = viewModelScope.launch { runSearch(trimmed) }
     }
 
     /** Re-run the current query immediately (no debounce), used by the error-state Retry. Clears
@@ -147,6 +194,8 @@ class GlobalSearchViewModel(private val container: AppContainer) : ViewModel() {
         val hits = java.util.Collections.synchronizedMap(HashMap<String, SearchHit>())
         val semaphore = Semaphore(NetworkConfig.maxConcurrentPreviews)
         val searched = java.util.concurrent.atomic.AtomicInteger(0)
+        val ignoreCase = !_state.value.matchCase
+        val filter = _state.value.typeFilter
         coroutineScope {
             toSearch.forEach { session ->
                 launch {
@@ -160,11 +209,13 @@ class GlobalSearchViewModel(private val container: AppContainer) : ViewModel() {
                                     Log.w("GlobalSearch", "listMessages failed: " + safeExceptionSummary(it))
                                     emptyList()
                                 }
-                        val snippet = matchSnippet(messages, query)
-                        val titleMatched = session.displayTitle.contains(query, ignoreCase = true)
+                        val snippet = matchSnippet(messages, query, ignoreCase, filter)
+                        // The session title isn't a message part, so the type filter doesn't
+                        // apply to it — a title match is always surfaced.
+                        val titleMatched = session.displayTitle.contains(query, ignoreCase = ignoreCase)
                         if (snippet != null || titleMatched) {
-                            val count = countMatches(messages, query) +
-                                countIn(session.displayTitle, query)
+                            val count = countMatches(messages, query, ignoreCase, filter) +
+                                countIn(session.displayTitle, query, ignoreCase)
                             hits[session.id] = SearchHit(
                                 session = session,
                                 snippet = snippet
@@ -191,33 +242,39 @@ class GlobalSearchViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     /** Find the first searchable text containing [query] across [messages] and return a short
-     *  snippet centered on the match, or null if nothing matches. Searches text, reasoning,
-     *  tool call names/titles/output/error, and file names/paths — for a coding assistant the
-     *  most common searches (an error string, a touched file) live in tool calls. */
+     *  snippet centered on the match, or null if nothing matches. [ignoreCase] controls
+     *  case-sensitivity; [filter] restricts which part types contribute searchable text. */
     private fun matchSnippet(
         messages: List<soy.iko.opencode.data.model.MessageWithParts>,
         query: String,
+        ignoreCase: Boolean,
+        filter: SearchTypeFilter = SearchTypeFilter.ALL,
     ): String? {
         for (message in messages) {
-            for (candidate in searchableTexts(message.parts)) {
-                val idx = candidate.indexOf(query, ignoreCase = true)
+            for (candidate in searchableTexts(message.parts, filter)) {
+                val idx = candidate.indexOf(query, ignoreCase = ignoreCase)
                 if (idx >= 0) return buildSnippet(candidate, idx, query.length)
             }
         }
         return null
     }
 
-    /** The ordered list of searchable strings for a message's parts. Text and reasoning are
-     *  searched in full; tool calls contribute their name, title, output, error, and the
-     *  stringified input; file parts contribute their filename and source path. */
-    private fun searchableTexts(parts: List<soy.iko.opencode.data.model.Part>): List<String> {
+    /** The ordered list of searchable strings for a message's parts, scoped by [filter].
+     *  Text and reasoning are searched in full; tool calls contribute their name, title,
+     *  output, error, and the stringified input; file parts contribute their filename and
+     *  source path. A non-ALL filter narrows to only the matching part type, so "Tool calls"
+     *  excludes text/reasoning/file matches. */
+    private fun searchableTexts(
+        parts: List<soy.iko.opencode.data.model.Part>,
+        filter: SearchTypeFilter = SearchTypeFilter.ALL,
+    ): List<String> {
         if (parts.isEmpty()) return emptyList()
         val out = ArrayList<String>(parts.size)
         for (p in parts) {
             when (p) {
-                is TextPart -> out.add(p.text)
-                is ReasoningPart -> out.add(p.text)
-                is ToolPart -> {
+                is TextPart -> if (filter == SearchTypeFilter.ALL || filter == SearchTypeFilter.MESSAGES) out.add(p.text)
+                is ReasoningPart -> if (filter == SearchTypeFilter.ALL || filter == SearchTypeFilter.REASONING) out.add(p.text)
+                is ToolPart -> if (filter == SearchTypeFilter.ALL || filter == SearchTypeFilter.TOOLS) {
                     out.add(p.tool)
                     when (p.state) {
                         is ToolRunning -> p.state.title?.let(out::add)
@@ -230,7 +287,7 @@ class GlobalSearchViewModel(private val container: AppContainer) : ViewModel() {
                     }
                     p.state.inputElement()?.toString()?.let(out::add)
                 }
-                is FilePart -> {
+                is FilePart -> if (filter == SearchTypeFilter.ALL) {
                     p.filename?.let(out::add)
                     p.sourcePath?.let(out::add)
                 }
@@ -254,23 +311,26 @@ class GlobalSearchViewModel(private val container: AppContainer) : ViewModel() {
     private fun countMatches(
         messages: List<soy.iko.opencode.data.model.MessageWithParts>,
         query: String,
+        ignoreCase: Boolean,
+        filter: SearchTypeFilter = SearchTypeFilter.ALL,
     ): Int {
         var count = 0
         for (message in messages) {
-            for (text in searchableTexts(message.parts)) {
-                count += countIn(text, query)
+            for (text in searchableTexts(message.parts, filter)) {
+                count += countIn(text, query, ignoreCase)
             }
         }
         return count
     }
 
-    /** Non-overlapping case-insensitive occurrence count of [query] within [text]. */
-    private fun countIn(text: String, query: String): Int {
+    /** Non-overlapping occurrence count of [query] within [text], case-insensitive unless
+     *  [ignoreCase] is false. */
+    private fun countIn(text: String, query: String, ignoreCase: Boolean): Int {
         if (query.isEmpty()) return 0
         var count = 0
         var idx = 0
         while (true) {
-            val next = text.indexOf(query, idx, ignoreCase = true)
+            val next = text.indexOf(query, idx, ignoreCase = ignoreCase)
             if (next < 0) break
             count++
             idx = next + query.length

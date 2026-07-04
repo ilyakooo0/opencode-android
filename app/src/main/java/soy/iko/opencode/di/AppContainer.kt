@@ -32,6 +32,8 @@ import soy.iko.opencode.data.repo.ErrorKind
 import soy.iko.opencode.data.repo.MessageCacheStore
 import soy.iko.opencode.data.repo.OutboxMessage
 import soy.iko.opencode.data.repo.OutboxStore
+import soy.iko.opencode.data.repo.RecentModelsStore
+import soy.iko.opencode.data.repo.SearchHistoryStore
 import soy.iko.opencode.data.repo.SessionPrefsStore
 import soy.iko.opencode.data.repo.SessionRepository
 import soy.iko.opencode.data.repo.ProfileStore
@@ -113,6 +115,8 @@ open class AppContainer private constructor(
     open val sessionPrefsStore: SessionPrefsStore by lazy { SessionPrefsStore(appContext!!) }
     open val messageCacheStore: MessageCacheStore by lazy { MessageCacheStore(appContext!!) }
     open val outboxStore: OutboxStore by lazy { OutboxStore(appContext!!) }
+    open val searchHistoryStore: SearchHistoryStore by lazy { SearchHistoryStore(appContext!!) }
+    open val recentModelsStore: RecentModelsStore by lazy { RecentModelsStore(appContext!!) }
     open val backupManager: BackupManager by lazy { BackupManager(profileStore, settingsStore, sessionPrefsStore) }
 
     /** True while the outbox is actively flushing queued messages to the server, so the UI
@@ -244,6 +248,12 @@ open class AppContainer private constructor(
      *  disconnect confirmation on the session list (disconnecting mid-run kills it). */
     private val _anyRunActive = MutableStateFlow(false)
     open val anyRunActive: StateFlow<Boolean> = _anyRunActive.asStateFlow()
+
+    /** Session ids currently streaming an assistant run, surfaced so the session list can
+     *  badge the row whose run is active. Mirrors [activeRuns] as an immutable snapshot so
+     *  Compose can skip recomposition when the set hasn't changed. */
+    private val _runningSessionIds = MutableStateFlow<Set<String>>(emptySet())
+    open val runningSessionIds: StateFlow<Set<String>> = _runningSessionIds.asStateFlow()
 
     /** Latest task-plan progress text for the active run (e.g. "Step 2 of 5"), surfaced in
      *  the foreground-service notification so the user can see what the agent is working on
@@ -468,7 +478,7 @@ open class AppContainer private constructor(
                         if (hasConnectedBefore) {
                             synchronized(activeRuns) {
                                 activeRuns.clear()
-                                _anyRunActive.value = false
+                                publishRunState()
                             }
                         }
                         hasConnectedBefore = true
@@ -653,7 +663,7 @@ open class AppContainer private constructor(
                         val esid = event.properties.sessionID ?: return@collect
                         val wasRunning = synchronized(activeRuns) {
                             activeRuns.remove(esid).also { removed ->
-                                if (removed) _anyRunActive.value = activeRuns.isNotEmpty()
+                                if (removed) publishRunState()
                             }
                         }
                         if (wasRunning && !isActivelyViewing(esid)) {
@@ -673,7 +683,7 @@ open class AppContainer private constructor(
                         // the completion *notification* is suppressed for the viewed one.
                         val wasRunning = synchronized(activeRuns) {
                             activeRuns.remove(idleSid).also { removed ->
-                                if (removed) _anyRunActive.value = activeRuns.isNotEmpty()
+                                if (removed) publishRunState()
                             }
                         }
                         // Clear the progress text when the run finishes.
@@ -750,7 +760,7 @@ open class AppContainer private constructor(
                             // guards the set, so a concurrent reconnect sweep (which clears
                             // both under this lock) can't interleave and leave the flag pinned
                             // true with an empty set — a stuck foreground service + "working…".
-                            _anyRunActive.value = activeRuns.isNotEmpty()
+                            publishRunState()
                         }
                     }
                 } }.onFailure { Log.w("AppContainer", "Message activity observer failed, will retry: ${safeExceptionSummary(it)}") }
@@ -782,6 +792,15 @@ open class AppContainer private constructor(
         // a part is replayed/reordered after the run already went idle.
         val part = (event as MessagePartUpdated).properties.part
         return part !is StepFinishPart
+    }
+
+    /** Snapshot [activeRuns] into [_runningSessionIds] and derive [_anyRunActive] from it.
+     *  MUST be called under the [activeRuns] monitor so the published flag and snapshot can't
+     *  diverge from the set a concurrent SSE add()/remove() is mutating — the same invariant
+     *  [connectLocked]/[teardownActiveLocked] rely on. */
+    private fun publishRunState() {
+        _anyRunActive.value = activeRuns.isNotEmpty()
+        _runningSessionIds.value = activeRuns.toSet()
     }
 
     /** Session ids currently streaming an assistant run (best-effort, in-process). Backed by
@@ -1127,7 +1146,7 @@ open class AppContainer private constructor(
         // down connection and no SessionIdle to clear it — a stuck foreground service.
         synchronized(activeRuns) {
             activeRuns.clear()
-            _anyRunActive.value = false
+            publishRunState()
         }
         if (previousProfileId != profile.id) {
             _unread.value = emptyMap()
@@ -1171,7 +1190,7 @@ open class AppContainer private constructor(
         // re-pin _anyRunActive after the clear.
         synchronized(activeRuns) {
             activeRuns.clear()
-            _anyRunActive.value = false
+            publishRunState()
         }
         _unread.value = emptyMap()
         unreadMessageIds.clear()

@@ -33,6 +33,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
@@ -50,6 +51,11 @@ enum class SessionSortMode { RECENT, TITLE }
 enum class SessionActionKind { PINNED, UNPINNED, ARCHIVED, UNARCHIVED }
 
 data class SessionActionEvent(val sessionId: String, val kind: SessionActionKind)
+
+/** A bulk pin/archive action the user just took, surfaced so the UI can confirm it with a
+ *  single Undo snackbar (per-item snackbars would spam). [undoable] via
+ *  [SessionListViewModel.undoBulkAction]. */
+data class BulkSessionActionEvent(val ids: Set<String>, val kind: SessionActionKind)
 
 /** Directory options for the new-session picker: worktree paths the server knows about
  *  ([projects]) and the server's default working directory ([serverDefault], its cwd).
@@ -189,6 +195,15 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
     )
     val transientErrors: SharedFlow<String> = _transientErrors.asSharedFlow()
 
+    /** One-shot transient *informational* confirmations (not errors) surfaced as snackbars,
+     *  e.g. "N sessions marked as read". Separate from [transientErrors] so the naming stays
+     *  honest, though both are rendered the same way by the UI. */
+    private val _transientInfo = MutableSharedFlow<String>(
+        extraBufferCapacity = NetworkConfig.snackbarEventBufferCapacity,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+    val transientInfo: SharedFlow<String> = _transientInfo.asSharedFlow()
+
     /** A transient error paired with a retry action (create/rename). The retry lambda lets
      *  the snackbar offer a "Retry" button so a transient network failure doesn't force the
      *  user back through the dialog/FAB to re-attempt — matching the server list's connect
@@ -216,6 +231,14 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
     val sessionActionEvents: SharedFlow<SessionActionEvent> = _sessionActionEvents.asSharedFlow()
+
+    /** One-shot events carrying a bulk pin/archive action, so the UI can show a single
+     *  confirmation + Undo snackbar instead of one per session. */
+    private val _bulkSessionActionEvents = MutableSharedFlow<BulkSessionActionEvent>(
+        extraBufferCapacity = NetworkConfig.snackbarEventBufferCapacity,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+    val bulkSessionActionEvents: SharedFlow<BulkSessionActionEvent> = _bulkSessionActionEvents.asSharedFlow()
 
     /** Session awaiting the undo window to expire before its REST delete fires. Holds the
      *  Session so Undo can restore it. */
@@ -517,10 +540,34 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     /** Force the SSE stream to reconnect (recovery path for a Failed banner) and
-     *  re-fetch the session list so the UI reflects the current server state. */
+     *  re-fetch the session list so the UI reflects the current server state. When the
+     *  active connection is null (e.g. a double-failure server switch left the user
+     *  disconnected from both the new and old servers), reconnect to the most-recently-
+     *  used profile so the Retry button can recover instead of emitting "not connected". */
     fun retryConnection() {
-        container.activeConnection.value?.events?.triggerReconnect()
-        refresh()
+        val conn = container.activeConnection.value
+        if (conn != null) {
+            conn.events.triggerReconnect()
+            refresh()
+            return
+        }
+        viewModelScope.launch {
+            val recent = runCatchingCancellable { container.profileStore.profiles.first() }
+                .getOrDefault(emptyList())
+                .firstOrNull()
+            if (recent == null) {
+                _transientErrors.tryEmit(container.string(R.string.no_servers_to_reconnect))
+                return@launch
+            }
+            runCatchingCancellable {
+                val c = container.connect(recent)
+                c.api.ping()
+            }.onSuccess { refresh() }
+                .onFailure {
+                    container.disconnect()
+                    _transientErrors.tryEmit(container.friendlyError(it))
+                }
+        }
     }
 
     fun refresh() {
@@ -781,16 +828,38 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    /** Bulk-archive (or unarchive) the given sessions. Quietly applies state + persists; the
-     *  caller surfaces a single confirmation (bulk actions batch, so per-item snackbars would
-     *  spam). Reversible by toggling "show archived" and un-archiving. */
+    /** Bulk-archive (or unarchive) the given sessions. Applies state + persists and emits a
+     *  single [BulkSessionActionEvent] so the caller can show one Undo snackbar (per-item
+     *  snackbars would spam). Reversible by toggling "show archived" and un-archiving, or
+     *  via the Undo action on the snackbar. */
     fun bulkArchive(ids: Set<String>, archive: Boolean) {
+        if (ids.isEmpty()) return
         ids.forEach { applyArchive(it, archive) }
+        _bulkSessionActionEvents.tryEmit(
+            BulkSessionActionEvent(
+                ids,
+                if (archive) SessionActionKind.ARCHIVED else SessionActionKind.UNARCHIVED,
+            ),
+        )
     }
 
-    /** Mark all of the given sessions as read (clears their unread badge). */
+    /** Reverse a bulk archive action surfaced via [bulkSessionActionEvents] (Undo snackbar). */
+    fun undoBulkAction(event: BulkSessionActionEvent) {
+        val undo = when (event.kind) {
+            SessionActionKind.ARCHIVED -> false
+            SessionActionKind.UNARCHIVED -> true
+            SessionActionKind.PINNED, SessionActionKind.UNPINNED -> return
+        }
+        event.ids.forEach { applyArchive(it, undo) }
+    }
+
+    /** Mark all of the given sessions as read (clears their unread badge). Emits a transient
+     *  confirmation so the user gets feedback that N sessions were marked read (the badges
+     *  just vanish otherwise, which could be mistaken for a glitch). */
     fun bulkMarkRead(ids: Set<String>) {
+        if (ids.isEmpty()) return
         ids.forEach { container.markSessionRead(it) }
+        _transientInfo.tryEmit(container.string(R.string.bulk_marked_read, ids.size))
     }
 
     /** Mark a single session as unread (re-badges it in the list). */

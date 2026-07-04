@@ -24,6 +24,7 @@ data class McpServerInfo(
     val connected: Boolean? = null,
     val error: String? = null,
     val toolCount: Int? = null,
+    val tools: List<String>? = null,
 )
 
 /**
@@ -62,7 +63,14 @@ fun mergeMcpStatus(servers: List<McpServerInfo>, status: JsonObject?): List<McpS
         val st = status[server.name] as? JsonObject ?: return@map server
         val connected = (st["connected"] as? JsonPrimitive)?.booleanOrNull
         val error = (st["error"] as? JsonPrimitive)?.contentOrNull
-        val tools = (st["tools"] as? JsonArray)?.size
-        server.copy(connected = connected, error = error, toolCount = tools)
+        val tools = (st["tools"] as? JsonArray)?.mapNotNull { el -> toolName(el) }
+        server.copy(connected = connected, error = error, toolCount = tools?.size, tools = tools)
     }
+}
+
+private fun toolName(el: kotlinx.serialization.json.JsonElement): String? {
+    val obj = el as? JsonObject ?: return (el as? JsonPrimitive)?.contentOrNull
+    val nameKey = obj.entries.firstOrNull { it.key.equals("name", ignoreCase = true) }?.key
+    return nameKey?.let { (obj[it] as? JsonPrimitive)?.contentOrNull }
+        ?: obj["id"]?.let { (it as? JsonPrimitive)?.contentOrNull }
 }

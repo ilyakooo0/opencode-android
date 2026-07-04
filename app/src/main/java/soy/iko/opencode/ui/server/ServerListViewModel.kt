@@ -27,6 +27,14 @@ import kotlinx.coroutines.withTimeoutOrNull
  *  failed to connect so the snackbar can offer a Retry action. */
 data class ConnectError(val message: String, val profile: ServerProfile?)
 
+/** Result of a "Test connection" probe: latency in ms on success, or a user-facing message
+ *  on failure. Carried by [ServerListViewModel.probeEvents] so the server list can surface
+ *  it as a snackbar without navigating away. */
+sealed class ProbeTestResult {
+    data class Success(val latencyMs: Long) : ProbeTestResult()
+    data class Failed(val message: String) : ProbeTestResult()
+}
+
 /** Sort order for the server list. RECENT (by lastUsed, the default) or NAME (A→Z). */
 enum class ServerSortMode { RECENT, NAME }
 
@@ -91,6 +99,62 @@ class ServerListViewModel(private val container: AppContainer) : ViewModel() {
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
     val undoEvents: SharedFlow<String> = _undoEvents.asSharedFlow()
+
+    /** One-shot "Test connection" results surfaced as snackbars. A SharedFlow (not StateFlow)
+     *  so each emission is delivered independently. */
+    private val _probeEvents = MutableSharedFlow<ProbeTestResult>(
+        extraBufferCapacity = NetworkConfig.snackbarEventBufferCapacity,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+    val probeEvents: SharedFlow<ProbeTestResult> = _probeEvents.asSharedFlow()
+
+    /** Id of the profile currently being probed by [testConnection], so its row can show a
+     *  spinner while the probe is in flight (mirrors [connectingId] for a full connect). */
+    private val _probing = MutableStateFlow<String?>(null)
+    val probingId: StateFlow<String?> = _probing.asStateFlow()
+
+    /** Probe a server without establishing a long-lived connection or navigating away.
+     *  Measures the round-trip latency of an authenticated ping and emits the result via
+     *  [probeEvents]. Uses [AppContainer.probeWithCredentials] so the probe validates the
+     *  same effective URL + auth the real connection would use, without replacing the
+     *  active connection. Capped at one in-flight probe at a time so rapid taps don't
+     *  multiply. */
+    fun testConnection(profile: ServerProfile) {
+        if (_probing.value != null) return
+        _probing.value = profile.id
+        viewModelScope.launch {
+            try {
+                val start = System.currentTimeMillis()
+                val result = runCatchingCancellable {
+                    withTimeoutOrNull(NetworkConfig.testCredentialsTimeoutMs) {
+                        container.probeWithCredentials(
+                            baseUrl = profile.baseUrl,
+                            username = profile.username.orEmpty(),
+                            password = profile.password.orEmpty(),
+                            requireHttps = profile.requireHttps,
+                            certPin = profile.certPin,
+                        )
+                    } ?: throw java.net.SocketTimeoutException("Probe timed out")
+                }
+                val latency = System.currentTimeMillis() - start
+                _probeEvents.tryEmit(
+                    result.fold(
+                        onSuccess = { ok ->
+                            // probeWithCredentials returns false on 401/403: the server was
+                            // reached but the credentials were rejected. Surface that as a
+                            // failure rather than a false "Connected", so the user isn't
+                            // misled into thinking auth is fine.
+                            if (ok) ProbeTestResult.Success(latency)
+                            else ProbeTestResult.Failed(container.string(R.string.connection_failed))
+                        },
+                        onFailure = { ProbeTestResult.Failed(container.friendlyError(it)) },
+                    ),
+                )
+            } finally {
+                _probing.value = null
+            }
+        }
+    }
 
     fun connect(profile: ServerProfile, onConnected: () -> Unit) {
         if (_connecting.value != null) return

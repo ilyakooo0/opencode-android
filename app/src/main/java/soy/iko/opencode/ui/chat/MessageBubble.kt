@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SmartToy
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.CircularProgressIndicator
@@ -99,6 +100,7 @@ fun MessageBubble(
     isRunning: Boolean = false,
     imageContext: ImageLoadContext? = null,
     modelLabel: String? = null,
+    agentLabel: String? = null,
     onOpenFile: ((String) -> Unit)? = null,
     onRevert: (() -> Unit)? = null,
     onEdit: ((String) -> Unit)? = null,
@@ -107,6 +109,7 @@ fun MessageBubble(
     ttsState: TtsState = TtsState.IDLE,
     onPause: (() -> Unit)? = null,
     onResume: (() -> Unit)? = null,
+    onStop: (() -> Unit)? = null,
     onQuote: ((String) -> Unit)? = null,
     onBranch: ((String) -> Unit)? = null,
     onRegenerate: (() -> Unit)? = null,
@@ -119,7 +122,7 @@ fun MessageBubble(
     when (message.info) {
         is UserMessage -> UserBubble(message, imageContext, modifier, onOpenFile, onRevert, onEdit, onQuote, onBranch, sendStatus, isEdited, onRetry, onDismiss, onShare)
         is UnknownMessage -> UnknownMessageBlock(message, imageContext, modifier, onOpenFile)
-        else -> AssistantBlock(message, isRunning, imageContext, modifier, modelLabel, onOpenFile, onRevert, onSpeak, isSpeaking, ttsState, onPause, onResume, onQuote, onBranch, onRegenerate, isEdited, onShare)
+        else -> AssistantBlock(message, isRunning, imageContext, modifier, modelLabel, agentLabel, onOpenFile, onRevert, onSpeak, isSpeaking, ttsState, onPause, onResume, onStop, onQuote, onBranch, onRegenerate, isEdited, onShare)
     }
 }
 
@@ -612,6 +615,7 @@ private fun AssistantBlock(
     imageContext: ImageLoadContext?,
     modifier: Modifier,
     modelLabel: String? = null,
+    agentLabel: String? = null,
     onOpenFile: ((String) -> Unit)? = null,
     onRevert: (() -> Unit)? = null,
     onSpeak: ((String) -> Unit)? = null,
@@ -619,6 +623,7 @@ private fun AssistantBlock(
     ttsState: TtsState = TtsState.IDLE,
     onPause: (() -> Unit)? = null,
     onResume: (() -> Unit)? = null,
+    onStop: (() -> Unit)? = null,
     onQuote: ((String) -> Unit)? = null,
     onBranch: ((String) -> Unit)? = null,
     onRegenerate: (() -> Unit)? = null,
@@ -652,7 +657,7 @@ private fun AssistantBlock(
             // Avatar + model label row: the robot icon gives the assistant a consistent visual
             // identity (left-aligned, mirroring the user's right-aligned bubble) so on a long
             // scroll the speaker is unambiguous without reading the label.
-            AssistantHeader(label = modelLabel ?: info.modelID)
+            AssistantHeader(label = modelLabel ?: info.modelID, agentLabel = agentLabel)
         }
         message.parts.forEachIndexed { index, part ->
             // Only the final part of a running message is actively streaming; earlier parts
@@ -747,6 +752,7 @@ private fun AssistantBlock(
                     onSpeak = onSpeak,
                     onPause = onPause,
                     onResume = onResume,
+                    onStop = onStop,
                     onRevert = onRevert,
                     onQuote = onQuote,
                     onBranch = onBranch,
@@ -837,9 +843,18 @@ private fun AssistantMessageLongPressMenu(
 }
 
 /** Avatar + model label row for an assistant message. Extracted from [AssistantBlock] to keep
- *  that function's cyclomatic complexity under the detekt threshold. */
+ *  that function's cyclomatic complexity under the detekt threshold. When [agentLabel] is
+ *  non-null it is shown before the model label, separated by a middle dot
+ *  (e.g. "build · claude-sonnet-4-20250514"), matching the top-bar subtitle's format. */
 @Composable
-private fun AssistantHeader(label: String?) {
+private fun AssistantHeader(label: String?, agentLabel: String?) {
+    val combined = remember(label, agentLabel) {
+        when {
+            agentLabel != null && label != null -> "$agentLabel · $label"
+            agentLabel != null -> agentLabel
+            else -> label
+        }
+    }
     Row(verticalAlignment = Alignment.CenterVertically) {
         Box(
             modifier = Modifier
@@ -855,9 +870,9 @@ private fun AssistantHeader(label: String?) {
                 tint = MaterialTheme.colorScheme.onSecondaryContainer,
             )
         }
-        if (label != null) {
+        if (combined != null) {
             Text(
-                label,
+                combined,
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
@@ -880,6 +895,7 @@ private fun AssistantActions(
     onSpeak: ((String) -> Unit)?,
     onPause: (() -> Unit)?,
     onResume: (() -> Unit)?,
+    onStop: (() -> Unit)? = null,
     onRevert: (() -> Unit)?,
     onQuote: ((String) -> Unit)? = null,
     onBranch: ((String) -> Unit)? = null,
@@ -917,6 +933,7 @@ private fun AssistantActions(
                 onSpeak = onSpeak,
                 onPause = onPause,
                 onResume = onResume,
+                onStop = onStop,
             )
         }
         onRevert?.let { RevertButton(it) }
@@ -940,9 +957,11 @@ private fun AssistantActions(
     }
 }
 
-/** Read-aloud button with play/pause/resume states. Extracted from [AssistantActions] to keep
+/** Read-aloud button with pause/resume/stop states. Extracted from [AssistantActions] to keep
  *  that function's cyclomatic complexity under the detekt threshold. The icon reflects the
- *  next action: VolumeUp (play) when idle, Pause when playing, PlayArrow (resume) when paused. */
+ *  next action: VolumeUp (play) when idle, Pause when playing, PlayArrow (resume) when paused.
+ *  A separate Stop button appears when playing or paused so the user can fully stop playback
+ *  without tapping a different message. */
 @Composable
 private fun TtsButton(
     text: String,
@@ -951,6 +970,7 @@ private fun TtsButton(
     onSpeak: (String) -> Unit,
     onPause: (() -> Unit)?,
     onResume: (() -> Unit)?,
+    onStop: (() -> Unit)? = null,
 ) {
     val haptics = LocalHapticFeedback.current
     val label = when {
@@ -958,27 +978,45 @@ private fun TtsButton(
         isSpeaking -> stringResource(R.string.pause_reading)
         else -> stringResource(R.string.read_aloud)
     }
-    IconButton(onClick = {
-        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-        when {
-            isSpeaking && ttsState == TtsState.PAUSED -> onResume?.invoke()
-            isSpeaking -> onPause?.invoke()
-            else -> onSpeak(text)
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        IconButton(onClick = {
+            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            when {
+                isSpeaking && ttsState == TtsState.PAUSED -> onResume?.invoke()
+                isSpeaking -> onPause?.invoke()
+                else -> onSpeak(text)
+            }
+        }) {
+            val icon = when {
+                isSpeaking && ttsState == TtsState.PAUSED -> Icons.Filled.PlayArrow
+                isSpeaking -> Icons.Filled.Pause
+                else -> Icons.AutoMirrored.Filled.VolumeUp
+            }
+            val tint = if (isSpeaking) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.onSurfaceVariant
+            Icon(
+                icon,
+                contentDescription = label,
+                modifier = Modifier.size(18.dp),
+                tint = tint,
+            )
         }
-    }) {
-        val icon = when {
-            isSpeaking && ttsState == TtsState.PAUSED -> Icons.Filled.PlayArrow
-            isSpeaking -> Icons.Filled.Pause
-            else -> Icons.AutoMirrored.Filled.VolumeUp
+        // Stop button: fully stops TTS playback (vs pause which keeps the position). Only
+        // shown while playing or paused, so idle messages don't have a dead stop button.
+        if (isSpeaking && onStop != null) {
+            val stopLabel = stringResource(R.string.stop_reading)
+            IconButton(onClick = {
+                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onStop()
+            }) {
+                Icon(
+                    Icons.Filled.Stop,
+                    contentDescription = stopLabel,
+                    modifier = Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
-        val tint = if (isSpeaking) MaterialTheme.colorScheme.primary
-            else MaterialTheme.colorScheme.onSurfaceVariant
-        Icon(
-            icon,
-            contentDescription = label,
-            modifier = Modifier.size(18.dp),
-            tint = tint,
-        )
     }
 }
 

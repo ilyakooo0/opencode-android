@@ -21,10 +21,13 @@ import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Hub
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
@@ -60,6 +63,7 @@ import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.ui.components.AppTopBar
 import soy.iko.opencode.ui.components.ConnectionBannerFor
 import soy.iko.opencode.ui.components.EmptyState
+import soy.iko.opencode.ui.components.reducedMotionAnimateItem
 import soy.iko.opencode.ui.vmFactory
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -148,6 +152,9 @@ fun McpScreen(container: AppContainer, onBack: () -> Unit) {
                                 icon = Icons.Filled.Hub,
                                 title = stringResource(R.string.mcp_empty),
                                 modifier = Modifier.align(Alignment.Center),
+                                actionIcon = Icons.Filled.Add,
+                                actionLabel = stringResource(R.string.mcp_add_server),
+                                onAction = { showAddDialog = true },
                             )
                         } else {
                             LazyColumn(
@@ -157,7 +164,9 @@ fun McpScreen(container: AppContainer, onBack: () -> Unit) {
                                 ),
                                 verticalArrangement = Arrangement.spacedBy(12.dp),
                             ) {
-                                items(s.servers, key = { it.name }) { McpServerCard(it) }
+                                items(s.servers, key = { it.name }) {
+                                    McpServerCard(it, modifier = Modifier.then(reducedMotionAnimateItem()))
+                                }
                             }
                         }
                 }
@@ -180,7 +189,7 @@ fun McpScreen(container: AppContainer, onBack: () -> Unit) {
 }
 
 @Composable
-private fun McpServerCard(server: McpServerInfo) {
+private fun McpServerCard(server: McpServerInfo, modifier: Modifier = Modifier) {
     val remote = server.type.equals("remote", ignoreCase = true)
     val connected = server.connected
     // Build a single merged content description so TalkBack reads the card as one node
@@ -204,8 +213,10 @@ private fun McpServerCard(server: McpServerInfo) {
         append(", ").append(stateLabel)
         statusLabel?.let { append(", ").append(it) }
     }
+    var menuExpanded by rememberSaveable { mutableStateOf(false) }
+    var showTools by rememberSaveable { mutableStateOf(false) }
     Card(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .semantics(mergeDescendants = true) { contentDescription = cardDesc },
     ) {
@@ -244,6 +255,27 @@ private fun McpServerCard(server: McpServerInfo) {
                     style = MaterialTheme.typography.labelMedium,
                     color = if (server.enabled) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                // A "Remove" item would go here once the opencode server exposes DELETE /mcp
+                // (or a config PATCH to drop an entry). Only GET and POST /mcp exist today, so
+                // removing a server isn't reachable from the client; the mcp_remove* strings are
+                // already declared for when it is.
+                Box {
+                    IconButton(onClick = { menuExpanded = true }) {
+                        Icon(
+                            Icons.Filled.MoreVert,
+                            contentDescription = stringResource(R.string.more_options_for, server.name),
+                        )
+                    }
+                    DropdownMenu(
+                        expanded = menuExpanded,
+                        onDismissRequest = { menuExpanded = false },
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.mcp_view_tools)) },
+                            onClick = { menuExpanded = false; showTools = true },
+                        )
+                    }
+                }
             }
             // Live status row: connected (with tool count) / error / unknown. Only shown when the
             // server reported a runtime state via /mcp, so a static config-only view isn't
@@ -254,6 +286,42 @@ private fun McpServerCard(server: McpServerInfo) {
             }
         }
     }
+    if (showTools) {
+        McpToolsDialog(server = server, onDismiss = { showTools = false })
+    }
+}
+
+@Composable
+private fun McpToolsDialog(server: McpServerInfo, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.mcp_view_tools)) },
+        text = {
+            val tools = server.tools
+            if (tools.isNullOrEmpty()) {
+                Text(stringResource(R.string.mcp_no_tools))
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        stringResource(R.string.mcp_tools_count, tools.size),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.size(4.dp))
+                    tools.forEach { name ->
+                        Text(
+                            name,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace,
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.close)) }
+        },
+    )
 }
 
 /** Live status row for an MCP server card: connected (with tool count) / error / disconnected.

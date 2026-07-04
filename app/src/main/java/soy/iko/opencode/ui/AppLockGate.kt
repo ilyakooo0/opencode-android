@@ -16,7 +16,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -44,6 +43,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import soy.iko.opencode.R
+import soy.iko.opencode.ui.components.LoadingSize
+import soy.iko.opencode.ui.components.LoadingSpinner
 
 /**
  * The set of authenticators the app lock accepts. Device credential (PIN/pattern/password)
@@ -211,7 +212,7 @@ fun AppLockGate(enabled: Boolean, reLockDelaySeconds: Int = 0, content: @Composa
                         // Within the grace period — stay unlocked, no re-prompt.
                     } else {
                         unlocked = false
-                        if (!unlocked) authenticate()
+                        authenticate()
                     }
                 }
                 else -> {}
@@ -285,9 +286,8 @@ fun AppLockGate(enabled: Boolean, reLockDelaySeconds: Int = 0, content: @Composa
                     modifier = Modifier.padding(top = 24.dp),
                 ) {
                     if (authInFlight) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(18.dp),
-                            strokeWidth = 2.dp,
+                        LoadingSpinner(
+                            size = LoadingSize.Small,
                             color = MaterialTheme.colorScheme.primary,
                         )
                         Spacer(Modifier.size(8.dp))

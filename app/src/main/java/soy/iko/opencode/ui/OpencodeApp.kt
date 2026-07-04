@@ -22,6 +22,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
@@ -56,6 +62,7 @@ import soy.iko.opencode.ui.settings.DiagnosticsScreen
 import soy.iko.opencode.ui.settings.SettingsScreen
 import soy.iko.opencode.ui.usage.UsageScreen
 import soy.iko.opencode.ui.mcp.McpScreen
+import soy.iko.opencode.util.findActivity
 import soy.iko.opencode.util.runCatchingCancellable
 
 @Composable
@@ -193,7 +200,35 @@ fun OpencodeApp(container: AppContainer) {
         }
     }
     val isHalfOpened = foldState?.state == androidx.window.layout.FoldingFeature.State.HALF_OPENED
-    BoxWithConstraints {
+    BoxWithConstraints(
+        modifier = Modifier.onPreviewKeyEvent { ev ->
+            // Global keyboard shortcuts for hardware-keyboard users (tablets, DeX, Chromebook):
+            // Ctrl+1..6 switches between top-level destinations. Only fires on KeyDown so a
+            // held Ctrl doesn't re-trigger on every repeat. Per-screen shortcuts (Ctrl+K palette,
+            // Esc stop, Ctrl+F find) are handled in each screen's own onPreviewKeyEvent and take
+            // precedence (they're closer to the focused composable in the tree).
+            if (ev.type != KeyEventType.KeyDown || !ev.isCtrlPressed) {
+                return@onPreviewKeyEvent false
+            }
+            val route = when (ev.key) {
+                Key.NumPad1, Key.One -> Routes.SESSIONS
+                Key.NumPad2, Key.Two -> Routes.SEARCH
+                Key.NumPad3, Key.Three -> Routes.FILES
+                Key.NumPad4, Key.Four -> Routes.USAGE
+                Key.NumPad5, Key.Five -> Routes.MCP
+                Key.NumPad6, Key.Six -> Routes.SETTINGS
+                else -> null
+            }
+            if (route != null && connection != null) {
+                navController.navigate(route) {
+                    popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                    launchSingleTop = true
+                    restoreState = true
+                }
+                true
+            } else false
+        },
+    ) {
         val isTwoPane = maxWidth >= NetworkConfig.twoPaneWidthThresholdDp.dp &&
             connection != null &&
             !isHalfOpened
@@ -482,10 +517,17 @@ fun OpencodeApp(container: AppContainer) {
         }
 
         if (showNavRail) {
+            // Collect unread/run state for the nav rail's Sessions badge, so a user on
+            // Files/Settings sees pending activity at a glance.
+            val unread by container.unread.collectAsStateWithLifecycle()
+            val anyRunActive by container.anyRunActive.collectAsStateWithLifecycle()
+            val totalUnread = remember(unread) { unread.values.sum() }
             Row(modifier = Modifier.fillMaxSize()) {
                 LargeScreenNavRail(
                     currentRoute = currentRoute,
                     connected = connection != null,
+                    unreadCount = totalUnread,
+                    runActive = anyRunActive,
                     // Use the standard M3 nav-bar pattern: popUpTo the start destination
                     // saving state, and restoreState on re-entry, so switching between
                     // top-level tabs via the rail preserves each tab's scroll/selection
@@ -508,13 +550,4 @@ fun OpencodeApp(container: AppContainer) {
         }
     }
     }
-}
-
-/** Walk the Context wrapper chain to find the hosting Activity, so WindowInfoTracker can
- *  observe the fold state. Returns null when the composable isn't hosted in an Activity
- *  (e.g. a preview), in which case fold-awareness is skipped. */
-private tailrec fun android.content.Context.findActivity(): android.app.Activity? = when (this) {
-    is android.app.Activity -> this
-    is android.content.ContextWrapper -> baseContext.findActivity()
-    else -> null
 }

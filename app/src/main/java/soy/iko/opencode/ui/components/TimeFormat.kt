@@ -19,12 +19,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.delay
-import java.util.concurrent.TimeUnit
+import soy.iko.opencode.R
 
 /**
  * Formats an epoch-millis timestamp as a short, compact relative string (e.g. "3m", "2h",
@@ -36,30 +37,21 @@ import java.util.concurrent.TimeUnit
  * but that returns a full phrase like "5 min. ago" / "2 hr. ago" — not the compact form the
  * examples and the numeric fallback imply — which wraps or crowds those rows.) Always returns a
  * non-empty string for a valid timestamp.
+ *
+ * The unit suffixes are resolved from string resources so they follow the device locale
+ * (e.g. "3m" in English, "3 min" in Spanish) instead of a hardcoded English letter.
  */
-fun relativeTime(epochMillis: Long?): String {
-    if (epochMillis == null || epochMillis <= 0) return ""
-    val now = System.currentTimeMillis()
-    val diff = now - epochMillis
-    if (diff < 0) return "now"
-    val minutes = TimeUnit.MILLISECONDS.toMinutes(diff)
-    if (minutes < 1) return "now"
-    if (minutes < 60) return "${minutes}m"
-    val hours = TimeUnit.MILLISECONDS.toHours(diff)
-    if (hours < 24) return "${hours}h"
-    val days = TimeUnit.MILLISECONDS.toDays(diff)
-    if (days < 7) return "${days}d"
-    // DateUtils doesn't offer a short week/month/year abbreviation; use a compact
-    // numeric form. The suffix is locale-stable (English letter) but these are
-    // rare timestamps (older than a week) and the numeric value is the primary signal.
-    val weeks = days / 7
-    if (weeks < 5) return "${weeks}w"
-    // Switch to years only past a full 365 days. Gating on `months < 12` (with months =
-    // days/30) instead misfires for 360–364 days: months == 12 fails the check and falls
-    // through to years, rendering "1y" for a span that's under a year (~11.9 months).
-    if (days < 365) return "${days / 30}mo"
-    val years = days / 365
-    return "${years}y"
+fun relativeTime(context: Context, epochMillis: Long?): String {
+    return when (val unit = relativeTimeUnit(epochMillis)) {
+        null -> ""
+        is RelativeTimeUnit.Now -> context.getString(R.string.time_now)
+        is RelativeTimeUnit.Minutes -> context.getString(R.string.time_minutes_abbrev, unit.count)
+        is RelativeTimeUnit.Hours -> context.getString(R.string.time_hours_abbrev, unit.count)
+        is RelativeTimeUnit.Days -> context.getString(R.string.time_days_abbrev, unit.count)
+        is RelativeTimeUnit.Weeks -> context.getString(R.string.time_weeks_abbrev, unit.count)
+        is RelativeTimeUnit.Months -> context.getString(R.string.time_months_abbrev, unit.count)
+        is RelativeTimeUnit.Years -> context.getString(R.string.time_years_abbrev, unit.count)
+    }
 }
 
 /** Re-evaluation interval for relative-time labels — coarse enough for battery, fine
@@ -115,10 +107,11 @@ fun rememberRelativeTimeTick(intervalMs: Long = RELATIVE_TIME_INTERVAL_MS): Long
 @Composable
 fun rememberRelativeTime(epochMillis: Long?): String {
     val sharedTick = LocalRelativeTimeTick.current
+    val context = LocalContext.current
     return if (sharedTick != 0L) {
         // Reading sharedTick above registers a recomposition dependency on the shared
         // ticker, so the label recomputes (cheaply) whenever the screen-level tick advances.
-        relativeTime(epochMillis)
+        relativeTime(context, epochMillis)
     } else {
         rememberRelativeTimeStandalone(epochMillis)
     }
@@ -129,6 +122,7 @@ fun rememberRelativeTime(epochMillis: Long?): String {
 private fun rememberRelativeTimeStandalone(epochMillis: Long?): String {
     var tick by remember { mutableLongStateOf(0L) }
     val lifecycleOwner = LocalLifecycleOwner.current
+    val context = LocalContext.current
 
     androidx.compose.runtime.LaunchedEffect(epochMillis, lifecycleOwner) {
         if (epochMillis == null) return@LaunchedEffect
@@ -150,7 +144,7 @@ private fun rememberRelativeTimeStandalone(epochMillis: Long?): String {
         derivedStateOf {
             // Read tick to create a recomposition dependency on the timer.
             tick
-            relativeTime(epochMillis)
+            relativeTime(context, epochMillis)
         }
     }
     return formatted

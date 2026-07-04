@@ -1,8 +1,5 @@
 package soy.iko.opencode.ui.theme
 
-import android.app.Activity
-import android.content.Context
-import android.content.ContextWrapper
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
@@ -13,9 +10,11 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
+import soy.iko.opencode.util.findActivity
 
 /**
  * Tokyo Night — a dark, muted blue/purple palette. Every Material 3 color role is set
@@ -207,13 +206,12 @@ data class DiffColors(val addText: Color, val addBg: Color, val removeText: Colo
 
 @Composable
 fun diffColors(): DiffColors {
-    val dark = androidx.compose.foundation.isSystemInDarkTheme()
+    // Read the resolved darkTheme flag (which honors ThemeMode/System/AMOLED) instead of the
+    // raw system setting, so a user who forces ThemeMode.LIGHT on a dark system gets the light
+    // diff palette, not the dark one. Computed from the active colorScheme's surface luminance
+    // so it stays correct under dynamic color too.
+    val surface = MaterialTheme.colorScheme.surface
+    val dark = surface.luminance() < 0.5f
     return if (dark) DiffColors(DarkDiffAdd, DarkDiffAddBg, DarkDiffRemove, DarkDiffRemoveBg)
     else DiffColors(LightDiffAdd, LightDiffAddBg, LightDiffRemove, LightDiffRemoveBg)
-}
-
-private tailrec fun Context.findActivity(): Activity? = when (this) {
-    is Activity -> this
-    is ContextWrapper -> baseContext.findActivity()
-    else -> null
 }

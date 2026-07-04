@@ -11,7 +11,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import soy.iko.opencode.data.model.ServerProfile
-import soy.iko.opencode.data.network.HttpClientFactory
+import soy.iko.opencode.data.network.CertPinUtil
 import soy.iko.opencode.data.repo.CrashLogger
 import soy.iko.opencode.di.AppContainer
 import java.util.concurrent.atomic.AtomicBoolean
@@ -97,12 +97,12 @@ private class PinnedImageCallFactory(private val container: AppContainer) : Call
         clientFor(container.activeConnection.value?.profile).newCall(request)
 
     private fun clientFor(profile: ServerProfile?): OkHttpClient {
-        val pins = parsePins(profile?.certPin)
+        val pins = CertPinUtil.parseCertPins(profile?.certPin)
         if (pins.isEmpty()) return base
         // effectiveBaseUrl upgrades http->https when pinning is on, so the pinned host matches the
         // https origin RemoteImage resolves image URLs against. Fail closed on an unparseable host
         // (never fall back to an unpinned client), mirroring HttpClientFactory.create().
-        val effectiveUrl = effectiveBaseUrl(profile!!)
+        val effectiveUrl = CertPinUtil.effectiveBaseUrl(profile!!)
         val host = effectiveUrl.toHttpUrlOrNull()?.host
             ?: throw IllegalStateException(
                 "Certificate pinning is configured but the server host could not be parsed from $effectiveUrl",
@@ -115,22 +115,6 @@ private class PinnedImageCallFactory(private val container: AppContainer) : Call
                 cachedSignature = signature
             }
             return cachedClient
-        }
-    }
-
-    // parsePins / effectiveBaseUrl mirror the private helpers in HttpClientFactory (the source of
-    // truth). This file may not edit HttpClientFactory and those helpers aren't exposed, so the
-    // pin-parsing and http->https upgrade logic is replicated here and must be kept in sync.
-    private fun parsePins(raw: String?): List<String> =
-        raw?.split(Regex("[\\s,]+"))?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList()
-
-    private fun effectiveBaseUrl(profile: ServerProfile): String {
-        val normalized = HttpClientFactory.normalizeBaseUrl(profile.baseUrl)
-        val forceHttps = profile.requireHttps || parsePins(profile.certPin).isNotEmpty()
-        return if (forceHttps && normalized.lowercase().startsWith("http://")) {
-            "https://" + normalized.substring("http://".length)
-        } else {
-            normalized
         }
     }
 }

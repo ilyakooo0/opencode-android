@@ -222,6 +222,7 @@ fun ChatScreen(
     val reconnecting by vm.reconnecting.collectAsStateWithLifecycle()
     val sendOnEnter by container.settingsStore.sendOnEnter.collectAsStateWithLifecycle(initialValue = true)
     val preferredModelId by container.settingsStore.preferredModelId.collectAsStateWithLifecycle(initialValue = "")
+    val recentModelEntries by container.recentModelsStore.entries.collectAsStateWithLifecycle()
     val compactSpacing by container.settingsStore.compactMessageSpacing.collectAsStateWithLifecycle(initialValue = false)
     val isOnline by container.isOnline.collectAsStateWithLifecycle()
     val haptics = LocalHapticFeedback.current
@@ -382,6 +383,11 @@ fun ChatScreen(
     // Count of picks currently being read + base64-encoded off the main thread, so the
     // composer can show a staging placeholder immediately (chips only materialize once done).
     var stagingCount by remember { mutableStateOf(0) }
+    // Total number of files still being staged across all in-flight batches, so the
+    // staging chip can show "Staging N files…" rather than a bare indeterminate spinner.
+    // A separate counter from [stagingCount] (which tracks batches, not files) so a
+    // multi-file pick reads as more work than a single-file pick.
+    var stagingFileTotal by remember { mutableStateOf(0) }
 
     // Convert each picked Uri to a base64 attachment off the main thread, honoring the
     // per-prompt count cap and surfacing per-file errors without aborting the batch.
@@ -389,17 +395,22 @@ fun ChatScreen(
         if (uris.isEmpty()) return
         scope.launch {
             stagingCount++
+            stagingFileTotal += uris.size
             try {
-                for (uri in uris) {
+                uris.forEachIndexed { index, uri ->
                     if (vm.attachments.value.size >= NetworkConfig.maxAttachments) {
                         snackbar.showSnackbar(attachLimitMsg)
-                        break
+                        // The cap dropped the rest of this batch; account for the files we
+                        // won't process so stagingFileTotal doesn't linger over-counted.
+                        stagingFileTotal -= uris.size - index
+                        return@forEachIndexed
                     }
                     when (val result = uri.toAttachmentResult(appContext)) {
                         is AttachmentResult.Ok -> vm.addAttachment(result.attachment)
                         AttachmentResult.TooLarge -> snackbar.showSnackbar(attachTooLargeMsg)
                         AttachmentResult.Failed -> snackbar.showSnackbar(attachFailedMsg)
                     }
+                    stagingFileTotal--
                 }
             } finally {
                 stagingCount--
@@ -637,6 +648,7 @@ fun ChatScreen(
                     val moreLabel = stringResource(R.string.more)
                     val loadingLabel = stringResource(R.string.loading)
                     val shareLabel = stringResource(R.string.share_conversation)
+                    val copyAsMarkdownLabel = stringResource(R.string.copy_as_markdown)
                     val commandsLabel = stringResource(R.string.commands)
                     val renameLabel = stringResource(R.string.rename_session_chat)
                     val deleteLabel = stringResource(R.string.delete_session_chat)
@@ -670,6 +682,21 @@ fun ChatScreen(
                                         }
                                         runCatchingCancellable { shareContext.startActivity(android.content.Intent.createChooser(send, shareLabel)) }
                                             .onFailure { showToast(shareContext, shareContext.getString(R.string.no_share_app)) }
+                                    }
+                                },
+                            )
+                            // Copy the whole conversation as Markdown to the clipboard, so a
+                            // user can paste into another app without the share-sheet round-trip.
+                            DropdownMenuItem(
+                                text = { Text(copyAsMarkdownLabel) },
+                                enabled = hasMessages,
+                                onClick = {
+                                    showOverflowMenu = false
+                                    scope.launch {
+                                        val md = withContext(Dispatchers.Default) {
+                                            buildConversationMarkdown(vm.messages.value, sessionTitle)
+                                        }
+                                        copyToClipboard(shareContext, shareContext.getString(R.string.clip_label_message), md)
                                     }
                                 },
                             )
@@ -811,6 +838,7 @@ fun ChatScreen(
                     focusRequester = inputFocusRequester,
                     attachments = attachments,
                     staging = stagingCount > 0,
+                    stagingFileCount = stagingFileTotal,
                     onRemoveAttachment = vm::removeAttachment,
                     onPickPhoto = {
                         photoPicker.launch(
@@ -1199,6 +1227,11 @@ fun ChatScreen(
                                     (message.info as? soy.iko.opencode.data.model.AssistantMessage)
                                         ?.let { resolveModelLabel(it, models) }
                                 }
+                                val agentLabel = remember(message.parts) {
+                                    message.parts
+                                        .filterIsInstance<soy.iko.opencode.data.model.AgentPart>()
+                                        .firstOrNull { it.name.isNotBlank() }?.name
+                                }
                                 // Text used to drive swipe-to-reply (and pre-fill the quote). Empty for
                                 // image/code-only messages, which then opt out of the swipe gesture.
                                 val quoteText = remember(message.parts) {
@@ -1244,6 +1277,7 @@ fun ChatScreen(
                                     isRunning = running && message.info.id == lastMessageId,
                                     imageContext = imageContext,
                                     modelLabel = modelLabel,
+                                    agentLabel = agentLabel,
                                     onOpenFile = onOpenFile,
                                     onRevert = { vm.revertTo(message.info.id) },
                                     onEdit = { text ->
@@ -1273,6 +1307,7 @@ fun ChatScreen(
                                     ttsState = if (message.info.id == speakingMessageId) ttsState else TtsState.IDLE,
                                     onPause = { tts.pause() },
                                     onResume = { tts.resume() },
+                                    onStop = { tts.stop() },
                                     onQuote = { text ->
                                         vm.quoteReply(text)
                                         runCatching { inputFocusRequester.requestFocus() }
@@ -1682,18 +1717,31 @@ fun ChatScreen(
     }
 
     if (showModelPicker) {
+        // Resolve persisted recent composite keys to the live ModelOption entries they refer
+        // to, dropping any whose model is no longer offered by the server. Ordered by
+        // recency (head of the store first).
+        val recentOptions = remember(models, recentModelEntries) {
+            val byKey = models.associateBy { it.providerID to it.modelID }
+            recentModelEntries.mapNotNull { entry ->
+                container.recentModelsStore.split(entry)?.let { (p, m) -> byKey[p to m] }
+            }
+        }
         ModelPickerSheet(
             options = models,
             selected = selectedModel,
             loading = modelsLoading,
             error = modelsError,
-            onSelect = { vm.selectModel(it) },
+            onSelect = {
+                vm.selectModel(it)
+                container.recentModelsStore.add(it.providerID, it.modelID)
+            },
             onRetry = { vm.reloadModels() },
             onDismiss = { showModelPicker = false },
             preferredModelId = preferredModelId,
             onSetPreferredModel = { id ->
                 scope.launch { runCatchingCancellable { container.settingsStore.setPreferredModelId(id) } }
             },
+            recent = recentOptions,
         )
     }
 
@@ -1790,6 +1838,7 @@ private fun ChatInputBar(
     focusRequester: androidx.compose.ui.focus.FocusRequester,
     attachments: List<PendingAttachment>,
     staging: Boolean,
+    stagingFileCount: Int,
     onRemoveAttachment: (String) -> Unit,
     onPickPhoto: () -> Unit,
     onPickFile: () -> Unit,
@@ -1845,7 +1894,7 @@ private fun ChatInputBar(
                 }
             }
             // Staged attachments: horizontally-scrollable thumbnails/chips, each removable.
-            AttachmentStrip(attachments, onRemove = onRemoveAttachment, staging = staging)
+            AttachmentStrip(attachments, onRemove = onRemoveAttachment, staging = staging, stagingFileCount = stagingFileCount)
             Row(
                 modifier = Modifier.fillMaxWidth().padding(8.dp),
                 verticalAlignment = Alignment.Bottom,
@@ -2015,6 +2064,7 @@ private fun ChatInputBar(
                 attachments = attachments,
                 onRemoveAttachment = onRemoveAttachment,
                 staging = staging,
+                stagingFileCount = stagingFileCount,
             )
         }
     }
@@ -2035,6 +2085,7 @@ private fun FullScreenEditor(
     attachments: List<PendingAttachment> = emptyList(),
     onRemoveAttachment: (String) -> Unit = {},
     staging: Boolean = false,
+    stagingFileCount: Int = 0,
 ) {
     androidx.compose.ui.window.Dialog(
         onDismissRequest = onDismiss,
@@ -2079,7 +2130,7 @@ private fun FullScreenEditor(
                 // Show staged attachments in the full-screen editor too, so a user who staged
                 // images then expanded for a long prompt can still see and remove them without
                 // collapsing first (mirrors the inline composer's AttachmentStrip).
-                AttachmentStrip(attachments, onRemove = onRemoveAttachment, staging = staging)
+                AttachmentStrip(attachments, onRemove = onRemoveAttachment, staging = staging, stagingFileCount = stagingFileCount)
                 OutlinedTextField(
                     value = value,
                     onValueChange = { v -> onValueChange(v.take(NetworkConfig.maxDraftLengthChars)) },

@@ -101,6 +101,7 @@ fun ServerListScreen(
     val profiles by vm.profiles.collectAsStateWithLifecycle()
     val loading by vm.loading.collectAsStateWithLifecycle()
     val connectingId by vm.connectingId.collectAsStateWithLifecycle()
+    val probingId by vm.probingId.collectAsStateWithLifecycle()
     val activeConnection by container.activeConnection.collectAsStateWithLifecycle()
     val reconnecting by container.reconnecting.collectAsStateWithLifecycle()
     // The active server's real SSE state, so its card reflects a dropped/failed stream instead of
@@ -143,6 +144,21 @@ fun ServerListScreen(
             if (result == SnackbarResult.ActionPerformed && event.profile != null) {
                 vm.connect(event.profile, onConnected)
             }
+        }
+    }
+
+    // "Test connection" probe results: surface as a snackbar ("Connected (123ms)" or
+    // "Failed: …") without navigating away. Collected separately from errorEvents so the
+    // two flows don't interleave their snackbars unpredictably.
+    val probeSuccessLabel = stringResource(R.string.test_connection_success)
+    val probeFailedLabel = stringResource(R.string.test_connection_failed)
+    LaunchedEffect(Unit) {
+        vm.probeEvents.collect { result ->
+            val message = when (result) {
+                is ProbeTestResult.Success -> probeSuccessLabel.format(result.latencyMs)
+                is ProbeTestResult.Failed -> probeFailedLabel.format(result.message)
+            }
+            snackbar.showSnackbar(message)
         }
     }
 
@@ -350,6 +366,8 @@ fun ServerListScreen(
                                         onDuplicate = { onDuplicateProfile(profile.id) },
                                         onPendingDelete = { pendingDeleteId = profile.id },
                                         onShareQr = { pendingQrProfile = profile },
+                                        onTestConnection = { vm.testConnection(profile) },
+                                        isProbing = probingId == profile.id,
                                     )
                                 }
                         } else {
@@ -402,6 +420,8 @@ fun ServerListScreen(
                                         onDuplicate = { onDuplicateProfile(profile.id) },
                                         onPendingDelete = { pendingDeleteId = profile.id },
                                         onShareQr = { pendingQrProfile = profile },
+                                        onTestConnection = { vm.testConnection(profile) },
+                                        isProbing = probingId == profile.id,
                                     )
                                 }
                             }
@@ -459,6 +479,8 @@ private fun ServerCardContent(
     onDuplicate: () -> Unit,
     onPendingDelete: () -> Unit,
     onShareQr: () -> Unit = {},
+    onTestConnection: () -> Unit = {},
+    isProbing: Boolean = false,
     activeState: soy.iko.opencode.data.network.EventStreamClient.ConnectionState? = null,
 ) {
     Row(
@@ -559,33 +581,47 @@ private fun ServerCardContent(
             val editLabel = stringResource(R.string.edit)
             val duplicateLabel = stringResource(R.string.duplicate_server)
             val removeLabel = stringResource(R.string.remove)
+            val testConnLabel = stringResource(R.string.test_connection)
+            val testConnDesc = stringResource(R.string.test_connection_desc, profile.displayLabel)
             // Tie the overflow button's a11y label to this server so a TalkBack user scrolling
             // a long list can tell the rows apart (a bare "More" on every row is ambiguous).
             val moreLabel = stringResource(R.string.more_options_for, profile.displayLabel)
-            Box {
-                IconButton(onClick = { showRowMenu = true }) {
-                    Icon(Icons.Filled.MoreVert, contentDescription = moreLabel)
-                }
-                DropdownMenu(
-                    expanded = showRowMenu,
-                    onDismissRequest = { showRowMenu = false },
-                ) {
-                    DropdownMenuItem(
-                        text = { Text(editLabel) },
-                        onClick = { showRowMenu = false; onEdit() },
-                    )
-                    DropdownMenuItem(
-                        text = { Text(duplicateLabel) },
-                        onClick = { showRowMenu = false; onDuplicate() },
-                    )
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.share_qr)) },
-                        onClick = { showRowMenu = false; onShareQr() },
-                    )
-                    DropdownMenuItem(
-                        text = { Text(removeLabel, color = MaterialTheme.colorScheme.error) },
-                        onClick = { showRowMenu = false; onPendingDelete() },
-                    )
+            // A probe in flight shows a small spinner in place of the overflow button so the
+            // user sees the test is running (mirrors the connecting spinner above).
+            if (isProbing) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(24.dp).semantics { contentDescription = testConnDesc },
+                )
+            } else {
+                Box {
+                    IconButton(onClick = { showRowMenu = true }) {
+                        Icon(Icons.Filled.MoreVert, contentDescription = moreLabel)
+                    }
+                    DropdownMenu(
+                        expanded = showRowMenu,
+                        onDismissRequest = { showRowMenu = false },
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text(editLabel) },
+                            onClick = { showRowMenu = false; onEdit() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text(duplicateLabel) },
+                            onClick = { showRowMenu = false; onDuplicate() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text(testConnLabel) },
+                            onClick = { showRowMenu = false; onTestConnection() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.share_qr)) },
+                            onClick = { showRowMenu = false; onShareQr() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text(removeLabel, color = MaterialTheme.colorScheme.error) },
+                            onClick = { showRowMenu = false; onPendingDelete() },
+                        )
+                    }
                 }
             }
         }

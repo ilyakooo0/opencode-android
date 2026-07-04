@@ -1,8 +1,6 @@
 package soy.iko.opencode.ui.components
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Row
@@ -10,7 +8,9 @@ import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CloudOff
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -28,6 +28,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -80,7 +81,11 @@ fun ConnectionBanner(
     // composition is a documented anti-pattern that can trigger extra recompositions and isn't
     // guaranteed a defined ordering. SideEffect runs only after a successful composition.
     SideEffect { if (text != null) lastText.value = text }
-    AnimatedVisibility(visible = text != null, enter = fadeIn(), exit = fadeOut()) {
+    AnimatedVisibility(
+        visible = text != null,
+        enter = rememberVisibilityTransitions().enter,
+        exit = rememberVisibilityTransitions().exit,
+    ) {
         val shown = lastText.value ?: return@AnimatedVisibility
         // Distinguish a hard failure (e.g. bad credentials) and an offline device from
         // transient connecting/reconnecting states by switching to the error palette,
@@ -115,16 +120,27 @@ fun ConnectionBanner(
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                if (!isFailed) {
-                    CircularProgressIndicator(
-                        Modifier.size(16.dp),
-                        strokeWidth = 2.dp,
+                if (isFailed) {
+                    // An error icon reinforces the failure state visually, matching the
+                    // session list's error state which uses ErrorOutline.
+                    Icon(
+                        Icons.Filled.CloudOff,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                        tint = onContainer,
+                    )
+                } else {
+                    LoadingSpinner(
+                        size = LoadingSize.Inline,
+                        color = onContainer,
                     )
                 }
                 Text(
                     shown,
                     style = MaterialTheme.typography.labelMedium,
                     color = onContainer,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                     modifier = Modifier
                         .padding(start = 6.dp)
                         .weight(1f, fill = false),

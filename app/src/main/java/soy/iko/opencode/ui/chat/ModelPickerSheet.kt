@@ -94,6 +94,7 @@ fun ModelPickerSheet(
     onDismiss: () -> Unit,
     preferredModelId: String = "",
     onSetPreferredModel: (String) -> Unit = {},
+    recent: List<ModelOption> = emptyList(),
 ) {
     // Hoist SheetState + skipPartiallyExpanded so the sheet opens full-height and selection
     // animates out (see AgentPickerSheet for the full rationale).
@@ -200,6 +201,17 @@ fun ModelPickerSheet(
                 LaunchedEffect(grouped) {
                     if (selectedIndex >= 0) listState.scrollToItem(selectedIndex)
                 }
+                // Recents are only surfaced when the user hasn't filtered: a search query
+                // already scopes the list, so a duplicate "Recent" section would be noise.
+                // Entries are also pruned to models still present in the catalog (a recent
+                // pick may have been removed server-side) and ordered by recency.
+                val recentShown = remember(filtered, recent, query) {
+                    if (query.isNotBlank()) emptyList()
+                    else {
+                        val available = filtered.associateBy { it.providerID to it.modelID }
+                        recent.mapNotNull { available[it.providerID to it.modelID] }
+                    }
+                }
                 LazyColumn(
                     state = listState,
                     modifier = Modifier
@@ -208,6 +220,23 @@ fun ModelPickerSheet(
                         .navigationBarsPadding()
                         .semantics { selectableGroup() },
                 ) {
+                    if (recentShown.isNotEmpty()) {
+                        item(key = "header_recent") {
+                            Text(
+                                stringResource(R.string.recent_models),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(start = 24.dp, top = 12.dp, bottom = 4.dp),
+                            )
+                        }
+                        items(recentShown, key = { "recent_${it.providerID}_${it.modelID}" }) { option ->
+                            ModelRow(option, selected) {
+                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                scope.launch { sheetState.hide() }.invokeOnCompletion { onDismiss() }
+                                onSelect(option)
+                            }
+                        }
+                    }
                     grouped.forEach { (providerID, opts) ->
                         item(key = "header_$providerID") {
                             Text(
@@ -220,75 +249,82 @@ fun ModelPickerSheet(
                         // opts is already distinct (filtered derives from the distinct list),
                         // so no per-row distinctBy is needed here.
                         items(opts, key = { it.providerID to it.modelID }) { option ->
-                    val isSelected = option.providerID == selected?.providerID &&
-                        option.modelID == selected?.modelID
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .semantics(mergeDescendants = true) {
-                                this.selected = isSelected
-                            }
-                            .clickable(role = Role.RadioButton) {
+                            ModelRow(option, selected) {
                                 haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 scope.launch { sheetState.hide() }.invokeOnCompletion { onDismiss() }
                                 onSelect(option)
                             }
-                            .padding(horizontal = 24.dp, vertical = 12.dp),
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                option.modelLabel,
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-                                modifier = Modifier.weight(1f),
-                            )
-                            if (isSelected) {
-                                Icon(
-                                    Icons.Filled.Check,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(20.dp),
-                                )
-                            }
                         }
                     }
                 }
-                    }
-            }
-            // Footer: a "set as default" toggle for the currently-selected model, so a user
-            // who always picks a specific model doesn't have to pick it every new session.
-            // Only shown when there's a selection; tapping clears the preference if it's
-            // already the default (toggle behavior).
-            if (selected != null) {
-                val isDefault = preferredModelId == selected.modelID
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 24.dp, vertical = 8.dp)
-                        .navigationBarsPadding(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        stringResource(
-                            if (isDefault) R.string.default_model_current else R.string.set_as_default_model,
-                            selected.modelLabel,
-                        ),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.weight(1f),
-                    )
-                    TextButton(
-                        onClick = {
-                            onSetPreferredModel(if (isDefault) "" else selected.modelID)
-                        },
+                // Footer: a "set as default" toggle for the currently-selected model, so a user
+                // who always picks a specific model doesn't have to pick it every new session.
+                // Only shown when there's a selection; tapping clears the preference if it's
+                // already the default (toggle behavior).
+                if (selected != null) {
+                    val isDefault = preferredModelId == selected.modelID
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 24.dp, vertical = 8.dp)
+                            .navigationBarsPadding(),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            stringResource(if (isDefault) R.string.clear_default else R.string.set_as_default),
+                            stringResource(
+                                if (isDefault) R.string.default_model_current else R.string.set_as_default_model,
+                                selected.modelLabel,
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f),
                         )
+                        TextButton(
+                            onClick = {
+                                onSetPreferredModel(if (isDefault) "" else selected.modelID)
+                            },
+                        ) {
+                            Text(
+                                stringResource(if (isDefault) R.string.clear_default else R.string.set_as_default),
+                            )
+                        }
                     }
                 }
             }
         }
+    }
+}
+
+/** A single selectable model row in the picker. Shared by the "Recent" section and the
+ *  provider-grouped list so the two stay visually identical. */
+@Composable
+private fun ModelRow(option: ModelOption, selected: ModelOption?, onClick: () -> Unit) {
+    val isSelected = option.providerID == selected?.providerID &&
+        option.modelID == selected?.modelID
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .semantics(mergeDescendants = true) {
+                this.selected = isSelected
+            }
+            .clickable(role = Role.RadioButton, onClick = onClick)
+            .padding(horizontal = 24.dp, vertical = 12.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                option.modelLabel,
+                style = MaterialTheme.typography.bodyLarge,
+                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.weight(1f),
+            )
+            if (isSelected) {
+                Icon(
+                    Icons.Filled.Check,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
         }
     }
 }
