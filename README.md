@@ -73,7 +73,7 @@ Source map: `data/network` (Ktor, SSE, JSON), `data/model` (wire models), `data/
 ## Build
 
 ```bash
-nix develop              # JDK 17, Gradle 8.14.4, Android SDK 35, aapt2 override
+nix develop              # JDK 17, Gradle 9.6.1, Android SDK 37, aapt2 override
 ./gradlew assembleDebug  # -> app/build/outputs/apk/debug/app-debug.apk
 ./gradlew assembleRelease  # R8-minified + resource-shrunk release APK
 ./gradlew testDebugUnitTest   # JVM tests for the JSON/serialization layer

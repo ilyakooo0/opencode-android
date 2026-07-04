@@ -1,22 +1,25 @@
 package soy.iko.opencode
 
 import android.app.Application
-import coil.ImageLoader
-import coil.ImageLoaderFactory
-import coil.disk.DiskCache
-import coil.memory.MemoryCache
+import android.content.Context
+import coil3.ImageLoader
+import coil3.SingletonImageLoader
+import coil3.disk.DiskCache
+import coil3.memory.MemoryCache
+import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import okhttp3.Call
 import okhttp3.CertificatePinner
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okio.Path.Companion.toOkioPath
 import soy.iko.opencode.data.model.ServerProfile
 import soy.iko.opencode.data.network.CertPinUtil
 import soy.iko.opencode.data.repo.CrashLogger
 import soy.iko.opencode.di.AppContainer
 import java.util.concurrent.atomic.AtomicBoolean
 
-class OpencodeApp : Application(), ImageLoaderFactory {
+class OpencodeApp : Application(), SingletonImageLoader.Factory {
     lateinit var container: AppContainer
         private set
 
@@ -43,19 +46,26 @@ class OpencodeApp : Application(), ImageLoaderFactory {
     // pinning as the REST/SSE client (see HttpClientFactory). Server-hosted images carry the
     // server's HTTP Basic auth header (see RemoteImage), so without this they would travel over
     // an UNPINNED TLS connection, silently defeating the pin the user opted into for that host.
-    override fun newImageLoader(): ImageLoader = ImageLoader.Builder(this)
+    override fun newImageLoader(context: Context): ImageLoader = ImageLoader.Builder(context)
         .memoryCache {
-            MemoryCache.Builder(this)
-                .maxSizePercent(0.25)
+            MemoryCache.Builder()
+                .maxSizePercent(context, 0.25)
                 .build()
         }
         .diskCache {
             DiskCache.Builder()
-                .directory(cacheDir.resolve("image_cache"))
+                .directory(cacheDir.resolve("image_cache").toOkioPath())
                 .maxSizeBytes(50L * 1024 * 1024)
                 .build()
         }
-        .callFactory { PinnedImageCallFactory(container) }
+        .components {
+            // Route fetches through a Call.Factory that applies the SAME per-profile certificate
+            // pinning as the REST/SSE client (see HttpClientFactory). Server-hosted images carry
+            // the server's HTTP Basic auth header (see RemoteImage), so without this they would
+            // travel over an UNPINNED TLS connection, silently defeating the pin the user opted
+            // into for that host.
+            add(OkHttpNetworkFetcherFactory(callFactory = { PinnedImageCallFactory(container) }))
+        }
         .build()
 
     override fun onTerminate() {

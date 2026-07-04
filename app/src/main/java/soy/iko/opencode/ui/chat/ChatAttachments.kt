@@ -38,7 +38,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import coil.compose.AsyncImage
+import coil3.compose.AsyncImage
 import soy.iko.opencode.R
 import soy.iko.opencode.data.network.NetworkConfig
 import java.util.Locale

@@ -1,6 +1,5 @@
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.detekt)
@@ -24,13 +23,13 @@ val versionNameOverride: String? = providers.gradleProperty("versionName").orNul
 
 android {
     namespace = "soy.iko.opencode"
-    compileSdk = 35
-    buildToolsVersion = "35.0.0"
+    compileSdk = 37
+    buildToolsVersion = "37.0.0"
 
     defaultConfig {
         applicationId = "soy.iko.opencode"
         minSdk = 26
-        targetSdk = 35
+        targetSdk = 37
         // Monotonically increasing across builds: derived from the git commit count so
         // each release ships a strictly higher versionCode without manual bookkeeping
         // (and never triggers a "downgrade" install block). Falls back to 1 when the
@@ -90,7 +89,18 @@ android {
         // ProduceStateDoesNotAssignValue false-positives on valid produceState calls that
         // assign `value` via a conditional/`withContext` expression (see FileViewScreen's
         // match-index scan), so it's disabled rather than worked around at each call site.
-        disable += setOf("GradleDependency", "AndroidGradlePluginVersion", "ProduceStateDoesNotAssignValue")
+        // InvalidFragmentVersionForActivityResult false-positives on FragmentActivity
+        // (the app doesn't use fragments, but BiometricPrompt requires FragmentActivity).
+        // LocalContextGetResourceValueCall flags context.getString() inside LaunchedEffect /
+        // remember lambdas where stringResource() can't be called (not a @Composable scope);
+        // the check is overly aggressive for valid non-composable coroutine contexts.
+        disable += setOf(
+            "GradleDependency",
+            "AndroidGradlePluginVersion",
+            "ProduceStateDoesNotAssignValue",
+            "InvalidFragmentVersionForActivityResult",
+            "LocalContextGetResourceValueCall",
+        )
     }
 
     packaging {
@@ -140,6 +150,7 @@ dependencies {
     implementation(libs.androidx.security.crypto)
     implementation(libs.androidx.biometric)
     implementation(libs.coil.compose)
+    implementation(libs.coil.network.okhttp)
     implementation(libs.markdown.renderer)
     implementation(libs.markdown.renderer.m3)
     implementation(libs.zxing.core)

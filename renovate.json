@@ -24,7 +24,7 @@
       "matchPackagePatterns": ["^io.ktor"]
     },
     {
-      "description": "Pin AndroidX to the set the app targets (compileSdk 35); review major bumps manually.",
+      "description": "Pin AndroidX to the set the app targets (compileSdk 37); review major bumps manually.",
       "matchPackagePatterns": ["^androidx."],
       "major": { "enabled": false }
     }

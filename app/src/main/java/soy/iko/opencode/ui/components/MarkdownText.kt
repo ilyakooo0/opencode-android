@@ -72,6 +72,9 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.delay
+import com.mikepenz.markdown.annotator.AnnotatorSettings
+import com.mikepenz.markdown.annotator.DefaultAnnotatorSettings
+import com.mikepenz.markdown.annotator.buildMarkdownAnnotatedString
 import com.mikepenz.markdown.compose.LocalMarkdownAnnotator
 import com.mikepenz.markdown.compose.LocalMarkdownColors
 import com.mikepenz.markdown.compose.LocalMarkdownTypography
@@ -80,7 +83,7 @@ import com.mikepenz.markdown.compose.components.markdownComponents
 import com.mikepenz.markdown.compose.elements.MarkdownText as LibraryMarkdownText
 import com.mikepenz.markdown.m3.Markdown
 import com.mikepenz.markdown.model.DefaultMarkdownAnnotator
-import com.mikepenz.markdown.utils.buildMarkdownAnnotatedString
+import com.mikepenz.markdown.model.DefaultMarkdownAnnotatorConfig
 import org.intellij.markdown.MarkdownElementTypes
 import org.intellij.markdown.ast.ASTNode
 import org.intellij.markdown.ast.getTextInNode
@@ -217,7 +220,7 @@ private fun MarkdownBody(
     // rather than extracted to a helper to keep this file under detekt's TooManyFunctions threshold.
     val inlineCodeAnnotator = remember(baseAnnotator, inlineCodeTypography, inlineCodeColors) {
         val codeStyle = inlineCodeTypography.inlineCode.copy(
-            color = inlineCodeColors.inlineCodeText,
+            color = inlineCodeTypography.inlineCode.color,
             background = inlineCodeColors.inlineCodeBackground,
         ).toSpanStyle()
         DefaultMarkdownAnnotator(
@@ -247,6 +250,7 @@ private fun MarkdownBody(
                     baseAnnotator.annotate?.invoke(this, content, node) ?: false
                 }
             },
+            config = DefaultMarkdownAnnotatorConfig(),
         )
     }
     // Compose the inline-code tagger with the search-highlight wrapper when a query is active.
@@ -271,6 +275,7 @@ private fun MarkdownBody(
                     }
                     handled
                 },
+                config = DefaultMarkdownAnnotatorConfig(),
             )
         }
     } else {
@@ -317,12 +322,12 @@ private fun MarkdownBody(
         // interrupting on every token; the reader hears the reply grow in measured chunks.
         CompositionLocalProvider(
             LocalUriHandler provides safeUriHandler,
-            LocalMarkdownAnnotator provides effectiveAnnotator,
         ) {
             Markdown(
                 content = renderedContent,
                 modifier = modifier.semantics { liveRegion = LiveRegionMode.Polite },
                 components = components,
+                annotator = effectiveAnnotator,
             )
         }
         // A blinking caret at the end of a streaming reply gives a "live" typewriter feel.
@@ -336,12 +341,12 @@ private fun MarkdownBody(
                     content = markdown,
                     modifier = modifier.semantics { liveRegion = LiveRegionMode.Polite },
                     components = components,
+                    annotator = effectiveAnnotator,
                 )
             }
         }
         CompositionLocalProvider(
             LocalUriHandler provides safeUriHandler,
-            LocalMarkdownAnnotator provides effectiveAnnotator,
         ) {
             content()
         }
@@ -465,12 +470,20 @@ private fun ParagraphWithInlineCodeCopy(model: MarkdownComponentModel) {
     val context = LocalContext.current
     val haptics = LocalHapticFeedback.current
     val style = model.typography.paragraph
-    // buildMarkdownAnnotatedString is @Composable (it reads LocalMarkdownAnnotator to run the
-    // inline-code tagger installed in MarkdownBody), so the annotated string can't be built in
-    // a `remember` block. The library's own MarkdownParagraph does the same.
+    val typography = LocalMarkdownTypography.current
+    val annotator = LocalMarkdownAnnotator.current
+    // buildMarkdownAnnotatedString needs an explicit AnnotatorSettings in 0.43+ (the old
+    // overload that read LocalMarkdownAnnotator internally was removed). Build one from the
+    // current composition locals so the inline-code tagger installed in MarkdownBody still
+    // runs. The library's own MarkdownParagraph does the same.
+    val settings = DefaultAnnotatorSettings(
+        linkTextSpanStyle = typography.textLink,
+        codeSpanStyle = typography.inlineCode.toSpanStyle(),
+        annotator = annotator,
+    )
     val styledText = buildAnnotatedString {
         pushStyle(style.toSpanStyle())
-        buildMarkdownAnnotatedString(model.content, model.node)
+        buildMarkdownAnnotatedString(model.content, model.node, settings)
         pop()
     }
     // Capture the layout result so a long-press position can be mapped to a character offset,
@@ -478,7 +491,7 @@ private fun ParagraphWithInlineCodeCopy(model: MarkdownComponentModel) {
     var layoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
     LibraryMarkdownText(
         content = styledText,
-        style = style,
+        node = model.node,
         modifier = Modifier.pointerInput(styledText) {
             detectTapGestures(
                 onLongPress = { pos ->
@@ -493,7 +506,8 @@ private fun ParagraphWithInlineCodeCopy(model: MarkdownComponentModel) {
                 },
             )
         },
-        onTextLayout = { layoutResult = it },
+        style = style,
+        onTextLayout = { result, _ -> layoutResult = result },
     )
 }
 

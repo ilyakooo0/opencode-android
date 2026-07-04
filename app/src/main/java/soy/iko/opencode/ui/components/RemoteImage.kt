@@ -46,8 +46,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import coil.compose.SubcomposeAsyncImage
-import coil.request.ImageRequest
+import coil3.compose.SubcomposeAsyncImage
+import coil3.network.NetworkHeaders
+import coil3.network.httpHeaders
+import coil3.request.ImageRequest
+import coil3.request.crossfade
+import coil3.toBitmap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlin.math.absoluteValue
@@ -189,7 +193,9 @@ fun RemoteImage(part: FilePart, ctx: ImageLoadContext, modifier: Modifier = Modi
                 // resolveModel already verified same-origin, so a String model can only point at
                 // the user's own server — attaching Basic auth over http (not just https) is safe.
                 // A data-URI model is a ByteArray, so gate on the model being a URL String.
-                if (model is String) ctx.basicAuthHeader?.let { addHeader("Authorization", it) }
+                if (model is String) ctx.basicAuthHeader?.let {
+                    httpHeaders(NetworkHeaders.Builder().add("Authorization", it).build())
+                }
             }
             .crossfade(true)
             .build()
@@ -542,9 +548,9 @@ private suspend fun saveImageToGallery(
  *  failure. Suspending so callers run it on a background dispatcher. */
 private suspend fun decodeRequestBitmap(context: android.content.Context, request: ImageRequest): android.graphics.Bitmap? {
     return soy.iko.opencode.util.runCatchingCancellableSuspend {
-        val loader = coil.Coil.imageLoader(context)
+        val loader = coil3.SingletonImageLoader.get(context)
         val result = loader.execute(request)
-        (result.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
+        result.image?.toBitmap()
     }.getOrNull()
 }
 

@@ -12,12 +12,12 @@ an adaptive single-pane / two-pane Material 3 UI.
 
 - Application id / namespace: `soy.iko.opencode`
 - Package root: `app/src/main/java/soy/iko/opencode`
-- minSdk 26, compileSdk/targetSdk 35, JDK 17, Kotlin 2.0.x, AGP 8.7.x
+- minSdk 26, compileSdk/targetSdk 37, JDK 17, Kotlin 2.2.x, AGP 9.2.x
 - Single Gradle module (`:app`); no dynamic feature modules.
 
 ## Build & environment
 
-A Nix flake provides the exact toolchain (JDK 17, Gradle, Android SDK 35, and a
+A Nix flake provides the exact toolchain (JDK 17, Gradle, Android SDK 37, and a
 Nix-built `aapt2` override because Gradle's bundled aapt2 segfaults on NixOS).
 
 ```bash
@@ -26,8 +26,8 @@ nix develop                    # enter the dev shell (sets ANDROID_HOME, JAVA_HO
 ./gradlew assembleRelease      # R8-minified + resource-shrunk; signed only when OPENCODE_STORE_* env vars are set
 ```
 
-Outside Nix, you need JDK 17 and the Android SDK (platform 35, build-tools
-35.0.0) installed manually; `ANDROID_HOME` / `ANDROID_SDK_ROOT` must point at it.
+Outside Nix, you need JDK 17 and the Android SDK (platform 37, build-tools
+37.0.0) installed manually; `ANDROID_HOME` / `ANDROID_SDK_ROOT` must point at it.
 
 Install on a connected device/emulator:
 
@@ -194,4 +194,4 @@ util            Coroutines.kt (runCatchingCancellable, safeExceptionSummary)
 
 `renovate.json` keeps dependencies current: Kotlin+AGP and Compose are grouped;
 Ktor is grouped; AndroidX majors are held for manual review (pinned to
-compileSdk 35). Dependency upgrades land via Renovate PRs, not manual bumps.
+compileSdk 37). Dependency upgrades land via Renovate PRs, not manual bumps.

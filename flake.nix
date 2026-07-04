@@ -10,8 +10,8 @@
     flake-utils.lib.eachDefaultSystem (system:
       let
         # Versions kept in sync with the Gradle project (compileSdk / build-tools).
-        platformVersion   = "35";
-        buildToolsVersion = "35.0.0";
+        platformVersion   = "37";
+        buildToolsVersion = "37.0.0";
 
         pkgs = import nixpkgs {
           inherit system;
