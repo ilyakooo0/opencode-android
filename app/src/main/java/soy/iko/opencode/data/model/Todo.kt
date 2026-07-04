@@ -27,6 +27,17 @@ data class TodoItem(
 /** Normalized lifecycle of a [TodoItem]; [UNKNOWN] covers any status the client doesn't model. */
 enum class TodoStatus { PENDING, IN_PROGRESS, COMPLETED, CANCELLED, UNKNOWN }
 
+/** Normalized priority of a [TodoItem]; [NONE] covers null/unmodelled priorities. The order
+ *  matters: HIGH > MEDIUM > LOW, used by [TodoPlan] tinting and a11y labels. */
+enum class TodoPriority { HIGH, MEDIUM, LOW, NONE }
+
+fun TodoItem.priorityEnum(): TodoPriority = when ((priority ?: "").trim().lowercase()) {
+    "high", "h", "1", "urgent", "critical" -> TodoPriority.HIGH
+    "medium", "med", "m", "normal", "2" -> TodoPriority.MEDIUM
+    "low", "l", "3", "minor", "backlog" -> TodoPriority.LOW
+    else -> if (priority.isNullOrBlank()) TodoPriority.NONE else TodoPriority.NONE
+}
+
 fun TodoItem.statusEnum(): TodoStatus = when (status.trim().lowercase()) {
     "pending", "todo", "" -> TodoStatus.PENDING
     "in_progress", "in-progress", "inprogress", "running", "active" -> TodoStatus.IN_PROGRESS

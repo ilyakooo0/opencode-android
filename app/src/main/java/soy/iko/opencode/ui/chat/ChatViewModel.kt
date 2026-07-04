@@ -529,6 +529,12 @@ class ChatViewModel(
     private val _reverted = MutableStateFlow(false)
     val reverted: StateFlow<Boolean> = _reverted.asStateFlow()
 
+    /** The diff of the active revert checkpoint, when the server includes one. Shown in the
+     *  revert banner so the user can see what changed before deciding to undo. Null when the
+     *  session isn't reverted or the server didn't send a diff. */
+    private val _revertDiff = MutableStateFlow<String?>(null)
+    val revertDiff: StateFlow<String?> = _revertDiff.asStateFlow()
+
     /** The active public share URL for this session, or null when not shared. */
     private val _shareUrl = MutableStateFlow<String?>(null)
     val shareUrl: StateFlow<String?> = _shareUrl.asStateFlow()
@@ -713,6 +719,7 @@ class ChatViewModel(
                 clearPermissions()
                 sessionAllowed.clear()
                 sessionTitleJob?.cancel()
+                _revertDiff.value = null
                 return@collectLatest
                 }
                 _running.value = false
@@ -723,6 +730,7 @@ class ChatViewModel(
                 clearPermissions()
                 sessionAllowed.clear()
                 _failedDraft.value = null
+                _revertDiff.value = null
                 // NOTE: deliberately not clearing _queuedFollowUp here. It's session-scoped
                 // user intent that is now persisted; wiping it on every (re)connect — which
                 // this collector does, including transient SSE drops and the cold-start
@@ -743,6 +751,7 @@ class ChatViewModel(
                             if (_sessionTitle.value == null) {
                                 _sessionTitle.value = session.displayTitle
                                 _reverted.value = session.isReverted
+                                _revertDiff.value = session.revert?.diff?.takeIf { it.isNotBlank() }
                                 _shareUrl.value = session.share?.url?.takeIf { it.isNotBlank() }
                             }
                         }
@@ -800,6 +809,7 @@ class ChatViewModel(
                                             val info = event.properties.info
                                             _sessionTitle.value = info.displayTitle
                                             _reverted.value = info.isReverted
+                                            _revertDiff.value = info.revert?.diff?.takeIf { it.isNotBlank() }
                                             _shareUrl.value = info.share?.url?.takeIf { it.isNotBlank() }
                                         }
                                     is SessionDeleted ->
@@ -1275,7 +1285,10 @@ class ChatViewModel(
         val conn = connection ?: return
         viewModelScope.launch {
             runCatchingCancellable { conn.api.revert(sessionId, messageId) }
-                .onSuccess { _reverted.value = it.isReverted }
+                .onSuccess {
+                    _reverted.value = it.isReverted
+                    _revertDiff.value = it.revert?.diff?.takeIf { diff -> diff.isNotBlank() }
+                }
                 .onFailure { _errorEvents.trySend(ChatError(container.friendlyError(it))) }
         }
     }
@@ -1362,7 +1375,10 @@ class ChatViewModel(
         val conn = connection ?: return
         viewModelScope.launch {
             runCatchingCancellable { conn.api.unrevert(sessionId) }
-                .onSuccess { _reverted.value = it.isReverted }
+                .onSuccess {
+                    _reverted.value = it.isReverted
+                    _revertDiff.value = it.revert?.diff?.takeIf { diff -> diff.isNotBlank() }
+                }
                 .onFailure { _errorEvents.trySend(ChatError(container.friendlyError(it))) }
         }
     }

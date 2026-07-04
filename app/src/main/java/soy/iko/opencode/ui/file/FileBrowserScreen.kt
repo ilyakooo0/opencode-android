@@ -1,5 +1,6 @@
 package soy.iko.opencode.ui.file
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -559,7 +560,12 @@ private fun DirectoryListing(
                 horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                var showSortMenu by remember { mutableStateOf(false) }
+                // rememberSaveable so an open sort dropdown survives a rotation instead of
+                // closing and leaving the user to re-open it.
+                var showSortMenu by rememberSaveable { mutableStateOf(false) }
+                // Close the sort dropdown on back press instead of navigating away, matching
+                // the session/server list dropdown back-handling.
+                BackHandler(enabled = showSortMenu) { showSortMenu = false }
                 androidx.compose.material3.FilterChip(
                     selected = sortKey != FileSortKey.NAME || sortDesc,
                     onClick = { showSortMenu = true },
@@ -657,7 +663,11 @@ private fun FileRow(
     val copyPathLabel = stringResource(R.string.copy_path)
     // Long-press → "Copy path" dropdown. Rendered only when [onCopyPath] is supplied, so the
     // parent ".." row (which passes none) stays a plain tap target. Anchored within the row.
-    var menu by remember { mutableStateOf(false) }
+    // rememberSaveable so an open row menu survives a rotation instead of closing.
+    var menu by rememberSaveable { mutableStateOf(false) }
+    // Close this row's overflow on back press instead of navigating away, matching the
+    // sort menu BackHandler above.
+    BackHandler(enabled = menu) { menu = false }
     val fileDesc = if (label == "..") stringResource(R.string.parent_dir)
         else if (icon) stringResource(R.string.folder, label)
         else stringResource(R.string.file_label, label)

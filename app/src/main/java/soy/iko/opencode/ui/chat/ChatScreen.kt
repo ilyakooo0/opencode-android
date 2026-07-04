@@ -52,6 +52,8 @@ import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Expand
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
@@ -160,6 +162,7 @@ import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
 import soy.iko.opencode.ui.components.CommandPalette
 import soy.iko.opencode.ui.components.ConnectionBanner
+import soy.iko.opencode.ui.components.DiffView
 import soy.iko.opencode.ui.components.PaletteAction
 import soy.iko.opencode.ui.components.LocalReducedMotion
 import soy.iko.opencode.ui.components.copyToClipboard
@@ -206,6 +209,7 @@ fun ChatScreen(
     val draft by vm.draft.collectAsStateWithLifecycle()
     val attachments by vm.attachments.collectAsStateWithLifecycle()
     val reverted by vm.reverted.collectAsStateWithLifecycle()
+    val revertDiff by vm.revertDiff.collectAsStateWithLifecycle()
     val shareUrl by vm.shareUrl.collectAsStateWithLifecycle()
     val reconnecting by vm.reconnecting.collectAsStateWithLifecycle()
     val sendOnEnter by container.settingsStore.sendOnEnter.collectAsStateWithLifecycle(initialValue = true)
@@ -758,7 +762,10 @@ fun ChatScreen(
                     enter = bannerMotion.enter,
                     exit = bannerMotion.exit,
                 ) {
-                    RevertBanner(onUndo = { vm.unrevert() })
+                    RevertBanner(
+                        diff = revertDiff,
+                        onUndo = { vm.unrevert() },
+                    )
                 }
                 AnimatedVisibility(
                     visible = queuedOffline.isNotEmpty(),
@@ -1122,6 +1129,7 @@ fun ChatScreen(
                 // message list leaves composition.
                 val tts = rememberTtsController()
                 val speakingMessageId by tts.speakingId
+                val ttsState by tts.state
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize(),
@@ -1251,6 +1259,9 @@ fun ChatScreen(
                                         }
                                     },
                                     isSpeaking = message.info.id == speakingMessageId,
+                                    ttsState = if (message.info.id == speakingMessageId) ttsState else TtsState.IDLE,
+                                    onPause = { tts.pause() },
+                                    onResume = { tts.resume() },
                                     onQuote = { text ->
                                         vm.quoteReply(text)
                                         runCatching { inputFocusRequester.requestFocus() }
@@ -1278,6 +1289,23 @@ fun ChatScreen(
                                             { vm.dismissOptimistic(message.info.id) }
                                         } else {
                                             null
+                                        }
+                                    },
+                                    onShare = {
+                                        // Per-message share: build a single-message Markdown
+                                        // transcript off-thread and fire ACTION_SEND, mirroring the
+                                        // whole-conversation share but scoped to just this message.
+                                        scope.launch {
+                                            val md = withContext(Dispatchers.Default) {
+                                                buildMessageMarkdown(message)
+                                            } ?: return@launch
+                                            val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                                type = "text/markdown"
+                                                putExtra(android.content.Intent.EXTRA_SUBJECT, sessionTitle ?: defaultShareSubject)
+                                                putExtra(android.content.Intent.EXTRA_TEXT, md)
+                                            }
+                                            runCatchingCancellable { shareContext.startActivity(android.content.Intent.createChooser(send, shareContext.getString(R.string.share_message))) }
+                                                .onFailure { showToast(shareContext, shareContext.getString(R.string.no_share_app)) }
                                         }
                                     },
                                 )
@@ -2175,40 +2203,88 @@ private fun EmptyConversation(
     }
 }
 
-/** A banner shown while a revert checkpoint is active, offering an Undo (unrevert). */
+/** A banner shown while a revert checkpoint is active, offering an Undo (unrevert). When the
+ *  server included a diff of the revert, a collapsible "Show what changed" affordance reveals
+ *  it inline via [DiffView] so the user can see what was rolled back before deciding to undo. */
 @Composable
-private fun RevertBanner(onUndo: () -> Unit) {
+private fun RevertBanner(diff: String?, onUndo: () -> Unit) {
     val haptics = LocalHapticFeedback.current
+    var showDiff by rememberSaveable { mutableStateOf(false) }
+    val expandMotion = rememberVisibilityTransitions()
     Surface(
         color = MaterialTheme.colorScheme.tertiaryContainer,
         tonalElevation = 2.dp,
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                Icon(
-                    Icons.Filled.Restore,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onTertiaryContainer,
-                    modifier = Modifier.size(18.dp),
-                )
-                Text(
-                    stringResource(R.string.reverted_banner),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onTertiaryContainer,
-                    modifier = Modifier.padding(start = 8.dp),
-                )
+        Column {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                    Icon(
+                        Icons.Filled.Restore,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onTertiaryContainer,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Text(
+                        stringResource(R.string.reverted_banner),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer,
+                        modifier = Modifier.padding(start = 8.dp),
+                    )
+                    // "Show what changed" toggle, shown only when the server provided a diff.
+                    // Collapsible so the banner stays compact by default; a user curious about
+                    // what the revert rolled back can expand it inline without leaving the chat.
+                    if (!diff.isNullOrBlank()) {
+                        TextButton(
+                            onClick = {
+                                haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                                showDiff = !showDiff
+                            },
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 8.dp, end = 4.dp),
+                        ) {
+                            Icon(
+                                if (showDiff) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                            )
+                            Text(
+                                stringResource(if (showDiff) R.string.revert_hide_diff else R.string.revert_show_diff),
+                                style = MaterialTheme.typography.labelSmall,
+                                modifier = Modifier.padding(start = 4.dp),
+                            )
+                        }
+                    }
+                }
+                TextButton(onClick = {
+                    // Haptic on undo to match the other destructive/important confirmations: a
+                    // revert restores potentially hundreds of hidden messages.
+                    haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                    onUndo()
+                }) { Text(stringResource(R.string.undo)) }
             }
-            TextButton(onClick = {
-                // Haptic on undo to match the other destructive/important confirmations: a
-                // revert restores potentially hundreds of hidden messages.
-                haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
-                onUndo()
-            }) { Text(stringResource(R.string.undo)) }
+            // The diff render lives inside the banner's Surface so it inherits the tertiary
+            // tonal container and reads as part of the banner, not a floating panel.
+            if (!diff.isNullOrBlank()) {
+                AnimatedVisibility(
+                    visible = showDiff,
+                    enter = expandMotion.enter,
+                    exit = expandMotion.exit,
+                ) {
+                    Column(modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 8.dp)) {
+                        Text(
+                            stringResource(R.string.revert_diff_header),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer,
+                            modifier = Modifier.padding(bottom = 4.dp),
+                        )
+                        DiffView(diff, saveKey = "revertDiff")
+                    }
+                }
+            }
         }
     }
 }

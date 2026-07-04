@@ -89,4 +89,32 @@ class ConversationExportTest {
         assertTrue(md.contains("**edit**"))
         assertTrue(md.contains("Editing src/main.kt"))
     }
+
+    @Test
+    fun buildMessageMarkdownRendersAssistantReply() {
+        val md = buildMessageMarkdown(assistant("a1", "Hi there!"))
+        assertNotNull(md)
+        assertTrue(md!!.startsWith("## opencode"))
+        assertTrue(md.contains("Hi there!"))
+    }
+
+    @Test
+    fun buildMessageMarkdownRendersUserMessage() {
+        val md = buildMessageMarkdown(user("u1", "Hello"))
+        assertNotNull(md)
+        assertTrue(md!!.startsWith("## You"))
+        assertTrue(md.contains("Hello"))
+    }
+
+    @Test
+    fun buildMessageMarkdownReturnsNullForEmptyMessage() {
+        val empty = MessageWithParts(
+            AssistantMessage("a1", sid),
+            listOf(ReasoningPart(id = "r1", text = "")),
+        )
+        assertNull(buildMessageMarkdown(empty))
+    }
+
+    private fun assertNotNull(value: String?) = org.junit.Assert.assertNotNull(value)
+    private fun assertNull(value: String?) = org.junit.Assert.assertNull(value)
 }

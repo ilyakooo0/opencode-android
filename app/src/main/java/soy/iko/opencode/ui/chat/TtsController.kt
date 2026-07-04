@@ -25,13 +25,27 @@ fun rememberTtsController(): TtsController {
 }
 
 /**
+ * Playback state of the current utterance, surfaced so the UI can show a play/pause/stop
+ * toggle. [PAUSED] is only reached from [PLAYING] via [TtsController.pause]; a fresh toggle
+ * resets to [IDLE].
+ */
+enum class TtsState { IDLE, PLAYING, PAUSED }
+
+/**
  * Thin wrapper over Android [TextToSpeech] for reading an assistant message aloud. Exposes
- * [speakingId] — the id of the message currently being spoken, or null — so the UI can show
- * a play/stop toggle. [toggle] plays a message or stops it if it's already the one speaking.
+ * [speakingId] — the id of the message currently being spoken, or null — and [state] so the
+ * UI can show a play/pause/stop toggle. [toggle] plays a message or stops it if it's already
+ * the one speaking. [pause] / [resume] suspend and continue playback without losing position.
  *
  * The engine initializes asynchronously; calls before it's ready are dropped (best-effort —
  * TTS is an optional convenience). Utterance-progress callbacks arrive on a binder thread,
  * so state is cleared on the main thread via [mainHandler].
+ *
+ * Pause/resume: Android's TextToSpeech has no native pause — `stop()` discards the queue.
+ * To approximate pause, we track the chunk list and the index of the chunk currently playing
+ * (advanced by `onStart`); pause calls `stop()` and stashes the resume index; resume re-enqueues
+ * the remaining chunks back-to-back (starting with the paused-from one) so playback continues
+ * from roughly where it stopped.
  */
 class TtsController(context: Context) : RememberObserver {
 
@@ -45,11 +59,26 @@ class TtsController(context: Context) : RememberObserver {
     private val _speakingId = mutableStateOf<String?>(null)
     val speakingId: State<String?> = _speakingId
 
+    private val _state = mutableStateOf(TtsState.IDLE)
+    val state: State<TtsState> = _state
+
+    // The chunked text for the currently-speaking utterance, plus the index of the chunk
+    // currently (or about to be) playing. Tracked so pause()/resume() can re-enqueue the
+    // tail without re-splitting the text. Cleared when playback ends or is stopped.
+    private var chunks: List<String> = emptyList()
+    private var currentChunk = 0
+    private var pausedFromChunk = 0
+
     private val tts: TextToSpeech = TextToSpeech(context) { status ->
         ready = status == TextToSpeech.SUCCESS
     }.apply {
         setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-            override fun onStart(utteranceId: String?) { /* speakingId already set by toggle() */ }
+            override fun onStart(utteranceId: String?) {
+                // Advance the current-chunk pointer so pause() can capture the right resume
+                // index. The tracked id is the final chunk; intermediate ids are "$id#$index".
+                val idx = utteranceId?.substringAfter('#')?.toIntOrNull()
+                if (idx != null) currentChunk = idx
+            }
             override fun onDone(utteranceId: String?) = clearIfCurrent(utteranceId)
             @Deprecated("Deprecated in Java", ReplaceWith(""))
             override fun onError(utteranceId: String?) = clearIfCurrent(utteranceId)
@@ -59,7 +88,15 @@ class TtsController(context: Context) : RememberObserver {
 
     /** Clear the speaking state when the utterance that finished is the one we're tracking. */
     private fun clearIfCurrent(utteranceId: String?) {
-        mainHandler.post { if (_speakingId.value == utteranceId) _speakingId.value = null }
+        mainHandler.post {
+            if (_speakingId.value == utteranceId) {
+                _speakingId.value = null
+                _state.value = TtsState.IDLE
+                chunks = emptyList()
+                currentChunk = 0
+                pausedFromChunk = 0
+            }
+        }
     }
 
     /**
@@ -70,18 +107,31 @@ class TtsController(context: Context) : RememberObserver {
      *   Callers use this to surface feedback instead of the button appearing dead.
      */
     fun toggle(id: String, text: String): Boolean {
-        if (_speakingId.value == id) { stop(); return true }
+        if (_speakingId.value == id) {
+            // Tapping play on the already-speaking message stops it (matching the prior
+            // behavior and the Stop icon the UI shows while playing).
+            stop(); return true
+        }
         if (!ready || text.isBlank()) return false
         // TextToSpeech.speak() silently returns ERROR (enqueuing nothing, firing no callback)
         // when a single input exceeds getMaxSpeechInputLength(), which would leave the Stop
         // button stuck with no audio. Chunk long text and enqueue the parts back-to-back.
-        val chunks = chunkForTts(text)
-        if (chunks.isEmpty()) return false
-        chunks.forEachIndexed { index, chunk ->
-            val queueMode = if (index == 0) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
+        val split = chunkForTts(text)
+        if (split.isEmpty()) return false
+        startPlayback(id, split, fromChunk = 0)
+        return true
+    }
+
+    /** Enqueue [split] for [id] starting at [fromChunk], marking the message as playing. */
+    private fun startPlayback(id: String, split: List<String>, fromChunk: Int) {
+        chunks = split
+        currentChunk = fromChunk
+        for (index in fromChunk until split.size) {
+            val chunk = split[index]
+            val queueMode = if (index == fromChunk) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
             // Only the final chunk carries the tracked [id]; intermediate chunks get a
             // distinct id so their per-utterance onDone doesn't clear the Stop state early.
-            val utteranceId = if (index == chunks.lastIndex) id else "$id#$index"
+            val utteranceId = if (index == split.lastIndex) id else "$id#$index"
             val result = tts.speak(chunk, queueMode, null, utteranceId)
             // If any chunk can't be enqueued, the final chunk's onDone (which would clear
             // the Stop state) never fires — leaving the Stop button stuck with partial or
@@ -89,13 +139,47 @@ class TtsController(context: Context) : RememberObserver {
             // stick. A mid-queue failure also breaks the contiguous playback, so stopping
             // is the safe default rather than playing a truncated prefix silently.
             if (result != TextToSpeech.SUCCESS) {
-                if (index == 0) _speakingId.value = null
-                else stop()
-                return false
+                if (index == fromChunk) {
+                    _speakingId.value = null
+                    _state.value = TtsState.IDLE
+                    chunks = emptyList()
+                    currentChunk = 0
+                } else {
+                    stop()
+                }
+                return
             }
         }
         _speakingId.value = id
-        return true
+        _state.value = TtsState.PLAYING
+    }
+
+    /**
+     * Pause playback if a message is currently playing. Android's TextToSpeech has no native
+     * pause, so this stops the engine and stashes the index of the chunk that was playing;
+     * [resume] re-enqueues from there. No-op when not playing (e.g. already paused or idle).
+     */
+    fun pause() {
+        if (_state.value != TtsState.PLAYING) return
+        // Capture the chunk currently playing so resume restarts from it rather than the next
+        // one — otherwise pause skips a chunk. currentChunk is advanced by onStart, so for a
+        // mid-utterance pause this points at the chunk that was interrupted.
+        pausedFromChunk = currentChunk
+        tts.stop()
+        _state.value = TtsState.PAUSED
+    }
+
+    /**
+     * Resume playback after [pause], re-enqueuing the remaining chunks from the paused-from
+     * index. No-op when not paused (e.g. idle or already playing).
+     */
+    fun resume() {
+        if (_state.value != TtsState.PAUSED) return
+        val id = _speakingId.value ?: return
+        val split = chunks
+        val from = pausedFromChunk.coerceIn(0, split.lastIndex.coerceAtLeast(0))
+        if (split.isEmpty()) { stop(); return }
+        startPlayback(id, split, fromChunk = from)
     }
 
     /**
@@ -133,6 +217,10 @@ class TtsController(context: Context) : RememberObserver {
     fun stop() {
         tts.stop()
         _speakingId.value = null
+        _state.value = TtsState.IDLE
+        chunks = emptyList()
+        currentChunk = 0
+        pausedFromChunk = 0
     }
 
     fun shutdown() {
@@ -141,6 +229,7 @@ class TtsController(context: Context) : RememberObserver {
         tts.stop()
         tts.shutdown()
         _speakingId.value = null
+        _state.value = TtsState.IDLE
     }
 
     // RememberObserver: release the engine whenever this instance leaves the composition,

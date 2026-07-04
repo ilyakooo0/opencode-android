@@ -22,10 +22,12 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.FormatQuote
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Restore
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SmartToy
-import androidx.compose.material.icons.filled.StopCircle
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.CircularProgressIndicator
@@ -60,7 +62,6 @@ import soy.iko.opencode.data.model.MessageWithParts
 import soy.iko.opencode.data.model.ModelOption
 import soy.iko.opencode.data.model.FilePart
 import soy.iko.opencode.data.model.TextPart
-import soy.iko.opencode.data.model.Tokens
 import soy.iko.opencode.data.model.UnknownMessage
 import soy.iko.opencode.data.model.UserMessage
 import soy.iko.opencode.data.network.NetworkConfig
@@ -100,6 +101,9 @@ fun MessageBubble(
     onEdit: ((String) -> Unit)? = null,
     onSpeak: ((String) -> Unit)? = null,
     isSpeaking: Boolean = false,
+    ttsState: TtsState = TtsState.IDLE,
+    onPause: (() -> Unit)? = null,
+    onResume: (() -> Unit)? = null,
     onQuote: ((String) -> Unit)? = null,
     onBranch: ((String) -> Unit)? = null,
     onRegenerate: (() -> Unit)? = null,
@@ -107,11 +111,12 @@ fun MessageBubble(
     isEdited: Boolean = false,
     onRetry: (() -> Unit)? = null,
     onDismiss: (() -> Unit)? = null,
+    onShare: (() -> Unit)? = null,
 ) {
     when (message.info) {
-        is UserMessage -> UserBubble(message, imageContext, modifier, onOpenFile, onRevert, onEdit, onQuote, onBranch, sendStatus, isEdited, onRetry, onDismiss)
+        is UserMessage -> UserBubble(message, imageContext, modifier, onOpenFile, onRevert, onEdit, onQuote, onBranch, sendStatus, isEdited, onRetry, onDismiss, onShare)
         is UnknownMessage -> UnknownMessageBlock(message, imageContext, modifier, onOpenFile)
-        else -> AssistantBlock(message, isRunning, imageContext, modifier, modelLabel, onOpenFile, onRevert, onSpeak, isSpeaking, onQuote, onBranch, onRegenerate, isEdited)
+        else -> AssistantBlock(message, isRunning, imageContext, modifier, modelLabel, onOpenFile, onRevert, onSpeak, isSpeaking, ttsState, onPause, onResume, onQuote, onBranch, onRegenerate, isEdited, onShare)
     }
 }
 
@@ -130,6 +135,7 @@ private fun MessageLongPressMenu(
     onQuote: ((String) -> Unit)?,
     onBranch: ((String) -> Unit)?,
     onRevert: (() -> Unit)?,
+    onShare: (() -> Unit)?,
 ) {
     DropdownMenu(expanded = expanded, onDismissRequest = onDismiss, offset = offset) {
         if (text != null && onCopy != null) {
@@ -137,6 +143,16 @@ private fun MessageLongPressMenu(
                 leadingIcon = { Icon(Icons.Filled.ContentCopy, contentDescription = null) },
                 text = { Text(stringResource(R.string.copy)) },
                 onClick = { onDismiss(); onCopy() },
+            )
+        }
+        // Per-message share: fire an ACTION_SEND with this message's Markdown, so a user can
+        // forward a single reply (e.g. a code snippet) without exporting the whole transcript.
+        // Gated on text so an image-only prompt doesn't show a no-op Share entry.
+        if (text != null && onShare != null) {
+            DropdownMenuItem(
+                leadingIcon = { Icon(Icons.Filled.Share, contentDescription = null) },
+                text = { Text(stringResource(R.string.share_message)) },
+                onClick = { onDismiss(); onShare() },
             )
         }
         if (text != null && onQuote != null) {
@@ -288,6 +304,7 @@ private fun UserBubble(
     isEdited: Boolean = false,
     onRetry: (() -> Unit)? = null,
     onDismiss: (() -> Unit)? = null,
+    onShare: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val haptics = LocalHapticFeedback.current
@@ -493,6 +510,7 @@ private fun UserBubble(
                 onQuote = onQuote,
                 onBranch = onBranch,
                 onRevert = onRevert,
+                onShare = onShare,
             )
             }
         }
@@ -511,10 +529,14 @@ private fun AssistantBlock(
     onRevert: (() -> Unit)? = null,
     onSpeak: ((String) -> Unit)? = null,
     isSpeaking: Boolean = false,
+    ttsState: TtsState = TtsState.IDLE,
+    onPause: (() -> Unit)? = null,
+    onResume: (() -> Unit)? = null,
     onQuote: ((String) -> Unit)? = null,
     onBranch: ((String) -> Unit)? = null,
     onRegenerate: (() -> Unit)? = null,
     isEdited: Boolean = false,
+    onShare: (() -> Unit)? = null,
 ) {
     Column(
         modifier = modifier.fillMaxWidth(),
@@ -522,38 +544,10 @@ private fun AssistantBlock(
     ) {
         val info = message.info
         if (info is AssistantMessage) {
-            val label = modelLabel ?: info.modelID
             // Avatar + model label row: the robot icon gives the assistant a consistent visual
             // identity (left-aligned, mirroring the user's right-aligned bubble) so on a long
             // scroll the speaker is unambiguous without reading the label.
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier
-                        .size(28.dp)
-                        .clip(MaterialTheme.shapes.extraSmall)
-                        .background(MaterialTheme.colorScheme.secondaryContainer),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        Icons.Filled.SmartToy,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp),
-                        tint = MaterialTheme.colorScheme.onSecondaryContainer,
-                    )
-                }
-                if (label != null) {
-                    Text(
-                        label,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier
-                            .padding(start = 6.dp)
-                            .weight(1f, fill = false),
-                    )
-                }
-            }
+            AssistantHeader(label = modelLabel ?: info.modelID)
         }
         message.parts.forEachIndexed { index, part ->
             // Only the final part of a running message is actively streaming; earlier parts
@@ -568,23 +562,34 @@ private fun AssistantBlock(
                 PartView(part, isRunning = partStreaming, modifier = Modifier.fillMaxWidth(), imageContext = imageContext, onOpenFile = onOpenFile)
             }
         }
+        // Agent-reported error: the server sets AssistantMessage.error when the run finished
+        // with a model/agent error (distinct from a transport failure, which surfaces as a
+        // snackbar). Render it as an error-tinted note above the footer so a reader can tell
+        // the reply is incomplete/failed by glancing at the bubble, not just from the absence
+        // of content. Folded into the same `info is AssistantMessage` branch as the cost
+        // summary below to avoid an extra conditional raising this function's complexity.
         if (info is AssistantMessage) {
+            info.error?.let { err -> AgentErrorNote(err) }
             val cost = info.cost
             val tokens = info.tokens
             val tokenFormat = stringResource(R.string.tokens_in_out)
+            val reasoningFormat = stringResource(R.string.tokens_reasoning_format)
+            val cacheReadFormat = stringResource(R.string.tokens_cache_read_format)
+            val cacheWriteFormat = stringResource(R.string.tokens_cache_write_format)
             val costShort = stringResource(R.string.cost_format_short)
             val costLong = stringResource(R.string.cost_format_long)
             // Memoize the formatted cost/tokens line so a scroll-induced or unrelated
             // state-flip recomposition doesn't re-run NumberFormat + buildList +
-            // joinToString for every visible assistant bubble.
-            val costSummary = remember(info.isComplete, tokens, cost, tokenFormat, costShort, costLong) {
-                if (!info.isComplete || (cost == null && tokens == null)) null
-                else buildList {
-                    // Skip an all-zero token count (e.g. a completed message that reported no
-                    // usage) so the bubble doesn't show a meaningless "0 in · 0 out".
-                    tokens?.takeIf { it.input > 0 || it.output > 0 }?.let { add(formatTokens(it, tokenFormat)) }
-                    cost?.takeIf { it > 0 }?.let { add(formatCost(it, costShort, costLong)) }
-                }.takeIf { it.isNotEmpty() }?.joinToString("  •  ")
+            // joinToString for every visible assistant bubble. The assembly logic lives in
+            // [buildCostSummary] (extracted to keep this function's complexity in check).
+            //
+            // Reasoning and cache figures are only added when non-zero, so a model that
+            // doesn't report them (or a request that didn't use them) shows the same compact
+            // "1.2k in · 540 out • $0.012" line as before; a reasoning-model reply gains a
+            // "3.1k reasoning" and/or "8.0k cache read" segment. The single-line cap and
+            // ellipsis below keep the line tidy at narrow widths even with all four segments.
+            val costSummary = remember(info.isComplete, tokens, cost, tokenFormat, reasoningFormat, cacheReadFormat, cacheWriteFormat, costShort, costLong) {
+                buildCostSummary(info.isComplete, tokens, cost, tokenFormat, reasoningFormat, cacheReadFormat, cacheWriteFormat, costShort, costLong)
             }
             // Long-press context menu state (see UserBubble for rationale).
             var longPressMenu by remember { mutableStateOf(false) }
@@ -647,7 +652,10 @@ private fun AssistantBlock(
                 AssistantActions(
                     textToCopy = textToCopy,
                     isSpeaking = isSpeaking,
+                    ttsState = ttsState,
                     onSpeak = onSpeak,
+                    onPause = onPause,
+                    onResume = onResume,
                     onRevert = onRevert,
                     onQuote = onQuote,
                     onBranch = onBranch,
@@ -663,10 +671,45 @@ private fun AssistantBlock(
                 onQuote = onQuote,
                 onBranch = onBranch,
                 onRevert = onRevert,
+                onShare = onShare,
             )
             }
         } else {
             MessageTimestampText(message.info)
+        }
+    }
+}
+
+/** Avatar + model label row for an assistant message. Extracted from [AssistantBlock] to keep
+ *  that function's cyclomatic complexity under the detekt threshold. */
+@Composable
+private fun AssistantHeader(label: String?) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            modifier = Modifier
+                .size(28.dp)
+                .clip(MaterialTheme.shapes.extraSmall)
+                .background(MaterialTheme.colorScheme.secondaryContainer),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Filled.SmartToy,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+                tint = MaterialTheme.colorScheme.onSecondaryContainer,
+            )
+        }
+        if (label != null) {
+            Text(
+                label,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .padding(start = 6.dp)
+                    .weight(1f, fill = false),
+            )
         }
     }
 }
@@ -677,7 +720,10 @@ private fun AssistantBlock(
 private fun AssistantActions(
     textToCopy: String?,
     isSpeaking: Boolean,
+    ttsState: TtsState,
     onSpeak: ((String) -> Unit)?,
+    onPause: (() -> Unit)?,
+    onResume: (() -> Unit)?,
     onRevert: (() -> Unit)?,
     onQuote: ((String) -> Unit)? = null,
     onBranch: ((String) -> Unit)? = null,
@@ -703,22 +749,19 @@ private fun AssistantActions(
                 )
             }
         }
-        // Read-aloud toggle: speaks the assistant text via TextToSpeech, showing a Stop
-        // icon while this message is the one being spoken.
+        // Read-aloud control with pause/resume. Tapping cycles through play → pause → resume,
+        // so a user listening to a long reply can step away and continue from roughly where
+        // they stopped without re-playing the whole message. Extracted to [TtsButton] to keep
+        // this function's cyclomatic complexity under the detekt threshold.
         if (onSpeak != null && textToCopy != null) {
-            val speakLabel = stringResource(if (isSpeaking) R.string.stop_reading else R.string.read_aloud)
-            IconButton(onClick = {
-                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                onSpeak(textToCopy)
-            }) {
-                Icon(
-                    if (isSpeaking) Icons.Filled.StopCircle else Icons.AutoMirrored.Filled.VolumeUp,
-                    contentDescription = speakLabel,
-                    modifier = Modifier.size(18.dp),
-                    tint = if (isSpeaking) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+            TtsButton(
+                text = textToCopy,
+                isSpeaking = isSpeaking,
+                ttsState = ttsState,
+                onSpeak = onSpeak,
+                onPause = onPause,
+                onResume = onResume,
+            )
         }
         onRevert?.let { RevertButton(it) }
         if (textToCopy != null) {
@@ -741,6 +784,48 @@ private fun AssistantActions(
     }
 }
 
+/** Read-aloud button with play/pause/resume states. Extracted from [AssistantActions] to keep
+ *  that function's cyclomatic complexity under the detekt threshold. The icon reflects the
+ *  next action: VolumeUp (play) when idle, Pause when playing, PlayArrow (resume) when paused. */
+@Composable
+private fun TtsButton(
+    text: String,
+    isSpeaking: Boolean,
+    ttsState: TtsState,
+    onSpeak: (String) -> Unit,
+    onPause: (() -> Unit)?,
+    onResume: (() -> Unit)?,
+) {
+    val haptics = LocalHapticFeedback.current
+    val label = when {
+        isSpeaking && ttsState == TtsState.PAUSED -> stringResource(R.string.resume_reading)
+        isSpeaking -> stringResource(R.string.pause_reading)
+        else -> stringResource(R.string.read_aloud)
+    }
+    IconButton(onClick = {
+        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+        when {
+            isSpeaking && ttsState == TtsState.PAUSED -> onResume?.invoke()
+            isSpeaking -> onPause?.invoke()
+            else -> onSpeak(text)
+        }
+    }) {
+        val icon = when {
+            isSpeaking && ttsState == TtsState.PAUSED -> Icons.Filled.PlayArrow
+            isSpeaking -> Icons.Filled.Pause
+            else -> Icons.AutoMirrored.Filled.VolumeUp
+        }
+        val tint = if (isSpeaking) MaterialTheme.colorScheme.primary
+            else MaterialTheme.colorScheme.onSurfaceVariant
+        Icon(
+            icon,
+            contentDescription = label,
+            modifier = Modifier.size(18.dp),
+            tint = tint,
+        )
+    }
+}
+
 @Composable
 private fun MessageTimestampText(info: soy.iko.opencode.data.model.MessageInfo) {
     // Compact relative label by default; long-press reveals the full absolute timestamp
@@ -748,24 +833,56 @@ private fun MessageTimestampText(info: soy.iko.opencode.data.model.MessageInfo) 
     RelativeTimeText(info.time?.created)
 }
 
-// NumberFormat.getNumberInstance performs an expensive ICU locale lookup + object
-// construction on every call. Reuse a thread-local instance so repeated calls (e.g.
-// when the message list re-seeds after a reconnect and every visible assistant bubble
-// recomposes at once) don't each pay that cost. Thread-local because NumberFormat is
-// not thread-safe.
-private val tokenNumberFormat: ThreadLocal<java.text.NumberFormat> = ThreadLocal.withInitial {
-    java.text.NumberFormat.getNumberInstance(java.util.Locale.US)
+/**
+ * Render an [AssistantMessage.error] as an error-tinted note on the bubble. The error is a
+ * tolerant-decoded [JsonElement]; we extract a readable string from it (a primitive's content
+ * for a bare string, a pretty-printed object otherwise, trimmed to a reasonable length so a
+ * verbose error object doesn't dominate the bubble).
+ */
+@Composable
+private fun AgentErrorNote(error: kotlinx.serialization.json.JsonElement) {
+    // Extract a readable string from the tolerant-decoded JsonElement: a bare string
+    // primitive returns its content (the common `{"error": "..."}` case); an object/array
+    // is pretty-printed and trimmed so a verbose error doesn't dominate the bubble.
+    val text = remember(error) {
+        val raw = if (error is kotlinx.serialization.json.JsonPrimitive) {
+            error.content
+        } else {
+            runCatching {
+                soy.iko.opencode.data.network.OpencodeJson.encodeToString(
+                    kotlinx.serialization.json.JsonElement.serializer(),
+                    error,
+                )
+            }.getOrDefault(error.toString())
+        }
+        if (raw.length <= 500) raw else raw.take(500) + "…"
+    }.takeIf { it.isNotBlank() } ?: return
+    val label = stringResource(R.string.agent_error_label)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.small)
+            .background(MaterialTheme.colorScheme.errorContainer)
+            .padding(10.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Icon(
+            Icons.Filled.Error,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onErrorContainer,
+            modifier = Modifier.size(16.dp),
+        )
+        Column(modifier = Modifier.padding(start = 8.dp)) {
+            Text(
+                label,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onErrorContainer,
+            )
+            Text(
+                text,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onErrorContainer,
+            )
+        }
+    }
 }
-
-private fun formatTokens(tokens: Tokens, format: String): String {
-    val nf = tokenNumberFormat.get()!!
-    return format.format(nf.format(tokens.input), nf.format(tokens.output))
-}
-
-private fun formatCost(cost: Double, shortFormat: String, longFormat: String): String =
-    // Locale.US so the formatting is stable regardless of device locale (avoids
-    // non-ASCII digits or comma decimal separators in a dollar amount). The format
-    // string itself is localized via strings.xml so the currency symbol can be
-    // adapted by translators.
-    if (cost < 0.01) String.format(java.util.Locale.US, longFormat, cost)
-    else String.format(java.util.Locale.US, shortFormat, cost)

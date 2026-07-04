@@ -187,22 +187,12 @@ fun NewSessionDialog(
                     onSelect = { choice = DirChoice.Custom },
                 )
                 if (choice is DirChoice.Custom) {
-                    // Autofocus the path field the moment the Custom row is chosen so the
-                    // keyboard is ready without a second tap.
-                    val customFocus = remember { FocusRequester() }
-                    LaunchedEffect(Unit) { customFocus.requestFocus() }
-                    OutlinedTextField(
-                        value = customText,
-                        onValueChange = { customText = it },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .focusRequester(customFocus)
-                            .padding(start = 36.dp, top = 4.dp, bottom = 4.dp),
-                        placeholder = { Text(stringResource(R.string.directory_custom_hint)) },
-                        singleLine = true,
+                    CustomPathField(
+                        text = customText,
+                        onTextChange = { customText = it },
                         enabled = !creating,
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                        keyboardActions = KeyboardActions(onDone = { if (canCreate) onCreate(resolved, resolvedTitle) }),
+                        canCreate = canCreate,
+                        onCreate = { onCreate(resolved, resolvedTitle) },
                     )
                 }
 
@@ -245,6 +235,43 @@ private fun TitleCharCounter(length: Int, limit: Int) {
     if (length >= (limit * 0.8f).toInt()) {
         Text("$length / $limit")
     }
+}
+
+/** The custom-path text field shown when the Custom directory choice is selected. Autofocuses
+ *  on appearance and marks itself error when blank so the user sees why Create is disabled.
+ *  Extracted from [NewSessionDialog] to keep its cyclomatic complexity under the threshold. */
+@Composable
+private fun CustomPathField(
+    text: String,
+    onTextChange: (String) -> Unit,
+    enabled: Boolean,
+    canCreate: Boolean,
+    onCreate: () -> Unit,
+) {
+    // Autofocus the path field the moment the Custom row is chosen so the keyboard is ready
+    // without a second tap.
+    val customFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { customFocus.requestFocus() }
+    // Mark the field error when Custom is selected but the path is still blank, so the user
+    // sees *why* Create is disabled instead of inferring it from the disabled button alone.
+    val customBlank = text.isBlank()
+    OutlinedTextField(
+        value = text,
+        onValueChange = onTextChange,
+        modifier = Modifier
+            .fillMaxWidth()
+            .focusRequester(customFocus)
+            .padding(start = 36.dp, top = 4.dp, bottom = 4.dp),
+        placeholder = { Text(stringResource(R.string.directory_custom_hint)) },
+        singleLine = true,
+        enabled = enabled,
+        isError = customBlank,
+        supportingText = if (customBlank) {
+            { Text(stringResource(R.string.custom_path_required), color = MaterialTheme.colorScheme.error) }
+        } else null,
+        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+        keyboardActions = KeyboardActions(onDone = { if (canCreate) onCreate() }),
+    )
 }
 
 @Composable

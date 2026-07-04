@@ -68,6 +68,45 @@ fun buildConversationMarkdown(messages: List<MessageWithParts>, title: String?):
     return sb.toString().trimEnd()
 }
 
+/**
+ * Render a single message as Markdown for per-message sharing. A trimmed-down version of
+ * [buildConversationMarkdown] that emits just this message's role heading + body (no metadata
+ * header), so a shared single reply/exchange is self-contained without dragging the whole
+ * transcript. Returns null when the message has no exportable body (e.g. an image-only prompt).
+ */
+fun buildMessageMarkdown(message: MessageWithParts): String? {
+    val heading = when (message.info) {
+        is UserMessage -> "## You"
+        is AssistantMessage -> "## opencode"
+        else -> return null
+    }
+    val escapeText = message.info is UserMessage
+    val body = message.parts
+        .mapNotNull { part ->
+            when (part) {
+                is TextPart -> part.text.takeIf { it.isNotBlank() }
+                    ?.let { if (escapeText) escapeMarkdown(it) else it }
+                is ReasoningPart -> part.text.takeIf { it.isNotBlank() }
+                    ?.let { text -> text.trim().lines().joinToString("\n") { "> _${escapeMarkdown(it)}_" } }
+                is ToolPart -> formatToolCall(part)
+                is FilePart -> {
+                    val name = part.sourcePath ?: part.url ?: part.filename ?: "attachment"
+                    if (part.mime?.startsWith("image/") == true) "_[image: ${escapeMarkdown(name)}]_"
+                    else "_[file: ${escapeMarkdown(name)}]_"
+                }
+                else -> null
+            }
+        }
+        .joinToString("\n\n")
+        .trim()
+    if (body.isEmpty()) return null
+    return buildString {
+        append(heading).append("\n\n")
+        message.info.time?.created?.let { ts -> append("_").append(formatExportTimestamp(ts)).append("_\n\n") }
+        append(body)
+    }
+}
+
 /** Format an epoch-millis as a locale-stable ISO-ish timestamp for the export. Thread-confined
  *  to the exporting coroutine, so a shared SimpleDateFormat (not thread-safe) is fine. */
 private fun formatExportTimestamp(epochMillis: Long): String =

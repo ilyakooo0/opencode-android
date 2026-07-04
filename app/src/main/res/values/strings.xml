@@ -681,4 +681,24 @@
         <item quantity="one">%1$d word hidden</item>
         <item quantity="other">%1$d words hidden</item>
     </plurals>
+
+    <!-- UI/UX batch 5: tool durations, todo priority, synthetic text, token breakdown, share, TTS, revert diff, agent error, path validation -->
+    <string name="tool_duration_format">· %1$s</string>
+    <string name="todo_priority_high">High</string>
+    <string name="todo_priority_medium">Medium</string>
+    <string name="todo_priority_low">Low</string>
+    <string name="todo_priority_label">Priority: %1$s</string>
+    <string name="synthetic_label">Summary</string>
+    <string name="synthetic_chip">Summarized</string>
+    <string name="tokens_reasoning_format">%1$s reasoning</string>
+    <string name="tokens_cache_read_format">%1$s cache read</string>
+    <string name="tokens_cache_write_format">%1$s cache write</string>
+    <string name="share_message">Share message</string>
+    <string name="pause_reading">Pause reading</string>
+    <string name="resume_reading">Resume reading</string>
+    <string name="revert_show_diff">Show what changed</string>
+    <string name="revert_hide_diff">Hide changes</string>
+    <string name="revert_diff_header">Changes from revert</string>
+    <string name="agent_error_label">The agent reported an error</string>
+    <string name="custom_path_required">Enter a path to create a session here.</string>
 </resources>

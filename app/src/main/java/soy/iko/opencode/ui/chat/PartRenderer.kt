@@ -95,6 +95,40 @@ private fun ToolState.titleText(): String? = when (this) {
     else -> null
 }
 
+/** The elapsed wall-clock seconds a tool state ran for, when its time window is known.
+ *  Returns null while a tool is still pending or when the server didn't report timing. */
+private fun ToolState.durationMs(): Long? {
+    val time = when (this) {
+        is ToolRunning -> time
+        is ToolCompleted -> time
+        is ToolError -> time
+        else -> return null
+    } ?: return null
+    val start = time.start ?: return null
+    val end = time.end ?: return null
+    return (end - start).coerceAtLeast(0L)
+}
+
+/** Compact human-readable duration for a tool call (e.g. "2.3s", "1m 04s"). Sub-second
+ *  runs render in milliseconds so a quick read still shows something distinguishable. */
+fun formatToolDuration(ms: Long): String {
+    if (ms < 1_000) return "${ms}ms"
+    val totalSeconds = ms / 1_000
+    val tenths = (ms % 1_000) / 100
+    if (totalSeconds < 60) {
+        return if (tenths == 0L) "${totalSeconds}s" else "${totalSeconds}.${tenths}s"
+    }
+    val minutes = totalSeconds / 60
+    val seconds = totalSeconds % 60
+    return if (minutes < 60) {
+        "${minutes}m ${seconds.toString().padStart(2, '0')}s"
+    } else {
+        val hours = minutes / 60
+        val mins = minutes % 60
+        "${hours}h ${mins.toString().padStart(2, '0')}m"
+    }
+}
+
 /**
  * Renders a single message [Part]. The exhaustive `when` over the sealed type gives
  * compile-time coverage; the [UnknownPart] arm keeps the UI forward-compatible.
@@ -113,6 +147,27 @@ fun PartView(
 ) {
     when (part) {
         is TextPart -> if (!part.ignored && part.text.isNotEmpty()) {
+            // A synthetic TextPart is server-generated content (e.g. a compacted-conversation
+            // summary) standing in for real exchanged messages. Mark it with a small muted
+            // chip above the body so a reader can tell it isn't a verbatim assistant reply —
+            // important when reviewing a compacted history where the "summary" framing would
+            // otherwise be indistinguishable from the agent speaking in its own voice.
+            if (part.synthetic) {
+                Row(
+                    modifier = modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        stringResource(R.string.synthetic_chip),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .clip(MaterialTheme.shapes.extraSmall)
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                            .padding(horizontal = 6.dp, vertical = 2.dp),
+                    )
+                }
+            }
             MarkdownText(part.text, modifier = modifier, streaming = isRunning)
         }
         is ReasoningPart -> ReasoningBlock(part.text, streaming = isRunning, keyId = part.id, modifier = modifier)
@@ -305,6 +360,18 @@ private fun ToolCallView(part: ToolPart, modifier: Modifier) {
                 fontFamily = FontFamily.Monospace,
                 modifier = Modifier.padding(start = 6.dp),
             )
+            // Wall-clock duration of the tool call (e.g. "· 2.3s"), shown when the server
+            // reports both start and end. Omitted while still running (no end yet) and when
+            // timing wasn't reported — a bare "· 0ms" would be noise. Placed inline with the
+            // tool name so a glance at the row tells both *what* and *how long*.
+            part.state.durationMs()?.let { ms ->
+                Text(
+                    stringResource(R.string.tool_duration_format, formatToolDuration(ms)),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 6.dp),
+                )
+            }
         }
         // A human-readable summary of what the tool was asked to do (e.g. "Reading
         // src/main.kt"), when the server provides one. Sits directly under the tool

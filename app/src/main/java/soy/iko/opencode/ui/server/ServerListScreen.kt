@@ -69,6 +69,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -203,7 +204,12 @@ fun ServerListScreen(
                     // servers to order; with one or two it's faster to scan by eye.
                     if (profiles.size > 1) {
                         val sortMode by vm.sortMode.collectAsStateWithLifecycle()
-                        var sortMenu by remember { mutableStateOf(false) }
+                        // rememberSaveable so an open sort dropdown survives a rotation instead
+                        // of closing and leaving the user to re-open it.
+                        var sortMenu by rememberSaveable { mutableStateOf(false) }
+                        // Close the sort dropdown on back press instead of navigating away,
+                        // matching the session list's dropdown back-handling.
+                        BackHandler(enabled = sortMenu) { sortMenu = false }
                         IconButton(onClick = { sortMenu = true }) {
                             Icon(Icons.Filled.Sort, contentDescription = stringResource(R.string.sort_by))
                         }
@@ -521,6 +527,9 @@ private fun ServerCardContent(
             )
         } else {
             var showRowMenu by rememberSaveable(profile.id) { mutableStateOf(false) }
+            // Close this row's overflow on back press instead of navigating away, matching
+            // the sort menu BackHandler above.
+            BackHandler(enabled = showRowMenu) { showRowMenu = false }
             val editLabel = stringResource(R.string.edit)
             val duplicateLabel = stringResource(R.string.duplicate_server)
             val removeLabel = stringResource(R.string.remove)
@@ -670,6 +679,7 @@ private fun filterServerProfiles(profiles: List<ServerProfile>, query: String): 
  *  its cyclomatic complexity under the detekt threshold. */
 @Composable
 private fun ServerListSearchField(query: String, onQueryChange: (String) -> Unit) {
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
     OutlinedTextField(
         value = query,
         onValueChange = onQueryChange,
@@ -684,5 +694,11 @@ private fun ServerListSearchField(query: String, onQueryChange: (String) -> Unit
                 }
             }
         },
+        // Match the session/file search fields: ImeAction.Search dismisses the keyboard on
+        // submit, so a user filtering servers isn't left with the IME covering the list.
+        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+            imeAction = androidx.compose.ui.text.input.ImeAction.Search,
+        ),
+        keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSearch = { keyboard?.hide() }),
     )
 }

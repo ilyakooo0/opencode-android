@@ -200,6 +200,7 @@ fun SessionListScreen(
     // Close the open dropdown on back press instead of navigating away.
     BackHandler(enabled = showServerMenu) { showServerMenu = false }
     BackHandler(enabled = showSortMenu) { showSortMenu = false }
+    BackHandler(enabled = showMainMenu) { showMainMenu = false }
 
     // Dismiss the server switcher once an in-flight switch resolves (switchingId returns to
     // null), so its per-row spinner stays visible for the whole switch instead of the menu
@@ -1128,6 +1129,9 @@ private fun SessionCard(
                 // long list look busy. Swipe-to-delete and the overflow cover the same
                 // actions; swipe remains the gesture path, overflow the discovery path.
                 var showRowMenu by rememberSaveable(session.id) { mutableStateOf(false) }
+                // Close this row's overflow on back press instead of navigating away, matching
+                // the top-bar dropdowns (showServerMenu/showSortMenu/showMainMenu).
+                BackHandler(enabled = showRowMenu) { showRowMenu = false }
                 val renameLabel = stringResource(R.string.rename)
                 val deleteLabel = stringResource(R.string.delete)
                 // Include the session title in the overflow button's a11y label so a TalkBack

@@ -35,6 +35,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
@@ -42,7 +43,9 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import soy.iko.opencode.R
 import soy.iko.opencode.data.model.TodoItem
+import soy.iko.opencode.data.model.TodoPriority
 import soy.iko.opencode.data.model.TodoStatus
+import soy.iko.opencode.data.model.priorityEnum
 import soy.iko.opencode.data.model.statusEnum
 import soy.iko.opencode.ui.components.rememberVisibilityTransitions
 
@@ -58,6 +61,7 @@ fun TodoPlanChecklist(todos: List<TodoItem>, modifier: Modifier = Modifier) {
 @Composable
 private fun TodoRow(todo: TodoItem) {
     val status = todo.statusEnum()
+    val priority = todo.priorityEnum()
     val struck = status == TodoStatus.COMPLETED || status == TodoStatus.CANCELLED
     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
         TodoStatusIcon(status)
@@ -71,8 +75,38 @@ private fun TodoRow(todo: TodoItem) {
             },
             fontWeight = if (status == TodoStatus.IN_PROGRESS) FontWeight.Medium else null,
             textDecoration = if (struck) TextDecoration.LineThrough else null,
-            modifier = Modifier.padding(start = 8.dp),
+            modifier = Modifier.padding(start = 8.dp).weight(1f),
         )
+        // Priority badge: a small uppercase label to the right of the content. Tinted to
+        // distinguish high (error) from medium (tertiary) from low (muted); skipped entirely
+        // when the server didn't report a priority (NONE) so a plain todo doesn't get a
+        // meaningless "LOW" chip. Struck-through items keep the badge but muted, so a
+        // completed/cancelled high-priority task still records its original urgency.
+        if (priority != TodoPriority.NONE) {
+            val label = when (priority) {
+                TodoPriority.HIGH -> stringResource(R.string.todo_priority_high)
+                TodoPriority.MEDIUM -> stringResource(R.string.todo_priority_medium)
+                TodoPriority.LOW -> stringResource(R.string.todo_priority_low)
+                TodoPriority.NONE -> ""
+            }
+            val tint = when (priority) {
+                TodoPriority.HIGH -> if (struck) MaterialTheme.colorScheme.onSurfaceVariant
+                    else MaterialTheme.colorScheme.error
+                TodoPriority.MEDIUM -> if (struck) MaterialTheme.colorScheme.onSurfaceVariant
+                    else MaterialTheme.colorScheme.tertiary
+                TodoPriority.LOW -> MaterialTheme.colorScheme.onSurfaceVariant
+                TodoPriority.NONE -> MaterialTheme.colorScheme.onSurfaceVariant
+            }
+            val a11yLabel = stringResource(R.string.todo_priority_label, label)
+            Text(
+                label.uppercase(),
+                style = MaterialTheme.typography.labelSmall,
+                color = tint,
+                modifier = Modifier
+                    .padding(start = 8.dp, top = 2.dp)
+                    .semantics { contentDescription = a11yLabel },
+            )
+        }
     }
 }
 

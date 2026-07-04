@@ -21,6 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteSweep
@@ -256,7 +257,11 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                         crashQuery = it
                     }
                     items(filtered, key = { it.fileName }) { report ->
-                        var menuExpanded by remember { mutableStateOf(false) }
+                        // rememberSaveable so an open row menu survives a rotation; BackHandler
+                        // so system back closes it instead of navigating away, matching the
+                        // session/server/file list dropdown back-handling.
+                        var menuExpanded by rememberSaveable(report.fileName) { mutableStateOf(false) }
+                        BackHandler(enabled = menuExpanded) { menuExpanded = false }
                         // Swipe end-to-start reveals a delete affordance. The delete is
                         // deferred for an undo window (matching the session/server lists);
                         // confirmValueChange snaps back so the row remains while the undo
@@ -542,6 +547,7 @@ private fun filterCrashReports(
  *  its cyclomatic complexity under the detekt threshold. */
 @Composable
 private fun CrashQueryField(query: String, onQueryChange: (String) -> Unit) {
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
     OutlinedTextField(
         value = query,
         onValueChange = onQueryChange,
@@ -556,6 +562,12 @@ private fun CrashQueryField(query: String, onQueryChange: (String) -> Unit) {
                 }
             }
         },
+        // Match the session/file/server search fields: ImeAction.Search dismisses the keyboard
+        // on submit so the IME doesn't keep covering the crash list after filtering.
+        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+            imeAction = androidx.compose.ui.text.input.ImeAction.Search,
+        ),
+        keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSearch = { keyboard?.hide() }),
     )
 }
 
