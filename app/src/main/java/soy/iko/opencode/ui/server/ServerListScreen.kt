@@ -463,12 +463,28 @@ private fun ServerCardContent(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            // Surface the scheme and whether cert pinning is on so a user juggling HTTPS-pinned
+            // servers and cleartext LAN servers can tell them apart at a glance without opening
+            // Edit. A closed lock = https, an open lock = http, and a pinned-lock overlay when a
+            // cert pin is configured.
+            val isHttps = profile.baseUrl.startsWith("https://", ignoreCase = true)
+            val hasPin = !profile.certPin.isNullOrBlank()
+            val schemeLabel = if (isHttps) {
+                if (hasPin) stringResource(R.string.server_https_pinned) else stringResource(R.string.server_https)
+            } else {
+                stringResource(R.string.server_http)
+            }
             Text(
                 profile.baseUrl + if (profile.hasAuth) stringResource(R.string.server_auth_short) else "",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                schemeLabel,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             if (isActive) {
                 // Reflect the live SSE state instead of a static "Connected": a dropped or failed

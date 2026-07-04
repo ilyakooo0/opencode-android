@@ -114,6 +114,10 @@ fun FileBrowserScreen(
     val refreshing by vm.refreshing.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
 
+    // System-back navigates up the directory tree while inside a subfolder (matching every
+    // other file manager's muscle memory), only exiting the screen at the root.
+    androidx.activity.compose.BackHandler(enabled = state.path.isNotBlank()) { vm.up() }
+
     LaunchedEffect(Unit) {
         vm.transientErrors.collect { msg ->
             snackbar.showSnackbar(msg)

@@ -237,7 +237,7 @@ object NetworkConfig {
     /** Minimum number of sessions before the session list shows its search/filter field.
      *  Matches the sibling screens' convention: a short list is faster to scan by eye than
      *  type into, so the field earns its vertical space only once the list grows. */
-    const val sessionListSearchThreshold = 6
+    const val sessionListSearchThreshold = 3
     /** Extra bottom content padding (dp) for the chat message list, reserving room for the
      *  jump-to-latest FAB so it never floats over the last message. */
     const val chatListFabInsetDp = 80
@@ -294,6 +294,9 @@ object NetworkConfig {
 
     /** Duration (ms) of the animated double-tap zoom transition in the fullscreen image viewer. */
     const val imageViewerZoomAnimMs = 220
+
+    /** Vertical drag distance (px) in the fullscreen image viewer that triggers swipe-to-dismiss. */
+    const val imageViewerSwipeDismissThreshold = 200f
 
     /** Blink period (ms) of the streaming caret at the tail of a live assistant reply. */
     const val streamingCaretPeriodMs = 550

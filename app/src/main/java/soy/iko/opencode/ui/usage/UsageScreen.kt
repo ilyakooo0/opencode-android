@@ -5,6 +5,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -27,6 +29,7 @@ import androidx.compose.material.icons.filled.SearchOff
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -68,7 +71,7 @@ import soy.iko.opencode.ui.vmFactory
 import java.text.NumberFormat
 import java.util.Locale
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun UsageScreen(container: AppContainer, onBack: () -> Unit, onOpenSession: (String) -> Unit = {}) {
     val vm: UsageViewModel = viewModel(factory = vmFactory { UsageViewModel(container) })
@@ -128,7 +131,13 @@ fun UsageScreen(container: AppContainer, onBack: () -> Unit, onOpenSession: (Str
                                 modifier = Modifier.align(Alignment.Center),
                             )
                         } else {
-                            UsageContent(s.report, onOpenSession)
+                            val timeRange by vm.timeRange.collectAsStateWithLifecycle()
+                            UsageContent(
+                                report = s.report,
+                                onOpenSession = onOpenSession,
+                                timeRange = timeRange,
+                                onTimeRangeChange = vm::setTimeRange,
+                            )
                         }
                 }
             }
@@ -143,8 +152,14 @@ private fun Centered(content: @Composable androidx.compose.foundation.layout.Col
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun UsageContent(report: UsageReport, onOpenSession: (String) -> Unit) {
+private fun UsageContent(
+    report: UsageReport,
+    onOpenSession: (String) -> Unit,
+    timeRange: UsageTimeRange,
+    onTimeRangeChange: (UsageTimeRange) -> Unit,
+) {
     // Optional session-title filter. The global totals (cost/tokens/by-model) always reflect
     // the whole history, but a user with many sessions can narrow the per-session list to find
     // a specific conversation's spend without scrolling through all of it.
@@ -154,11 +169,35 @@ private fun UsageContent(report: UsageReport, onOpenSession: (String) -> Unit) {
         if (q.isEmpty()) report.bySession
         else report.bySession.filter { it.title.contains(q, ignoreCase = true) }
     }
+    val ranges = remember {
+        listOf(
+            UsageTimeRange.TWENTY_FOUR_HOURS to R.string.usage_range_24h,
+            UsageTimeRange.SEVEN_DAYS to R.string.usage_range_7d,
+            UsageTimeRange.THIRTY_DAYS to R.string.usage_range_30d,
+            UsageTimeRange.ALL_TIME to R.string.usage_range_all,
+        )
+    }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        // Time-range filter: narrows the totals AND the breakdowns to the selected window, so
+        // "how much did I spend today?" is answerable instead of drowning in all-time history.
+        item {
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                ranges.forEach { (range, labelRes) ->
+                    FilterChip(
+                        selected = timeRange == range,
+                        onClick = { onTimeRangeChange(range) },
+                        label = { Text(stringResource(labelRes)) },
+                    )
+                }
+            }
+        }
         item { TotalsCard(report) }
         item { TokenBreakdownCard(report.totalTokens) }
         if (report.byModel.isNotEmpty()) {

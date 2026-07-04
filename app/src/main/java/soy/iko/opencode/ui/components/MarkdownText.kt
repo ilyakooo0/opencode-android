@@ -548,9 +548,12 @@ private fun MarkdownImage(model: MarkdownComponentModel, ctx: ImageLoadContext) 
     //   IMAGE -> [LINK_LABEL, LPAREN, LINK_DESTINATION, RPAREN]  (and LINK_TEXT nested)
     val (url, alt) = remember(node, content) { extractImageUrlAndAlt(node, content) }
     if (url.isNullOrBlank()) {
-        // No URL — show the alt text (or a placeholder) so the image isn't invisible.
+        // No URL — show the alt text (or a placeholder) so the image isn't invisible. The
+        // earlier `"[$alt]".ifBlank { "[image]" }` was a bug: when alt is blank, "[$alt]" is
+        // "[]" — a non-blank string — so the [image] fallback never fired and the user saw "[]".
+        val placeholder = if (alt.isNotBlank()) alt else stringResource(R.string.markdown_image_placeholder)
         Text(
-            alt.ifBlank { "[$alt]" }.ifBlank { "[image]" },
+            placeholder,
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(vertical = 4.dp),

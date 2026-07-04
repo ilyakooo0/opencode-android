@@ -1,11 +1,14 @@
 package soy.iko.opencode.ui.chat
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
@@ -18,15 +21,22 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import soy.iko.opencode.R
 
@@ -88,9 +98,13 @@ private fun StagingChip() {
 }
 
 /** A single staged attachment: an image thumbnail (or a generic file icon) with its name
- *  and a remove button. */
+ *  and a remove button. Tapping the thumbnail/name of an image attachment opens a fullscreen
+ *  preview so the user can verify it before sending (a sent image costs tokens and can't be
+ *  unsent). */
 @Composable
 private fun AttachmentChip(attachment: PendingAttachment, onRemove: () -> Unit) {
+    var showPreview by remember { mutableStateOf(false) }
+    val previewLabel = stringResource(R.string.preview_attachment)
     Surface(
         shape = MaterialTheme.shapes.small,
         color = MaterialTheme.colorScheme.surfaceVariant,
@@ -102,7 +116,11 @@ private fun AttachmentChip(attachment: PendingAttachment, onRemove: () -> Unit) 
                     model = attachment.previewModel,
                     contentDescription = attachment.name,
                     contentScale = ContentScale.Crop,
-                    modifier = Modifier.size(36.dp).clip(MaterialTheme.shapes.extraSmall),
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(MaterialTheme.shapes.extraSmall)
+                        .semantics { contentDescription = previewLabel }
+                        .clickable(role = Role.Image) { showPreview = true },
                 )
             } else {
                 Icon(
@@ -127,6 +145,30 @@ private fun AttachmentChip(attachment: PendingAttachment, onRemove: () -> Unit) 
                     contentDescription = stringResource(R.string.remove),
                     modifier = Modifier.size(16.dp),
                 )
+            }
+        }
+    }
+    if (showPreview && attachment.previewModel != null) {
+        Dialog(
+            onDismissRequest = { showPreview = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
+        ) {
+            Box(
+                modifier = Modifier.fillMaxSize().padding(16.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                AsyncImage(
+                    model = attachment.previewModel,
+                    contentDescription = attachment.name,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxWidth().clickable(role = Role.Image) { showPreview = false },
+                )
+                IconButton(
+                    onClick = { showPreview = false },
+                    modifier = Modifier.align(Alignment.TopEnd),
+                ) {
+                    Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.close))
+                }
             }
         }
     }

@@ -158,10 +158,14 @@ fun FileViewScreen(
     // `take()` (not `subList()`) so the cap actually releases the tail: subList returns a view
     // backed by the full list, which would keep every line (and the full rawText) in memory.
     val allLines = remember(rawText) { rawText.split("\n") }
-    val truncated = allLines.size > MAX_RENDERED_LINES
-    val lines = remember(rawText) {
-        if (allLines.size > MAX_RENDERED_LINES) allLines.take(MAX_RENDERED_LINES) else allLines
-    }
+    // The viewer renders the file in chunks of MAX_RENDERED_LINES so a huge file doesn't lay
+    // out thousands of lines at once. The user can load the next chunk via the truncation
+    // banner's "Load more" button instead of being stranded at the first cap (or forced to
+    // leave the app via Share full file).
+    var renderLimit by rememberSaveable(path) { mutableStateOf(MAX_RENDERED_LINES) }
+    val lines = remember(rawText, renderLimit) { allLines.take(renderLimit) }
+    val truncated = allLines.size > lines.size
+    val moreLines = (allLines.size - lines.size).coerceAtMost(MAX_RENDERED_LINES)
     // The line the viewer was opened at (from a search hit), highlighted until the user scrolls
     // or starts an in-file find so the landed line stands out. Null once cleared.
     val highlightLine = rememberJumpToLineHighlight(
@@ -320,6 +324,8 @@ fun FileViewScreen(
                     wrap = wrap,
                     lines = lines,
                     truncated = truncated,
+                    moreLines = moreLines,
+                    onLoadMore = { renderLimit += MAX_RENDERED_LINES },
                     highlightLineIndex = highlightLine.value,
                     listState = listState,
                     onRetry = { vm.reload() },
@@ -332,7 +338,19 @@ fun FileViewScreen(
                             putExtra(Intent.EXTRA_TEXT, rawText)
                         }
                         runCatchingCancellable { context.startActivity(Intent.createChooser(send, shareLabel)) }
-                            .onFailure { scope.launch { snackbar.showSnackbar(context.getString(R.string.no_share_app)) } }
+                            .onFailure {
+                                // A large file can blow past the Binder transaction limit
+                                // (~1MB); distinguish that from a missing share target so the
+                                // message is honest instead of blaming a nonexistent app.
+                                val msg = if (it is android.os.DeadObjectException ||
+                                    it is android.os.TransactionTooLargeException
+                                ) {
+                                    context.getString(R.string.file_share_too_large)
+                                } else {
+                                    context.getString(R.string.no_share_app)
+                                }
+                                scope.launch { snackbar.showSnackbar(msg) }
+                            }
                     },
                 )
             }
@@ -366,7 +384,7 @@ private fun GoToLineLauncher(
 private fun GoToLineDialog(maxLine: Int, onConfirm: (Int) -> Unit, onDismiss: () -> Unit) {
     var text by rememberSaveable { mutableStateOf("") }
     val parsed = text.trim().toIntOrNull()
-    val valid = parsed != null && parsed >= 1
+    val valid = parsed != null && parsed in 1..maxLine
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.go_to_line)) },
@@ -386,7 +404,7 @@ private fun GoToLineDialog(maxLine: Int, onConfirm: (Int) -> Unit, onDismiss: ()
                     keyboardType = KeyboardType.Number,
                     imeAction = ImeAction.Done,
                 ),
-                keyboardActions = KeyboardActions(onDone = { parsed?.let { onConfirm(it) } }),
+                keyboardActions = KeyboardActions(onDone = { if (valid) parsed?.let { onConfirm(it) } }),
             )
         },
         confirmButton = {
@@ -568,6 +586,8 @@ private fun BoxScope.FileViewStateContent(
     wrap: Boolean,
     lines: List<String>,
     truncated: Boolean,
+    moreLines: Int,
+    onLoadMore: () -> Unit,
     highlightLineIndex: Int?,
     listState: LazyListState,
     onRetry: () -> Unit,
@@ -614,6 +634,8 @@ private fun BoxScope.FileViewStateContent(
             wrap = wrap,
             lines = lines,
             truncated = truncated,
+            moreLines = moreLines,
+            onLoadMore = onLoadMore,
             highlightLineIndex = highlightLineIndex,
             listState = listState,
             onShareFull = onShareFull,
@@ -641,6 +663,8 @@ private fun BoxScope.FileViewContentBody(
     wrap: Boolean,
     lines: List<String>,
     truncated: Boolean,
+    moreLines: Int,
+    onLoadMore: () -> Unit,
     highlightLineIndex: Int?,
     listState: LazyListState,
     onShareFull: () -> Unit,
@@ -733,6 +757,8 @@ private fun BoxScope.FileViewContentBody(
                 filename = filename,
                 topInset = topInset,
                 truncated = truncated,
+                moreLines = moreLines,
+                onLoadMore = onLoadMore,
                 wrap = wrap,
                 findQuery = findQuery,
                 matchIndices = matchIndices,
@@ -819,6 +845,8 @@ private fun FileTextContent(
     filename: String,
     topInset: androidx.compose.ui.unit.Dp,
     truncated: Boolean,
+    moreLines: Int,
+    onLoadMore: () -> Unit,
     wrap: Boolean,
     findQuery: String,
     matchIndices: List<Int>,
@@ -859,14 +887,16 @@ private fun FileTextContent(
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
                     Text(
-                        stringResource(R.string.file_truncated, MAX_RENDERED_LINES),
+                        stringResource(R.string.file_truncated, lines.size),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.weight(1f),
                     )
-                    // Escape hatch: when only the first N lines render, offer the (already
-                    // full-content) Share action inline so the user isn't stranded without the
-                    // rest of the file. The overflow Share shares the same full content.
+                    // Load the next chunk in-place so the user can keep reading the file without
+                    // leaving the app. Falls back to Share full file for the whole content.
+                    TextButton(onClick = onLoadMore) {
+                        Text(stringResource(R.string.load_more_lines, moreLines))
+                    }
                     TextButton(onClick = onShareFull) {
                         Text(stringResource(R.string.share_full_file))
                     }

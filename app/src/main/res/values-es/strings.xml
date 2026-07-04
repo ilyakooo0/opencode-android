@@ -740,4 +740,39 @@
     <string name="diff_context_line">Línea %1$d: %2$s</string>
     <string name="tts_stopped_unexpectedly">La lectura en voz alta se detuvo inesperadamente</string>
     <string name="usage_empty_desc">El uso aparece una vez que tu asistente haya enviado mensajes facturables.</string>
+
+    <!-- UI/UX batch 7 -->
+    <string name="markdown_image_placeholder">[imagen]</string>
+    <string name="qr_image_for">Código QR de %1$s</string>
+    <string name="reconnecting_to">Reconectando a %1$s…</string>
+    <string name="run_stopped">Ejecución detenida</string>
+    <string name="preview_attachment">Vista previa del adjunto</string>
+    <string name="diff_split">Vista dividida</string>
+    <string name="diff_unified">Vista unificada</string>
+    <string name="mark_unread">Marcar como no leído</string>
+    <string name="search_progress">Buscadas %1$d / %2$d sesiones</string>
+    <string name="recent_searches">Búsquedas recientes</string>
+    <string name="load_more_lines">Cargar %1$d líneas más</string>
+    <string name="detect_from_server">Detectar desde el servidor</string>
+    <string name="detecting_pin">Detectando pin de certificado…</string>
+    <string name="cert_pin_detected">Pin detectado — revisa y guarda</string>
+    <string name="cert_pin_detect_failed">No se pudo obtener el certificado del servidor</string>
+    <string name="mcp_disable">Desactivar</string>
+    <string name="mcp_enable">Activar</string>
+    <string name="mcp_remove">Quitar</string>
+    <string name="mcp_retry">Reintentar</string>
+    <string name="mcp_remove_title">¿Quitar servidor MCP?</string>
+    <string name="mcp_remove_text">“%1$s” se quitará de tus servidores MCP.</string>
+    <string name="mcp_disabled_locally">Desactivado en este dispositivo</string>
+    <string name="file_share_too_large">El archivo es demasiado grande para compartir</string>
+    <string name="search_filter_all">Todo</string>
+    <string name="search_filter_messages">Mensajes</string>
+    <string name="search_filter_tools">Llamadas a herramientas</string>
+    <string name="search_filter_reasoning">Razonamiento</string>
+    <string name="search_match_type_message">mensaje</string>
+    <string name="search_match_type_tool">herramienta</string>
+    <string name="search_match_type_reasoning">razonamiento</string>
+    <string name="server_http">HTTP · no seguro</string>
+    <string name="server_https">HTTPS</string>
+    <string name="server_https_pinned">HTTPS · cert fijado</string>
 </resources>

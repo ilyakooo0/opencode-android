@@ -156,6 +156,9 @@ import soy.iko.opencode.data.model.ToolCompleted
 import soy.iko.opencode.data.model.ToolError
 import soy.iko.opencode.data.model.ToolPart
 import soy.iko.opencode.data.model.ToolRunning
+import soy.iko.opencode.data.model.FilePart
+import soy.iko.opencode.data.model.sourcePath
+import soy.iko.opencode.data.model.inputElement
 import soy.iko.opencode.data.network.EventStreamClient
 import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.di.AppContainer
@@ -847,7 +850,26 @@ fun ChatScreen(
         val searchMessages = remember(messages, searchQuery) {
             if (searchQuery.isEmpty()) messages
             else messages.filter { m ->
-                m.parts.any { p -> (p as? TextPart)?.text?.contains(searchQuery, ignoreCase = true) == true }
+                m.parts.any { p ->
+                    when (p) {
+                        is TextPart -> p.text.contains(searchQuery, ignoreCase = true)
+                        is ReasoningPart -> p.text.contains(searchQuery, ignoreCase = true)
+                        is ToolPart -> {
+                            // Match the tool name plus its running/completed/error text and the
+                            // stringified input, so searching for an error string or a file the
+                            // tool touched actually finds the message it appeared in.
+                            p.tool.contains(searchQuery, ignoreCase = true) ||
+                                (p.state is ToolRunning && p.state.title?.contains(searchQuery, ignoreCase = true) == true) ||
+                                (p.state is ToolCompleted && (p.state.title?.contains(searchQuery, ignoreCase = true) == true ||
+                                    p.state.output?.contains(searchQuery, ignoreCase = true) == true)) ||
+                                (p.state is ToolError && p.state.error?.contains(searchQuery, ignoreCase = true) == true) ||
+                                p.state.inputElement()?.toString()?.contains(searchQuery, ignoreCase = true) == true
+                        }
+                        is FilePart -> p.filename?.contains(searchQuery, ignoreCase = true) == true ||
+                            p.sourcePath?.contains(searchQuery, ignoreCase = true) == true
+                        else -> false
+                    }
+                }
             }
         }
         // Keep the focused-match index in range as the query (and thus the match set) changes.
@@ -1789,6 +1811,7 @@ private fun ChatInputBar(
 ) {
     // Sendable when there's text OR at least one attachment (an image-only prompt is valid).
     val hasContent = value.isNotBlank() || attachments.isNotEmpty()
+    val context = LocalContext.current
     // Full-screen editor state: opened when the user wants more space for a long prompt.
     var showFullScreenEditor by rememberSaveable { mutableStateOf(false) }
     Surface(tonalElevation = 3.dp, modifier = Modifier.imePadding()) {
@@ -1863,9 +1886,18 @@ private fun ChatInputBar(
                         )
                     }
                 }
-                // Voice dictation: appends recognized speech to the draft.
-                IconButton(onClick = onVoice, enabled = enabled) {
-                    Icon(Icons.Filled.Mic, contentDescription = stringResource(R.string.voice_input))
+                // Voice dictation: appends recognized speech to the draft. Hidden (not just
+                // disabled) when the device has no speech-recognition activity, so a user
+                // without a voice app doesn't get a button that only fails noisily on tap.
+                val voiceAvailable = remember {
+                    val pm = context.packageManager
+                    val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+                    pm.queryIntentActivities(intent, 0).isNotEmpty()
+                }
+                if (voiceAvailable) {
+                    IconButton(onClick = onVoice, enabled = enabled) {
+                        Icon(Icons.Filled.Mic, contentDescription = stringResource(R.string.voice_input))
+                    }
                 }
                 // Expand to a full-screen editor for long prompts (the inline field caps at 6 lines).
                 IconButton(onClick = { showFullScreenEditor = true }, enabled = enabled) {
@@ -2175,7 +2207,14 @@ private fun ComposerTrailingButton(
             enabled = canSend,
             modifier = Modifier.padding(start = 4.dp).testTag("send_button"),
         ) {
-            Icon(Icons.AutoMirrored.Filled.Send, contentDescription = stringResource(R.string.send))
+            // Tint the send icon with primary when there's content to send so the commit action
+            // draws the eye; muted otherwise. A plain enabled/disabled flip is easy to miss.
+            Icon(
+                Icons.AutoMirrored.Filled.Send,
+                contentDescription = stringResource(R.string.send),
+                tint = if (canSend) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

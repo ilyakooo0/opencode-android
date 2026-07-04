@@ -124,12 +124,13 @@ suspend fun decodeServerQr(context: android.content.Context, uri: android.net.Ur
  *  background (QR scanners need the light module) with a small inner pad so the code isn't flush
  *  with the dialog edges. */
 @Composable
-fun QrImage(content: String, sizePx: Int, modifier: Modifier = Modifier) {
+fun QrImage(content: String, sizePx: Int, modifier: Modifier = Modifier, label: String? = null) {
     val bitmap = remember(content, sizePx) { encodeQrBitmap(content, sizePx) }
     if (bitmap != null) {
+        val description = label?.let { stringResource(R.string.qr_image_for, it) }
         Image(
             bitmap = bitmap.asImageBitmap(),
-            contentDescription = null,
+            contentDescription = description,
             modifier = modifier
                 .size(sizePx.dp)
                 .background(Color.White)
@@ -153,7 +154,7 @@ fun QrShareDialog(profile: ServerProfile, onDismiss: () -> Unit) {
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                QrImage(content = payload, sizePx = 256)
+                QrImage(content = payload, sizePx = 256, label = profile.displayLabel)
                 Spacer(Modifier.size(8.dp))
                 Text(
                     profile.baseUrl,

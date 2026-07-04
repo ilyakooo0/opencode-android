@@ -49,6 +49,15 @@ class UsageViewModel(private val container: AppContainer) : ViewModel() {
     /** Bumped by [load] (refresh/retry) to re-run without waiting for a connection change. */
     private val _reload = MutableStateFlow(0)
 
+    /** Active time-range filter. Changing it re-aggregates from the cached fetch (no network)
+     *  so toggling ranges is instant. Defaults to all time. */
+    private val _timeRange = MutableStateFlow(UsageTimeRange.ALL_TIME)
+    val timeRange: StateFlow<UsageTimeRange> = _timeRange.asStateFlow()
+
+    // Cached raw inputs from the last successful fetch, so a time-range change can re-aggregate
+    // without re-downloading every session's history.
+    @Volatile private var cachedInputs: List<UsageSessionInput>? = null
+
     init {
         // Observe the active connection so the report loads (or reloads) once a connection is
         // available — including when the screen opens during a reconnect window where
@@ -58,9 +67,25 @@ class UsageViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             merge(container.activeConnection, _reload).collectLatest { doLoad() }
         }
+        // Re-aggregate from the cache when only the time range changes (no network round-trip).
+        viewModelScope.launch {
+            _timeRange.collectLatest { reaggregate() }
+        }
     }
 
     fun load() { _reload.value++ }
+
+    fun setTimeRange(range: UsageTimeRange) { _timeRange.value = range }
+
+    /** Re-aggregate the cached fetch under the current time range, if a Ready report exists. */
+    private suspend fun reaggregate() {
+        val inputs = cachedInputs ?: return
+        val cutoff = _timeRange.value.cutoffMs()
+        withContext(Dispatchers.Default) {
+            val report = aggregateUsage(inputs, cutoff)
+            _state.value = State.Ready(report)
+        }
+    }
 
     private suspend fun doLoad() {
         val conn = container.activeConnection.value ?: run {
@@ -85,12 +110,19 @@ class UsageViewModel(private val container: AppContainer) : ViewModel() {
                         limiter.withPermit {
                             val messages = runCatchingCancellable { conn.api.listMessages(session.id) }
                                 .getOrDefault(emptyList())
-                            Triple(session.id, session.displayTitle, messages)
+                            UsageSessionInput(
+                                sessionId = session.id,
+                                title = session.displayTitle,
+                                modifiedAt = session.time?.updated ?: session.time?.created,
+                                messages = messages,
+                            )
                         }
                     }
                 }.awaitAll()
             }
-            withContext(Dispatchers.Default) { aggregateUsage(perSession) }
+            cachedInputs = perSession
+            val cutoff = _timeRange.value.cutoffMs()
+            withContext(Dispatchers.Default) { aggregateUsage(perSession, cutoff) }
         }
             .onSuccess { _state.value = State.Ready(it) }
             .onFailure { _state.value = State.Error(safeExceptionSummary(it)) }

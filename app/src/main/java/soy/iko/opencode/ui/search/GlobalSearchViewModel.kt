@@ -5,9 +5,17 @@ import androidx.compose.runtime.Immutable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import soy.iko.opencode.R
+import soy.iko.opencode.data.model.FilePart
 import soy.iko.opencode.data.model.MessageWithParts
+import soy.iko.opencode.data.model.ReasoningPart
 import soy.iko.opencode.data.model.Session
 import soy.iko.opencode.data.model.TextPart
+import soy.iko.opencode.data.model.ToolCompleted
+import soy.iko.opencode.data.model.ToolError
+import soy.iko.opencode.data.model.ToolPart
+import soy.iko.opencode.data.model.ToolRunning
+import soy.iko.opencode.data.model.inputElement
+import soy.iko.opencode.data.model.sourcePath
 import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.util.runCatchingCancellable
@@ -47,6 +55,12 @@ data class GlobalSearchState(
     /** True when there were more sessions than [NetworkConfig.maxSearchSessions], so the
      *  search only covered the most recent ones. */
     val truncated: Boolean = false,
+    /** How many sessions have been scanned so far in the current pass, for progress feedback
+     *  (a global search downloads each session's history, so a 50-session pass can take a
+     *  while; surfacing the count keeps the spinner from looking stuck). */
+    val searchedCount: Int = 0,
+    /** Total sessions being scanned in the current pass ([searchedCount] / [totalCount]). */
+    val totalCount: Int = 0,
 )
 
 /**
@@ -113,8 +127,10 @@ class GlobalSearchViewModel(private val container: AppContainer) : ViewModel() {
             }.also { sessionsCache = it }
         val toSearch = sessions.take(NetworkConfig.maxSearchSessions)
         val truncated = sessions.size > toSearch.size
+        _state.update { it.copy(totalCount = toSearch.size, searchedCount = 0) }
         val hits = java.util.Collections.synchronizedMap(HashMap<String, SearchHit>())
         val semaphore = Semaphore(NetworkConfig.maxConcurrentPreviews)
+        val searched = java.util.concurrent.atomic.AtomicInteger(0)
         coroutineScope {
             toSearch.forEach { session ->
                 launch {
@@ -141,6 +157,8 @@ class GlobalSearchViewModel(private val container: AppContainer) : ViewModel() {
                                 matchedTitle = titleMatched,
                             )
                         }
+                        // Publish progress so the spinner can show "Searched N / M sessions".
+                        _state.update { it.copy(searchedCount = searched.incrementAndGet()) }
                     }
                 }
             }
@@ -156,20 +174,54 @@ class GlobalSearchViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    /** Find the first text part containing [query] across [messages] and return a short
-     *  snippet centered on the match, or null if nothing matches. */
+    /** Find the first searchable text containing [query] across [messages] and return a short
+     *  snippet centered on the match, or null if nothing matches. Searches text, reasoning,
+     *  tool call names/titles/output/error, and file names/paths — for a coding assistant the
+     *  most common searches (an error string, a touched file) live in tool calls. */
     private fun matchSnippet(
         messages: List<soy.iko.opencode.data.model.MessageWithParts>,
         query: String,
     ): String? {
         for (message in messages) {
-            for (part in message.parts) {
-                if (part !is TextPart) continue
-                val idx = part.text.indexOf(query, ignoreCase = true)
-                if (idx >= 0) return buildSnippet(part.text, idx, query.length)
+            for (candidate in searchableTexts(message.parts)) {
+                val idx = candidate.indexOf(query, ignoreCase = true)
+                if (idx >= 0) return buildSnippet(candidate, idx, query.length)
             }
         }
         return null
+    }
+
+    /** The ordered list of searchable strings for a message's parts. Text and reasoning are
+     *  searched in full; tool calls contribute their name, title, output, error, and the
+     *  stringified input; file parts contribute their filename and source path. */
+    private fun searchableTexts(parts: List<soy.iko.opencode.data.model.Part>): List<String> {
+        if (parts.isEmpty()) return emptyList()
+        val out = ArrayList<String>(parts.size)
+        for (p in parts) {
+            when (p) {
+                is TextPart -> out.add(p.text)
+                is ReasoningPart -> out.add(p.text)
+                is ToolPart -> {
+                    out.add(p.tool)
+                    when (p.state) {
+                        is ToolRunning -> p.state.title?.let(out::add)
+                        is ToolCompleted -> {
+                            p.state.title?.let(out::add)
+                            p.state.output?.let(out::add)
+                        }
+                        is ToolError -> p.state.error?.let(out::add)
+                        else -> {}
+                    }
+                    p.state.inputElement()?.toString()?.let(out::add)
+                }
+                is FilePart -> {
+                    p.filename?.let(out::add)
+                    p.sourcePath?.let(out::add)
+                }
+                else -> {}
+            }
+        }
+        return out
     }
 
     private fun buildSnippet(text: String, matchStart: Int, matchLength: Int): String {
@@ -181,17 +233,16 @@ class GlobalSearchViewModel(private val container: AppContainer) : ViewModel() {
         return prefix + text.substring(start, end).trim() + suffix
     }
 
-    /** Count all occurrences of [query] across the text parts of [messages] (case-insensitive,
-     *  non-overlapping) so a result card can show "N matches" instead of just one snippet. */
+    /** Count all occurrences of [query] across the searchable text of [messages] (text,
+     *  reasoning, tool calls, file names) so a result card can show "N matches". */
     private fun countMatches(
         messages: List<soy.iko.opencode.data.model.MessageWithParts>,
         query: String,
     ): Int {
         var count = 0
         for (message in messages) {
-            for (part in message.parts) {
-                if (part !is TextPart) continue
-                count += countIn(part.text, query)
+            for (text in searchableTexts(message.parts)) {
+                count += countIn(text, query)
             }
         }
         return count

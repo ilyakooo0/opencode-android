@@ -618,8 +618,8 @@ fun SettingsScreen(
                 Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             // Discoverability links from the About section: source code and issue tracker.
-            // Opens in the browser via ACTION_VIEW; if nothing can handle it, the chooser just
-            // shows no options (a no-op), which is acceptable for these optional links.
+            // Opens in the browser via ACTION_VIEW; a device without a browser (e.g. a de-Googled
+            // or work-profile split) silently no-ops otherwise, so surface a snackbar on failure.
             NavRow(
                 icon = Icons.Filled.Code,
                 label = stringResource(R.string.source_code),
@@ -629,7 +629,7 @@ fun SettingsScreen(
                         context.startActivity(
                             Intent(Intent.ACTION_VIEW, android.net.Uri.parse(context.getString(R.string.url_source_code))),
                         )
-                    }
+                    }.onFailure { scope.launch { snackbar.showSnackbar(couldNotOpenLinkMsg) } }
                 },
             )
             NavRow(
@@ -641,7 +641,7 @@ fun SettingsScreen(
                         context.startActivity(
                             Intent(Intent.ACTION_VIEW, android.net.Uri.parse(context.getString(R.string.url_report_issue))),
                         )
-                    }
+                    }.onFailure { scope.launch { snackbar.showSnackbar(couldNotOpenLinkMsg) } }
                 },
             )
         }

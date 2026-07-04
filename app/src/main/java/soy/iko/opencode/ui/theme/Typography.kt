@@ -126,7 +126,10 @@ val OpencodeTypography = Typography(
     labelSmall = TextStyle(
         fontFamily = FontFamily.Default,
         fontWeight = FontWeight.Medium,
-        fontSize = 11.sp,
+        // 12sp (bumped from the M3 default of 11sp) so secondary labels — timestamps, char
+        // counts, token summaries, code-block language tags — stay above the 12sp floor
+        // commonly recommended for text a user must read. The OS font scale still applies on top.
+        fontSize = 12.sp,
         lineHeight = 16.sp,
         letterSpacing = 0.4.sp,
     ),

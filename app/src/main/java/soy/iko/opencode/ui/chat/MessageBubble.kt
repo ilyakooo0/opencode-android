@@ -138,6 +138,10 @@ private fun MessageLongPressMenu(
     onBranch: ((String) -> Unit)?,
     onRevert: (() -> Unit)?,
     onShare: (() -> Unit)?,
+    onEdit: (() -> Unit)? = null,
+    onRegenerate: (() -> Unit)? = null,
+    onSpeak: (() -> Unit)? = null,
+    speakLabel: String? = null,
 ) {
     DropdownMenu(expanded = expanded, onDismissRequest = onDismiss, offset = offset) {
         if (text != null && onCopy != null) {
@@ -155,6 +159,33 @@ private fun MessageLongPressMenu(
                 leadingIcon = { Icon(Icons.Filled.Share, contentDescription = null) },
                 text = { Text(stringResource(R.string.share_message)) },
                 onClick = { onDismiss(); onShare() },
+            )
+        }
+        // Edit (user prompts): reload the prompt into the composer. Surfaced here as well as
+        // inline so the action is discoverable without spotting the 18dp icon.
+        if (text != null && onEdit != null) {
+            DropdownMenuItem(
+                leadingIcon = { Icon(Icons.Filled.Edit, contentDescription = null) },
+                text = { Text(stringResource(R.string.edit_message)) },
+                onClick = { onDismiss(); onEdit() },
+            )
+        }
+        // Regenerate (assistant): re-run the preceding user prompt. A flagship action that was
+        // previously only reachable via the tiny inline icon.
+        if (onRegenerate != null) {
+            DropdownMenuItem(
+                leadingIcon = { Icon(Icons.Filled.Refresh, contentDescription = null) },
+                text = { Text(stringResource(R.string.regenerate)) },
+                onClick = { onDismiss(); onRegenerate() },
+            )
+        }
+        // Read aloud / Stop reading (assistant): toggles TTS. The label is supplied by the caller
+        // so it reflects the current speaking state (play/pause/resume).
+        if (text != null && onSpeak != null && speakLabel != null) {
+            DropdownMenuItem(
+                leadingIcon = { Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = null) },
+                text = { Text(speakLabel) },
+                onClick = { onDismiss(); onSpeak() },
             )
         }
         if (text != null && onQuote != null) {
@@ -179,6 +210,44 @@ private fun MessageLongPressMenu(
             )
         }
     }
+}
+
+/** Wraps [MessageLongPressMenu] for a user prompt, building the Edit callback (which reloads
+ *  the prompt into the composer and warns when the original carried attachments) so the
+ *  branch count stays out of [UserBubble]. */
+@Composable
+private fun UserMessageLongPressMenu(
+    expanded: Boolean,
+    onDismiss: () -> Unit,
+    offset: androidx.compose.ui.unit.DpOffset,
+    text: String?,
+    onCopy: (() -> Unit)?,
+    onQuote: ((String) -> Unit)?,
+    onBranch: ((String) -> Unit)?,
+    onRevert: (() -> Unit)?,
+    onShare: (() -> Unit)?,
+    onEdit: ((String) -> Unit)?,
+    hasAttachments: Boolean,
+    dropsAttachmentsMsg: String,
+    context: android.content.Context,
+) {
+    val editForMenu: (() -> Unit)? = if (onEdit != null && text != null) {
+        { onEdit(text); if (hasAttachments) showToast(context, dropsAttachmentsMsg) }
+    } else {
+        null
+    }
+    MessageLongPressMenu(
+        expanded = expanded,
+        onDismiss = onDismiss,
+        offset = offset,
+        text = text,
+        onCopy = onCopy,
+        onQuote = onQuote,
+        onBranch = onBranch,
+        onRevert = onRevert,
+        onShare = onShare,
+        onEdit = editForMenu,
+    )
 }
 
 /** Overflow menu of secondary per-message actions (quote-reply, branch-a-new-session).
@@ -313,6 +382,8 @@ private fun UserBubble(
     val density = androidx.compose.ui.platform.LocalDensity.current
     val copyLabel = stringResource(R.string.copy)
     val editLabel = stringResource(R.string.edit_message)
+    val dropsAttachmentsMsg = stringResource(R.string.edit_drops_attachments)
+    val hasAttachments = message.parts.any { it is FilePart }
     // Long-press context menu state: consolidates copy/quote/branch/revert into a standard
     // Android long-press menu so the actions are discoverable without spotting the 18dp icons.
     // The menu anchors at the actual touch point rather than a fixed corner.
@@ -341,6 +412,22 @@ private fun UserBubble(
                 .widthIn(max = maxWidth * NetworkConfig.userBubbleWidthFraction)
                 .clip(MaterialTheme.shapes.medium)
                 .background(MaterialTheme.colorScheme.primaryContainer)
+                // Long-press anywhere on the bubble (body or footer) opens the context menu —
+                // the conventional Android pattern — so the actions are discoverable without
+                // spotting the 18dp inline icons. detectTapGestures with only onLongPress does
+                // not consume taps, so text selection and inline-icon clicks still work; a long
+                // press on selectable text is consumed by the SelectionContainer first, so the
+                // menu only opens from non-text areas (the intended behavior).
+                .pointerInput(Unit) {
+                    detectTapGestures(onLongPress = { offset ->
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        longPressOffset = androidx.compose.ui.unit.DpOffset(
+                            with(density) { offset.x.toDp() },
+                            with(density) { offset.y.toDp() },
+                        )
+                        longPressMenu = true
+                    })
+                }
                 .padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
@@ -348,26 +435,10 @@ private fun UserBubble(
             message.parts.forEachIndexed { index, part ->
                 key(part.id, index) { PartView(part, imageContext = imageContext, onOpenFile = onOpenFile) }
             }
-            // Footer row with timestamp + inline actions. Long-press opens a context menu
-            // consolidating copy/quote/branch/revert — the conventional Android pattern — so
-            // the actions are discoverable without spotting the 18dp inline icons. Uses
-            // pointerInput/detectTapGestures (not combinedClickable) so no misleading "Button"
-            // semantics are announced to TalkBack for an area whose tap does nothing, and the
-            // menu anchors at the actual long-press position instead of a fixed corner.
+            // Footer row with timestamp + inline actions.
             Box {
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .pointerInput(Unit) {
-                        detectTapGestures(onLongPress = { offset ->
-                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                            longPressOffset = androidx.compose.ui.unit.DpOffset(
-                                with(density) { offset.x.toDp() },
-                                with(density) { offset.y.toDp() },
-                            )
-                            longPressMenu = true
-                        })
-                    },
+                modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -460,8 +531,6 @@ private fun UserBubble(
                     // conversation to before it so a Send replaces it. Only when there's text
                     // to edit (an image-only prompt has nothing to reload).
                     if (onEdit != null && textToCopy != null) {
-                        val dropsAttachmentsMsg = stringResource(R.string.edit_drops_attachments)
-                        val hasAttachments = message.parts.any { it is FilePart }
                         IconButton(onClick = {
                             onEdit(textToCopy)
                             // Editing reloads only the text; if this prompt carried images or
@@ -503,7 +572,7 @@ private fun UserBubble(
                     }
                 }
             }
-            MessageLongPressMenu(
+            UserMessageLongPressMenu(
                 expanded = longPressMenu,
                 onDismiss = { longPressMenu = false },
                 offset = longPressOffset,
@@ -513,6 +582,10 @@ private fun UserBubble(
                 onBranch = onBranch,
                 onRevert = onRevert,
                 onShare = onShare,
+                onEdit = onEdit,
+                hasAttachments = hasAttachments,
+                dropsAttachmentsMsg = dropsAttachmentsMsg,
+                context = context,
             )
             }
         }
@@ -540,8 +613,26 @@ private fun AssistantBlock(
     isEdited: Boolean = false,
     onShare: (() -> Unit)? = null,
 ) {
+    // Long-press context menu state, hoisted to the block scope so the whole bubble (body and
+    // footer) is the long-press target — see UserBubble for rationale.
+    val assistantHaptics = LocalHapticFeedback.current
+    val assistantContext = LocalContext.current
+    val assistantDensity = androidx.compose.ui.platform.LocalDensity.current
+    var longPressMenu by remember { mutableStateOf(false) }
+    var longPressOffset by remember { mutableStateOf(androidx.compose.ui.unit.DpOffset(0.dp, 0.dp)) }
     Column(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier
+            .fillMaxWidth()
+            .pointerInput(Unit) {
+                detectTapGestures(onLongPress = { offset ->
+                    assistantHaptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    longPressOffset = androidx.compose.ui.unit.DpOffset(
+                        with(assistantDensity) { offset.x.toDp() },
+                        with(assistantDensity) { offset.y.toDp() },
+                    )
+                    longPressMenu = true
+                })
+            },
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         val info = message.info
@@ -593,9 +684,8 @@ private fun AssistantBlock(
             val costSummary = remember(info.isComplete, tokens, cost, tokenFormat, reasoningFormat, cacheReadFormat, cacheWriteFormat, costShort, costLong) {
                 buildCostSummary(info.isComplete, tokens, cost, tokenFormat, reasoningFormat, cacheReadFormat, cacheWriteFormat, costShort, costLong)
             }
-            // Long-press context menu state (see UserBubble for rationale).
-            var longPressMenu by remember { mutableStateOf(false) }
-            var longPressOffset by remember { mutableStateOf(androidx.compose.ui.unit.DpOffset(0.dp, 0.dp)) }
+            // Long-press context menu state is hoisted to the block scope (see the Column
+            // above) so the whole bubble is the long-press target.
             // Collect text from all TextParts for copy/read-aloud. Memoized so a
             // scroll-induced recomposition doesn't re-scan the parts list.
             val textToCopy = remember(message.parts) {
@@ -604,9 +694,6 @@ private fun AssistantBlock(
                     .joinToString("\n\n") { it.text }
                     .takeIf { it.isNotBlank() }
             }
-            val assistantHaptics = LocalHapticFeedback.current
-            val assistantContext = LocalContext.current
-            val assistantDensity = androidx.compose.ui.platform.LocalDensity.current
             val onCopy: (() -> Unit)? = textToCopy?.let { text ->
                 {
                     assistantHaptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -615,18 +702,7 @@ private fun AssistantBlock(
             }
             Box {
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .pointerInput(Unit) {
-                        detectTapGestures(onLongPress = { offset ->
-                            assistantHaptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                            longPressOffset = androidx.compose.ui.unit.DpOffset(
-                                with(assistantDensity) { offset.x.toDp() },
-                                with(assistantDensity) { offset.y.toDp() },
-                            )
-                            longPressMenu = true
-                        })
-                    },
+                modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -636,9 +712,10 @@ private fun AssistantBlock(
                             it,
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            // Cap to a single line so a long "1.2k in · 540 out • $0.012"
-                            // summary doesn't wrap the "•" awkwardly at narrow widths.
-                            maxLines = 1,
+                            // Allow up to 2 lines so a multi-segment summary (in/out • reasoning
+                            // • cache read • cost) wraps instead of ellipsizing away the cost —
+                            // the part users most want — on narrow screens.
+                            maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
@@ -664,7 +741,7 @@ private fun AssistantBlock(
                     onRegenerate = onRegenerate,
                 )
             }
-            MessageLongPressMenu(
+            AssistantMessageLongPressMenu(
                 expanded = longPressMenu,
                 onDismiss = { longPressMenu = false },
                 offset = longPressOffset,
@@ -674,12 +751,77 @@ private fun AssistantBlock(
                 onBranch = onBranch,
                 onRevert = onRevert,
                 onShare = onShare,
+                onRegenerate = onRegenerate,
+                onSpeak = onSpeak,
+                isSpeaking = isSpeaking,
+                ttsState = ttsState,
+                onPause = onPause,
+                onResume = onResume,
             )
             }
         } else {
             MessageTimestampText(message.info)
         }
     }
+}
+
+/** Wraps [MessageLongPressMenu] for an assistant reply, building the Read-aloud toggle
+ *  callback and label from the current speaking state so the branch count stays out of
+ *  [AssistantBlock]. */
+@Composable
+private fun AssistantMessageLongPressMenu(
+    expanded: Boolean,
+    onDismiss: () -> Unit,
+    offset: androidx.compose.ui.unit.DpOffset,
+    text: String?,
+    onCopy: (() -> Unit)?,
+    onQuote: ((String) -> Unit)?,
+    onBranch: ((String) -> Unit)?,
+    onRevert: (() -> Unit)?,
+    onShare: (() -> Unit)?,
+    onRegenerate: (() -> Unit)?,
+    onSpeak: ((String) -> Unit)?,
+    isSpeaking: Boolean,
+    ttsState: TtsState,
+    onPause: (() -> Unit)?,
+    onResume: (() -> Unit)?,
+) {
+    val speakForMenu: (() -> Unit)? = if (onSpeak != null && text != null) {
+        {
+            when {
+                isSpeaking && ttsState == TtsState.PAUSED -> onResume?.invoke()
+                isSpeaking -> onPause?.invoke()
+                else -> onSpeak(text)
+            }
+        }
+    } else {
+        null
+    }
+    val speakLabel: String? = if (onSpeak != null && text != null) {
+        stringResource(
+            when {
+                isSpeaking && ttsState == TtsState.PAUSED -> R.string.resume_reading
+                isSpeaking -> R.string.pause_reading
+                else -> R.string.read_aloud
+            },
+        )
+    } else {
+        null
+    }
+    MessageLongPressMenu(
+        expanded = expanded,
+        onDismiss = onDismiss,
+        offset = offset,
+        text = text,
+        onCopy = onCopy,
+        onQuote = onQuote,
+        onBranch = onBranch,
+        onRevert = onRevert,
+        onShare = onShare,
+        onRegenerate = onRegenerate,
+        onSpeak = speakForMenu,
+        speakLabel = speakLabel,
+    )
 }
 
 /** Avatar + model label row for an assistant message. Extracted from [AssistantBlock] to keep

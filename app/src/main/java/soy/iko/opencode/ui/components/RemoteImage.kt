@@ -266,7 +266,7 @@ private fun FullscreenImageViewer(
     // gesture for photo viewers. The drag also fades the background so the dismiss reads as
     // a continuous motion rather than a snap.
     var dragOffsetY by remember { mutableFloatStateOf(0f) }
-    val dismissThreshold = 200f
+    val dismissThreshold = NetworkConfig.imageViewerSwipeDismissThreshold
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),

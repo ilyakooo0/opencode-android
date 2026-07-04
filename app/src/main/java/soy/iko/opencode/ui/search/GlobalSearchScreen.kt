@@ -4,6 +4,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -109,9 +110,23 @@ fun GlobalSearchScreen(
                 ConnectionBannerFor(container)
                 val searchingLabel = stringResource(R.string.searching)
                 when {
-                    state.searching -> CircularProgressIndicator(
-                        Modifier.align(Alignment.Center).semantics { contentDescription = searchingLabel },
-                    )
+                    state.searching -> Column(
+                        modifier = Modifier.align(Alignment.Center),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        CircularProgressIndicator(
+                            Modifier.semantics { contentDescription = searchingLabel },
+                        )
+                        // Surface determinate progress so a 50-session pass doesn't look stuck.
+                        if (state.totalCount > 1) {
+                            Spacer(Modifier.size(12.dp))
+                            Text(
+                                stringResource(R.string.search_progress, state.searchedCount, state.totalCount),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
                     state.error != null -> EmptyState(
                         icon = Icons.Filled.ErrorOutline,
                         title = state.error ?: "",

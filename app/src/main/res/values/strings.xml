@@ -740,4 +740,39 @@
     <string name="diff_removed_line">Line %1$d removed: %2$s</string>
     <string name="diff_context_line">Line %1$d: %2$s</string>
     <string name="tts_stopped_unexpectedly">Read-aloud stopped unexpectedly</string>
+
+    <!-- UI/UX batch 7: shared components, navigation, files, mcp, usage -->
+    <string name="markdown_image_placeholder">[image]</string>
+    <string name="qr_image_for">QR code for %1$s</string>
+    <string name="reconnecting_to">Reconnecting to %1$s…</string>
+    <string name="run_stopped">Run stopped</string>
+    <string name="preview_attachment">Preview attachment</string>
+    <string name="diff_split">Split view</string>
+    <string name="diff_unified">Unified view</string>
+    <string name="mark_unread">Mark as unread</string>
+    <string name="search_progress">Searched %1$d / %2$d sessions</string>
+    <string name="recent_searches">Recent searches</string>
+    <string name="load_more_lines">Load %1$d more lines</string>
+    <string name="detect_from_server">Detect from server</string>
+    <string name="detecting_pin">Detecting certificate pin…</string>
+    <string name="cert_pin_detected">Pin detected — review and save</string>
+    <string name="cert_pin_detect_failed">Couldn\'t fetch the server certificate</string>
+    <string name="mcp_disable">Disable</string>
+    <string name="mcp_enable">Enable</string>
+    <string name="mcp_remove">Remove</string>
+    <string name="mcp_retry">Retry</string>
+    <string name="mcp_remove_title">Remove MCP server?</string>
+    <string name="mcp_remove_text">“%1$s” will be removed from your MCP servers.</string>
+    <string name="mcp_disabled_locally">Disabled on this device</string>
+    <string name="file_share_too_large">File is too large to share</string>
+    <string name="search_filter_all">All</string>
+    <string name="search_filter_messages">Messages</string>
+    <string name="search_filter_tools">Tool calls</string>
+    <string name="search_filter_reasoning">Reasoning</string>
+    <string name="search_match_type_message">message</string>
+    <string name="search_match_type_tool">tool</string>
+    <string name="search_match_type_reasoning">reasoning</string>
+    <string name="server_http">HTTP · not secured</string>
+    <string name="server_https">HTTPS</string>
+    <string name="server_https_pinned">HTTPS · cert pinned</string>
 </resources>

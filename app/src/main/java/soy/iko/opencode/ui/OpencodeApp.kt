@@ -367,7 +367,14 @@ fun OpencodeApp(container: AppContainer) {
                 sessionId = entry.arguments?.getString("sessionId").orEmpty(),
                 onBack = { navController.popBackStack() },
                 onOpenFile = { path -> navController.navigate(Routes.fileView(path)) },
-                onOpenSession = { id -> navController.navigate(Routes.chat(id)) },
+                onOpenSession = { id ->
+                    navController.navigate(Routes.chat(id)) {
+                        // Prevent the same chat from being pushed twice when re-tapping a
+                        // session deep link, and keep the back stack bounded when chaining
+                        // chat → linked chat → … (otherwise every hop piles a new entry).
+                        launchSingleTop = true
+                    }
+                },
             )
         }
 
