@@ -165,6 +165,7 @@ import soy.iko.opencode.ui.components.ConnectionBanner
 import soy.iko.opencode.ui.components.DiffView
 import soy.iko.opencode.ui.components.PaletteAction
 import soy.iko.opencode.ui.components.LocalReducedMotion
+import soy.iko.opencode.ui.components.reducedMotionAnimateItem
 import soy.iko.opencode.ui.components.copyToClipboard
 import soy.iko.opencode.ui.components.LocalRelativeTimeTick
 import soy.iko.opencode.ui.components.rememberRelativeTimeTick
@@ -259,6 +260,10 @@ fun ChatScreen(
     val snackbar = remember { SnackbarHostState() }
     val retryLabel = stringResource(R.string.retry)
     val inputFocusRequester = remember { androidx.compose.ui.focus.FocusRequester() }
+    // Dedicated focus requester for the in-conversation search field. The overflow menu's
+    // "Find in conversation" and Ctrl+F previously called inputFocusRequester.requestFocus()
+    // (the composer), so typing went to the composer instead of the search field.
+    val searchFocusRequester = remember { androidx.compose.ui.focus.FocusRequester() }
     var showModelPicker by rememberSaveable { mutableStateOf(false) }
     var showAgentPicker by rememberSaveable { mutableStateOf(false) }
     var showTitleMenu by rememberSaveable { mutableStateOf(false) }
@@ -673,7 +678,10 @@ fun ChatScreen(
                                 onClick = {
                                     showOverflowMenu = false
                                     searchActive = true
-                                    runCatching { inputFocusRequester.requestFocus() }
+                                    // Focus is requested by the LaunchedEffect(searchActive)
+                                    // below, which waits for the search field to be composed
+                                    // before requesting focus (calling requestFocus here would
+                                    // target a field that isn't in the composition yet).
                                 },
                             )
                             androidx.compose.material3.HorizontalDivider()
@@ -1165,7 +1173,7 @@ fun ChatScreen(
                         // doesn't animate on every token (and respects the a11y preference).
                         Box(
                             Modifier
-                                .then(if (LocalReducedMotion.current) Modifier else Modifier.animateItem())
+                                .then(reducedMotionAnimateItem())
                                 .then(
                                     if (isFocusedMatch) {
                                         Modifier.background(
@@ -1345,7 +1353,7 @@ fun ChatScreen(
                                 // jolt the message list when a run starts/stops — matching the
                                 // AnimatedVisibility used by every other transient banner/FAB here.
                                 modifier = Modifier
-                                    .animateItem()
+                                    .then(reducedMotionAnimateItem())
                                     .padding(vertical = 4.dp),
                             ) {
                                 // Merge the indicator + label + clock into one TalkBack node so
@@ -1469,6 +1477,12 @@ fun ChatScreen(
                             .padding(horizontal = 12.dp, vertical = 4.dp)
                             .fillMaxWidth(),
                     ) {
+                        // Focus the search field when the bar appears (from the overflow menu's
+                        // "Find in conversation" or Ctrl+F), so the user can start typing
+                        // immediately. Runs after the search field enters the composition.
+                        LaunchedEffect(searchActive) {
+                            if (searchActive) runCatching { searchFocusRequester.requestFocus() }
+                        }
                         Row(
                             modifier = Modifier.padding(start = 8.dp, end = 4.dp),
                             verticalAlignment = Alignment.CenterVertically,
@@ -1476,7 +1490,7 @@ fun ChatScreen(
                             OutlinedTextField(
                                 value = chatSearch,
                                 onValueChange = { chatSearch = it },
-                                modifier = Modifier.weight(1f),
+                                modifier = Modifier.weight(1f).focusRequester(searchFocusRequester),
                                 placeholder = { Text(stringResource(R.string.search_in_conversation)) },
                                 singleLine = true,
                                 leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
@@ -1489,7 +1503,7 @@ fun ChatScreen(
                                 if (searchQuery.isNotEmpty() && matchCount > 0) {
                                     stringResource(R.string.search_match_count, searchPos + 1, matchCount)
                                 } else if (searchQuery.isNotEmpty()) {
-                                    stringResource(R.string.search_match_count, 0, messages.size)
+                                    stringResource(R.string.search_no_matches)
                                 } else "",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1999,10 +2013,21 @@ private fun FullScreenEditor(
         onDismissRequest = onDismiss,
         properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
     ) {
+        // Cap the editor width on large screens (tablets) so the text field doesn't stretch
+        // edge-to-edge — matching the chat list's readability rationale. BoxWithConstraints
+        // gives the available width so we can center a capped-width column.
+        androidx.compose.foundation.layout.BoxWithConstraints(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center,
+        ) {
+            val hPad = if (maxWidth > NetworkConfig.twoPaneWidthThresholdDp.dp)
+                ((maxWidth - NetworkConfig.composerDialogMaxWidthDp.dp) / 2).coerceAtLeast(0.dp)
+            else 0.dp
         Scaffold(
+            modifier = Modifier.padding(horizontal = hPad),
             topBar = {
                 androidx.compose.material3.TopAppBar(
-                    title = { Text(stringResource(R.string.message_placeholder)) },
+                    title = { Text(stringResource(R.string.compose_editor_title)) },
                     navigationIcon = {
                         androidx.compose.material3.TextButton(onClick = onDismiss) {
                             Text(stringResource(R.string.collapse_editor))
@@ -2062,6 +2087,7 @@ private fun FullScreenEditor(
                     ),
                 )
             }
+        }
         }
     }
 }
@@ -2298,6 +2324,7 @@ private fun OutboxBanner(
     onFlush: () -> Unit,
     onDiscard: () -> Unit,
 ) {
+    var showDiscardConfirm by rememberSaveable { mutableStateOf(false) }
     Surface(
         color = MaterialTheme.colorScheme.secondaryContainer,
         tonalElevation = 2.dp,
@@ -2332,15 +2359,34 @@ private fun OutboxBanner(
                 val haptics = LocalHapticFeedback.current
                 TextButton(onClick = onFlush) { Text(stringResource(R.string.outbox_flush)) }
                 TextButton(onClick = {
-                    // Haptic on the irreversible "Discard queued" (drops every queued message
-                    // for this session), matching the error-colored destructive actions.
+                    // Confirm before discarding all queued messages (irreversible), matching
+                    // the confirmation pattern used by deleteSession and other destructive
+                    // actions. Previously a single tap dropped every queued message.
                     haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                    onDiscard()
+                    showDiscardConfirm = true
                 }) {
                     Text(stringResource(R.string.outbox_discard_all), color = MaterialTheme.colorScheme.error)
                 }
             }
         }
+    }
+    if (showDiscardConfirm) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showDiscardConfirm = false },
+            title = { Text(stringResource(R.string.discard_queued_title)) },
+            text = { Text(stringResource(R.string.discard_queued_text, count)) },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    showDiscardConfirm = false
+                    onDiscard()
+                }) { Text(stringResource(R.string.discard)) }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { showDiscardConfirm = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
     }
 }
 

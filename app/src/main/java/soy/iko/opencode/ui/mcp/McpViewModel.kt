@@ -23,6 +23,7 @@ import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.util.runCatchingCancellable
+import soy.iko.opencode.util.safeExceptionSummary
 
 /** The shape of an MCP server the user is registering from the Add dialog. */
 enum class McpKind { LOCAL, REMOTE }
@@ -38,7 +39,9 @@ class McpViewModel(private val container: AppContainer) : ViewModel() {
     sealed interface State {
         data object Loading : State
         data object Disconnected : State
-        data object Error : State
+        /** MCP servers failed to load. [message] carries a short, safe summary so the user
+         *  can tell an auth failure from a transient network drop or an old server without /mcp. */
+        data class Error(val message: String? = null) : State
         data class Ready(val servers: List<McpServerInfo>) : State
     }
 
@@ -97,7 +100,7 @@ class McpViewModel(private val container: AppContainer) : ViewModel() {
             }
         }
             .onSuccess { _state.value = State.Ready(it) }
-            .onFailure { _state.value = State.Error }
+            .onFailure { _state.value = State.Error(safeExceptionSummary(it)) }
         _refreshing.value = false
     }
 

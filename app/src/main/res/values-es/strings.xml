@@ -701,4 +701,38 @@
     <string name="revert_diff_header">Cambios del revertido</string>
     <string name="agent_error_label">El agente informó un error</string>
     <string name="custom_path_required">Escribe una ruta para crear una sesión aquí.</string>
+
+    <!-- UI/UX batch 6 -->
+    <string name="loading_models">Cargando modelos…</string>
+    <string name="loading_agents">Cargando agentes…</string>
+    <string name="loading_commands">Cargando comandos…</string>
+    <string name="show_full_error">Ver error completo</string>
+    <string name="hide_full_error">Ocultar error completo</string>
+    <string name="discard_queued_title">¿Descartar mensajes en cola?</string>
+    <string name="discard_queued_text">Se descartarán %1$d mensaje(s) en cola. Esto no se puede deshacer.</string>
+    <string name="compose_editor_title">Redactar mensaje</string>
+    <string name="always_allow_scope">Se aplica a esta herramienta y patrón en todas las sesiones.</string>
+    <string name="mcp_local">Local</string>
+    <string name="mcp_remote">Remoto</string>
+    <string name="mcp_command_split_hint">División por espacios; los argumentos entre comillas no son compatibles. Edita config.mcp para comandos complejos.</string>
+    <string name="mcp_env_hint">Un KEY=VALUE por línea; las líneas sin = se omiten.</string>
+    <string name="usage_range_24h">24 horas</string>
+    <string name="usage_range_7d">7 días</string>
+    <string name="usage_range_30d">30 días</string>
+    <string name="usage_range_all">Todo el tiempo</string>
+    <string name="usage_open_session">Abrir sesión</string>
+    <string name="usage_cost_fraction">%1$d%% del total</string>
+    <string name="app_lock_disabled_warning">El bloqueo de la app está activado pero no hay biometría o credencial del dispositivo disponible; la app no está bloqueada.</string>
+    <string name="qr_paste_hint">Consejo: pega una configuración de servidor compartida aquí para importarla.</string>
+    <string name="server_url_clear">Borrar URL</string>
+    <string name="long_press_for_timestamp">Mantén pulsado para la marca de tiempo completa</string>
+    <string name="search_always_available">Buscar</string>
+    <string name="streaming_caret_label">transmitiendo</string>
+    <string name="code_block_label">Bloque de código, %1$s, %2$d líneas</string>
+    <string name="code_block_plain">simple</string>
+    <string name="diff_added_line">Línea %1$d añadida: %2$s</string>
+    <string name="diff_removed_line">Línea %1$d eliminada: %2$s</string>
+    <string name="diff_context_line">Línea %1$d: %2$s</string>
+    <string name="tts_stopped_unexpectedly">La lectura en voz alta se detuvo inesperadamente</string>
+    <string name="usage_empty_desc">El uso aparece una vez que tu asistente haya enviado mensajes facturables.</string>
 </resources>

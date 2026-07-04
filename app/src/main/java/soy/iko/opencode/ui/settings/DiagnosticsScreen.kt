@@ -73,6 +73,7 @@ import soy.iko.opencode.util.runCatchingCancellable
 import soy.iko.opencode.ui.components.AppTopBar
 import soy.iko.opencode.ui.components.EmptyState
 import soy.iko.opencode.ui.components.copyToClipboard
+import soy.iko.opencode.ui.components.reducedMotionAnimateItem
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -110,6 +111,10 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
     val shareScope = rememberCoroutineScope()
     val haptics = LocalHapticFeedback.current
     val snackbar = remember { SnackbarHostState() }
+    // Separate host for transient error messages (share failures, etc.) so a transient error
+    // can't preempt an undo snackbar's full window — the undo and error channels don't share
+    // a queue, so a share error can't cancel an in-flight undo and strand a pending delete.
+    val errorSnackbar = remember { SnackbarHostState() }
     val undoLabel = stringResource(R.string.undo)
     val reportDeletedLabel = stringResource(R.string.report_deleted)
     val reportsClearedLabel = stringResource(R.string.reports_cleared)
@@ -225,7 +230,14 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                 },
             )
         },
-        snackbarHost = { SnackbarHost(snackbar) },
+        snackbarHost = {
+            // Stack both hosts; the undo snackbar takes priority (rendered first), the error
+            // host renders below it so both can be visible simultaneously without preempting.
+            Column {
+                SnackbarHost(snackbar)
+                SnackbarHost(errorSnackbar)
+            }
+        },
     ) { padding ->
         CompositionLocalProvider(LocalRelativeTimeTick provides timeTick) {
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
@@ -276,7 +288,7 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                         SwipeToDismissBox(
                             state = swipeState,
                             enableDismissFromStartToEnd = false,
-                            modifier = Modifier.animateItem(),
+                            modifier = reducedMotionAnimateItem(),
                             backgroundContent = {
                                 Box(
                                     modifier = Modifier
@@ -332,7 +344,7 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                                                 // failures (e.g. an oversized report exceeding the Binder limit →
                                                 // TransactionTooLargeException) get a generic toast, not that misleading one.
                                                 val msg = if (it is ActivityNotFoundException) R.string.no_share_app else R.string.error_generic
-                                                shareScope.launch { snackbar.showSnackbar(context.getString(msg)) }
+                                                shareScope.launch { errorSnackbar.showSnackbar(context.getString(msg)) }
                                             }
                                     }
                                 }) {
@@ -430,7 +442,7 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                                                 // (e.g. an oversized report exceeding the Binder limit → TransactionTooLargeException)
                                                 // get a generic toast, not that misleading one.
                                                 val msg = if (it is ActivityNotFoundException) R.string.no_share_app else R.string.error_generic
-                                                shareScope.launch { snackbar.showSnackbar(context.getString(msg)) }
+                                                shareScope.launch { errorSnackbar.showSnackbar(context.getString(msg)) }
                                             }
                                     },
                                 ) { Icon(Icons.Filled.Share, contentDescription = stringResource(R.string.share)) }

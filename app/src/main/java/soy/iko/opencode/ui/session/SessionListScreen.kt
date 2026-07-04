@@ -9,8 +9,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -115,6 +117,7 @@ import soy.iko.opencode.R
 import soy.iko.opencode.ui.components.ConnectionBanner
 import soy.iko.opencode.ui.components.EmptyState
 import soy.iko.opencode.ui.components.LocalRelativeTimeTick
+import soy.iko.opencode.ui.components.reducedMotionAnimateItem
 import soy.iko.opencode.ui.components.RelativeTimeText
 import soy.iko.opencode.ui.components.rememberRelativeTimeTick
 import soy.iko.opencode.ui.vmFactory
@@ -422,7 +425,7 @@ fun SessionListScreen(
         // down when it appears instead of covering the search field and top cards. Its own
         // AnimatedVisibility collapses it to zero height when the stream is healthy, so the
         // body fills the space normally.
-        Column(modifier = Modifier.fillMaxSize().padding(padding)) {
+        Column(modifier = Modifier.fillMaxSize().imePadding().padding(padding)) {
             ConnectionBanner(
                 state = connectionState,
                 isOnline = isOnline,
@@ -738,7 +741,7 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
                                 // Indent sub-sessions under their parent (capped so deep
                                 // nesting doesn't squeeze the card off-screen).
                                 modifier = Modifier
-                                    .animateItem()
+                                    .then(reducedMotionAnimateItem())
                                     .padding(start = (node.depth.coerceAtMost(3) * 16).dp),
                                 backgroundContent = {
                                     val archiving = swipeState.dismissDirection == SwipeToDismissBoxValue.StartToEnd
@@ -1093,6 +1096,7 @@ private fun SessionCard(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
                                 .padding(top = 2.dp)
+                                .defaultMinSize(minHeight = 48.dp)
                                 .clip(MaterialTheme.shapes.small)
                                 .then(
                                     if (chipEnabled) {

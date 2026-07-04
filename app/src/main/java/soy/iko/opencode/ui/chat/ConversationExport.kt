@@ -11,6 +11,7 @@ import soy.iko.opencode.data.model.ToolPart
 import soy.iko.opencode.data.model.ToolRunning
 import soy.iko.opencode.data.model.UserMessage
 import soy.iko.opencode.data.model.sourcePath
+import soy.iko.opencode.data.network.NetworkConfig
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -121,8 +122,12 @@ private fun appendMetadataHeader(sb: StringBuilder, messages: List<MessageWithPa
     val firstTime = messages.firstOrNull()?.info?.time?.created
     val lastTime = messages.lastOrNull()?.info?.time?.created
     sb.append("> ")
-    sb.append("$userCount user · $assistantCount assistant message")
+    // Pluralize each noun independently (a prior bug keyed both on userCount, so "user" was
+    // never pluralized and "message" was pluralized based on the wrong count).
+    sb.append("$userCount user")
     if (userCount != 1) sb.append("s")
+    sb.append(" · $assistantCount assistant message")
+    if (assistantCount != 1) sb.append("s")
     if (firstTime != null && lastTime != null) {
         sb.append(" · $firstTime → $lastTime")
     }
@@ -183,19 +188,19 @@ private fun longestBacktickRun(text: String): Int {
 }
 
 private fun truncateOutput(output: String): String {
-    if (output.length <= TOOL_OUTPUT_LIMIT) return output
-    return output.take(TOOL_OUTPUT_LIMIT) + "\n… (truncated)"
+    if (output.length <= NetworkConfig.exportToolOutputLimitChars) return output
+    return output.take(NetworkConfig.exportToolOutputLimitChars) + "\n… (truncated)"
 }
 
-private const val TOOL_OUTPUT_LIMIT = 2000
-
-/** Escape markdown special characters so user/model text doesn't produce malformed markdown. */
+/** Escape markdown special characters so user/model text doesn't produce malformed markdown.
+ *  Extends the basic set with [ ] ( ) - + ! so user text containing links, list markers, or
+ *  image syntax doesn't render as live Markdown in the exported transcript. */
 private fun escapeMarkdown(text: String): String {
     if (text.isEmpty()) return text
     val sb = StringBuilder(text.length + 16)
     for (c in text) {
         when (c) {
-            '\\', '*', '_', '#', '`', '>' -> sb.append('\\')
+            '\\', '*', '_', '#', '`', '>', '[', ']', '(', ')', '!', '+', '-' -> sb.append('\\')
         }
         sb.append(c)
     }

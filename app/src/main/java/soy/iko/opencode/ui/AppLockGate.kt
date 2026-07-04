@@ -23,6 +23,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -108,6 +109,17 @@ fun AppLockGate(enabled: Boolean, reLockDelaySeconds: Int = 0, content: @Composa
     // would otherwise always hit onAuthenticationError and strand the user on a permanent lockout.
     // A transient authenticator error keeps the lock up (the user retries) rather than unlocking.
     if (appLockPermanentlyUnavailable(context)) {
+        // Surface a one-time warning so the user knows their app-lock setting is on but isn't
+        // actually protecting the app — without this they'd have to discover it by opening
+        // Settings and seeing the "unavailable" state. A Toast (not a snackbar) because the
+        // gate sits above the Scaffold/SnackbarHost; the warning is informational, not an action.
+        LaunchedEffect(Unit) {
+            android.widget.Toast.makeText(
+                context,
+                context.getString(R.string.app_lock_disabled_warning),
+                android.widget.Toast.LENGTH_LONG,
+            ).show()
+        }
         content()
         return
     }

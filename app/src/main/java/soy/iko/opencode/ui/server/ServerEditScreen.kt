@@ -224,6 +224,10 @@ private fun ServerEditForm(
                     } else {
                         Text(stringResource(R.string.invalid_url))
                     }
+                } else if (state.baseUrl.isBlank()) {
+                    // Surface the QR-paste shortcut so a user with a shared server config knows
+                    // they can paste it here instead of scanning an image.
+                    Text(stringResource(R.string.qr_paste_hint))
                 }
             },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done),

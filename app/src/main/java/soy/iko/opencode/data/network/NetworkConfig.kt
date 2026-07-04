@@ -256,6 +256,75 @@ object NetworkConfig {
      *  keeps line lengths comfortable. Applied only above [twoPaneWidthThresholdDp]. */
     const val chatContentMaxWidthDp = 800
 
+    /** Maximum width (dp) for the full-screen chat composer dialog on large screens, so
+     *  the editor doesn't stretch edge-to-edge on a tablet (matching [chatContentMaxWidthDp]'s
+     *  readability rationale for the message list). */
+    const val composerDialogMaxWidthDp = 800
+
+    /** Maximum height (dp) for a modal bottom sheet's list area. Resolved against the screen
+     *  (not the partial sheet) so a sheet that starts fully expanded shows a predictable list
+     *  height regardless of the sheet's drag position. */
+    const val pickerSheetMaxHeightDp = 560
+
+    /** Maximum inline height (dp) for an image attachment in the chat list. A tall image
+     *  caps at this so it doesn't dominate the bubble; tapping opens the fullscreen viewer. */
+    const val inlineImageMaxHeightDp = 320
+
+    /** Minimum inline height (dp) reserved for an image placeholder (loading/error/resolving),
+     *  so the layout doesn't jump when the load completes and the image's intrinsic size is known. */
+    const val inlineImageMinHeightDp = 120
+
+    /** Lines of a code fence rendered before collapsing to a head with a "show more" affordance. */
+    const val collapsedCodeLineThreshold = 200
+
+    /** Lines of a unified diff rendered before collapsing to a head with a "show more" affordance. */
+    const val collapsedDiffLineThreshold = 200
+
+    /** Lines of tool output rendered before collapsing to a head with a "show more" affordance. */
+    const val toolOutputCollapsedLimitChars = 4000
+
+    /** Characters of tool output included in a shared/exported transcript before truncation. */
+    const val exportToolOutputLimitChars = 2000
+
+    /** Maximum zoom factor applied by pinch or double-tap in the fullscreen image viewer. */
+    const val imageViewerMaxZoom = 5f
+
+    /** Zoom factor a double-tap jumps to when starting from 1× in the fullscreen image viewer. */
+    const val imageViewerDoubleTapZoom = 2.5f
+
+    /** Duration (ms) of the animated double-tap zoom transition in the fullscreen image viewer. */
+    const val imageViewerZoomAnimMs = 220
+
+    /** Blink period (ms) of the streaming caret at the tail of a live assistant reply. */
+    const val streamingCaretPeriodMs = 550
+
+    /** Duration (ms) the copy button shows its checkmark confirmation before reverting. */
+    const val copyFeedbackMs = 1200
+
+    /** Gutter width (dp) for each side (old/new) of a unified-diff line-number column. */
+    const val diffGutterWidthDp = 36
+
+    /** Width (dp) of the +/- prefix column in a unified-diff row. */
+    const val diffPrefixWidthDp = 16
+
+    /** Maximum width (dp) of a breadcrumb segment in the file browser (non-last segments). */
+    const val breadcrumbSegmentMaxWidthDp = 120
+
+    /** Maximum width (dp) of the last (current) breadcrumb segment in the file browser. */
+    const val breadcrumbLastSegmentMaxWidthDp = 220
+
+    /** Vertical scroll threshold beyond which the chat "scroll to top" FAB appears. */
+    const val chatScrollToTopFabThreshold = 200
+
+    /** Maximum width (dp) for an attachment chip's filename text before it truncates. */
+    const val attachmentChipNameMaxWidthDp = 120
+
+    /** Maximum height (dp) for the expanded todo-plan checklist in a message bubble. */
+    const val todoPlanMaxHeightDp = 240
+
+    /** Fallback height (dp) for the connection banner when no text is available (e.g. exit fade). */
+    const val connectionBannerFallbackHeightDp = 44
+
     // --- Motion tokens (shared across screens) ---
 
     /** Duration (ms) for horizontal slide push/pop nav transitions. */

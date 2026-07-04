@@ -137,6 +137,7 @@ fun McpScreen(container: AppContainer, onBack: () -> Unit) {
                     is McpViewModel.State.Error -> EmptyState(
                         icon = Icons.Filled.ErrorOutline,
                         title = stringResource(R.string.mcp_failed),
+                        description = s.message,
                         modifier = Modifier.align(Alignment.Center),
                         actionLabel = stringResource(R.string.retry),
                         onAction = { vm.load() },
@@ -182,16 +183,51 @@ fun McpScreen(container: AppContainer, onBack: () -> Unit) {
 private fun McpServerCard(server: McpServerInfo) {
     val remote = server.type.equals("remote", ignoreCase = true)
     val connected = server.connected
-    Card(modifier = Modifier.fillMaxWidth()) {
+    // Build a single merged content description so TalkBack reads the card as one node
+    // (type, name, target, enabled, status) instead of ~5 separate stops.
+    val typeLabel = stringResource(if (remote) R.string.mcp_remote else R.string.mcp_local)
+    val stateLabel = if (server.enabled) {
+        stringResource(R.string.mcp_enabled)
+    } else {
+        stringResource(R.string.mcp_disabled)
+    }
+    val statusLabel = when {
+        server.error != null && connected != true -> server.error
+        connected == true -> stringResource(R.string.mcp_connected)
+        connected == false -> stringResource(R.string.mcp_disconnected)
+        else -> null
+    }
+    val cardDesc = buildString {
+        append(typeLabel).append(", ")
+        append(server.name)
+        server.target?.let { append(", ").append(it) }
+        append(", ").append(stateLabel)
+        statusLabel?.let { append(", ").append(it) }
+    }
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .semantics(mergeDescendants = true) { contentDescription = cardDesc },
+    ) {
         Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
                     if (remote) Icons.Filled.CloudQueue else Icons.Filled.Computer,
-                    contentDescription = null,
+                    contentDescription = typeLabel,
                     tint = if (server.enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Column(modifier = Modifier.weight(1f).padding(start = 12.dp)) {
-                    Text(server.name, style = MaterialTheme.typography.titleSmall)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(server.name, style = MaterialTheme.typography.titleSmall)
+                        // Small type label next to the name so a user can tell local from
+                        // remote without recognizing the cloud/computer icon.
+                        Text(
+                            typeLabel,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(start = 6.dp),
+                        )
+                    }
                     server.target?.let {
                         Text(
                             it,
@@ -202,13 +238,6 @@ private fun McpServerCard(server: McpServerInfo) {
                             fontFamily = FontFamily.Monospace,
                         )
                     }
-                }
-                // Enabled/disabled reflects the *configured* state; the live connected/error chip
-                // below reflects the runtime state when the server exposes /mcp status.
-                val stateLabel = if (server.enabled) {
-                    stringResource(R.string.mcp_enabled)
-                } else {
-                    stringResource(R.string.mcp_disabled)
                 }
                 Text(
                     stateLabel,
@@ -221,49 +250,56 @@ private fun McpServerCard(server: McpServerInfo) {
             // cluttered with "unknown" chips.
             if (connected != null || server.error != null) {
                 Spacer(Modifier.size(10.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (server.error != null && connected != true) {
-                        Icon(
-                            Icons.Filled.Error,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp),
-                            tint = MaterialTheme.colorScheme.error,
-                        )
-                        Text(
-                            server.error,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.error,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.padding(start = 6.dp).weight(1f),
-                        )
-                    } else if (connected == true) {
-                        Icon(
-                            Icons.Filled.CheckCircle,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp),
-                            tint = MaterialTheme.colorScheme.primary,
-                        )
-                        val connectedLabel = server.toolCount?.let {
-                            stringResource(R.string.mcp_connected) + " · " +
-                                stringResource(R.string.mcp_tools_count, it)
-                        } ?: stringResource(R.string.mcp_connected)
-                        Text(
-                            connectedLabel,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.padding(start = 6.dp),
-                        )
-                    } else {
-                        Text(
-                            stringResource(R.string.mcp_disconnected),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(start = 22.dp),
-                        )
-                    }
-                }
+                McpStatusRow(server = server, connected = connected)
             }
+        }
+    }
+}
+
+/** Live status row for an MCP server card: connected (with tool count) / error / disconnected.
+ *  Extracted from McpServerCard to keep its complexity under detekt's threshold. */
+@Composable
+private fun McpStatusRow(server: McpServerInfo, connected: Boolean?) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        if (server.error != null && connected != true) {
+            Icon(
+                Icons.Filled.Error,
+                contentDescription = stringResource(R.string.mcp_failed_state),
+                modifier = Modifier.size(16.dp),
+                tint = MaterialTheme.colorScheme.error,
+            )
+            Text(
+                server.error,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.error,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(start = 6.dp).weight(1f),
+            )
+        } else if (connected == true) {
+            Icon(
+                Icons.Filled.CheckCircle,
+                contentDescription = stringResource(R.string.mcp_connected),
+                modifier = Modifier.size(16.dp),
+                tint = MaterialTheme.colorScheme.primary,
+            )
+            val connectedLabel = server.toolCount?.let {
+                stringResource(R.string.mcp_connected) + " · " +
+                    stringResource(R.string.mcp_tools_count, it)
+            } ?: stringResource(R.string.mcp_connected)
+            Text(
+                connectedLabel,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(start = 6.dp),
+            )
+        } else {
+            Text(
+                stringResource(R.string.mcp_disconnected),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 22.dp),
+            )
         }
     }
 }
@@ -315,7 +351,7 @@ private fun AddMcpDialog(
                 OutlinedTextField(
                     value = target,
                     onValueChange = { target = it },
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                    modifier = Modifier.fillMaxWidth().padding(bottom = if (kind == McpKind.LOCAL) 4.dp else 12.dp),
                     label = { Text(if (kind == McpKind.LOCAL) stringResource(R.string.mcp_add_command) else stringResource(R.string.mcp_add_url)) },
                     placeholder = {
                         Text(if (kind == McpKind.LOCAL) stringResource(R.string.mcp_add_command_hint) else stringResource(R.string.mcp_add_url_hint))
@@ -323,12 +359,24 @@ private fun AddMcpDialog(
                     singleLine = true,
                     enabled = !adding,
                 )
+                // Warn that the local command is split on whitespace and quoted args aren't
+                // supported, so a user entering `"my program" --arg` isn't surprised when it's
+                // split into 4 tokens. Directs them to config.mcp for complex commands.
+                if (kind == McpKind.LOCAL) {
+                    Text(
+                        stringResource(R.string.mcp_command_split_hint),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 12.dp),
+                    )
+                }
                 OutlinedTextField(
                     value = env,
                     onValueChange = { env = it },
                     modifier = Modifier.fillMaxWidth(),
                     label = { Text(stringResource(R.string.mcp_add_env)) },
                     placeholder = { Text(stringResource(R.string.mcp_add_env_hint)) },
+                    supportingText = { Text(stringResource(R.string.mcp_env_hint)) },
                     enabled = !adding,
                     minLines = 2,
                 )

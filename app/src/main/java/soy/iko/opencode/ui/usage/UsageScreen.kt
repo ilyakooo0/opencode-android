@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.ErrorOutline
@@ -49,6 +50,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.invisibleToUser
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -112,6 +114,7 @@ fun UsageScreen(container: AppContainer, onBack: () -> Unit, onOpenSession: (Str
                     is UsageViewModel.State.Error -> EmptyState(
                         icon = Icons.Filled.ErrorOutline,
                         title = stringResource(R.string.usage_failed),
+                        description = s.message,
                         modifier = Modifier.align(Alignment.Center),
                         actionLabel = stringResource(R.string.retry),
                         onAction = { vm.load() },
@@ -121,6 +124,7 @@ fun UsageScreen(container: AppContainer, onBack: () -> Unit, onOpenSession: (Str
                             EmptyState(
                                 icon = Icons.Filled.QueryStats,
                                 title = stringResource(R.string.usage_empty),
+                                description = stringResource(R.string.usage_empty_desc),
                                 modifier = Modifier.align(Alignment.Center),
                             )
                         } else {
@@ -223,12 +227,17 @@ private fun fractionOf(part: Double, total: Double): Float =
 /** A slim horizontal bar showing this row's share of the total cost. */
 @Composable
 private fun CostBar(fraction: Float) {
+    val pct = (fraction * 100).toInt()
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .height(4.dp)
             .clip(MaterialTheme.shapes.small)
-            .background(MaterialTheme.colorScheme.surfaceVariant),
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .semantics {
+                contentDescription = "${pct}% of total"
+                invisibleToUser()
+            },
     ) {
         if (fraction > 0f) {
             Box(
@@ -325,6 +334,17 @@ private fun UsageRow(
                 color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.padding(start = 12.dp),
             )
+            // Chevron signals that tapping a session row navigates to it (mirrors the M3
+            // list-item pattern for navigable rows), so the affordance isn't hidden behind
+            // just the click ripple.
+            if (onClick != null) {
+                Icon(
+                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
         }
         Spacer(Modifier.size(6.dp))
         CostBar(costFraction)

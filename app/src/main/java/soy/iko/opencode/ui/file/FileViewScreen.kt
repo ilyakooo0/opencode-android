@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -276,7 +277,7 @@ fun FileViewScreen(
         androidx.compose.material3.pulltorefresh.PullToRefreshBox(
             isRefreshing = state.loading && state.content != null,
             onRefresh = { vm.reload() },
-            modifier = Modifier.fillMaxSize().padding(padding),
+            modifier = Modifier.fillMaxSize().imePadding().padding(padding),
         ) {
             Box(modifier = Modifier.fillMaxSize()) {
             // Surface SSE connection state so a dropped stream is visible while viewing a file.

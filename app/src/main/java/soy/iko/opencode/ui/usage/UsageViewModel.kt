@@ -18,6 +18,7 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.util.runCatchingCancellable
+import soy.iko.opencode.util.safeExceptionSummary
 
 /**
  * Computes a cross-session [UsageReport] by listing the server's sessions and fetching each
@@ -31,7 +32,9 @@ class UsageViewModel(private val container: AppContainer) : ViewModel() {
     sealed interface State {
         data object Loading : State
         data object Disconnected : State
-        data object Error : State
+        /** Usage failed to load. [message] carries a short, safe summary (e.g. "offline",
+         *  "server error") so the user can tell an auth failure from a transient network drop. */
+        data class Error(val message: String? = null) : State
         data class Ready(val report: UsageReport) : State
     }
 
@@ -90,7 +93,7 @@ class UsageViewModel(private val container: AppContainer) : ViewModel() {
             withContext(Dispatchers.Default) { aggregateUsage(perSession) }
         }
             .onSuccess { _state.value = State.Ready(it) }
-            .onFailure { _state.value = State.Error }
+            .onFailure { _state.value = State.Error(safeExceptionSummary(it)) }
         _refreshing.value = false
     }
 

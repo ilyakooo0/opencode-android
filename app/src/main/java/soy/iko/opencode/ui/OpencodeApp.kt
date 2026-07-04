@@ -26,6 +26,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.navigation.NavType
+import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -455,7 +456,20 @@ fun OpencodeApp(container: AppContainer) {
                 LargeScreenNavRail(
                     currentRoute = currentRoute,
                     connected = connection != null,
-                    onNavigate = { route -> navController.navigate(route) { launchSingleTop = true } },
+                    // Use the standard M3 nav-bar pattern: popUpTo the start destination
+                    // saving state, and restoreState on re-entry, so switching between
+                    // top-level tabs via the rail preserves each tab's scroll/selection
+                    // state and back always exits cleanly instead of popping through
+                    // every sibling tab the user visited.
+                    onNavigate = { route ->
+                        navController.navigate(route) {
+                            popUpTo(navController.graph.findStartDestination().id) {
+                                saveState = true
+                            }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    },
                 )
                 Box(modifier = Modifier.weight(1f).fillMaxHeight()) { navHost() }
             }

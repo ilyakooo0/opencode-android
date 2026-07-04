@@ -480,6 +480,7 @@
     <string name="usage_filter_sessions">Filter sessions</string>
     <string name="usage_no_sessions">No matching sessions</string>
     <string name="usage_empty">No usage recorded yet</string>
+    <string name="usage_empty_desc">Usage appears once your assistant has sent billable messages.</string>
     <plurals name="usage_messages_count">
         <item quantity="one">%1$d assistant message</item>
         <item quantity="other">%1$d assistant messages</item>
@@ -701,4 +702,37 @@
     <string name="revert_diff_header">Changes from revert</string>
     <string name="agent_error_label">The agent reported an error</string>
     <string name="custom_path_required">Enter a path to create a session here.</string>
+
+    <!-- UI/UX batch 6: picker sheets, diff, markdown images, discoverability, errors, usage, mcp -->
+    <string name="loading_models">Loading models…</string>
+    <string name="loading_agents">Loading agents…</string>
+    <string name="loading_commands">Loading commands…</string>
+    <string name="show_full_error">Show full error</string>
+    <string name="hide_full_error">Hide full error</string>
+    <string name="discard_queued_title">Discard queued messages?</string>
+    <string name="discard_queued_text">%1$d queued message(s) will be discarded. This cannot be undone.</string>
+    <string name="compose_editor_title">Compose message</string>
+    <string name="always_allow_scope">Applies to this tool and pattern in every session.</string>
+    <string name="mcp_local">Local</string>
+    <string name="mcp_remote">Remote</string>
+    <string name="mcp_command_split_hint">Split on whitespace; quoted args aren\'t supported. Edit config.mcp for complex commands.</string>
+    <string name="mcp_env_hint">One KEY=VALUE per line; lines without = are skipped.</string>
+    <string name="usage_range_24h">24 hours</string>
+    <string name="usage_range_7d">7 days</string>
+    <string name="usage_range_30d">30 days</string>
+    <string name="usage_range_all">All time</string>
+    <string name="usage_open_session">Open session</string>
+    <string name="usage_cost_fraction">%1$d%% of total</string>
+    <string name="app_lock_disabled_warning">App lock is on but no biometric or device credential is available — the app isn\'t locked.</string>
+    <string name="qr_paste_hint">Tip: paste a shared server config here to import it.</string>
+    <string name="server_url_clear">Clear URL</string>
+    <string name="long_press_for_timestamp">Long-press for the full timestamp</string>
+    <string name="search_always_available">Search</string>
+    <string name="streaming_caret_label">streaming</string>
+    <string name="code_block_label">Code block, %1$s, %2$d lines</string>
+    <string name="code_block_plain">plain</string>
+    <string name="diff_added_line">Line %1$d added: %2$s</string>
+    <string name="diff_removed_line">Line %1$d removed: %2$s</string>
+    <string name="diff_context_line">Line %1$d: %2$s</string>
+    <string name="tts_stopped_unexpectedly">Read-aloud stopped unexpectedly</string>
 </resources>

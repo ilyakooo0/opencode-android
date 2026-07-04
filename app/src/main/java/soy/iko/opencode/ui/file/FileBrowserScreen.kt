@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -26,6 +27,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Image
@@ -94,6 +96,7 @@ import soy.iko.opencode.R
 import soy.iko.opencode.ui.components.AppTopBar
 import soy.iko.opencode.ui.components.ConnectionBannerFor
 import soy.iko.opencode.ui.components.EmptyState
+import soy.iko.opencode.ui.components.reducedMotionAnimateItem
 import soy.iko.opencode.ui.components.copyToClipboard
 import soy.iko.opencode.ui.components.relativeTime
 import soy.iko.opencode.ui.vmFactory
@@ -123,7 +126,7 @@ fun FileBrowserScreen(
         },
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
-        Column(modifier = Modifier.fillMaxSize().padding(padding)) {
+        Column(modifier = Modifier.fillMaxSize().imePadding().padding(padding)) {
             // Surface SSE connection state so a dropped stream is visible while browsing
             // files, not just on the chat/session screens.
             Box(modifier = Modifier.fillMaxWidth()) {
@@ -193,13 +196,31 @@ fun FileBrowserScreen(
                         // Full-screen spinner only for the initial directory load. An in-flight
                         // search keeps the previous results visible (a slim top bar below shows the
                         // progress) instead of blanking the list behind a spinner on every keystroke.
-                        state.loading -> CircularProgressIndicator(
-                            Modifier.align(Alignment.Center).semantics { contentDescription = loadingLabel },
-                        )
+                        state.loading -> Column(
+                            modifier = Modifier.align(Alignment.Center).padding(24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            CircularProgressIndicator(
+                                Modifier.semantics { contentDescription = loadingLabel },
+                            )
+                            Text(
+                                stringResource(R.string.loading),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 8.dp),
+                            )
+                        }
                         state.error != null -> Column(
                             modifier = Modifier.align(Alignment.Center).padding(24.dp),
                             horizontalAlignment = Alignment.CenterHorizontally,
                         ) {
+                            Icon(
+                                Icons.Filled.ErrorOutline,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(56.dp),
+                            )
+                            androidx.compose.foundation.layout.Spacer(Modifier.size(12.dp))
                             Text(
                                 state.error ?: "",
                                 color = MaterialTheme.colorScheme.error,
@@ -322,7 +343,7 @@ private fun SearchResults(results: List<String>, onOpenFile: (String) -> Unit) {
                 onCopyPath = {
                     copyToClipboard(context, context.getString(R.string.clip_label_path), path)
                 },
-                modifier = Modifier.animateItem(),
+                modifier = reducedMotionAnimateItem(),
             )
             HorizontalDivider()
         }
@@ -377,6 +398,7 @@ private fun TextResults(results: List<FindMatch>, emptyMessage: String?, onOpen:
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .defaultMinSize(minHeight = 48.dp)
                     .clickable(role = Role.Button) { onOpen(match.filePath, match.lineNumber) }
                     .padding(horizontal = 16.dp, vertical = 10.dp),
             ) {
@@ -448,6 +470,7 @@ private fun SymbolResults(results: List<SymbolResult>, emptyMessage: String?, on
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .defaultMinSize(minHeight = 48.dp)
                     .clickable(role = Role.Button) { onOpen(symbol.filePath, symbol.displayLine) }
                     .padding(horizontal = 16.dp, vertical = 10.dp),
             ) {
@@ -633,7 +656,7 @@ private fun DirectoryListing(
                 size = node.size,
                 mtime = node.mtime,
                 status = state.statusMap[node.path],
-                modifier = Modifier.animateItem(),
+                modifier = reducedMotionAnimateItem(),
             )
             HorizontalDivider()
         }

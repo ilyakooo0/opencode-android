@@ -10,6 +10,8 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.animateContentSize
+import androidx.compose.foundation.lazy.LazyItemScope
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -17,6 +19,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -96,4 +99,33 @@ fun <T> rememberMotionTween(durationMs: Int): AnimationSpec<T> {
     return remember(reduced, durationMs) {
         if (reduced) snap() else tween(durationMs)
     }
+}
+
+/**
+ * [LazyItemScope.animateItem] gated by [LocalReducedMotion]: under reduced motion the
+ * modifier is a no-op so item insert/remove/reorder is instant, otherwise the standard
+ * placement animation runs. The chat list already applied this pattern inline; this helper
+ * centralizes it so every lazy list (sessions, servers, files, diagnostics) honors the
+ * same accessibility preference without each repeating the branch.
+ *
+ * Returns a [Modifier] (not a `Modifier` extension) because `animateItem` is a `Modifier`
+ * extension scoped to [LazyItemScope]; call sites use `modifier = reducedMotionAnimateItem()`
+ * inside an `items { ... }` block where `this` is the `LazyItemScope`.
+ */
+@Composable
+fun LazyItemScope.reducedMotionAnimateItem(): Modifier {
+    val reduced = LocalReducedMotion.current
+    return if (reduced) Modifier else Modifier.animateItem()
+}
+
+/**
+ * [Modifier.animateContentSize] gated by [LocalReducedMotion]: under reduced motion the
+ * size change is instant (no animated transition), otherwise the standard spring/tween
+ * size animation runs. Used by collapsible code/diff blocks so an expand/collapse isn't
+ * a jarring jump for sighted users while remaining instant under reduced motion.
+ */
+@Composable
+fun Modifier.reducedMotionAnimateContentSize(): Modifier {
+    val reduced = LocalReducedMotion.current
+    return if (reduced) this else this.animateContentSize()
 }

@@ -2,8 +2,11 @@ package soy.iko.opencode.ui.chat
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -23,11 +26,13 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -41,12 +46,12 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.ui.platform.LocalConfiguration
+import kotlinx.coroutines.launch
 import soy.iko.opencode.data.model.Command
 import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.R
@@ -68,19 +73,28 @@ fun CommandPickerSheet(
     // is open. Re-resolve the full Command from the current list for rendering.
     var pendingCommandName by rememberSaveable { mutableStateOf<String?>(null) }
     val pendingCommand = pendingCommandName?.let { name -> commands.firstOrNull { it.name == name } }
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    // Hoist SheetState + skipPartiallyExpanded (see AgentPickerSheet for the full rationale).
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val scope = rememberCoroutineScope()
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         Text(
             stringResource(R.string.commands),
             style = MaterialTheme.typography.titleMedium,
             modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 8.dp),
         )
         if (loading) {
-            val loadingLabel = stringResource(R.string.loading)
-            Box(
-                modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
-                contentAlignment = Alignment.Center,
+            val loadingLabel = stringResource(R.string.loading_commands)
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp).imePadding(),
+                horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 CircularProgressIndicator(Modifier.semantics { contentDescription = loadingLabel })
+                Text(
+                    stringResource(R.string.loading_commands),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
             }
         } else if (error && commands.isEmpty()) {
             Column(
@@ -130,10 +144,12 @@ fun CommandPickerSheet(
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 keyboardActions = KeyboardActions(onSearch = { keyboardController?.hide() }),
             )
-            val filtered = remember(commands, query) {
+            // Dedupe the source list once, then filter the distinct list.
+            val distinct = remember(commands) { commands.distinctBy { it.name } }
+            val filtered = remember(distinct, query) {
                 val q = query.trim()
-                if (q.isEmpty()) commands
-                else commands.filter {
+                if (q.isEmpty()) distinct
+                else distinct.filter {
                     it.name.contains(q, ignoreCase = true) ||
                         it.displayDescription.contains(q, ignoreCase = true)
                 }
@@ -146,27 +162,33 @@ fun CommandPickerSheet(
                     modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp),
                 )
             } else {
-                // Responsive height: half the viewport rather than a hardcoded 420dp cap.
-                LazyColumn(modifier = Modifier.fillMaxHeight(0.5f)) {
-                    // distinctBy the name so duplicate command names from the server can't
-                    // crash the list with LazyColumn's "Key was already used".
-                    items(filtered.distinctBy { it.name }, key = { it.name }) { cmd ->
+                LazyColumn(
+                    modifier = Modifier
+                        .heightIn(max = NetworkConfig.pickerSheetMaxHeightDp.dp)
+                        .imePadding()
+                        .navigationBarsPadding(),
+                ) {
+                    items(filtered, key = { it.name }) { cmd ->
+                        val destructive = isDestructiveCommand(cmd.name)
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable(role = Role.Button) {
                                     haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    if (isDestructiveCommand(cmd.name)) {
+                                    if (destructive) {
                                         pendingCommandName = cmd.name
                                     } else {
+                                        scope.launch { sheetState.hide() }.invokeOnCompletion { onDismiss() }
                                         onSelect(cmd)
-                                        onDismiss()
                                     }
+                                }
+                                .semantics {
+                                    if (destructive) stateDescription = "destructive"
                                 }
                                 .padding(horizontal = 24.dp, vertical = 12.dp),
                         ) {
-                            androidx.compose.foundation.layout.Row(
-                                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Icon(Icons.AutoMirrored.Filled.PlaylistPlay, contentDescription = null)
                                 Text(
@@ -200,8 +222,8 @@ fun CommandPickerSheet(
             confirmButton = {
                 TextButton(onClick = {
                     pendingCommandName = null
+                    scope.launch { sheetState.hide() }.invokeOnCompletion { onDismiss() }
                     onSelect(cmd)
-                    onDismiss()
                 }) { Text(stringResource(R.string.run)) }
             },
             dismissButton = {
@@ -219,5 +241,5 @@ fun CommandPickerSheet(
 private fun isDestructiveCommand(name: String): Boolean {
     val n = name.lowercase()
     return n in setOf("clear", "compact", "delete", "reset", "remove", "wipe", "drop", "purge") ||
-        n.startsWith("clear") || n.startsWith("compact") || n.startsWith("reset")
+        n.startsWith("clear-") || n.startsWith("compact-") || n.startsWith("reset-")
 }

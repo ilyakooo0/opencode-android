@@ -5,12 +5,16 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -43,6 +47,7 @@ import coil.compose.SubcomposeAsyncImage
 import coil.request.ImageRequest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlin.math.absoluteValue
 import androidx.compose.animation.core.Animatable
 import kotlinx.coroutines.withContext
 import androidx.compose.material.icons.Icons
@@ -53,6 +58,7 @@ import soy.iko.opencode.data.model.FilePart
 import soy.iko.opencode.data.model.ServerProfile
 import soy.iko.opencode.data.model.sourcePath
 import soy.iko.opencode.data.network.HttpClientFactory
+import soy.iko.opencode.data.network.NetworkConfig
 
 /**
  * Carries the bits needed to load an image off the opencode server: the base URL (for
@@ -208,14 +214,14 @@ fun RemoteImage(part: FilePart, ctx: ImageLoadContext, modifier: Modifier = Modi
         contentDescription = part.filename ?: stringResource(R.string.image),
         contentScale = ContentScale.FillWidth,
         modifier = modifier
-            .heightIn(max = 320.dp)
+            .heightIn(max = NetworkConfig.inlineImageMaxHeightDp.dp)
             .clip(MaterialTheme.shapes.small)
             // Tap to open a fullscreen zoomable viewer so the user can inspect details
             // without the inline 320dp height cap.
             .clickable(role = Role.Button) { showFullscreen = true },
         loading = {
             Box(
-                modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp),
+                modifier = Modifier.fillMaxWidth().heightIn(min = NetworkConfig.inlineImageMinHeightDp.dp),
                 contentAlignment = Alignment.Center,
             ) {
                 val loadingLabel = stringResource(R.string.loading)
@@ -254,7 +260,13 @@ private fun FullscreenImageViewer(
     // Double-tap zoom tween, collapsed to an instant snap under reduced motion. Resolved in
     // the composable body (not inside the pointerInput coroutine) since it reads the
     // composition's LocalReducedMotion.
-    val zoomSpec = rememberMotionTween<Float>(IMAGE_ZOOM_ANIM_MS)
+    val zoomSpec = rememberMotionTween<Float>(NetworkConfig.imageViewerZoomAnimMs)
+    // Swipe-to-dismiss: track the vertical drag offset. When the image is at 1× (not zoomed
+    // or panned) and the user drags down beyond a threshold, dismiss the viewer — a common
+    // gesture for photo viewers. The drag also fades the background so the dismiss reads as
+    // a continuous motion rather than a snap.
+    var dragOffsetY by remember { mutableFloatStateOf(0f) }
+    val dismissThreshold = 200f
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
@@ -262,12 +274,12 @@ private fun FullscreenImageViewer(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(androidx.compose.ui.graphics.Color.Black)
+                .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = (1f - (dragOffsetY.absoluteValue / dismissThreshold)).coerceIn(0f, 1f)))
                 .pointerInput(Unit) {
                     detectTransformGestures { _, pan, zoom, _ ->
                         // Clamp the zoom so the image can't be scaled down below 1× (which would
                         // leave empty letterbox) or blown up so far it becomes a handful of pixels.
-                        val newScale = (scale.value * zoom).coerceIn(1f, MAX_IMAGE_ZOOM)
+                        val newScale = (scale.value * zoom).coerceIn(1f, NetworkConfig.imageViewerMaxZoom)
                         scope.launch { scale.snapTo(newScale) }
                         if (newScale <= 1f) {
                             // Returning to 1× recenters so a prior pan doesn't leave the image
@@ -278,6 +290,28 @@ private fun FullscreenImageViewer(
                             offsetX += pan.x
                             offsetY += pan.y
                         }
+                    }
+                }
+                // Swipe-to-dismiss: only when the image is at 1× (not zoomed/panned), a
+                // vertical drag accumulates an offset; crossing the threshold dismisses.
+                .pointerInput(scale.value) {
+                    if (scale.value <= 1.001f) {
+                        detectVerticalDragGestures(
+                            onDragEnd = {
+                                if (dragOffsetY.absoluteValue >= dismissThreshold) {
+                                    onDismiss()
+                                } else {
+                                    // Animate the snap-back to rest. A simple reset; the user's
+                                    // finger is already lifting so a full spring isn't needed.
+                                    dragOffsetY = 0f
+                                }
+                            },
+                            onVerticalDrag = { _, dragAmount ->
+                                // Only accumulate downward drags (positive Y) for dismiss, so an
+                                // upward swipe doesn't accidentally trigger it.
+                                if (dragAmount > 0) dragOffsetY += dragAmount
+                            },
+                        )
                     }
                 }
                 // Tap handling on the same surface: a double-tap toggles zoom (animated, with a
@@ -292,7 +326,7 @@ private fun FullscreenImageViewer(
                                     offsetY = 0f
                                     scale.animateTo(1f, zoomSpec)
                                 } else {
-                                    scale.animateTo(DOUBLE_TAP_ZOOM, zoomSpec)
+                                    scale.animateTo(NetworkConfig.imageViewerDoubleTapZoom, zoomSpec)
                                 }
                             }
                         },
@@ -311,13 +345,19 @@ private fun FullscreenImageViewer(
                         scaleX = scale.value,
                         scaleY = scale.value,
                         translationX = offsetX,
-                        translationY = offsetY,
+                        // Apply the swipe-drag offset on top of any pan offset so the image
+                        // follows the finger during a dismiss swipe.
+                        translationY = offsetY + dragOffsetY,
                     ),
             )
-            // Close button in the top corner.
+            // Close button in the top corner, inset below the status bar so it doesn't sit
+            // under the notch / status bar overlay on edge-to-edge devices.
             androidx.compose.material3.IconButton(
                 onClick = onDismiss,
-                modifier = Modifier.align(Alignment.TopEnd).padding(16.dp),
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .windowInsetsPadding(WindowInsets.statusBars)
+                    .padding(end = 8.dp),
             ) {
                 Icon(
                     Icons.Filled.Close,
@@ -329,13 +369,6 @@ private fun FullscreenImageViewer(
     }
 }
 
-/** Maximum zoom factor applied by pinch or double-tap in the fullscreen image viewer. */
-private const val MAX_IMAGE_ZOOM = 5f
-/** Zoom factor a double-tap jumps to when starting from 1×. */
-private const val DOUBLE_TAP_ZOOM = 2.5f
-/** Duration (ms) of the animated double-tap zoom transition. */
-private const val IMAGE_ZOOM_ANIM_MS = 220
-
 /** Error slot for [RemoteImage]: a broken-image icon plus a "Tap to retry" caption, the whole box
  *  clickable so a failed load can be re-issued instead of stranding a permanent broken icon. */
 @Composable
@@ -344,7 +377,7 @@ private fun ImageRetry(onRetry: () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 120.dp)
+            .heightIn(min = NetworkConfig.inlineImageMinHeightDp.dp)
             .clickable(role = Role.Button, onClick = onRetry),
         contentAlignment = Alignment.Center,
     ) {
@@ -369,7 +402,7 @@ private val ImageResolving = Any()
 @Composable
 private fun ImageStatusBox(content: @Composable () -> Unit) {
     Box(
-        modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp),
+        modifier = Modifier.fillMaxWidth().heightIn(min = NetworkConfig.inlineImageMinHeightDp.dp),
         contentAlignment = Alignment.Center,
     ) { content() }
 }

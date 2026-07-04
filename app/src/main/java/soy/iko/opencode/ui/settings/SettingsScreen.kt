@@ -273,6 +273,7 @@ fun SettingsScreen(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .defaultMinSize(minHeight = 48.dp)
                             .toggleable(
                                 value = s.dynamicColor,
                                 enabled = !amoledActive,
@@ -310,6 +311,7 @@ fun SettingsScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .defaultMinSize(minHeight = 48.dp)
                         .toggleable(
                             value = s.sendOnEnter,
                             onValueChange = { scope.launch { runCatchingCancellable { container.settingsStore.setSendOnEnter(it) } } },
@@ -341,6 +343,7 @@ fun SettingsScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .defaultMinSize(minHeight = 48.dp)
                         .toggleable(
                             value = s.appLock,
                             enabled = appLockToggleable,
@@ -397,6 +400,7 @@ fun SettingsScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .defaultMinSize(minHeight = 48.dp)
                     .toggleable(
                         value = codeWrap,
                         onValueChange = { scope.launch { runCatchingCancellable { container.settingsStore.setCodeWrap(it) } } },
@@ -463,6 +467,7 @@ fun SettingsScreen(
                             TextButton(
                                 onClick = { container.activeConnection.value?.events?.triggerReconnect() },
                                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp),
+                                modifier = Modifier.defaultMinSize(minHeight = 48.dp),
                             ) { Text(stringResource(R.string.retry_now)) }
                         }
                     }
@@ -532,6 +537,7 @@ fun SettingsScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .defaultMinSize(minHeight = 48.dp)
                     .toggleable(
                         value = includePasswords,
                         onValueChange = { includePasswords = it },
@@ -662,6 +668,13 @@ fun SettingsScreen(
                                 actionLabel = restartLabel,
                             )
                             if (result == SnackbarResult.ActionPerformed) {
+                                // Shut down the container (cancels the app scope, closes the
+                                // active connection, flushes stores) before the hard kill so
+                                // in-flight work is cleaned up rather than abruptly severed.
+                                // The JVM shutdown hook in OpencodeApp would catch this, but
+                                // calling shutdown explicitly is cleaner and avoids relying on
+                                // the hook's ordering under a kill.
+                                runCatchingCancellable { container.shutdown() }
                                 android.os.Process.killProcess(android.os.Process.myPid())
                             }
                         } else {
@@ -805,6 +818,7 @@ private fun ThemeRow(mode: ThemeMode, selected: Boolean, usingSystemColors: Bool
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .defaultMinSize(minHeight = 48.dp)
             .selectable(selected = selected, onClick = onSelect)
             .padding(vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),

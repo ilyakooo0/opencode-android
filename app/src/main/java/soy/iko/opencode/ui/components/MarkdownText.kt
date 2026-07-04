@@ -61,8 +61,10 @@ import com.mikepenz.markdown.compose.components.MarkdownComponentModel
 import com.mikepenz.markdown.compose.components.markdownComponents
 import com.mikepenz.markdown.m3.Markdown
 import org.intellij.markdown.MarkdownElementTypes
+import org.intellij.markdown.ast.ASTNode
 import org.intellij.markdown.ast.getTextInNode
 import soy.iko.opencode.R
+import soy.iko.opencode.data.model.FilePart
 import soy.iko.opencode.data.network.NetworkConfig
 
 /**
@@ -98,10 +100,11 @@ fun MarkdownText(
     modifier: Modifier = Modifier,
     @Suppress("UNUSED_PARAMETER") style: TextStyle = MaterialTheme.typography.bodyLarge,
     streaming: Boolean = false,
+    imageContext: ImageLoadContext? = null,
 ) {
     val scale = LocalChatTextScale.current
     if (scale == 1f) {
-        MarkdownBody(markdown, modifier, streaming)
+        MarkdownBody(markdown, modifier, streaming, imageContext)
     } else {
         // Scale the entire markdown subtree (headings, lists, code, body) from the user's
         // chat text-size preference by nesting a MaterialTheme with a scaled typography:
@@ -112,7 +115,7 @@ fun MarkdownText(
         val base = MaterialTheme.typography
         val scaled = remember(scale, base) { base.scaledBy(scale) }
         MaterialTheme(typography = scaled) {
-            MarkdownBody(markdown, modifier, streaming)
+            MarkdownBody(markdown, modifier, streaming, imageContext)
         }
     }
 }
@@ -122,12 +125,26 @@ private fun MarkdownBody(
     markdown: String,
     modifier: Modifier = Modifier,
     streaming: Boolean = false,
+    imageContext: ImageLoadContext? = null,
 ) {
-    val components = remember {
+    // Provide a custom image component when an ImageLoadContext is available so markdown
+    // image tags (![alt](url)) route through RemoteImage (Basic auth + same-origin guard).
+    // Without this the library's default image loader fetches with no auth and fails on
+    // server-relative URLs. When no context is available, fall back to the library default
+    // by not overriding the image component.
+    val components = if (imageContext != null) {
         markdownComponents(
             codeFence = { CodeWithCopy(it) },
             codeBlock = { CodeWithCopy(it) },
+            image = { MarkdownImage(it, imageContext) },
         )
+    } else {
+        remember {
+            markdownComponents(
+                codeFence = { CodeWithCopy(it) },
+                codeBlock = { CodeWithCopy(it) },
+            )
+        }
     }
     if (streaming) {
         // Bridge the markdown parameter into snapshot state so snapshotFlow can observe it.
@@ -214,14 +231,14 @@ private fun CodeWithCopy(model: MarkdownComponentModel) {
     // once, memoized so a recomposition that doesn't change `code` (e.g. a wrap/expand flip)
     // doesn't re-walk it.
     val lineCount = remember(code) { code.count { it == '\n' } + 1 }
-    val canCollapse = lineCount > COLLAPSED_CODE_LINES
+    val canCollapse = lineCount > NetworkConfig.collapsedCodeLineThreshold
     // Key expand state on the content so a growing (streaming) block re-seeds it. Collapsing
     // primarily benefits completed messages; a streaming block that crosses the cap may snap
     // to collapsed on the token that crosses it, which is acceptable (the head stays visible).
     var expanded by rememberSaveable(code) { mutableStateOf(false) }
     val displayCode = if (canCollapse && !expanded) {
         remember(code, expanded) {
-            code.lineSequence().take(COLLAPSED_CODE_LINES).joinToString("\n")
+            code.lineSequence().take(NetworkConfig.collapsedCodeLineThreshold).joinToString("\n")
         }
     } else {
         code
@@ -248,7 +265,7 @@ private fun CodeWithCopy(model: MarkdownComponentModel) {
     val haptics = LocalHapticFeedback.current
     LaunchedEffect(copied) {
         if (copied) {
-            delay(1200)
+            delay(NetworkConfig.copyFeedbackMs.toLong())
             copied = false
         }
     }
@@ -271,7 +288,7 @@ private fun CodeWithCopy(model: MarkdownComponentModel) {
                 modifier = Modifier.weight(1f),
             )
             if (canCollapse) {
-                val moreLines = lineCount - COLLAPSED_CODE_LINES
+                val moreLines = lineCount - NetworkConfig.collapsedCodeLineThreshold
                 IconButton(onClick = { expanded = !expanded }) {
                     Icon(
                         if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
@@ -328,7 +345,7 @@ private fun CodeWithCopy(model: MarkdownComponentModel) {
             )
         }
         if (canCollapse && !expanded) {
-            val hidden = lineCount - COLLAPSED_CODE_LINES
+            val hidden = lineCount - NetworkConfig.collapsedCodeLineThreshold
             TextButton(
                 onClick = { expanded = true },
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp),
@@ -342,8 +359,56 @@ private fun CodeWithCopy(model: MarkdownComponentModel) {
     }
 }
 
-/** Max lines a code fence renders before collapsing to a head with a "show more" affordance. */
-private const val COLLAPSED_CODE_LINES = 200
+/**
+ * Custom markdown image component that routes `![alt](url)` through [RemoteImage] so
+ * server-relative image URLs get the same Basic auth + same-origin handling as image
+ * attachments. The library's default image loader has no notion of the opencode server's
+ * auth, so without this a `![diagram](/media/foo.png)` in an assistant reply would fail
+ * to load. When the URL can't be extracted or doesn't resolve to a loadable model, the
+ * alt text is shown as a muted placeholder so the image isn't silently invisible.
+ */
+@Composable
+private fun MarkdownImage(model: MarkdownComponentModel, ctx: ImageLoadContext) {
+    val node = model.node
+    val content = model.content
+    // Extract the URL from the IMAGE node's LINK_DESTINATION child, and the alt text from
+    // the LINK_TEXT child. The AST structure for `![alt](url)` is:
+    //   IMAGE -> [LINK_LABEL, LPAREN, LINK_DESTINATION, RPAREN]  (and LINK_TEXT nested)
+    val (url, alt) = remember(node, content) { extractImageUrlAndAlt(node, content) }
+    if (url.isNullOrBlank()) {
+        // No URL — show the alt text (or a placeholder) so the image isn't invisible.
+        Text(
+            alt.ifBlank { "[$alt]" }.ifBlank { "[image]" },
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(vertical = 4.dp),
+        )
+        return
+    }
+    // Build a FilePart so RemoteImage's existing resolution (data URI, same-origin, auth)
+    // handles the URL. The part carries the URL and alt text as the filename.
+    val part = FilePart(url = url, filename = alt.ifBlank { null })
+    RemoteImage(part = part, ctx = ctx, modifier = Modifier.fillMaxWidth())
+}
+
+/** Extract the URL and alt text from a markdown IMAGE AST node. Returns (url, alt) where
+ *  url may be null when no LINK_DESTINATION child is present. */
+private fun extractImageUrlAndAlt(node: ASTNode, content: String): Pair<String?, String> {
+    var url: String? = null
+    var alt = ""
+    for (child in node.children) {
+        when (child.type) {
+            MarkdownElementTypes.LINK_DESTINATION -> {
+                url = child.getTextInNode(content).toString().trim().ifBlank { null }
+            }
+            MarkdownElementTypes.LINK_TEXT -> {
+                alt = child.getTextInNode(content).toString()
+                    .removePrefix("[").removeSuffix("]").trim()
+            }
+        }
+    }
+    return url to alt
+}
 
 /**
  * A small blinking caret shown at the tail of a streaming assistant reply for a "live"
@@ -356,7 +421,7 @@ private fun StreamingCaret() {
     val alpha by transition.animateFloat(
         initialValue = 0.2f,
         targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(550), RepeatMode.Reverse),
+        animationSpec = infiniteRepeatable(tween(NetworkConfig.streamingCaretPeriodMs), RepeatMode.Reverse),
         label = "caretAlpha",
     )
     Text(

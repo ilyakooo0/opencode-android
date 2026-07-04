@@ -84,6 +84,7 @@ import soy.iko.opencode.util.runCatchingCancellable
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
 import soy.iko.opencode.ui.components.EmptyState
+import soy.iko.opencode.ui.components.reducedMotionAnimateItem
 import soy.iko.opencode.ui.components.rememberRelativeTime
 import soy.iko.opencode.ui.vmFactory
 
@@ -324,7 +325,7 @@ fun ServerListScreen(
                                 Card(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .animateItem()
+                                        .then(reducedMotionAnimateItem())
                                         .testTag("server_card")
                                         .clickable(enabled = connectingId == null, role = Role.Button) {
                                             haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
@@ -357,7 +358,7 @@ fun ServerListScreen(
                             SwipeToDismissBox(
                                 state = swipeState,
                                 enableDismissFromStartToEnd = false,
-                                modifier = Modifier.animateItem(),
+                                modifier = reducedMotionAnimateItem(),
                                 backgroundContent = {
                                     Box(
                                         modifier = Modifier

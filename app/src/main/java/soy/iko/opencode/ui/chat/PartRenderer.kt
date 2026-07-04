@@ -28,6 +28,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -63,6 +64,7 @@ import soy.iko.opencode.data.model.ToolCompleted
 import soy.iko.opencode.data.model.ToolError
 import soy.iko.opencode.data.model.ToolPart
 import soy.iko.opencode.data.model.ToolPending
+import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.data.model.ToolRunning
 import soy.iko.opencode.data.model.ToolState
 import soy.iko.opencode.data.model.ToolUnknown
@@ -82,7 +84,7 @@ import soy.iko.opencode.ui.components.rememberVisibilityTransitions
 import soy.iko.opencode.ui.components.showCopyToast
 import soy.iko.opencode.R
 
-private const val COLLAPSED_LIMIT = 4000
+private val COLLAPSED_LIMIT get() = NetworkConfig.toolOutputCollapsedLimitChars
 
 // Pretty-printer for tool inputs. Separate from OpencodeJson (which is tuned for
 // resilient decoding) so this stays human-readable; constructed lazily and memoized.
@@ -168,7 +170,7 @@ fun PartView(
                     )
                 }
             }
-            MarkdownText(part.text, modifier = modifier, streaming = isRunning)
+            MarkdownText(part.text, modifier = modifier, streaming = isRunning, imageContext = imageContext)
         }
         is ReasoningPart -> ReasoningBlock(part.text, streaming = isRunning, keyId = part.id, modifier = modifier)
         is ToolPart -> ToolCallView(part, modifier)
@@ -463,6 +465,7 @@ private fun ToolCallView(part: ToolPart, modifier: Modifier) {
                     copyToClipboard(context, context.getString(R.string.clip_label_output), detail)
                 },
                 diffSaveKey = part.id,
+                isError = part.state is ToolError,
             )
         }
     }
@@ -487,6 +490,7 @@ private fun CollapsibleDetail(
     collapsedState: String = "",
     onCopy: (() -> Unit)? = null,
     diffSaveKey: String? = null,
+    isError: Boolean = false,
 ) {
     Column(modifier = Modifier.fillMaxWidth().padding(top = 6.dp)) {
         if (label != null) {
@@ -521,14 +525,27 @@ private fun CollapsibleDetail(
             // a single line of stdout) instead of only copy-all via the button below.
             // Horizontal scroll + softWrap=false so wide stdout / tables scroll instead of
             // soft-wrapping into an unreadable ragged block (mirrors the file viewer).
-            SelectionContainer {
-                Text(
-                    detail,
-                    style = MaterialTheme.typography.bodySmall,
-                    fontFamily = FontFamily.Monospace,
-                    softWrap = false,
-                    modifier = Modifier.horizontalScroll(rememberScrollState()),
-                )
+            // Error output is tinted with errorContainer so a glance conveys the tool failed,
+            // mirroring AgentErrorNote's styling for consistency.
+            val bgColor = if (isError) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.surfaceVariant
+            val textColor = if (isError) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSurface
+            Surface(
+                color = bgColor,
+                shape = MaterialTheme.shapes.small,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                SelectionContainer {
+                    Text(
+                        detail,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace,
+                        color = textColor,
+                        softWrap = false,
+                        modifier = Modifier
+                            .padding(8.dp)
+                            .horizontalScroll(rememberScrollState()),
+                    )
+                }
             }
         }
         if (onToggleExpand != null) {

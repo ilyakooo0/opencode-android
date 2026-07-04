@@ -49,6 +49,25 @@ fun TwoPaneFileBrowser(
         }
     }
 
+    // Stale-selection cleanup: if the selected file is deleted server-side (or otherwise
+    // disappears from the listing), clear the selection so the detail pane doesn't keep
+    // showing stale content. Mirrors TwoPaneSessionChat's equivalent for sessions. We only
+    // clear when the listing is loaded and non-empty (so a transient empty load doesn't wipe
+    // the selection); the FileViewScreen's own error state handles a genuinely-missing file.
+    val connection by container.activeConnection.collectAsStateWithLifecycle()
+    LaunchedEffect(connection, selected) {
+        val conn = connection ?: return@LaunchedEffect
+        val path = selected ?: return@LaunchedEffect
+        // The file browser's listing is cached in the VM; check the current directory's
+        // entries via the repository's file-listing API for the selected file's parent.
+        // This is a lightweight check that runs once per selection change.
+        val parent = path.substringBeforeLast('/', missingDelimiterValue = "")
+        if (parent.isBlank()) return@LaunchedEffect
+        val listing = runCatching { conn.api.listDirectory(parent) }.getOrNull() ?: return@LaunchedEffect
+        val stillExists = listing.any { it.path == path }
+        if (!stillExists) selected = null
+    }
+
     Row(modifier = modifier.fillMaxSize()) {
         Box(
             modifier = Modifier

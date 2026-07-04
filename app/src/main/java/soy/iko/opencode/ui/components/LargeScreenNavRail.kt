@@ -57,10 +57,13 @@ fun LargeScreenNavRail(
 ) {
     NavigationRail(modifier = modifier.fillMaxHeight()) {
         RAIL_DESTINATIONS.forEach { dest ->
-            // Match exact top-level routes. Sub-routes (chat/{id}, file_view) don't highlight any
-            // rail item — the rail tracks top-level position, not the detail back stack.
+            // Match exact top-level routes, and also highlight the rail item when a detail
+            // route pushed on top of it is active: chat/{id} is a detail of `sessions`, and
+            // file_view?path=… is a detail of `files`. Without this, drilling into a file
+            // loses the FILES highlight and the user loses their place in the rail.
             val selected = currentRoute == dest.route ||
-                (dest.route == "sessions" && currentRoute != null && currentRoute.startsWith("chat/"))
+                (dest.route == "sessions" && currentRoute != null && currentRoute.startsWith("chat/")) ||
+                (dest.route == "files" && currentRoute != null && currentRoute.startsWith("file_view"))
             NavigationRailItem(
                 selected = selected,
                 enabled = !dest.requiresConnection || connected,

@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -36,6 +37,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ripple
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -844,7 +846,7 @@ private fun AgentErrorNote(error: kotlinx.serialization.json.JsonElement) {
     // Extract a readable string from the tolerant-decoded JsonElement: a bare string
     // primitive returns its content (the common `{"error": "..."}` case); an object/array
     // is pretty-printed and trimmed so a verbose error doesn't dominate the bubble.
-    val text = remember(error) {
+    val fullText = remember(error) {
         val raw = if (error is kotlinx.serialization.json.JsonPrimitive) {
             error.content
         } else {
@@ -855,8 +857,11 @@ private fun AgentErrorNote(error: kotlinx.serialization.json.JsonElement) {
                 )
             }.getOrDefault(error.toString())
         }
-        if (raw.length <= 500) raw else raw.take(500) + "…"
+        raw
     }.takeIf { it.isNotBlank() } ?: return
+    val isLong = fullText.length > 500
+    var expanded by remember(fullText) { mutableStateOf(false) }
+    val text = if (isLong && !expanded) fullText.take(500) + "…" else fullText
     val label = stringResource(R.string.agent_error_label)
     Row(
         modifier = Modifier
@@ -878,11 +883,27 @@ private fun AgentErrorNote(error: kotlinx.serialization.json.JsonElement) {
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onErrorContainer,
             )
-            Text(
-                text,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onErrorContainer,
-            )
+            // SelectionContainer so the user can copy the error text to search for it or
+            // share it for support — previously the error was static, unselectable text.
+            androidx.compose.foundation.text.selection.SelectionContainer {
+                Text(
+                    text,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                )
+            }
+            if (isLong) {
+                TextButton(
+                    onClick = { expanded = !expanded },
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp),
+                    modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                ) {
+                    Text(
+                        stringResource(if (expanded) R.string.hide_full_error else R.string.show_full_error),
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
+            }
         }
     }
 }

@@ -152,6 +152,14 @@ fun PermissionDialog(
                     },
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text(stringResource(R.string.always_allow)) }
+                // Explain the scope of "Always allow" so the user understands what they're
+                // granting (this tool + pattern in every session) before choosing it.
+                Text(
+                    stringResource(R.string.always_allow_scope),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                )
                 // Reject is an OutlinedButton (not a low-prominence TextButton) in the
                 // same column so the actions are visually balanced — the prior layout buried
                 // Reject as a small dismiss-button, nudging users toward granting. Reject
