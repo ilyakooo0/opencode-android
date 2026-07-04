@@ -21,6 +21,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write # required to push the tag and create the release
+      id-token: write # required for OIDC so GitHub can sign the attestation
+      attestations: write # required to publish the attestation record
     steps:
       - uses: actions/checkout@v4
         with:
@@ -72,6 +74,17 @@ jobs:
           mkdir -p staging
           APK="$(find app/build/outputs/apk -name '*.apk' | head -n1)"
           cp "$APK" "staging/opencode-${{ steps.version.outputs.version }}.apk"
+
+      # Generate a signed build-provenance attestation for the staged APK and
+      # store it in GitHub's artifact attestation store, keyed by the file's
+      # digest. Anyone can later verify the APK's origin/provenance with
+      # `gh attestation verify` -- its repository & workflow. Run *after*
+      # staging and *before* the release is published so the attested subject
+      # is byte-identical to the artifact attached to the release.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: staging/*.apk
 
       - name: Create release
         uses: softprops/action-gh-release@v2
