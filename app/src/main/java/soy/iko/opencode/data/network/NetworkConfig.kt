@@ -35,6 +35,10 @@ object NetworkConfig {
     const val sseInitialBackoffMs = 500L
     /** Cap on the SSE reconnect backoff. */
     const val sseMaxBackoffMs = 10_000L
+    /** Reconnect-attempt count at which the connection banner switches from "Reconnecting…"
+     *  to "Reconnecting (attempt N)…" — after a few retries the user benefits from seeing the
+     *  system is actively retrying rather than stuck. Below this the plain label is calmer. */
+    const val sseReconnectAttemptLabelThreshold = 3
     /** Max gap between events before a silent/half-open SSE connection is dropped and reconnected. */
     const val sseIdleTimeoutMs = 90_000L
     /** Buffer capacity for the SSE events SharedFlow; prevents a slow subscriber stalling the read loop. */
@@ -209,8 +213,13 @@ object NetworkConfig {
      *  run-activity changes. A run that starts and then fails/idles almost immediately
      *  would otherwise dispatch startForegroundService() then stopService() back-to-back;
      *  if the stop wins the race before startForeground() runs, Android raises the
-     *  "did not then call startForeground()" crash. Debouncing collapses that window. */
-    const val runForegroundDebounceMs = 500L
+     *  "did not then call startForeground()" crash. Debouncing collapses that window.
+     *  Also serves as a minimum-run-duration gate: a run shorter than this (a quick abort,
+     *  a one-token reply) clears [anyRunActive] before the FGS ever posts, so the shade
+     *  stays clean of non-dismissable notifications for trivially short runs. The Doze-
+     *  resilience benefit only matters for long runs, so a few seconds of gate preserves
+     *  the core benefit. */
+    const val runForegroundDebounceMs = 3_000L
 
     // --- Markdown rendering (MarkdownText) ---
 
@@ -249,6 +258,14 @@ object NetworkConfig {
     /** Minimum number of crash reports before the diagnostics list shows its search field. */
     const val diagnosticsSearchThreshold = 8
 
+    /** Initial render window for the diagnostics crash-report list — the number of rows
+     *  composed before the user scrolls to reveal more. Bounds composition work on a device
+     *  that has accumulated many crash reports. Grows by [diagnosticsListPageStep] as the
+     *  user nears the bottom. */
+    const val diagnosticsListInitialPage = 60
+    /** How many additional crash-report rows to reveal when the render window is exhausted. */
+    const val diagnosticsListPageStep = 60
+
     /** Minimum number of sessions in the usage report before the per-session list shows its
      *  filter field. A short history is faster to scan than type into. */
     const val usageSessionSearchThreshold = 8
@@ -270,6 +287,11 @@ object NetworkConfig {
     const val twoPaneLeftWeight = 0.38f
     /** Right pane weight in the two-pane layout (chat detail). */
     const val twoPaneRightWeight = 0.62f
+
+    /** Maximum width (dp) for the left (session-list) pane in the two-pane layout. On a wide
+     *  tablet the list pane would otherwise stretch too wide for a readable row density; capping
+     *  it keeps the list compact and gives the chat detail pane the remaining space. */
+    const val twoPaneLeftMaxWidthDp = 460
 
     /** Minimum window width (dp) at which a NavigationRail is shown alongside the
      *  two-pane layout for top-level destination discoverability on large screens. Sits below
@@ -321,6 +343,25 @@ object NetworkConfig {
     /** Lines of tool output rendered before collapsing to a head with a "show more" affordance. */
     const val toolOutputCollapsedLimitChars = 4000
 
+    /** Lines of tool output rendered before collapsing to a head with a "show more" affordance.
+     *  A line-based threshold (rather than the char-based [toolOutputCollapsedLimitChars]) keeps
+     *  the collapsed preview a predictable height on mobile — a 4000-char block of short lines
+     *  can be 60+ lines and fill the whole screen, defeating the purpose of collapsing. The
+     *  char cap still applies as a hard upper bound; this line cap kicks in first for typical
+     *  multi-line output. */
+    const val toolOutputCollapsedLimitLines = 30
+
+    /** Tool input (pretty-printed JSON) shorter than this many lines is shown expanded by
+     *  default — for tools like bash/write/edit the command is the most important info and
+     *  hiding it behind a tap inverts the priority. Longer inputs stay collapsed to avoid
+     *  dominating the bubble. */
+    const val toolInputAutoExpandLineThreshold = 10
+
+    /** Tool durations below this many ms are hidden from the tool-name row (sub-second runs
+     *  are instant and the ms figure is noise). Set to 1000 to hide all sub-second durations,
+     *  or 0 to always show. */
+    const val toolDurationHideBelowMs = 1_000L
+
     /** Characters of tool output included in a shared/exported transcript before truncation. */
     const val exportToolOutputLimitChars = 2000
 
@@ -338,6 +379,13 @@ object NetworkConfig {
 
     /** Blink period (ms) of the streaming caret at the tail of a live assistant reply. */
     const val streamingCaretPeriodMs = 500
+
+    /** Target maximum length (chars) of a single TTS chunk. Android's TextToSpeech enforces a
+     *  hard limit (getMaxSpeechInputLength, ~4000 chars) — this is a tighter cap so pause/
+     *  resume restarts at a finer granularity. Without it, a pause mid-chunk restarts the
+     *  whole chunk from its start; smaller chunks mean less replay on resume. Sentence
+     *  boundaries are still preferred, so short sentences pack up to this cap. */
+    const val ttsChunkTargetMaxChars = 200
 
     /** Auto-reject a tool-permission prompt after this many ms if the user hasn't responded,
      *  so a forgotten prompt doesn't block the run indefinitely. The foreground service keeps

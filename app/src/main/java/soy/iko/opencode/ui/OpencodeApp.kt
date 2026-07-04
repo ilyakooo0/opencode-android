@@ -400,6 +400,7 @@ fun OpencodeApp(container: AppContainer) {
                         navController.popBackStack(Routes.SERVERS, inclusive = false)
                     },
                     onAddServer = { navController.navigate(Routes.serverEdit()) },
+                    onEditProfile = { id -> navController.navigate(Routes.serverEdit(id)) },
                 )
             } else {
                 SessionListScreen(
@@ -422,6 +423,7 @@ fun OpencodeApp(container: AppContainer) {
                     onOpenSettings = { navController.navigate(Routes.SETTINGS) },
                     onOpenSearch = { navController.navigate(Routes.SEARCH) },
                     onAddServer = { navController.navigate(Routes.serverEdit()) },
+                    onEditProfile = { id -> navController.navigate(Routes.serverEdit(id)) },
                 )
             }
         }
@@ -447,6 +449,7 @@ fun OpencodeApp(container: AppContainer) {
                         launchSingleTop = true
                     }
                 },
+                onEditProfile = { id -> navController.navigate(Routes.serverEdit(id)) },
             )
         }
 

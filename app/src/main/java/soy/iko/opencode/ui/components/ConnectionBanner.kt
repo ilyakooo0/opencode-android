@@ -42,14 +42,21 @@ import soy.iko.opencode.data.network.EventStreamClient
 import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.di.AppContainer
 
+/** Attempt count at which the banner switches to "Reconnecting (attempt N)…". See
+ *  NetworkConfig.sseReconnectAttemptLabelThreshold. */
+private val RECONNECT_ATTEMPT_LABEL_THRESHOLD get() = NetworkConfig.sseReconnectAttemptLabelThreshold
+
 /**
  * Banner shown when the SSE event stream is not connected. Shared by the chat and the
  * session list so a dropped stream is visible everywhere, not just mid-conversation.
  *
  * On a hard failure ([ConnectionState.Failed]) an inline "Retry now" button is offered
  * when [onRetry] is supplied, so the user can re-connect without hunting for the
- * chat screen's reconnect button or navigating to the server list. Transient
- * connecting/reconnecting states remain non-interactive (the system is already trying).
+ * chat screen's reconnect button or navigating to the server list. On an auth failure
+ * ([ConnectionState.AuthFailed]) an "Edit credentials" button is offered instead (via
+ * [onEditCredentials]) — retrying with the same bad credentials is futile, so the
+ * recovery path is to edit the server profile. Transient connecting/reconnecting states
+ * remain non-interactive (the system is already trying).
  */
 @Composable
 fun ConnectionBanner(
@@ -57,6 +64,8 @@ fun ConnectionBanner(
     modifier: Modifier = Modifier,
     isOnline: Boolean = true,
     onRetry: (() -> Unit)? = null,
+    onEditCredentials: (() -> Unit)? = null,
+    reconnectAttempts: Int = 0,
 ) {
     // When the device itself has no connectivity, surface that distinctly (instead of
     // the SSE state) — a dropped Wi-Fi shouldn't read "Reconnecting…" or "check
@@ -65,8 +74,18 @@ fun ConnectionBanner(
         stringResource(R.string.offline)
     } else {
         when (state) {
-            EventStreamClient.ConnectionState.Connecting -> stringResource(R.string.connecting)
-            EventStreamClient.ConnectionState.Disconnected -> stringResource(R.string.reconnecting)
+            EventStreamClient.ConnectionState.Connecting ->
+                if (reconnectAttempts >= RECONNECT_ATTEMPT_LABEL_THRESHOLD) {
+                    stringResource(R.string.reconnect_attempt, reconnectAttempts)
+                } else {
+                    stringResource(R.string.connecting)
+                }
+            EventStreamClient.ConnectionState.Disconnected ->
+                if (reconnectAttempts >= RECONNECT_ATTEMPT_LABEL_THRESHOLD) {
+                    stringResource(R.string.reconnect_attempt, reconnectAttempts)
+                } else {
+                    stringResource(R.string.reconnecting)
+                }
             EventStreamClient.ConnectionState.Failed -> stringResource(R.string.connection_failed_endpoint)
             EventStreamClient.ConnectionState.AuthFailed -> stringResource(R.string.connection_failed)
             EventStreamClient.ConnectionState.Connected -> null
@@ -157,22 +176,52 @@ fun ConnectionBanner(
                         .padding(start = 6.dp)
                         .weight(1f, fill = false),
                 )
-                // Inline retry on the Failed banner so the user can recover without
-                // leaving the screen. Hidden during transient states (the system is
-                // already reconnecting), when offline (retry can't help), and when no
-                // callback is wired (callers that don't have a reconnect path).
-                if (isServerFailure && !isOffline && onRetry != null) {
-                    TextButton(
-                        onClick = onRetry,
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp),
-                        modifier = Modifier
-                            .defaultMinSize(minHeight = 48.dp)
-                            .testTag("connection_retry"),
-                    ) {
-                        Text(stringResource(R.string.retry_now), color = onContainer)
-                    }
+                // Inline recovery action on a hard failure so the user can recover without
+                // leaving the screen. Hidden during transient states (the system is already
+                // reconnecting), when offline (retry can't help), and when no callback is wired.
+                if (isServerFailure && !isOffline) {
+                    ConnectionRecoveryButton(
+                        state = state,
+                        onRetry = onRetry,
+                        onEditCredentials = onEditCredentials,
+                        onContainer = onContainer,
+                    )
                 }
             }
+        }
+    }
+}
+
+/** Renders the inline recovery button for a hard connection failure. For an auth failure
+ *  (401/403), retrying with the same bad credentials is futile — offer "Edit credentials"
+ *  instead. For an endpoint failure, "Retry now" re-attempts the connection. Extracted from
+ *  [ConnectionBanner] to keep that function's cyclomatic complexity under detekt's threshold. */
+@Composable
+private fun ConnectionRecoveryButton(
+    state: EventStreamClient.ConnectionState,
+    onRetry: (() -> Unit)?,
+    onEditCredentials: (() -> Unit)?,
+    onContainer: androidx.compose.ui.graphics.Color,
+) {
+    if (state == EventStreamClient.ConnectionState.AuthFailed && onEditCredentials != null) {
+        TextButton(
+            onClick = onEditCredentials,
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp),
+            modifier = Modifier
+                .defaultMinSize(minHeight = 48.dp)
+                .testTag("connection_edit_credentials"),
+        ) {
+            Text(stringResource(R.string.edit_credentials), color = onContainer)
+        }
+    } else if (onRetry != null) {
+        TextButton(
+            onClick = onRetry,
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp),
+            modifier = Modifier
+                .defaultMinSize(minHeight = 48.dp)
+                .testTag("connection_retry"),
+        ) {
+            Text(stringResource(R.string.retry_now), color = onContainer)
         }
     }
 }
@@ -186,7 +235,10 @@ fun ConnectionBanner(
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 @Composable
-fun BoxScope.ConnectionBannerFor(container: AppContainer) {
+fun BoxScope.ConnectionBannerFor(
+    container: AppContainer,
+    onEditCredentials: (() -> Unit)? = null,
+) {
     // flatMapLatest without stateIn: collectAsStateWithLifecycle handles the lifecycle and
     // gives an initial value. No ViewModel scope needed, so this works on any screen.
     val connectionState by produceState(
@@ -197,11 +249,18 @@ fun BoxScope.ConnectionBannerFor(container: AppContainer) {
             .flatMapLatest { it?.events?.state ?: flowOf(EventStreamClient.ConnectionState.Disconnected) }
             .collect { value = it }
     }
+    val reconnectAttempts by produceState(initialValue = 0, container) {
+        container.activeConnection
+            .flatMapLatest { it?.events?.reconnectAttempts ?: flowOf(0) }
+            .collect { value = it }
+    }
     val isOnline by container.isOnline.collectAsStateWithLifecycle()
     ConnectionBanner(
         state = connectionState,
         modifier = Modifier.align(Alignment.TopCenter),
         isOnline = isOnline,
         onRetry = { container.activeConnection.value?.events?.triggerReconnect() },
+        onEditCredentials = onEditCredentials,
+        reconnectAttempts = reconnectAttempts,
     )
 }

@@ -11,6 +11,7 @@ import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
+import soy.iko.opencode.data.network.NetworkConfig
 
 /**
  * Remember a [TtsController] scoped to the current composition; it shuts the engine down
@@ -185,11 +186,15 @@ class TtsController(context: Context) : RememberObserver {
     /**
      * Split [text] into segments no longer than [TextToSpeech.getMaxSpeechInputLength] so
      * every part can actually be enqueued. Prefers sentence/paragraph then whitespace
-     * boundaries, packing greedily, and hard-slices any single piece that still overflows.
+     * boundaries, packing greedily up to [NetworkConfig.ttsChunkTargetMaxChars] (a tighter
+     * cap than the hard limit) so pause/resume restarts at a finer granularity — a pause
+     * mid-chunk restarts the whole chunk, so smaller chunks mean less replay on resume.
+     * Hard-slices any single piece that still overflows the absolute max.
      */
     private fun chunkForTts(text: String): List<String> {
-        val max = TextToSpeech.getMaxSpeechInputLength().coerceAtLeast(1)
-        if (text.length <= max) return listOf(text)
+        val hardMax = TextToSpeech.getMaxSpeechInputLength().coerceAtLeast(1)
+        val packTarget = NetworkConfig.ttsChunkTargetMaxChars.coerceAtMost(hardMax)
+        if (text.length <= packTarget) return listOf(text)
         val chunks = ArrayList<String>()
         val current = StringBuilder()
         fun flush() {
@@ -197,16 +202,16 @@ class TtsController(context: Context) : RememberObserver {
         }
         for (piece in text.split(Regex("(?<=[.!?\\n])\\s+"))) {
             var p = piece
-            // A single piece with no usable boundary can still exceed the limit: hard-slice it.
-            while (p.length > max) {
+            // A single piece with no usable boundary can still exceed the hard limit: hard-slice it.
+            while (p.length > hardMax) {
                 flush()
-                chunks.add(p.substring(0, max))
-                p = p.substring(max)
+                chunks.add(p.substring(0, hardMax))
+                p = p.substring(hardMax)
             }
             when {
                 p.isEmpty() -> Unit
                 current.isEmpty() -> current.append(p)
-                current.length + 1 + p.length <= max -> current.append(' ').append(p)
+                current.length + 1 + p.length <= packTarget -> current.append(' ').append(p)
                 else -> { flush(); current.append(p) }
             }
         }

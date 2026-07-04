@@ -47,6 +47,24 @@
     <string name="not_connected">Not connected.</string>
     <string name="no_servers_to_reconnect">No saved server to reconnect to.</string>
     <string name="retry_now">Retry now</string>
+    <string name="edit_credentials">Edit credentials</string>
+    <string name="reconnect_attempt">Reconnecting (attempt %1$d)…</string>
+    <string name="connection_lost">Connection to "%1$s" lost</string>
+    <string name="connection_lost_tap">Tap to reconnect</string>
+    <string name="message_not_delivered">Message not delivered</string>
+    <string name="message_not_delivered_body">Couldn\'t deliver your reply to "%1$s" — tap to open and retry.</string>
+    <string name="server_requires_auth">This server requires a username and password</string>
+    <string name="credentials_incorrect">Username or password is incorrect</string>
+    <string name="step_summary_collapsed">Step summary</string>
+    <string name="retrying_ellipsis">Retrying…</string>
+    <string name="open_full_editor_hint">Draft is long — tap expand for the full-screen editor</string>
+    <string name="cannot_quote_this">Can\'t quote an image or tool-only message</string>
+    <string name="attachment_name">Attachment name</string>
+    <string name="default_model_set">Default model set to "%1$s"</string>
+    <string name="default_model_cleared">Default model cleared</string>
+    <string name="permission_auto_rejected">Run paused: permission auto-rejected after 10 min</string>
+    <string name="couldnt_stop_run">Couldn\'t stop run — open app</string>
+    <string name="run_stopped_undo">Stopped</string>
 
     <!-- Server list -->
     <string name="servers_title">opencode servers</string>

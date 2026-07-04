@@ -110,6 +110,7 @@ import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
 import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.ui.canAuthenticateForAppLock
+import soy.iko.opencode.ui.components.ConnectionBanner
 import soy.iko.opencode.ui.theme.LightPaletteSwatches
 import soy.iko.opencode.ui.theme.DarkPaletteSwatches
 import soy.iko.opencode.ui.theme.AmoledPaletteSwatches
@@ -184,6 +185,13 @@ fun SettingsScreen(
     }
     val connectionState by connectionStateFlow
         .collectAsStateWithLifecycle(initialValue = EventStreamClient.ConnectionState.Disconnected)
+    val isOnline by container.isOnline.collectAsStateWithLifecycle()
+    // Reconnect-attempt count for the banner's "Reconnecting (attempt N)…" label.
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val reconnectAttempts by remember {
+        container.activeConnection
+            .flatMapLatest { it?.events?.reconnectAttempts ?: kotlinx.coroutines.flow.flowOf(0) }
+    }.collectAsStateWithLifecycle(initialValue = 0)
     val context = LocalContext.current
     // Crash count badge: surface that there are reports to look at without making the
     // user open the screen to find out.
@@ -292,6 +300,16 @@ fun SettingsScreen(
                 .nestedScroll(scrollBehavior.nestedScrollConnection)
                 .padding(16.dp),
         ) {
+            // Prominent connection banner at the top (matching every other content screen)
+            // so a user who opens Settings during a connection failure sees it immediately
+            // instead of having to scroll to the Connection section. The inline Connection
+            // section below remains as a detailed view.
+            ConnectionBanner(
+                state = connectionState,
+                isOnline = isOnline,
+                onRetry = { container.activeConnection.value?.events?.triggerReconnect() },
+                reconnectAttempts = reconnectAttempts,
+            )
             val s = settings
             // Resolve section-header strings once so the filter logic below can match
             // against them without re-resolving per recomposition. These mirror the

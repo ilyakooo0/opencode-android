@@ -50,6 +50,7 @@ fun TwoPaneSessionChat(
     onDisconnect: () -> Unit,
     onAddServer: () -> Unit,
     onOpenSearch: () -> Unit = {},
+    onEditProfile: ((String) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     var selected by rememberSaveable { mutableStateOf<String?>(null) }
@@ -77,16 +78,30 @@ fun TwoPaneSessionChat(
         }
     }
 
+    // Auto-select latch: runs at most once per Activity instance (saveable so an explicit
+    // "clear detail pane" via BackHandler survives a rotation — otherwise rotation resets the
+    // latch, re-arms the effect, and re-selects a session the user just cleared). Reset to
+    // false on a server switch (see the profile-change effect below) so the new server's top
+    // session auto-fills the detail pane instead of leaving it empty.
+    var autoSelected by rememberSaveable { mutableStateOf(false) }
+
     // Clear the selection when the active server profile changes (a server switch via
     // the ServerSwitcherMenu). Without this, `selected` still points at the old
     // server's session id and the detail pane renders a ChatScreen for a session that
     // doesn't exist on the new server, showing a load error with no explanation.
     // Skips the initial transition (null -> a profile id) so a deep link / pending
     // open session that sets `selected` on the same first composition isn't clobbered.
+    // Also resets `autoSelected` so the new server's top session auto-fills the detail
+    // pane — without that, a server switch leaves the pane empty ("Select a session")
+    // even though the new server has sessions, because the latch stayed `true` from the
+    // previous server.
     var lastProfileId by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(activeConnection?.profile?.id) {
         val currentId = activeConnection?.profile?.id
-        if (lastProfileId != null && lastProfileId != currentId) selected = null
+        if (lastProfileId != null && lastProfileId != currentId) {
+            selected = null
+            autoSelected = false
+        }
         lastProfileId = currentId
     }
 
@@ -101,16 +116,13 @@ fun TwoPaneSessionChat(
 
     // Auto-select the top of the sorted/filtered list into the detail pane so a wide screen
     // doesn't open on a blank right pane. Runs at most once per Activity instance (the
-    // `autoSelected` latch, saveable so an explicit "clear detail pane" via BackHandler
-    // survives a rotation — otherwise rotation resets the latch, re-arms the effect, and
-    // re-selects a session the user just cleared), and only once the first list load has
-    // completed. It defers to any explicit selection already present — a restored `selected`,
-    // a deep-link/notification (pendingOpenSession), or a user pick — and, since the latch
+    // `autoSelected` latch above), and only once the first list load has completed. It
+    // defers to any explicit selection already present — a restored `selected`, a
+    // deep-link/notification (pendingOpenSession), or a user pick — and, since the latch
     // is set the moment any of those wins, it never re-selects after a user clears the pane
-    // (BackHandler) or a server switch nulls `selected`. Using state.filtered (not a raw
-    // recency sort) means the auto-selected detail matches the top list row under the
-    // active sort mode, pinned float, archived-hidden, and directory filter.
-    var autoSelected by rememberSaveable { mutableStateOf(false) }
+    // (BackHandler) or a server switch nulls `selected` (and resets the latch). Using
+    // state.filtered (not a raw recency sort) means the auto-selected detail matches the top
+    // list row under the active sort mode, pinned float, archived-hidden, and directory filter.
     val autoSelectCandidate = sessionListState.filtered.firstOrNull()?.id
     LaunchedEffect(
         sessionListState.loading,
@@ -145,7 +157,7 @@ fun TwoPaneSessionChat(
         Box(
             modifier = Modifier
                 .weight(NetworkConfig.twoPaneLeftWeight)
-                .widthIn(max = 460.dp),
+                .widthIn(max = NetworkConfig.twoPaneLeftMaxWidthDp.dp),
         ) {
             SessionListScreen(
                 container = container,
@@ -157,6 +169,7 @@ fun TwoPaneSessionChat(
                 onOpenSettings = onOpenSettings,
                 onAddServer = onAddServer,
                 onOpenSearch = onOpenSearch,
+                onEditProfile = onEditProfile,
                 externalNewSessionTrigger = newSessionTrigger,
                 selectedSessionId = selected,
             )
@@ -189,6 +202,7 @@ fun TwoPaneSessionChat(
                         onBack = { selected = null },
                         onOpenFile = onOpenFile,
                         onOpenSession = { id -> selected = id },
+                        onEditProfile = onEditProfile,
                     )
                 }
             }

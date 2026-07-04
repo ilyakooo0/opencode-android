@@ -154,6 +154,17 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
                 initialValue = EventStreamClient.ConnectionState.Disconnected,
             )
 
+    /** SSE reconnect-attempt count, surfaced so the banner can show "Reconnecting (attempt N)…". */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val reconnectAttempts: StateFlow<Int> =
+        container.activeConnection
+            .flatMapLatest { it?.events?.reconnectAttempts ?: flowOf(0) }
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(NetworkConfig.stateFlowSubscriptionTimeoutMs),
+                initialValue = 0,
+            )
+
     /** Sessions with activity that arrived while not being viewed, mapped to their
      *  unread event count so the list can show "N unread" instead of a bare dot. */
     val unread: StateFlow<Map<String, Int>> = container.unread
@@ -873,6 +884,15 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         if (ids.isEmpty()) return
         ids.forEach { container.markSessionRead(it) }
         _transientInfo.tryEmit(container.string(R.string.bulk_marked_read, ids.size))
+    }
+
+    /** Mark every unread session as read at once — the overflow menu's "Mark all read" action.
+     *  Emits a transient confirmation matching [bulkMarkRead], so the action gives feedback
+     *  (and isn't mistaken for a glitch) rather than silently clearing all badges. */
+    fun markAllRead(unreadIds: Set<String>) {
+        if (unreadIds.isEmpty()) return
+        container.clearAllUnread()
+        _transientInfo.tryEmit(container.string(R.string.bulk_marked_read, unreadIds.size))
     }
 
     /** Mark a single session as unread (re-badges it in the list). */

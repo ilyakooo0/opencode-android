@@ -154,6 +154,7 @@ fun SessionListScreen(
     onOpenSettings: () -> Unit,
     onAddServer: () -> Unit,
     onOpenSearch: () -> Unit = {},
+    onEditProfile: ((String) -> Unit)? = null,
     // Incremented by a host (the two-pane empty-detail pane) to open the new-session
     // directory picker, so that pane shares this screen's dialog instead of bypassing it.
     externalNewSessionTrigger: Int = 0,
@@ -166,6 +167,7 @@ fun SessionListScreen(
     val profiles by vm.profiles.collectAsStateWithLifecycle()
     val switchingId by vm.switchingId.collectAsStateWithLifecycle()
     val connectionState by vm.connectionState.collectAsStateWithLifecycle()
+    val reconnectAttempts by vm.reconnectAttempts.collectAsStateWithLifecycle()
     val unread by vm.unread.collectAsStateWithLifecycle()
     val mutedSessions by container.mutedSessions.collectAsStateWithLifecycle()
     val creating by vm.creating.collectAsStateWithLifecycle()
@@ -435,7 +437,13 @@ fun SessionListScreen(
                             DropdownMenuItem(
                                 text = { Text(stringResource(R.string.mark_all_read)) },
                                 leadingIcon = { Icon(Icons.Filled.DoneAll, contentDescription = null) },
-                                onClick = { showMainMenu = false; container.clearAllUnread() },
+                                onClick = {
+                                    showMainMenu = false
+                                    // Route through the VM so a transient confirmation snackbar
+                                    // fires (matching the selection-mode bulk-mark-read), instead
+                                    // of the badges vanishing silently with no feedback.
+                                    vm.markAllRead(unread.keys)
+                                },
                             )
                         }
                         DropdownMenuItem(
@@ -509,6 +517,11 @@ fun SessionListScreen(
                 state = connectionState,
                 isOnline = isOnline,
                 onRetry = { vm.retryConnection() },
+                onEditCredentials = {
+                    val profileId = activeConnection?.profile?.id
+                    if (profileId != null) onEditProfile?.invoke(profileId)
+                },
+                reconnectAttempts = reconnectAttempts,
             )
             Box(modifier = Modifier.fillMaxSize()) {
                 SessionListBody(
@@ -899,16 +912,20 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
                 // list away from recency, so date headers would mislead).
                 val showGroups = state.sortMode == SessionSortMode.RECENT &&
                     !inSelection && state.query.isEmpty() && state.directoryFilter == null
-                // Resolve section labels once (in the @Composable scope) so buildGroupedEntries
-                // can stay a plain function. Captured into the file-level lateinit fields.
-                pinnedLabel = stringResource(R.string.session_pinned)
-                todayLabel = stringResource(R.string.today)
-                yesterdayLabel = stringResource(R.string.yesterday)
-                lastWeekLabel = stringResource(R.string.last_week)
-                olderLabel = stringResource(R.string.older)
+                // Resolve section labels once (in the @Composable scope) so buildGroupedSegments
+                // can stay a plain function. Passed in as a value (not captured via file-level
+                // lateinit fields) so the function's contract is explicit and can't throw
+                // UninitializedPropertyAccessException if call ordering ever changes.
+                val dateLabels = DateGroupLabels(
+                    pinned = stringResource(R.string.session_pinned),
+                    today = stringResource(R.string.today),
+                    yesterday = stringResource(R.string.yesterday),
+                    lastWeek = stringResource(R.string.last_week),
+                    older = stringResource(R.string.older),
+                )
                 val groupedSegments = remember(nodes, renderCap, state.pinnedIds, showGroups) {
                     val capped = if (nodes.size <= renderCap) nodes else nodes.take(renderCap)
-                    buildGroupedSegments(capped, state.pinnedIds, showGroups)
+                    buildGroupedSegments(capped, state.pinnedIds, showGroups, dateLabels)
                 }
                 PullToRefreshBox(
                     isRefreshing = refreshing,
@@ -1122,6 +1139,24 @@ private fun sessionDateGroup(session: soy.iko.opencode.data.model.Session, now: 
     }
 }
 
+/** Resolved date-group labels (resolved once in a @Composable scope via [stringResource] and
+ *  passed into [buildGroupedSegments] so it can stay a plain non-@Composable function). */
+private data class DateGroupLabels(
+    val pinned: String,
+    val today: String,
+    val yesterday: String,
+    val lastWeek: String,
+    val older: String,
+)
+
+/** Resolve a date-group key to its display label using [labels]. */
+private fun dateGroupLabel(group: String, labels: DateGroupLabels): String = when (group) {
+    "today" -> labels.today
+    "yesterday" -> labels.yesterday
+    "last_week" -> labels.lastWeek
+    else -> labels.older
+}
+
 /** Build the grouped entry list for the LazyColumn. Inserts a "Pinned" header before pinned
  *  sessions (when [showGroups] is true and pinned sessions exist), and date-group headers
  *  (Today / Yesterday / Last week / Older) between unpinned sessions when [showGroups] is
@@ -1132,6 +1167,7 @@ private fun buildGroupedSegments(
     nodes: List<SessionNode>,
     pinnedIds: Set<String>,
     showGroups: Boolean,
+    labels: DateGroupLabels,
 ): List<Pair<SessionListEntry.Header?, List<SessionListEntry.Node>>> {
     if (nodes.isEmpty()) return emptyList()
     val now = System.currentTimeMillis()
@@ -1146,7 +1182,7 @@ private fun buildGroupedSegments(
     fun maybeAddPinnedSegment(): MutableList<SessionListEntry.Node>? {
         if (pinnedIds.isEmpty()) return null
         if (!pinnedHeaderAdded[0]) {
-            ensureSegment(SessionListEntry.Header("__pinned", pinnedLabel))
+            ensureSegment(SessionListEntry.Header("__pinned", labels.pinned))
             pinnedHeaderAdded[0] = true
         }
         return segments.last().second
@@ -1162,7 +1198,7 @@ private fun buildGroupedSegments(
                 val group = sessionDateGroup(node.session, now)
                 if (dateHeaderAdded[group] != true) {
                     dateHeaderAdded[group] = true
-                    ensureSegment(SessionListEntry.Header("__date_$group", dateGroupLabel(group)))
+                    ensureSegment(SessionListEntry.Header("__date_$group", dateGroupLabel(group, labels)))
                 }
                 segments.last().second.add(SessionListEntry.Node(node))
             } else {
@@ -1176,23 +1212,6 @@ private fun buildGroupedSegments(
     }
     return segments
 }
-
-/** Resolve a date-group key to its display label. */
-private fun dateGroupLabel(group: String): String = when (group) {
-    "today" -> todayLabel
-    "yesterday" -> yesterdayLabel
-    "last_week" -> lastWeekLabel
-    else -> olderLabel
-}
-
-// Cached labels resolved lazily from resources at first use. Resolved in the composable
-// scope via stringResource and captured here so buildGroupedEntries (a plain function) can
-// use them without a @Composable context.
-private lateinit var pinnedLabel: String
-private lateinit var todayLabel: String
-private lateinit var yesterdayLabel: String
-private lateinit var lastWeekLabel: String
-private lateinit var olderLabel: String
 
 /** A date-group section header in the session list. Rendered as a muted titleSmall label
  *  with heading semantics so TalkBack users can skip between groups. */
@@ -1714,7 +1733,12 @@ private fun SessionActionUndoEffect(vm: SessionListViewModel, snackbar: Snackbar
             val result = snackbar.showSnackbar(
                 message = message,
                 actionLabel = undoLabel,
-                duration = androidx.compose.material3.SnackbarDuration.Short,
+                // Long (~10s) so an accidental swipe has a reasonable window to be undone.
+                // The delete undo uses Indefinite with a 5s timed dismiss; Long is a touch
+                // longer but still auto-dismisses, which is appropriate for the easily
+                // reversible pin/archive actions (vs delete which is destructive enough to
+                // warrant Indefinite until tapped or timed out).
+                duration = androidx.compose.material3.SnackbarDuration.Long,
             )
             if (result == androidx.compose.material3.SnackbarResult.ActionPerformed) {
                 vm.undoSessionAction(event)
@@ -1740,7 +1764,7 @@ private fun BulkSessionActionUndoEffect(vm: SessionListViewModel, snackbar: Snac
             val result = snackbar.showSnackbar(
                 message = message,
                 actionLabel = undoLabel,
-                duration = androidx.compose.material3.SnackbarDuration.Short,
+                duration = androidx.compose.material3.SnackbarDuration.Long,
             )
             if (result == androidx.compose.material3.SnackbarResult.ActionPerformed) {
                 vm.undoBulkAction(event)

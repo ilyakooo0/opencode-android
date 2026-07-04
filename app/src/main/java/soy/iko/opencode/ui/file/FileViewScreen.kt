@@ -38,6 +38,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.WrapText
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
@@ -295,6 +296,14 @@ fun FileViewScreen(
                         if (!ok) scope.launch { snackbar.showSnackbar(context.getString(R.string.open_externally_failed)) }
                     }
                 },
+                onOpenInChat = {
+                    // Start a new session with this file attached as an @path reference,
+                    // mirroring the file browser row's "Open in chat" action — the viewer is
+                    // the more natural place for it since the user is already looking at the file.
+                    container.setPendingShare("@$path")
+                    container.requestNewSession()
+                    onBack()
+                },
             )
         },
         snackbarHost = { SnackbarHost(snackbar) },
@@ -505,6 +514,7 @@ private fun FileViewTopBar(
     onCopyPath: () -> Unit,
     onShare: () -> Unit,
     onOpenExternally: () -> Unit,
+    onOpenInChat: () -> Unit,
 ) {
     TopAppBar(
         title = {
@@ -567,7 +577,7 @@ private fun FileViewTopBar(
                 // title isn't crowded off screen by five inline icons on a phone.
                 var menuExpanded by remember { mutableStateOf(false) }
                 IconButton(onClick = { menuExpanded = true }) {
-                    Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.more_options))
+                    Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.more_options_for, filename))
                 }
                 DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
                     // Wrap long lines instead of horizontal-scrolling; useful for prose. Disabled
@@ -599,6 +609,11 @@ private fun FileViewTopBar(
                         text = { Text(stringResource(R.string.copy_path)) },
                         onClick = { onCopyPath(); menuExpanded = false },
                         leadingIcon = { Icon(Icons.Filled.Link, contentDescription = null) },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.open_in_chat)) },
+                        onClick = { onOpenInChat(); menuExpanded = false },
+                        leadingIcon = { Icon(Icons.AutoMirrored.Filled.Chat, contentDescription = null) },
                     )
                     DropdownMenuItem(
                         text = { Text(stringResource(R.string.share)) },

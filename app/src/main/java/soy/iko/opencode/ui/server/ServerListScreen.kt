@@ -292,11 +292,33 @@ fun ServerListScreen(
         Column(modifier = Modifier.fillMaxSize().padding(top = padding.calculateTopPadding())) {
             if (reconnecting && profiles.isNotEmpty()) {
                 val reconnectingLabel = stringResource(R.string.reconnecting)
-                LinearProgressIndicator(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .semantics { contentDescription = reconnectingLabel },
-                )
+                // Add a visible text label so a sighted user sees the bar's meaning (a bare
+                // progress bar is ambiguous — could be loading). Names the server so the user
+                // knows which profile is reconnecting.
+                val serverName = activeConnection?.profile?.displayLabel
+                val visibleText = if (serverName != null) {
+                    stringResource(R.string.reconnecting_to, serverName)
+                } else {
+                    reconnectingLabel
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    LinearProgressIndicator(
+                        modifier = Modifier
+                            .weight(1f, fill = false)
+                            .padding(end = 8.dp)
+                            .semantics { contentDescription = reconnectingLabel },
+                    )
+                    Text(
+                        visibleText,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
             // Crossfade between content states (loading/empty/list) so the transition reads as a
             // smooth fade instead of an instant snap. Matches the session list's Crossfade

@@ -343,6 +343,17 @@ class ChatViewModel(
     val running: StateFlow<Boolean> = _running.asStateFlow()
 
     /**
+     * True when the SSE stream dropped mid-run (a transient [Disconnected] while a run is
+     * active). The UI uses this to switch the working indicator to a "stream interrupted /
+     * reconnecting" visual instead of clearing [_running] outright — the run is still active
+     * on the server, so showing it as finished would mislead the user into typing a follow-up
+     * or navigating away. Cleared when the stream reconnects ([Connected]) or when a hard
+     * failure ([Failed]/[AuthFailed]) genuinely clears [_running]. See the state watcher in
+     * [init]. */
+    private val _streamInterrupted = MutableStateFlow(false)
+    val streamInterrupted: StateFlow<Boolean> = _streamInterrupted.asStateFlow()
+
+    /**
      * Wall-clock millis at which the current run started (0L when no run is active). Drives
      * the typing row's elapsed timer so it survives LazyColumn recycling — a local `remember`
      * in the row resets to 0:00 when the row is disposed and scrolled back into view. Stamped
@@ -388,6 +399,17 @@ class ChatViewModel(
     private val _queuedFollowUp = MutableStateFlow<String?>(null)
     val queuedFollowUp: StateFlow<String?> = _queuedFollowUp.asStateFlow()
 
+    /** The text of the most recently-sent user prompt (captured in [send]), so an undo-able
+     *  Stop can re-send it. Only text-bearing prompts are tracked — an image-only prompt has
+     *  nothing to re-send text-wise. Cleared when a new run starts with different text. */
+    private var lastSentPrompt: String? = null
+
+    /** One-shot event signals for an undoable Stop. The UI collects this and shows an
+     *  "Stopped — Undo" snackbar; tapping Undo calls [resendLastPrompt]. A Channel so an
+     *  emit before the UI subscribes is still delivered. */
+    private val _stopUndoEvents = Channel<String?>(Channel.CONFLATED)
+    val stopUndoEvents: Flow<String?> = _stopUndoEvents.receiveAsFlow()
+
     /** One-shot error events surfaced as snackbars. A Channel (not SharedFlow) so an event
      *  emitted before the UI subscribes is buffered and still delivered — a SharedFlow with
      *  replay=0 would drop it (e.g. a VM-init catalog fetch failing before first
@@ -427,6 +449,17 @@ class ChatViewModel(
                 scope = viewModelScope,
                 started = SharingStarted.WhileSubscribed(NetworkConfig.stateFlowSubscriptionTimeoutMs),
                 initialValue = EventStreamClient.ConnectionState.Disconnected,
+            )
+
+    /** SSE reconnect-attempt count for the active connection, surfaced so the chat's
+     *  connection banner can show "Reconnecting (attempt N)…" during a sustained outage. */
+    val reconnectAttempts: StateFlow<Int> =
+        container.activeConnection
+            .flatMapLatest { it?.events?.reconnectAttempts ?: flowOf(0) }
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(NetworkConfig.stateFlowSubscriptionTimeoutMs),
+                initialValue = 0,
             )
 
     private val _pendingPermission = MutableStateFlow<Permission?>(null)
@@ -763,6 +796,7 @@ class ChatViewModel(
                     // the RunForegroundService alive, and the Stop button no-ops (abort() early-
                     // returns with no connection) until a later reconnect happens to clear it.
                 _running.value = false
+                _streamInterrupted.value = false
                 _aborting.value = false
                 clearPermissions()
                 sessionAllowed.clear()
@@ -771,6 +805,7 @@ class ChatViewModel(
                 return@collectLatest
                 }
                 _running.value = false
+                _streamInterrupted.value = false
                 // Allow the re-light below to recover a still-running run after this (re)connect;
                 // a run that actually finished during the outage emits no live parts, so this
                 // won't spuriously re-light.
@@ -942,6 +977,11 @@ class ChatViewModel(
         )
         // If the SSE stream drops mid-run, the run indicator would spin forever;
         // reset it so the UI doesn't look stuck while the banner shows "Reconnecting…".
+        // On a *transient* drop (Disconnected) we don't clear _running — the run is still
+        // active on the server, and showing it as finished would mislead the user. Instead
+        // we set _streamInterrupted so the working row switches to a "reconnecting" visual.
+        // On a *hard* failure (Failed/AuthFailed) the run genuinely can't continue without
+        // user action, so _running is cleared. _streamInterrupted is cleared on Connected.
         viewModelScope.launch {
             container.activeConnection.collectLatest { conn ->
                 if (conn == null) return@collectLatest
@@ -954,11 +994,28 @@ class ChatViewModel(
                     while (currentCoroutineContext().isActive) {
                         try {
                             conn.events.state.collect { state ->
-                                val isDown = state == EventStreamClient.ConnectionState.Disconnected ||
-                                    state == EventStreamClient.ConnectionState.Failed ||
-                                    state == EventStreamClient.ConnectionState.AuthFailed
-                                if (isDown && _running.value) {
-                                    _running.value = false
+                                when (state) {
+                                    EventStreamClient.ConnectionState.Connected -> {
+                                        _streamInterrupted.value = false
+                                    }
+                                    EventStreamClient.ConnectionState.Disconnected -> {
+                                        // Transient: the stream dropped but the system is
+                                        // reconnecting. Flag interrupted so the working row
+                                        // shows a "reconnecting" state instead of vanishing.
+                                        if (_running.value) _streamInterrupted.value = true
+                                    }
+                                    EventStreamClient.ConnectionState.Failed,
+                                    EventStreamClient.ConnectionState.AuthFailed -> {
+                                        // Hard failure: the run can't continue without user
+                                        // action (fix credentials / server). Clear running and
+                                        // the interrupted flag so the UI doesn't look stuck.
+                                        _streamInterrupted.value = false
+                                        if (_running.value) _running.value = false
+                                    }
+                                    EventStreamClient.ConnectionState.Connecting -> {
+                                        // Initial connect or reconnect attempt; leave running
+                                        // as-is — interrupted (if set) stays until Connected.
+                                    }
                                 }
                             }
                         } catch (e: CancellationException) {
@@ -1045,6 +1102,9 @@ class ChatViewModel(
             _optimisticMessages.update { entries -> entries.filterNot { it.failed && it.text.trim() == trimmed } }
             _optimisticMessages.update { it + OptimisticEntry(optimisticId, trimmed, System.currentTimeMillis(), failed = false) }
         }
+        // Remember the sent text so an undoable Stop can re-send it. Only text-bearing prompts
+        // are tracked (an image-only prompt has nothing to re-send).
+        if (trimmed.isNotEmpty()) lastSentPrompt = trimmed
         viewModelScope.launch {
             runCatchingCancellable {
                 conn.repository.sendPrompt(
@@ -1304,12 +1364,29 @@ class ChatViewModel(
                 // before the request even reaches the server) and the run keeps burning tokens
                 // server-side despite the user explicitly stopping it.
                 runCatchingCancellable { withContext(NonCancellable) { conn.repository.abort(sessionId) } }
-                    .onSuccess { _running.value = false }
+                    .onSuccess {
+                        _running.value = false
+                        // Surface an undo opportunity so an accidental Stop is recoverable.
+                        // The UI shows a "Stopped — Undo" snackbar; tapping Undo re-sends the
+                        // last prompt. Only when there's a tracked prompt to undo back to.
+                        val prompt = lastSentPrompt
+                        if (prompt != null) _stopUndoEvents.trySend(prompt)
+                    }
                     .onFailure { _errorEvents.trySend(ChatError(container.friendlyError(it))) }
             } finally {
                 _aborting.value = false
             }
         }
+    }
+
+    /** Re-send the most recently-sent user prompt, used by the Stop-undo snackbar so an
+     *  accidental Stop can be recovered. No-op if no prompt is tracked (e.g. the run was
+     *  started by a command, not a text prompt). Clears the tracked prompt so a second Undo
+     *  tap doesn't double-send. */
+    fun resendLastPrompt() {
+        val prompt = lastSentPrompt ?: return
+        lastSentPrompt = null
+        send(prompt, includeAttachments = false)
     }
 
     fun addAttachment(attachment: PendingAttachment) {

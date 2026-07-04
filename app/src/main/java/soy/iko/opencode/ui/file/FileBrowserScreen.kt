@@ -68,8 +68,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
@@ -171,7 +169,8 @@ fun FileBrowserScreen(
                 .graphicsLayer { scaleX = scale; scaleY = scale },
         ) {
             // Surface SSE connection state so a dropped stream is visible while browsing
-            // files, not just on the chat/session screens.
+            // files, not just on the chat/session screens. Wrapped in a Box because
+            // ConnectionBannerFor uses BoxScope.align(TopCenter) for the banner's placement.
             Box(modifier = Modifier.fillMaxWidth()) {
                 ConnectionBannerFor(container)
             }
@@ -182,17 +181,17 @@ fun FileBrowserScreen(
                 modifier = Modifier.fillMaxWidth(),
             )
             val keyboardController = LocalSoftwareKeyboardController.current
-            // Search is the primary reason to open this screen, so focus the field on first
-            // composition. Focus only (no forced keyboard) so it doesn't fight the breadcrumb/listing.
-            val searchFocus = remember { FocusRequester() }
-            LaunchedEffect(Unit) { runCatchingCancellable { searchFocus.requestFocus() } }
+            // Don't auto-focus the search field on entry: doing so raises the IME keyboard
+            // over the directory listing (the other primary function of this screen) and
+            // forces a browse-first user to dismiss it. The session/server lists don't
+            // auto-focus either, so this is also a consistency fix. The field is still
+            // prominent at the top and a tap focuses it as expected.
             OutlinedTextField(
                 value = state.query,
                 onValueChange = vm::setQuery,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(start = 12.dp, end = 12.dp, top = 12.dp)
-                    .focusRequester(searchFocus)
                     .testTag("file_search"),
                 label = {
                     Text(

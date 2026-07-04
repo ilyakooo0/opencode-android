@@ -5,6 +5,7 @@ package soy.iko.opencode.ui.chat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -225,6 +226,34 @@ class ChatViewModelTest {
         assertFalse(vm.running.value)
     }
 
+    @Test
+    fun abort_emitsStopUndoWithLastPrompt() = testScope.runTest {
+        val container = makeContainer()
+        val vm = makeVm(container)
+        assertTrue(vm.send("hello there"))
+        testScope.testScheduler.advanceUntilIdle()
+        vm.abort()
+        testScope.testScheduler.advanceUntilIdle()
+        // The undo event carries the last-sent prompt so the UI can show "Stopped — Undo".
+        val prompt = vm.stopUndoEvents.first()
+        assertEquals("hello there", prompt)
+    }
+
+    @Test
+    fun resendLastPrompt_reSendsTheTrackedPrompt() = testScope.runTest {
+        val container = makeContainer()
+        val vm = makeVm(container)
+        assertTrue(vm.send("original prompt"))
+        testScope.testScheduler.advanceUntilIdle()
+        // Abort surfaces the undo event; resendLastPrompt re-sends the tracked text.
+        vm.abort()
+        testScope.testScheduler.advanceUntilIdle()
+        vm.resendLastPrompt()
+        testScope.testScheduler.advanceUntilIdle()
+        // The send should have re-queued the prompt (running re-lights).
+        assertTrue(vm.running.value)
+    }
+
     // --- respondPermission() ---
 
     @Test
@@ -334,7 +363,7 @@ class ChatViewModelTest {
     // --- Connection state ---
 
     @Test
-    fun sseDisconnected_resetsRunning() = testScope.runTest {
+    fun sseDisconnected_keepsRunningAndFlagsInterrupted() = testScope.runTest {
         val events = FakeEventStreamClient()
         val container = makeContainer(events = events)
         val vm = makeVm(container)
@@ -342,7 +371,16 @@ class ChatViewModelTest {
         testScope.testScheduler.advanceUntilIdle()
         events.fakeState.value = EventStreamClient.ConnectionState.Disconnected
         testScope.testScheduler.advanceUntilIdle()
-        assertFalse(vm.running.value)
+        // A transient SSE drop does NOT clear _running — the run is still active on the
+        // server, and showing it as finished would mislead the user. Instead the stream-
+        // interrupted flag is set so the working row shows a "reconnecting" visual.
+        assertTrue(vm.running.value)
+        assertTrue(vm.streamInterrupted.value)
+        // Reconnecting clears the interrupted flag but keeps running.
+        events.fakeState.value = EventStreamClient.ConnectionState.Connected
+        testScope.testScheduler.advanceUntilIdle()
+        assertTrue(vm.running.value)
+        assertFalse(vm.streamInterrupted.value)
     }
 
     @Test

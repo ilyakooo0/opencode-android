@@ -203,10 +203,12 @@ fun ChatScreen(
     onOpenFile: ((String) -> Unit)? = null,
     onOpenSession: ((String) -> Unit)? = null,
     focusMessageId: String? = null,
+    onEditProfile: ((String) -> Unit)? = null,
 ) {
     val vm: ChatViewModel = viewModel(key = sessionId, factory = vmFactory { ChatViewModel(container, sessionId) })
     val hasMessages by vm.hasMessages.collectAsStateWithLifecycle()
     val running by vm.running.collectAsStateWithLifecycle()
+    val streamInterrupted by vm.streamInterrupted.collectAsStateWithLifecycle()
     val aborting by vm.aborting.collectAsStateWithLifecycle()
     val loading by vm.loading.collectAsStateWithLifecycle()
     val loadError by vm.loadError.collectAsStateWithLifecycle()
@@ -217,6 +219,7 @@ fun ChatScreen(
     val modelsError by vm.modelsError.collectAsStateWithLifecycle()
     val selectedModel by vm.selectedModel.collectAsStateWithLifecycle()
     val connectionState by vm.connectionState.collectAsStateWithLifecycle()
+    val reconnectAttempts by vm.reconnectAttempts.collectAsStateWithLifecycle()
     val pendingPermission by vm.pendingPermission.collectAsStateWithLifecycle()
     val permissionProgress by vm.permissionProgress.collectAsStateWithLifecycle()
     val agents by vm.agents.collectAsStateWithLifecycle()
@@ -296,7 +299,6 @@ fun ChatScreen(
     var showTitleMenu by rememberSaveable { mutableStateOf(false) }
     var showCommandPicker by rememberSaveable { mutableStateOf(false) }
     var showExitConfirm by rememberSaveable { mutableStateOf(false) }
-    var showStopConfirm by rememberSaveable { mutableStateOf(false) }
     var showOverflowMenu by rememberSaveable { mutableStateOf(false) }
     var showRenameDialog by rememberSaveable { mutableStateOf(false) }
     var showDeleteDialog by rememberSaveable { mutableStateOf(false) }
@@ -360,6 +362,20 @@ fun ChatScreen(
                 snackbar.showSnackbar(event.message)
             }
             if (result == androidx.compose.material3.SnackbarResult.ActionPerformed) vm.retryFailed()
+        }
+    }
+
+    // Stop-undo: abort() emits the last-sent prompt here so this collector can show a
+    // "Stopped — Undo" snackbar. Tapping Undo re-sends the prompt, recovering an accidental
+    // Stop without a confirmation dialog (Stop now happens on first tap).
+    val undoStopLabel = stringResource(R.string.undo)
+    val stoppedLabel = stringResource(R.string.run_stopped_undo)
+    LaunchedEffect(Unit) {
+        vm.stopUndoEvents.collect { prompt ->
+            if (prompt != null) {
+                val result = snackbar.showSnackbar(message = stoppedLabel, actionLabel = undoStopLabel)
+                if (result == androidx.compose.material3.SnackbarResult.ActionPerformed) vm.resendLastPrompt()
+            }
         }
     }
 
@@ -547,8 +563,8 @@ fun ChatScreen(
                 ev.isCtrlPressed && ev.key == Key.F -> { searchActive = true; true }
                 ev.key == Key.Escape && showPalette -> { showPalette = false; true }
                 ev.key == Key.Escape && searchActive -> { searchActive = false; chatSearch = ""; true }
-                ev.key == Key.Escape && running && !showStopConfirm && !showExitConfirm -> {
-                    showStopConfirm = true; true
+                ev.key == Key.Escape && running && !showExitConfirm -> {
+                    vm.abort(); true
                 }
                 else -> false
             }
@@ -893,7 +909,7 @@ fun ChatScreen(
                     enabled = activeConnection != null,
                     sendOnEnter = sendOnEnter,
                     onSend = ::doSend,
-                    onAbort = { showStopConfirm = true },
+                    onAbort = { vm.abort() },
                     queuedFollowUp = queuedFollowUp,
                     onQueueFollowUp = vm::queueFollowUp,
                     onCancelQueue = { vm.queueFollowUp("") },
@@ -1155,7 +1171,21 @@ fun ChatScreen(
         // content padding accounts for the bottomBar's raised height, so the message
         // list is already above the keyboard. Adding imePadding here would double-apply
         // the IME inset and push messages too far up.
-        Box(modifier = Modifier.fillMaxSize().padding(padding)) {
+        //
+        // BoxWithConstraints so the FABs and search bar can align to the capped (800dp)
+        // message list on wide screens instead of floating at the screen edges — on a
+        // tablet the list is a centered column, so edge-aligned FABs are visually detached.
+        // The horizontal margin below is applied to the FAB/search containers so they
+        // track the list's left/right edges.
+        androidx.compose.foundation.layout.BoxWithConstraints(
+            modifier = Modifier.fillMaxSize().padding(padding),
+        ) {
+            val screenMaxWidth = maxWidth
+            val listMaxWidth = NetworkConfig.chatContentMaxWidthDp.dp
+            // Horizontal margin between the capped list's edge and the screen edge (0 on
+            // screens narrower than the cap). Applied as start/end padding so the FABs and
+            // search bar sit at the list's edges, not the screen's.
+            val sideMargin = ((screenMaxWidth - listMaxWidth) / 2).coerceAtLeast(0.dp)
             if (activeConnection == null) {
                 Column(
                     modifier = Modifier.align(Alignment.Center).padding(24.dp),
@@ -1187,6 +1217,10 @@ fun ChatScreen(
                 // fires while the banner is composed (visible), so gate the inset on
                 // bannerVisible and fall back to 44dp until the first measurement arrives.
                 var bannerHeightPx by remember { mutableIntStateOf(0) }
+                // Track the search bar height so the list's top padding can grow when search
+                // is active — otherwise a scrolled-to match lands at index 0, hidden behind
+                // the floating search bar (the "scroll-under-the-search-bar" bug).
+                var searchbarHeightPx by remember { mutableIntStateOf(0) }
                 val density = LocalDensity.current
                 val topPad = if (bannerVisible) {
                     if (bannerHeightPx > 0) {
@@ -1196,17 +1230,29 @@ fun ChatScreen(
                     }
                 } else {
                     16.dp
+                } + if (searchActive && searchbarHeightPx > 0) {
+                    with(density) { searchbarHeightPx.toDp() } + 4.dp
+                } else {
+                    0.dp
                 }
                 ConnectionBanner(
                     state = connectionState,
                     modifier = Modifier.align(Alignment.TopCenter).onSizeChanged { bannerHeightPx = it.height },
                     isOnline = isOnline,
-                    // On a hard failure, retry by forcing an SSE reconnect (which
+                    // On a hard endpoint failure, retry by forcing an SSE reconnect (which
                     // re-seeds from REST). refreshMessages is the right recovery path
                     // when the connection is present but the stream died; reconnect()
                     // is the path when the whole connection is gone (handled by the
                     // separate "Not connected" state below).
                     onRetry = { vm.refreshMessages() },
+                    // On an auth failure (401/403), retrying with the same bad credentials
+                    // is futile — offer a one-tap path to edit the active profile's
+                    // credentials instead of making the user hunt for the server list.
+                    onEditCredentials = {
+                        val profileId = activeConnection?.profile?.id
+                        if (profileId != null) onEditProfile?.invoke(profileId)
+                    },
+                    reconnectAttempts = reconnectAttempts,
                 )
                 // Persistent inline error banner for a mid-conversation load failure.
                 // Unlike the one-shot snackbar (which fires once per streak then goes
@@ -1285,6 +1331,27 @@ fun ChatScreen(
                         Spacer(Modifier.size(12.dp))
                         Button(onClick = { vm.refreshMessages() }) {
                             Text(stringResource(R.string.retry))
+                        }
+                        // When the VM's retryWhen loop is actively retrying (loading is true
+                        // on top of the error state), surface a small "retrying…" indicator so
+                        // the user knows the system is working — without it, the static error
+                        // + Retry button reads as "broken, tap to fix", and the user may not
+                        // realize an automatic retry is already in progress.
+                        if (loading) {
+                            Spacer(Modifier.size(12.dp))
+                            val retryingLabel = stringResource(R.string.retrying_ellipsis)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                CircularProgressIndicator(
+                                    Modifier.size(14.dp),
+                                    strokeWidth = 2.dp,
+                                )
+                                Text(
+                                    retryingLabel,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(start = 6.dp),
+                                )
+                            }
                         }
                     }
                 } else if (messages.isEmpty() && running) {
@@ -1391,8 +1458,10 @@ fun ChatScreen(
                                 }
                                 // Swipe-start-to-end reveals a reply affordance and triggers quote-reply,
                                 // snapping back (the message isn't dismissed — the quote fills the composer).
-                                // Only enabled when there's text to quote, so non-text messages don't
-                                // capture horizontal drags (e.g. inside a horizontally-scrollable code block).
+                                // Enabled for non-text messages too (image/tool-only), but the confirm
+                                // callback gives a haptic without triggering reply — so the user gets a
+                                // perceptible "can't quote this" signal instead of a silently dead gesture.
+                                val cantQuoteMsg = stringResource(R.string.cannot_quote_this)
                                 val swipeState = rememberSwipeToDismissBoxState(
                                     confirmValueChange = { value ->
                                         val replyValue = if (layoutDirection == LayoutDirection.Rtl) {
@@ -1400,10 +1469,18 @@ fun ChatScreen(
                                         } else {
                                             SwipeToDismissBoxValue.StartToEnd
                                         }
-                                        if (value == replyValue && quoteText != null) {
-                                            haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
-                                            vm.quoteReply(quoteText)
-                                            runCatching { inputFocusRequester.requestFocus() }
+                                        if (value == replyValue) {
+                                            if (quoteText != null) {
+                                                haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                                                vm.quoteReply(quoteText)
+                                                runCatching { inputFocusRequester.requestFocus() }
+                                            } else {
+                                                // Non-text message: give a longer haptic so the user
+                                                // feels the gesture was received but can't quote it,
+                                                // and surface a brief toast so the reason is clear.
+                                                haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                                scope.launch { snackbar.showSnackbar(cantQuoteMsg) }
+                                            }
                                         }
                                         false
                                     },
@@ -1415,8 +1492,8 @@ fun ChatScreen(
                                 val replyFromStartToEnd = layoutDirection != LayoutDirection.Rtl
                                 SwipeToDismissBox(
                                     state = swipeState,
-                                    enableDismissFromEndToStart = !replyFromStartToEnd && quoteText != null,
-                                    enableDismissFromStartToEnd = replyFromStartToEnd && quoteText != null,
+                                    enableDismissFromEndToStart = !replyFromStartToEnd,
+                                    enableDismissFromStartToEnd = replyFromStartToEnd,
                                     backgroundContent = {
                                         Box(
                                             Modifier.fillMaxSize().padding(horizontal = 16.dp),
@@ -1528,6 +1605,11 @@ fun ChatScreen(
                     if (running) {
                         item(key = "__typing") {
                             val workingText = stringResource(R.string.working)
+                            // When the SSE stream dropped mid-run, show a "reconnecting" label
+                            // instead of the plain "working" text so the user understands the
+                            // run is still active but the stream is reconnecting (not finished).
+                            val reconnectingText = stringResource(R.string.reconnecting)
+                            val interruptedLabel = if (streamInterrupted) reconnectingText else workingText
                             // Elapsed-since-run chip driven by the VM's runStartMs so the timer
                             // survives LazyColumn recycling — a local remember reset to 0:00 when
                             // the row was disposed and scrolled back into view. The VM stamps the
@@ -1574,11 +1656,18 @@ fun ChatScreen(
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier.semantics(mergeDescendants = true) {
-                                        contentDescription = "$workingText $elapsedText"
+                                        contentDescription = "$interruptedLabel $elapsedText"
                                     },
                                 ) {
-                                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                                    Text(workingText, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 6.dp))
+                                    // Dim the spinner when interrupted so the row reads as
+                                    // "paused/reconnecting" rather than actively progressing.
+                                    CircularProgressIndicator(
+                                        Modifier.size(16.dp),
+                                        strokeWidth = 2.dp,
+                                        color = if (streamInterrupted) MaterialTheme.colorScheme.onSurfaceVariant
+                                            else MaterialTheme.colorScheme.primary,
+                                    )
+                                    Text(interruptedLabel, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 6.dp))
                                     Spacer(Modifier.size(8.dp))
                                     Icon(
                                         Icons.Filled.Schedule,
@@ -1600,7 +1689,7 @@ fun ChatScreen(
                                 Spacer(Modifier.weight(1f))
                                 val stopLabel = stringResource(R.string.stop)
                                 IconButton(
-                                    onClick = { showStopConfirm = true },
+                                    onClick = { vm.abort() },
                                     modifier = Modifier.semantics { contentDescription = stopLabel },
                                 ) {
                                     Icon(Icons.Filled.Stop, contentDescription = null)
@@ -1618,7 +1707,9 @@ fun ChatScreen(
                     visible = !isPinnedToBottom && listItems.isNotEmpty(),
                     enter = fabMotion.enter,
                     exit = fabMotion.exit,
-                    modifier = Modifier.align(Alignment.BottomEnd),
+                    // Inset by sideMargin on wide screens so the FAB tracks the capped list's
+                    // edge instead of floating at the screen edge (visually detached on tablets).
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(end = sideMargin),
                 ) {
                     // Badge the FAB when new content arrived while the user was scrolled up, so
                     // they know there's something new to jump to (cleared once back at bottom).
@@ -1669,7 +1760,7 @@ fun ChatScreen(
                     visible = scrolledDown && listItems.size > 4,
                     enter = fabMotion.enter,
                     exit = fabMotion.exit,
-                    modifier = Modifier.align(Alignment.BottomStart),
+                    modifier = Modifier.align(Alignment.BottomStart).padding(start = sideMargin),
                 ) {
                     SmallFloatingActionButton(
                         onClick = {
@@ -1690,13 +1781,16 @@ fun ChatScreen(
                     visible = searchActive,
                     enter = searchMotion.enter,
                     exit = searchMotion.exit,
-                    modifier = Modifier.align(Alignment.TopCenter),
+                    // Inset by sideMargin on wide screens so the search bar spans the capped
+                    // list's width, not the full screen width.
+                    modifier = Modifier.align(Alignment.TopCenter).padding(horizontal = sideMargin),
                 ) {
                     Surface(
                         tonalElevation = 3.dp,
                         modifier = Modifier
                             .padding(horizontal = 12.dp, vertical = 4.dp)
-                            .fillMaxWidth(),
+                            .fillMaxWidth()
+                            .onSizeChanged { searchbarHeightPx = it.height },
                     ) {
                         // Focus the search field when the bar appears (from the overflow menu's
                         // "Find in conversation" or Ctrl+F), so the user can start typing
@@ -1728,7 +1822,12 @@ fun ChatScreen(
                                 } else "",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(horizontal = 4.dp),
+                                modifier = Modifier
+                                    .padding(horizontal = 4.dp)
+                                    // Live region so a TalkBack user hears "3 of 12" / "No
+                                    // matches" announce as they step through results, not just
+                                    // the sighted user seeing the counter update.
+                                    .semantics { liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite },
                             )
                             // Step through matches (Previous / Next), disabled when there are
                             // fewer than two to navigate. Wrap around at the ends so repeated
@@ -1794,24 +1893,6 @@ fun ChatScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showExitConfirm = false }) { Text(stringResource(R.string.stay)) }
-            },
-        )
-    }
-
-    if (showStopConfirm) {
-        AlertDialog(
-            onDismissRequest = { showStopConfirm = false },
-            title = { Text(stringResource(R.string.stop_run_title)) },
-            text = { Text(stringResource(R.string.stop_run_text)) },
-            confirmButton = {
-                TextButton(onClick = {
-                    showStopConfirm = false
-                    haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
-                    vm.abort()
-                }) { Text(stringResource(R.string.stop), color = MaterialTheme.colorScheme.error) }
-            },
-            dismissButton = {
-                TextButton(onClick = { showStopConfirm = false }) { Text(stringResource(R.string.cancel)) }
             },
         )
     }
@@ -1899,6 +1980,10 @@ fun ChatScreen(
                 container.recentModelsStore.split(entry)?.let { (p, m) -> byKey[p to m] }
             }
         }
+        // Resolve snackbar strings in the composable scope; the onSetPreferredModel lambda
+        // below isn't @Composable, so stringResource can't be called inside it.
+        val defaultModelClearedMsg = stringResource(R.string.default_model_cleared)
+        val defaultModelSetFmt = stringResource(R.string.default_model_set, "%s")
         ModelPickerSheet(
             options = models,
             selected = selectedModel,
@@ -1912,7 +1997,18 @@ fun ChatScreen(
             onDismiss = { showModelPicker = false },
             preferredModelId = preferredModelId,
             onSetPreferredModel = { id ->
-                scope.launch { runCatchingCancellable { container.settingsStore.setPreferredModelId(id) } }
+                scope.launch {
+                    runCatchingCancellable { container.settingsStore.setPreferredModelId(id) }
+                    // Confirm the change with a snackbar so the user sees it took effect —
+                    // the toggle's label flip can be missed, especially when clearing.
+                    val msg = if (id.isEmpty()) {
+                        defaultModelClearedMsg
+                    } else {
+                        val label = models.firstOrNull { it.modelID == id }?.modelLabel ?: id
+                        defaultModelSetFmt.format(label)
+                    }
+                    snackbar.showSnackbar(msg)
+                }
             },
             recent = recentOptions,
         )
@@ -2293,6 +2389,16 @@ private fun ChatInputBar(
                                 style = MaterialTheme.typography.labelSmall,
                                 color = if (value.length >= NetworkConfig.maxDraftLengthChars) MaterialTheme.colorScheme.error
                                     else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        } else if (value.lines().size > 6) {
+                            // The inline field caps at 6 lines; once the draft crosses that,
+                            // hint that a bigger full-screen editor exists (the Expand icon
+                            // above is easy to miss among the icon row). A tappable label
+                            // would be ideal, but a plain hint is enough to draw attention.
+                            Text(
+                                stringResource(R.string.open_full_editor_hint),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                     },

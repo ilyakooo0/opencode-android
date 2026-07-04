@@ -335,6 +335,68 @@ object SessionNotifications {
             .onFailure { Log.w(TAG, "Failed to post reply-failed notification", it) }
     }
 
+    /** A queued outbox message was permanently undeliverable (e.g. the target session was
+     *  deleted server-side → 404). Distinct from [postError] (which is titled "Run failed"):
+     *  no run failed — a queued reply couldn't be delivered. Uses a distinct title/body so the
+     *  user understands the failure mode and recovery action (open the session and re-send). */
+    @SuppressLint("MissingPermission")
+    fun postOutboxDropped(context: Context, sessionId: String, sessionTitle: String, profileId: String? = null) {
+        if (!canPost(context)) return
+        val notifId = notifId(NS_ERROR, sessionId)
+        val notification = NotificationCompat.Builder(context, NotificationChannels.ERROR)
+            .setSmallIcon(R.drawable.ic_stat_notify)
+            .setContentTitle(context.getString(R.string.message_not_delivered))
+            .setContentText(context.getString(R.string.message_not_delivered_body, sessionTitle))
+            .setAutoCancel(true)
+            .setOnlyAlertOnce(true)
+            .setContentIntent(openSessionIntent(context, sessionId, notifId, profileId))
+            .setCategory(NotificationCompat.CATEGORY_ERROR)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setGroup(GROUP_ERROR)
+            .build()
+        runCatching { NotificationManagerCompat.from(context).notify(notifId, notification) }
+            .onFailure { Log.w(TAG, "Failed to post outbox-dropped notification", it) }
+        runCatching { postGroupSummary(context, NotificationChannels.ERROR, GROUP_ERROR, SUMMARY_ERROR_ID) }
+            .onFailure { Log.w(TAG, "Failed to post error summary notification", it) }
+    }
+
+    /** The SSE stream hit a non-retryable failure (Failed/AuthFailed) while the app was
+     *  backgrounded during an active run, so the in-app banner isn't visible and the run is
+     *  effectively stranded. Posts a low-priority notification so a backgrounded user is
+     *  signaled that their run is stalled and can tap to reconnect. Distinct from [postError]
+     *  (a run error) — this is a connection loss, not a run failure. */
+    @SuppressLint("MissingPermission")
+    fun postConnectionLost(context: Context, profileLabel: String, profileId: String?) {
+        if (!canPost(context)) return
+        val notifId = NOTIF_ID_PREFIX + 7000
+        // Tap reopens the app at the server list so the user can reconnect / fix credentials.
+        val openIntent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            profileId?.let { putExtra(NotificationActionReceiver.EXTRA_PROFILE_ID, it) }
+        }
+        val openPending = PendingIntent.getActivity(
+            context, notifId, openIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val notification = NotificationCompat.Builder(context, NotificationChannels.ERROR)
+            .setSmallIcon(R.drawable.ic_stat_notify)
+            .setContentTitle(context.getString(R.string.connection_lost, profileLabel))
+            .setContentText(context.getString(R.string.connection_lost_tap))
+            .setAutoCancel(true)
+            .setOnlyAlertOnce(true)
+            .setContentIntent(openPending)
+            .setCategory(NotificationCompat.CATEGORY_STATUS)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .build()
+        runCatching { NotificationManagerCompat.from(context).notify(notifId, notification) }
+            .onFailure { Log.w(TAG, "Failed to post connection-lost notification", it) }
+    }
+
+    /** Cancel a previously-posted [postConnectionLost] notification (e.g. on reconnect). */
+    fun cancelConnectionLost(context: Context) {
+        NotificationManagerCompat.from(context).cancel(NOTIF_ID_PREFIX + 7000)
+    }
+
     /** FLAG_MUTABLE where required (Android 12+) so RemoteInput results can be injected. */
     private fun mutableFlag(): Int =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_MUTABLE else 0

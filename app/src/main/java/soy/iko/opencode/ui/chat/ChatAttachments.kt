@@ -10,11 +10,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -153,7 +155,9 @@ private fun StagingChip(stagingFileCount: Int) {
 @Composable
 private fun AttachmentChip(attachment: PendingAttachment, onRemove: () -> Unit) {
     var showPreview by remember { mutableStateOf(false) }
+    var showNameDialog by remember { mutableStateOf(false) }
     val previewLabel = stringResource(R.string.preview_attachment)
+    val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
     Surface(
         shape = MaterialTheme.shapes.small,
         color = MaterialTheme.colorScheme.surfaceVariant,
@@ -172,10 +176,22 @@ private fun AttachmentChip(attachment: PendingAttachment, onRemove: () -> Unit) 
                         .clickable(role = Role.Image) { showPreview = true },
                 )
             } else {
+                // Long-press the file icon to see the full filename (it's truncated to 120dp
+                // in the chip, so a long name can't be read in full otherwise). Mirrors the
+                // image chip's tap-to-preview pattern for non-image files.
                 Icon(
                     Icons.Filled.Description,
                     contentDescription = null,
-                    modifier = Modifier.size(24.dp),
+                    modifier = Modifier
+                        .size(24.dp)
+                        .combinedClickable(
+                            role = Role.Image,
+                            onLongClick = {
+                                haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                showNameDialog = true
+                            },
+                            onClick = {},
+                        ),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -220,5 +236,23 @@ private fun AttachmentChip(attachment: PendingAttachment, onRemove: () -> Unit) 
                 }
             }
         }
+    }
+    if (showNameDialog) {
+        AlertDialog(
+            onDismissRequest = { showNameDialog = false },
+            title = { Text(stringResource(R.string.attachment_name)) },
+            text = {
+                Text(
+                    attachment.name,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                )
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = { showNameDialog = false }) {
+                    Text(stringResource(R.string.close))
+                }
+            },
+        )
     }
 }

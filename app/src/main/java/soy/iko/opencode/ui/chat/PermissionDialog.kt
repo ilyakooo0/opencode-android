@@ -87,9 +87,6 @@ fun PermissionDialog(
     // indefinitely (the foreground service holds the process alive). LaunchedEffect keyed on
     // permission.id so a fresh prompt resets the timer. Disabled when the timeout is 0.
     val autoRejectMs = NetworkConfig.permissionAutoRejectMs
-    // Final-warning threshold: show a per-second countdown in the last 10s so the user isn't
-    // surprised by a silent auto-reject.
-    val warningThresholdMs = (autoRejectMs - 10_000L).coerceAtLeast(0L)
     LaunchedEffect(permission.id, autoRejectMs) {
         if (autoRejectMs <= 0L) return@LaunchedEffect
         val tickMs = 1000L
@@ -102,14 +99,22 @@ fun PermissionDialog(
         respond(PermissionResponse.REJECT)
     }
     val showReminder = elapsedMs >= NetworkConfig.permissionReminderThresholdMs
-    // In the final 10 seconds, show a per-second countdown instead of the minute reminder.
-    val showSecondsWarning = autoRejectMs > 0L && elapsedMs >= warningThresholdMs
+    // In the final 60 seconds, switch to a per-second countdown so the imminent auto-reject
+    // is clearly signaled (a full minute of per-second countdown, not just the last 10s,
+    // so the user isn't surprised at the 10s mark by a sudden format change).
+    val showSecondsWarning = autoRejectMs > 0L && elapsedMs >= autoRejectMs - 60_000L
     AlertDialog(
         // Back press routes here (dismissOnBackPress defaults true) and is treated as an
         // explicit reject — the safe default. Tap-outside is disabled below so it can't
         // dismiss silently. A host-composition BackHandler doesn't work: AlertDialog
         // renders in its own window whose back dispatcher never reaches the host.
-        onDismissRequest = { respond(PermissionResponse.REJECT) },
+        // A haptic fires so an accidental back-press/gesture-mis-tap is at least perceptible
+        // — without it the run would stop with no visible/audible feedback that the back
+        // press was the cause.
+        onDismissRequest = {
+            haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+            respond(PermissionResponse.REJECT)
+        },
         properties = androidx.compose.ui.window.DialogProperties(dismissOnClickOutside = false),
         icon = { Icon(Icons.Filled.Shield, contentDescription = null) },
         title = {
@@ -212,6 +217,16 @@ fun PermissionDialog(
                     },
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text(stringResource(R.string.allow_for_session)) }
+                // Explain the scope of "Always allow" so the user understands what they're
+                // granting (this tool + pattern in every session) BEFORE choosing it. Placed
+                // above the button (informed-consent ordering) so a top-down reader sees the
+                // scope before reaching the action.
+                Text(
+                    stringResource(R.string.always_allow_scope),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.fillMaxWidth(),
+                )
                 OutlinedButton(
                     onClick = {
                         haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
@@ -219,14 +234,6 @@ fun PermissionDialog(
                     },
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text(stringResource(R.string.always_allow)) }
-                // Explain the scope of "Always allow" so the user understands what they're
-                // granting (this tool + pattern in every session) before choosing it.
-                Text(
-                    stringResource(R.string.always_allow_scope),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
-                )
                 // Reject is an OutlinedButton (not a low-prominence TextButton) in the
                 // same column so the actions are visually balanced — the prior layout buried
                 // Reject as a small dismiss-button, nudging users toward granting. Reject

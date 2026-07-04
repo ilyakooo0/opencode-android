@@ -460,6 +460,47 @@ open class AppContainer private constructor(
     }
 
     /**
+     * Post a system notification when the SSE stream hits a non-retryable failure
+     * ([Failed]/[AuthFailed]) while the app is backgrounded during an active run, so a
+     * backgrounded user is signaled that their run is stranded (the in-app banner isn't
+     * visible). The notification is cancelled when the stream reconnects. This closes the
+     * gap where a user who kicks off a run and backgrounds the app returns hours later to
+     * find nothing happened and no signal why — the stream parked on a 4xx mid-run and the
+     * in-app banner was never seen.
+     */
+    private fun observeBackgroundedConnectionFailures() {
+        val ctx = appContext ?: return
+        appScope.launch {
+            activeConnection.collectLatest { conn ->
+                if (conn == null) return@collectLatest
+                conn.events.state.collect { state ->
+                    when (state) {
+                        EventStreamClient.ConnectionState.Failed,
+                        EventStreamClient.ConnectionState.AuthFailed -> {
+                            // Only notify when the app is backgrounded AND a run was recently
+                            // active (or still is) — a foregrounded user sees the banner, and
+                            // a failure with no run is less actionable.
+                            if (!_isForeground.value && _anyRunActive.value) {
+                                runCatchingCancellable {
+                                    SessionNotifications.postConnectionLost(
+                                        ctx, conn.profile.displayLabel, conn.profile.id,
+                                    )
+                                }.onFailure {
+                                    Log.w("AppContainer", "connection-lost notification failed: ${safeExceptionSummary(it)}")
+                                }
+                            }
+                        }
+                        EventStreamClient.ConnectionState.Connected -> {
+                            runCatchingCancellable { SessionNotifications.cancelConnectionLost(ctx) }
+                        }
+                        else -> {}
+                    }
+                }
+            }
+        }
+    }
+
+    /**
      * Reconcile active-run tracking on an SSE *reconnect*. A run that completes during a stream
      * outage never delivers its `SessionIdle`, so its id would stay in [activeRuns] and pin
      * [anyRunActive] (and the foreground service + "working…" notification) on indefinitely. On a
@@ -563,18 +604,16 @@ open class AppContainer private constructor(
                         "Dropping undeliverable outbox message ${msg.id} for ${msg.sessionId} (HTTP $status): ${string(R.string.outbox_dropped_text)}",
                     )
                     outboxStore.remove(msg.id)
-                    // Previously this silent drop only hit logcat, so the user got no signal
-                    // that their composed reply never landed. Surface it on the ERROR channel.
-                    // postError is the only public entry point that posts there; it renders a
-                    // fixed title/text and interpolates its title arg, so the localized
-                    // outbox_dropped_title is passed as that arg (a user-facing message rather
-                    // than an opaque session id). Tap routes back to the originating profile.
+                    // Surface the dropped reply on the ERROR channel with a distinct title
+                    // ("Message not delivered") so the user understands a queued reply
+                    // couldn't be delivered — not that a run failed (which postError
+                    // implies). Tap routes back to the originating profile's session.
                     val ctx = appContext
                     if (ctx != null) {
                         runCatchingCancellable {
-                            SessionNotifications.postError(
+                            SessionNotifications.postOutboxDropped(
                                 ctx, msg.sessionId,
-                                string(R.string.outbox_dropped_title),
+                                msg.sessionId,
                                 conn.profile.id,
                             )
                         }.onFailure {
@@ -1416,6 +1455,7 @@ open class AppContainer private constructor(
             observeMessageActivity()
             observeRunReconcileOnReconnect()
             observeRunForegroundService()
+            observeBackgroundedConnectionFailures()
             // Load the persisted muted-sessions set so isSessionMuted() reflects the choice
             // immediately on cold start (before any session list composition).
             appScope.launch {

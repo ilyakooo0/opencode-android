@@ -34,7 +34,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -112,11 +112,15 @@ fun McpScreen(container: AppContainer, onBack: () -> Unit) {
         snackbarHost = { SnackbarHost(snackbar) },
         floatingActionButton = {
             // Register a new MCP server dynamically (POST /mcp). Hidden until a connection is
-            // established — adding requires an active server.
+            // established — adding requires an active server. Extended FAB (icon + label) matches
+            // the session list ("New session") and server list ("Add server") so a first-time
+            // user isn't left guessing what the + does.
             if (state !is McpViewModel.State.Disconnected) {
-                FloatingActionButton(onClick = { showAddDialog = true }) {
-                    Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.mcp_add))
-                }
+                ExtendedFloatingActionButton(
+                    onClick = { showAddDialog = true },
+                    icon = { Icon(Icons.Filled.Add, contentDescription = null) },
+                    text = { Text(stringResource(R.string.mcp_add_server)) },
+                )
             }
         },
     ) { padding ->

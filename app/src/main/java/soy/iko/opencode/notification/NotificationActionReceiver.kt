@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import androidx.core.app.RemoteInput
 import soy.iko.opencode.OpencodeApp
+import soy.iko.opencode.R
 import soy.iko.opencode.data.model.PermissionResponse
 import soy.iko.opencode.data.network.NetworkConfig
 import java.util.concurrent.atomic.AtomicBoolean
@@ -32,22 +33,7 @@ class NotificationActionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val container = (context.applicationContext as? OpencodeApp)?.container ?: return
         if (intent.action == ACTION_STOP_RUN) {
-            // Stop action from the foreground-service notification. The session id may be
-            // absent if multiple runs were active (generic notification); in that case we
-            // can't target a specific run — just let it ride.
-            val sessionId = intent.getStringExtra(EXTRA_SESSION_ID)?.takeIf { it.isNotBlank() } ?: return
-            val profileId = intent.getStringExtra(EXTRA_PROFILE_ID)?.takeIf { it.isNotBlank() }
-            val pending = goAsync()
-            val finished = AtomicBoolean(false)
-            var watchdogThread: Thread? = null
-            val finishOnce = {
-                if (finished.compareAndSet(false, true)) {
-                    watchdogThread?.interrupt()
-                    pending.finish()
-                }
-            }
-            watchdogThread = watchdog(finishOnce)
-            container.abortRunFromNotification(sessionId, profileId) { _ -> finishOnce() }
+            handleStopRun(context, container, intent)
             return
         }
         val sessionId = intent.getStringExtra(EXTRA_SESSION_ID)?.takeIf { it.isNotBlank() } ?: return
@@ -142,6 +128,40 @@ class NotificationActionReceiver : BroadcastReceiver() {
                     finishOnce()
                 }
             }
+        }
+    }
+
+    /** Handle the Stop action from the foreground-service notification. Extracted from
+     *  [onReceive] to keep that function's cyclomatic complexity under detekt's threshold. */
+    private fun handleStopRun(context: Context, container: soy.iko.opencode.di.AppContainer, intent: Intent) {
+        // The session id may be absent if multiple runs were active (generic notification);
+        // in that case we can't target a specific run — just let it ride.
+        val sessionId = intent.getStringExtra(EXTRA_SESSION_ID)?.takeIf { it.isNotBlank() } ?: return
+        val profileId = intent.getStringExtra(EXTRA_PROFILE_ID)?.takeIf { it.isNotBlank() }
+        val pending = goAsync()
+        val finished = AtomicBoolean(false)
+        var watchdogThread: Thread? = null
+        val finishOnce = {
+            if (finished.compareAndSet(false, true)) {
+                watchdogThread?.interrupt()
+                pending.finish()
+            }
+        }
+        watchdogThread = watchdog(finishOnce)
+        container.abortRunFromNotification(sessionId, profileId) { success ->
+            // On a failed abort (transient network error), the run continues but the FGS
+            // notification will disappear once anyRunActive clears — leaving the user with
+            // no signal that their Stop tap didn't take. Post a quick "couldn't stop"
+            // notification so they know to open the app. On success, the FGS disappearing
+            // is sufficient feedback.
+            if (!success) {
+                SessionNotifications.postError(
+                    context, sessionId,
+                    context.getString(R.string.couldnt_stop_run),
+                    profileId,
+                )
+            }
+            finishOnce()
         }
     }
 

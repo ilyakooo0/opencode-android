@@ -292,11 +292,32 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                 )
             } else {
                 val filtered = remember(reports, crashQuery) { filterCrashReports(reports, crashQuery) }
-                LazyColumn(modifier = Modifier.fillMaxSize()) {
+                // Windowed render: compose only the first `renderCap` rows, growing as the
+                // user scrolls near the bottom. Bounds composition work on a device that has
+                // accumulated many crash reports (e.g. a flaky build used for weeks), matching
+                // the session/file lists' pattern.
+                var renderCap by remember {
+                    mutableStateOf(NetworkConfig.diagnosticsListInitialPage)
+                }
+                val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+                androidx.compose.runtime.LaunchedEffect(listState, filtered.size) {
+                    androidx.compose.runtime.snapshotFlow {
+                        val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+                        lastVisible >= renderCap - NetworkConfig.diagnosticsListPageStep / 2
+                    }.collect { nearEnd ->
+                        if (nearEnd && renderCap < filtered.size) {
+                            renderCap = (renderCap + NetworkConfig.diagnosticsListPageStep).coerceAtMost(filtered.size)
+                        }
+                    }
+                }
+                val capped = remember(filtered, renderCap) {
+                    if (filtered.size <= renderCap) filtered else filtered.take(renderCap)
+                }
+                LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
                     crashSearchHeader(reports = reports, filtered = filtered, crashQuery = crashQuery) {
                         crashQuery = it
                     }
-                    items(filtered, key = { it.fileName }) { report ->
+                    items(capped, key = { it.fileName }) { report ->
                         // rememberSaveable so an open row menu survives a rotation; BackHandler
                         // so system back closes it instead of navigating away, matching the
                         // session/server/file list dropdown back-handling.
@@ -393,7 +414,7 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                                     IconButton(onClick = { menuExpanded = true }) {
                                         Icon(
                                             Icons.Filled.MoreVert,
-                                            contentDescription = stringResource(R.string.more_options),
+                                            contentDescription = stringResource(R.string.more_options_for, report.fileName),
                                         )
                                     }
                                     DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
@@ -489,7 +510,9 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                                 IconButton(onClick = {
                                     // Confirm before deleting a single report, matching clear-all.
                                     pendingReportDelete = reportName
-                                }) { Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.delete)) }
+                                }, enabled = content != null) {
+                                    Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.delete))
+                                }
                             },
                         )
                     },

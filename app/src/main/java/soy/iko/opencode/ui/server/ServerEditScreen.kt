@@ -41,6 +41,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -52,6 +53,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
@@ -109,6 +111,10 @@ fun ServerEditScreen(
         if (!state.saving) showDiscardConfirm = true
     }
 
+    // Collapsing/lifting top bar so the long form scrolls under it, matching Settings and
+    // Diagnostics (the form can be tall: Base URL + Discovery + Auth + Test + Connect + Save +
+    // Label + Security).
+    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     Scaffold(
         topBar = {
             TopAppBar(
@@ -128,10 +134,15 @@ fun ServerEditScreen(
                             Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.delete_server))
                         }
                         if (showDeleteConfirm) {
+                            // Name the server (matching the server list's delete dialog, which
+                            // includes displayLabel) so the user can verify which profile they're
+                            // deleting before confirming. displayLabel falls back to baseUrl when
+                            // no label is set, so there's always an identifiable name.
+                            val displayName = state.label.takeIf { it.isNotBlank() } ?: state.baseUrl
                             AlertDialog(
                                 onDismissRequest = { showDeleteConfirm = false },
                                 title = { Text(stringResource(R.string.delete_server)) },
-                                text = { Text(stringResource(R.string.delete_server_confirm)) },
+                                text = { Text(stringResource(R.string.remove_server_text, displayName)) },
                                 confirmButton = {
                                     TextButton(onClick = {
                                         showDeleteConfirm = false
@@ -145,6 +156,7 @@ fun ServerEditScreen(
                         }
                     }
                 },
+                scrollBehavior = scrollBehavior,
             )
         },
     ) { padding ->
@@ -159,6 +171,7 @@ fun ServerEditScreen(
                 passwordVisible = passwordVisible,
                 onTogglePassword = { passwordVisible = !passwordVisible },
                 padding = padding,
+                scrollBehavior = scrollBehavior,
                 vm = vm,
                 onDone = onDone,
             )
@@ -183,12 +196,14 @@ fun ServerEditScreen(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ServerEditForm(
     state: ServerEditState,
     passwordVisible: Boolean,
     onTogglePassword: () -> Unit,
     padding: androidx.compose.foundation.layout.PaddingValues,
+    scrollBehavior: androidx.compose.material3.TopAppBarScrollBehavior,
     vm: ServerEditViewModel,
     onDone: () -> Unit,
 ) {
@@ -218,6 +233,7 @@ private fun ServerEditForm(
             .wrapContentWidth(Alignment.CenterHorizontally)
             .widthIn(max = 600.dp)
             .padding(16.dp)
+            .nestedScroll(scrollBehavior.nestedScrollConnection)
             .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {

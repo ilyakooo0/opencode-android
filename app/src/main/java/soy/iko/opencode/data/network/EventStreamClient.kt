@@ -55,6 +55,14 @@ open class EventStreamClient(
     private val _state = MutableStateFlow(ConnectionState.Disconnected)
     open val state: StateFlow<ConnectionState> = _state.asStateFlow()
 
+    /** Number of reconnect attempts made since the last successful [ConnectionState.Connected]
+     *  period. Incremented each time the stream loop begins a new connection attempt after a
+     *  drop, and reset to 0 on a successful connect. Surfaced so the UI can show "Reconnecting
+     *  (attempt N)…" during a sustained outage, giving the user confidence the system is
+     *  actively retrying rather than stuck. */
+    private val _reconnectAttempts = MutableStateFlow(0)
+    open val reconnectAttempts: StateFlow<Int> = _reconnectAttempts.asStateFlow()
+
     open val events: SharedFlow<BusEvent> by lazy {
         stream()
             .buffer(bufferCapacity, BufferOverflow.DROP_OLDEST)
@@ -166,7 +174,13 @@ open class EventStreamClient(
         // stopped the upstream while triggerReconnect() queued a signal).
         while (reconnectSignal.tryReceive().isSuccess) { /* drain */ }
         var backoffMs = initialBackoffMs
+        // Tracks whether this is the first iteration (the initial connect) vs a reconnect,
+        // so the attempt counter is only incremented on reconnects (not the first connect).
+        var firstAttempt = true
         while (isActive) {
+            // Increment the reconnect-attempt counter on every iteration except the initial
+            // connect, so the UI can show "Reconnecting (attempt N)…". Reset to 0 on success.
+            if (firstAttempt) firstAttempt = false else _reconnectAttempts.value++
             _state.value = ConnectionState.Connecting
             // Set by readSseEvents when a triggerReconnect() signal interrupted an active
             // read. The signal is consumed to drop the socket, so the backoff select below
@@ -241,6 +255,9 @@ open class EventStreamClient(
                             if (!receivedAny) {
                                 receivedAny = true
                                 backoffMs = initialBackoffMs
+                                // A genuine event confirms the connection is healthy, so reset
+                                // the reconnect-attempt counter for the next outage's count.
+                                _reconnectAttempts.value = 0
                             }
                             send(it)
                         }

@@ -372,16 +372,20 @@ private fun ToolCallView(part: ToolPart, modifier: Modifier) {
                 modifier = Modifier.padding(start = 6.dp),
             )
             // Wall-clock duration of the tool call (e.g. "· 2.3s"), shown when the server
-            // reports both start and end. Omitted while still running (no end yet) and when
-            // timing wasn't reported — a bare "· 0ms" would be noise. Placed inline with the
-            // tool name so a glance at the row tells both *what* and *how long*.
+            // reports both start and end. Omitted while still running (no end yet), when
+            // timing wasn't reported, and for sub-second runs (the ms figure is noise for
+            // instant tools like a quick read/glob — see NetworkConfig.toolDurationHideBelowMs).
+            // Placed inline with the tool name so a glance at the row tells both *what* and
+            // *how long*.
             part.state.durationMs()?.let { ms ->
-                Text(
-                    stringResource(R.string.tool_duration_format, formatToolDuration(ms)),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 6.dp),
-                )
+                if (ms >= NetworkConfig.toolDurationHideBelowMs) {
+                    Text(
+                        stringResource(R.string.tool_duration_format, formatToolDuration(ms)),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 6.dp),
+                    )
+                }
             }
         }
         // A human-readable summary of what the tool was asked to do (e.g. "Reading
@@ -410,11 +414,17 @@ private fun ToolCallView(part: ToolPart, modifier: Modifier) {
                 val pretty = remember(input) {
                     runCatching { prettyJson.encodeToString(JsonElement.serializer(), input) }.getOrDefault(input.toString())
                 }
+                // Expand short inputs by default: for tools like bash/write/edit the command
+                // is the most important info, and hiding it behind a tap inverts the priority.
+                // Longer inputs stay collapsed to avoid dominating the bubble.
+                val inputLines = remember(pretty) { pretty.lines().size }
+                val autoExpand = inputLines <= NetworkConfig.toolInputAutoExpandLineThreshold
                 CollapsibleDetail(
                     label = inputLabel,
                     detail = pretty,
                     isDiff = false,
                     keySuffix = "input",
+                    defaultExpanded = autoExpand,
                     // The input block has a label row whose collapse toggle announces its state
                     // via stateDescription; pass the strings so TalkBack reads "expanded"/"collapsed"
                     // rather than an empty state (the defaults are "").
@@ -439,6 +449,12 @@ private fun ToolCallView(part: ToolPart, modifier: Modifier) {
             // looksLikeDiff scans the whole string; memoize on `detail` so a recomposition that
             // doesn't change the content (e.g. the expand/collapse flip) doesn't re-scan.
             val isDiff = remember(detail) { looksLikeDiff(detail) }
+            // Collapse when the output exceeds EITHER the char cap or the line cap. A line-based
+            // threshold keeps the collapsed preview a predictable mobile height — a 4000-char
+            // block of short lines can be 60+ lines and fill the screen, defeating the collapse.
+            val lineCount = remember(detail) { detail.lines().size }
+            val exceedsLimit = detail.length > COLLAPSED_LIMIT ||
+                lineCount > NetworkConfig.toolOutputCollapsedLimitLines
             val collapsed = remember(detail, isDiff) {
                 val head = detail.take(COLLAPSED_LIMIT)
                 // Truncating a diff mid-line makes DiffView render a malformed final line, so
@@ -448,22 +464,22 @@ private fun ToolCallView(part: ToolPart, modifier: Modifier) {
             var expanded by rememberSaveable(part.id) { mutableStateOf(false) }
             val expandedState = stringResource(R.string.state_expanded)
             val collapsedState = stringResource(R.string.state_collapsed)
-            val display = if (expanded || detail.length <= COLLAPSED_LIMIT) detail else collapsed
+            val display = if (expanded || !exceedsLimit) detail else collapsed
             // How many lines are hidden while collapsed. detail.lines() splits the whole
             // (potentially multi-KB) output, so memoize it — otherwise it re-splits on
             // every recomposition, including each streaming update of a running tool.
             // `collapsed` is a prefix of `detail`, so its line count never exceeds it;
             // 0 (a single long line cut mid-way) falls back to the generic label.
-            val moreLines = remember(detail, collapsed) {
-                if (detail.length > COLLAPSED_LIMIT) detail.lines().size - collapsed.lines().size else 0
+            val moreLines = remember(detail, collapsed, lineCount) {
+                if (exceedsLimit) lineCount - collapsed.lines().size else 0
             }
             CollapsibleDetail(
                 label = null,
                 detail = display,
                 isDiff = isDiff,
                 keySuffix = "output",
-                expanded = expanded || detail.length <= COLLAPSED_LIMIT,
-                onToggleExpand = if (detail.length > COLLAPSED_LIMIT) {
+                expanded = expanded || !exceedsLimit,
+                onToggleExpand = if (exceedsLimit) {
                     { expanded = !expanded }
                 } else null,
                 moreLines = moreLines,
@@ -500,10 +516,13 @@ private fun CollapsibleDetail(
     onCopy: (() -> Unit)? = null,
     diffSaveKey: String? = null,
     isError: Boolean = false,
+    /** Initial expanded state for the labeled (input) variant. The output variant ignores
+     *  this and uses [expanded]/[onToggleExpand] instead. */
+    defaultExpanded: Boolean = false,
 ) {
     Column(modifier = Modifier.fillMaxWidth().padding(top = 6.dp)) {
         if (label != null) {
-            var inputExpanded by rememberSaveable(label + keySuffix) { mutableStateOf(false) }
+            var inputExpanded by rememberSaveable(label + keySuffix) { mutableStateOf(defaultExpanded) }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -719,6 +738,10 @@ private fun FileChip(
  * a main agent + a sub-agent) shows the cost breakdown per step. Compact and muted
  * to read as a footnote rather than a primary element. Returns nothing when the
  * step reported neither cost nor tokens (some steps report no usage).
+ *
+ * Collapsed by default behind a small toggle so a multi-step response isn't
+ * cluttered with a cost line after each step; the aggregate in the footer is the
+ * primary signal, and a user who wants the per-step breakdown can expand it.
  */
 @Composable
 private fun StepFinishSummary(part: StepFinishPart) {
@@ -734,10 +757,37 @@ private fun StepFinishSummary(part: StepFinishPart) {
             cost?.takeIf { it > 0 }?.let { add(formatCost(it, costShort, costLong)) }
         }.takeIf { it.isNotEmpty() }?.joinToString("  •  ")
     } ?: return
-    Text(
-        summary,
-        style = MaterialTheme.typography.labelSmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(top = 2.dp),
-    )
+    val expandedState = stringResource(R.string.state_expanded)
+    val collapsedState = stringResource(R.string.state_collapsed)
+    var expanded by rememberSaveable(part.id) { mutableStateOf(false) }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .defaultMinSize(minHeight = 48.dp)
+            .clickable(role = Role.Button) { expanded = !expanded }
+            .semantics { stateDescription = if (expanded) expandedState else collapsedState },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+            contentDescription = null,
+            modifier = Modifier.size(14.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (expanded) {
+            Text(
+                summary,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 4.dp, top = 2.dp),
+            )
+        } else {
+            Text(
+                stringResource(R.string.step_summary_collapsed),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 4.dp),
+            )
+        }
+    }
 }

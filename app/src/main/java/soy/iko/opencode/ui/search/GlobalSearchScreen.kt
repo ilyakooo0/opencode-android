@@ -35,6 +35,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -154,18 +155,24 @@ fun GlobalSearchScreen(
             Box(modifier = Modifier.fillMaxSize()) {
                 ConnectionBannerFor(container)
                 val searchingLabel = stringResource(R.string.searching)
+                // When a re-search runs on top of existing results, keep the prior results
+                // visible with a slim top progress bar (matching the file browser) instead of
+                // blanking the list to a full-screen spinner — incremental typing shouldn't
+                // flash an empty screen each keystroke. The full-screen spinner is only used
+                // for the very first search (no results yet).
+                val showResultsWhileSearching = state.searching && state.hasSearched && state.results.isNotEmpty()
                 // Crossfade between content states so transitions read as a smooth fade instead
                 // of an instant snap. Matches the session list's Crossfade pattern; reduced
                 // motion is honored by Crossfade's default spec.
                 val stateKey = globalSearchStateKey(state)
-                    @Suppress("UnusedCrossfadeTargetStateParameter")
-                    Crossfade(
+                @Suppress("UnusedCrossfadeTargetStateParameter")
+                Crossfade(
                         targetState = stateKey,
                         animationSpec = tween(soy.iko.opencode.data.network.NetworkConfig.motionFadeDurationMs.toInt()),
                         label = "global_search_state",
                     ) {
                     when {
-                    state.searching -> Column(
+                    state.searching && !showResultsWhileSearching -> Column(
                         modifier = Modifier.align(Alignment.Center),
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
@@ -267,6 +274,18 @@ fun GlobalSearchScreen(
                     }
                     }
                 }
+                // Slim progress bar overlay for an in-flight re-search that keeps the prior
+                // results visible underneath (matches the file browser's pattern). Only shown
+                // when results are already on screen; the first-search spinner is handled by
+                // the Crossfade branch above.
+                if (showResultsWhileSearching) {
+                    LinearProgressIndicator(
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .fillMaxWidth()
+                            .semantics { contentDescription = searchingLabel },
+                    )
+                }
             }
         }
     }
@@ -274,8 +293,10 @@ fun GlobalSearchScreen(
 
 /** Maps the global-search view state to a stable string key for the Crossfade, so the screen's
  *  content-state transitions fade smoothly. Extracted from [GlobalSearchScreen] to keep its
- *  cyclomatic complexity under the detekt threshold. */
+ *  cyclomatic complexity under the detekt threshold. A re-search that keeps prior results
+ *  visible maps to "results" (not "searching") so the Crossfade doesn't fade the list out. */
 private fun globalSearchStateKey(state: GlobalSearchState): String = when {
+    state.searching && state.hasSearched && state.results.isNotEmpty() -> "results"
     state.searching -> "searching"
     state.error != null -> "error"
     state.hasSearched && state.results.isEmpty() -> "no_matches"

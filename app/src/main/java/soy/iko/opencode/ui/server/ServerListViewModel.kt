@@ -141,11 +141,21 @@ class ServerListViewModel(private val container: AppContainer) : ViewModel() {
                     result.fold(
                         onSuccess = { ok ->
                             // probeWithCredentials returns false on 401/403: the server was
-                            // reached but the credentials were rejected. Surface that as a
-                            // failure rather than a false "Connected", so the user isn't
-                            // misled into thinking auth is fine.
-                            if (ok) ProbeTestResult.Success(latency)
-                            else ProbeTestResult.Failed(container.string(R.string.connection_failed))
+                            // reached but auth failed. Distinguish "server requires auth but
+                            // no credentials were sent" from "credentials were sent and
+                            // rejected" so the user gets actionable feedback (enter creds vs
+                            // fix creds) instead of a single ambiguous "check credentials".
+                            if (ok) {
+                                ProbeTestResult.Success(latency)
+                            } else {
+                                val hasCreds = !profile.username.isNullOrBlank() || !profile.password.isNullOrEmpty()
+                                val msg = if (hasCreds) {
+                                    container.string(R.string.credentials_incorrect)
+                                } else {
+                                    container.string(R.string.server_requires_auth)
+                                }
+                                ProbeTestResult.Failed(msg)
+                            }
                         },
                         onFailure = { ProbeTestResult.Failed(container.friendlyError(it)) },
                     ),

@@ -46,6 +46,24 @@
     <string name="not_connected">Sin conexión.</string>
     <string name="no_servers_to_reconnect">No hay ningún servidor guardado al que reconectar.</string>
     <string name="retry_now">Reintentar ahora</string>
+    <string name="edit_credentials">Editar credenciales</string>
+    <string name="reconnect_attempt">Reconectando (intento %1$d)…</string>
+    <string name="connection_lost">Se perdió la conexión con "%1$s"</string>
+    <string name="connection_lost_tap">Toca para reconectar</string>
+    <string name="message_not_delivered">Mensaje no entregado</string>
+    <string name="message_not_delivered_body">No se pudo entregar tu respuesta a "%1$s" — toca para abrir y reintentar.</string>
+    <string name="server_requires_auth">Este servidor requiere un nombre de usuario y contraseña</string>
+    <string name="credentials_incorrect">El nombre de usuario o la contraseña son incorrectos</string>
+    <string name="step_summary_collapsed">Resumen del paso</string>
+    <string name="retrying_ellipsis">Reintentando…</string>
+    <string name="open_full_editor_hint">El borrador es largo — toca expandir para el editor a pantalla completa</string>
+    <string name="cannot_quote_this">No se puede citar un mensaje de solo imagen o herramienta</string>
+    <string name="attachment_name">Nombre del adjunto</string>
+    <string name="default_model_set">Modelo predeterminado establecido a "%1$s"</string>
+    <string name="default_model_cleared">Modelo predeterminado borrado</string>
+    <string name="permission_auto_rejected">Ejecución pausada: permiso rechazado automáticamente tras 10 min</string>
+    <string name="couldnt_stop_run">No se pudo detener la ejecución — abre la app</string>
+    <string name="run_stopped_undo">Detenido</string>
 
     <!-- Server list -->
     <string name="servers_title">Servidores de opencode</string>

@@ -273,17 +273,32 @@ private fun UserMessageLongPressMenu(
     )
 }
 
-/** Overflow menu of secondary per-message actions (quote-reply, branch-a-new-session, view source).
- *  Shown when at least one action is available and there's text to act on. Keeps the
- *  inline action row (copy/edit/revert/speak) uncluttered while still surfacing the extras. */
+/** Overflow menu of per-message actions, surfaced as a visible icon button in the footer so
+ *  the full action set is reachable in one tap from a visible affordance — not only via the
+ *  long-press gesture (which is consumed by the SelectionContainer on selectable text and so
+ *  only fires from the thin footer/inter-part spacing). Mirrors the [MessageLongPressMenu]
+ *  action set so both entry points expose the same actions. Items with null callbacks (or no
+ *  text to act on) are omitted. */
 @Composable
 private fun MessageOverflow(
     text: String,
     onQuote: ((String) -> Unit)?,
     onBranch: ((String) -> Unit)?,
     onViewSource: (() -> Unit)? = null,
+    onCopy: (() -> Unit)? = null,
+    onEdit: (() -> Unit)? = null,
+    onRegenerate: (() -> Unit)? = null,
+    onRevert: (() -> Unit)? = null,
+    onShare: (() -> Unit)? = null,
+    onSpeak: (() -> Unit)? = null,
+    speakLabel: String? = null,
 ) {
-    if (onQuote == null && onBranch == null && onViewSource == null) return
+    // No actions to show at all → render nothing. The combined check keeps the guard readable
+    // (detekt's ComplexCondition threshold flags a single long && chain).
+    val hasAnyAction = listOf(
+        onQuote, onBranch, onViewSource, onCopy, onEdit, onRegenerate, onRevert, onShare,
+    ).any { it != null } || (onSpeak != null && speakLabel != null)
+    if (!hasAnyAction) return
     var expanded by remember { mutableStateOf(false) }
     val moreLabel = stringResource(R.string.message_actions)
     val haptics = LocalHapticFeedback.current
@@ -297,40 +312,142 @@ private fun MessageOverflow(
             )
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            onQuote?.let { quote ->
-                DropdownMenuItem(
-                    leadingIcon = { Icon(Icons.Filled.FormatQuote, contentDescription = null) },
-                    text = { Text(stringResource(R.string.quote_reply)) },
-                    onClick = {
-                        expanded = false
-                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        quote(text)
-                    },
-                )
-            }
-            onBranch?.let { branch ->
-                DropdownMenuItem(
-                    leadingIcon = { Icon(Icons.AutoMirrored.Filled.PlaylistAdd, contentDescription = null) },
-                    text = { Text(stringResource(R.string.branch_session)) },
-                    onClick = {
-                        expanded = false
-                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        branch(text)
-                    },
-                )
-            }
-            onViewSource?.let { viewSource ->
-                DropdownMenuItem(
-                    leadingIcon = { Icon(Icons.Filled.Code, contentDescription = null) },
-                    text = { Text(stringResource(R.string.view_source)) },
-                    onClick = {
-                        expanded = false
-                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        viewSource()
-                    },
-                )
-            }
+            MessageOverflowItems(
+                text = text,
+                onCopy = onCopy,
+                onShare = onShare,
+                onEdit = onEdit,
+                onRegenerate = onRegenerate,
+                onSpeak = onSpeak,
+                speakLabel = speakLabel,
+                onQuote = onQuote,
+                onBranch = onBranch,
+                onViewSource = onViewSource,
+                onRevert = onRevert,
+                onDismissMenu = { expanded = false },
+                haptics = haptics,
+            )
         }
+    }
+}
+
+/** The dropdown menu items for [MessageOverflow], extracted to keep that function's
+ *  cyclomatic complexity under detekt's threshold. Each item is gated on its callback (and
+ *  text where relevant) so only available actions appear. */
+@Composable
+private fun MessageOverflowItems(
+    text: String,
+    onCopy: (() -> Unit)?,
+    onShare: (() -> Unit)?,
+    onEdit: (() -> Unit)?,
+    onRegenerate: (() -> Unit)?,
+    onSpeak: (() -> Unit)?,
+    speakLabel: String?,
+    onQuote: ((String) -> Unit)?,
+    onBranch: ((String) -> Unit)?,
+    onViewSource: (() -> Unit)?,
+    onRevert: (() -> Unit)?,
+    onDismissMenu: () -> Unit,
+    haptics: androidx.compose.ui.hapticfeedback.HapticFeedback,
+) {
+    if (text != null && onCopy != null) {
+        DropdownMenuItem(
+            leadingIcon = { Icon(Icons.Filled.ContentCopy, contentDescription = null) },
+            text = { Text(stringResource(R.string.copy)) },
+            onClick = {
+                onDismissMenu()
+                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onCopy()
+            },
+        )
+    }
+    if (text != null && onShare != null) {
+        DropdownMenuItem(
+            leadingIcon = { Icon(Icons.Filled.Share, contentDescription = null) },
+            text = { Text(stringResource(R.string.share_message)) },
+            onClick = {
+                onDismissMenu()
+                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onShare()
+            },
+        )
+    }
+    if (text != null && onEdit != null) {
+        DropdownMenuItem(
+            leadingIcon = { Icon(Icons.Filled.Edit, contentDescription = null) },
+            text = { Text(stringResource(R.string.edit_message)) },
+            onClick = {
+                onDismissMenu()
+                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onEdit()
+            },
+        )
+    }
+    if (onRegenerate != null) {
+        DropdownMenuItem(
+            leadingIcon = { Icon(Icons.Filled.Refresh, contentDescription = null) },
+            text = { Text(stringResource(R.string.regenerate)) },
+            onClick = {
+                onDismissMenu()
+                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onRegenerate()
+            },
+        )
+    }
+    if (text != null && onSpeak != null && speakLabel != null) {
+        DropdownMenuItem(
+            leadingIcon = { Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = null) },
+            text = { Text(speakLabel) },
+            onClick = {
+                onDismissMenu()
+                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onSpeak()
+            },
+        )
+    }
+    onQuote?.let { quote ->
+        DropdownMenuItem(
+            leadingIcon = { Icon(Icons.Filled.FormatQuote, contentDescription = null) },
+            text = { Text(stringResource(R.string.quote_reply)) },
+            onClick = {
+                onDismissMenu()
+                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                quote(text)
+            },
+        )
+    }
+    onBranch?.let { branch ->
+        DropdownMenuItem(
+            leadingIcon = { Icon(Icons.AutoMirrored.Filled.PlaylistAdd, contentDescription = null) },
+            text = { Text(stringResource(R.string.branch_session)) },
+            onClick = {
+                onDismissMenu()
+                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                branch(text)
+            },
+        )
+    }
+    onViewSource?.let { viewSource ->
+        DropdownMenuItem(
+            leadingIcon = { Icon(Icons.Filled.Code, contentDescription = null) },
+            text = { Text(stringResource(R.string.view_source)) },
+            onClick = {
+                onDismissMenu()
+                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                viewSource()
+            },
+        )
+    }
+    if (onRevert != null) {
+        DropdownMenuItem(
+            leadingIcon = { Icon(Icons.Filled.Restore, contentDescription = null) },
+            text = { Text(stringResource(R.string.revert_to_here)) },
+            onClick = {
+                onDismissMenu()
+                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onRevert()
+            },
+        )
     }
 }
 
@@ -638,10 +755,28 @@ private fun UserBubble(
                             )
                         }
                     }
-                    // Quote-reply / branch-a-new-session, tucked behind an overflow so the
-                    // inline row stays compact. Only when there's prompt text to act on.
+                    // Per-message overflow: a visible icon button exposing the full action
+                    // set (copy/edit/share/quote/branch/revert) in one tap. Promoted from a
+                    // quote/branch-only menu so the actions are discoverable without relying on
+                    // the long-press gesture, which is consumed by the SelectionContainer on
+                    // selectable text and so only fires from the thin footer. The inline
+                    // copy/edit/revert icons above remain for the most common one-tap actions;
+                    // this overflow surfaces the rest and duplicates the common ones for
+                    // discoverability. Only when there's prompt text to act on.
                     if (textToCopy != null) {
-                        MessageOverflow(text = textToCopy, onQuote = onQuote, onBranch = onBranch)
+                        MessageOverflow(
+                            text = textToCopy,
+                            onQuote = onQuote,
+                            onBranch = onBranch,
+                            onCopy = {
+                                copyToClipboard(context, context.getString(R.string.clip_label_message), textToCopy)
+                            },
+                            onEdit = if (onEdit != null) {
+                                { onEdit(textToCopy); if (hasAttachments) showToast(context, dropsAttachmentsMsg) }
+                            } else null,
+                            onRevert = onRevert,
+                            onShare = onShare,
+                        )
                     }
                 }
             }
@@ -845,6 +980,7 @@ private fun AssistantBlock(
                     onRegenerate = onRegenerate,
                     onContinue = onContinue,
                     onViewSource = textToCopy?.let { { showSource = true } },
+                    onShare = onShare,
                 )
             }
             AssistantMessageLongPressMenu(
@@ -999,6 +1135,7 @@ private fun AssistantActions(
     onRegenerate: (() -> Unit)? = null,
     onContinue: (() -> Unit)? = null,
     onViewSource: (() -> Unit)? = null,
+    onShare: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val haptics = LocalHapticFeedback.current
@@ -1068,11 +1205,47 @@ private fun AssistantActions(
             }
         }
         // Assistant replies can be quoted into the composer or branched into a new session.
-        // View source is also available here for assistant replies (in addition to the long-press
-        // menu) so the action is discoverable without a long-press. MessageOverflow itself
+        // View source is also available here for assistant replies. The overflow exposes the
+        // full action set (copy/share/regenerate/read-aloud/quote/branch/view-source/revert)
+        // in one tap from a visible icon button — promoted from a quote/branch-only menu so
+        // the actions are discoverable without the long-press gesture (which is consumed by
+        // the SelectionContainer on selectable text). The inline copy/regenerate/TTS/revert
+        // icons above remain for the most common one-tap actions; this overflow surfaces the
+        // rest and duplicates the common ones for discoverability. MessageOverflow itself
         // no-ops when all callbacks are null, so the guard only needs to check text.
         if (textToCopy != null) {
-            MessageOverflow(text = textToCopy, onQuote = onQuote, onBranch = onBranch, onViewSource = onViewSource)
+            val speakForOverflow: (() -> Unit)? = if (onSpeak != null) {
+                {
+                    when {
+                        isSpeaking && ttsState == TtsState.PAUSED -> onResume?.invoke()
+                        isSpeaking -> onPause?.invoke()
+                        else -> onSpeak(textToCopy)
+                    }
+                }
+            } else null
+            val speakLabelForOverflow: String? = if (onSpeak != null) {
+                stringResource(
+                    when {
+                        isSpeaking && ttsState == TtsState.PAUSED -> R.string.resume_reading
+                        isSpeaking -> R.string.pause_reading
+                        else -> R.string.read_aloud
+                    },
+                )
+            } else null
+            MessageOverflow(
+                text = textToCopy,
+                onQuote = onQuote,
+                onBranch = onBranch,
+                onViewSource = onViewSource,
+                onCopy = {
+                    copyToClipboard(context, context.getString(R.string.clip_label_message), textToCopy)
+                },
+                onRegenerate = onRegenerate,
+                onRevert = onRevert,
+                onShare = onShare,
+                onSpeak = speakForOverflow,
+                speakLabel = speakLabelForOverflow,
+            )
         }
     }
 }

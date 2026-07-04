@@ -51,6 +51,7 @@ import androidx.compose.ui.semantics.selectableGroup
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.Box
 import kotlinx.coroutines.launch
@@ -300,6 +301,11 @@ fun AgentPickerSheet(
                             agent.displayDescription,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            // Cap at 2 lines (matching the command picker) so a verbose
+                            // description doesn't make the row arbitrarily tall and push the
+                            // radio affordance out of alignment across the list.
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
                         )
                     }
                 }
