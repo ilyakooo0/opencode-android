@@ -91,6 +91,9 @@
     <string name="show_password">Show password</string>
     <string name="hide_password">Hide password</string>
     <string name="test_credentials">Test credentials</string>
+    <string name="testing_connection">Testing…</string>
+    <string name="delete_server">Delete server</string>
+    <string name="delete_server_confirm">Delete this server profile?</string>
     <string name="discover_on_network">Discover on network</string>
     <string name="searching_network">Searching the local network…</string>
     <string name="no_servers_found">No opencode servers found on the local network.</string>
@@ -397,6 +400,7 @@
     <!-- Revert -->
     <string name="revert_to_here">Revert to here</string>
     <string name="reverted_banner">Reverted — later messages are hidden.</string>
+    <string name="editing_banner">Editing message — later messages are hidden.</string>
     <string name="edit_message">Edit</string>
     <string name="read_aloud">Read aloud</string>
     <string name="stop_reading">Stop reading</string>
@@ -476,6 +480,8 @@
     <!-- Message actions -->
     <string name="message_actions">Message actions</string>
     <string name="quote_reply">Quote reply</string>
+    <string name="quote_reply_banner">Replying to</string>
+    <string name="cancel_quote_reply">Cancel reply</string>
     <string name="branch_session">Start new session from here</string>
     <string name="branch_created">Started a new session from this message</string>
     <string name="branch_failed">Couldn\'t start a new session</string>
@@ -891,6 +897,8 @@
     <string name="settings_language">Language</string>
     <string name="settings_language_desc">Override the system language for the app.</string>
     <string name="settings_language_system">System default</string>
+    <string name="language_english">English</string>
+    <string name="language_spanish">Español</string>
     <!-- Settings: granular notification toggles. -->
     <string name="settings_notifications">Notifications</string>
     <string name="settings_notif_run_complete">Run completed</string>

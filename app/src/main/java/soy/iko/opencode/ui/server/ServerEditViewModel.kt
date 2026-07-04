@@ -41,6 +41,10 @@ data class ServerEditState(
     val testingCredentials: Boolean = false,
     /** Non-null when the last credential test succeeded (true) or failed (false). */
     val credentialsResult: Boolean? = null,
+    /** Whether a reachability probe (Test connection) is in progress. */
+    val testingConnection: Boolean = false,
+    /** Latency (ms) of the last successful reachability probe, or an error message. */
+    val connectionResult: ConnectionProbeResult? = null,
 ) {
     val canSave: Boolean get() = baseUrl.isNotBlank() && isValidUrl(baseUrl) && certPinValid
     val isNew: Boolean get() = id == null
@@ -57,6 +61,13 @@ data class ServerEditState(
                 requireHttps != init.requireHttps ||
                 certPin.trim() != init.certPin
         }
+}
+
+/** Result of a "Test connection" reachability probe from the edit screen. */
+@Immutable
+sealed interface ConnectionProbeResult {
+    data class Success(val latencyMs: Long) : ConnectionProbeResult
+    data class Failed(val message: String) : ConnectionProbeResult
 }
 
 /** Snapshot of the profile loaded into the editor, normalized the same way save() stores it. */
@@ -376,6 +387,71 @@ class ServerEditViewModel(
     /** Secondary action: persist the profile without connecting (e.g. setting up offline). */
     fun save(onDone: () -> Unit) {
         saveInternal(connectAfter = false, onDone = onDone)
+    }
+
+    /**
+     * Probe the server's reachability *without* requiring credentials (a pre-save "is this URL
+     * reachable?" check). Surfaces [ServerEditState.connectionResult] so the UI can show
+     * success/latency or a failure without dismissing the form. Complements [testCredentials],
+     * which validates auth once the URL is known to be reachable.
+     */
+    fun testConnection() {
+        val s = _state.value
+        if (!s.canSave || s.testingConnection) return
+        _state.update { it.copy(testingConnection = true, connectionResult = null, error = null) }
+        val probedUrl = s.baseUrl.trim()
+        val probedRequireHttps = s.requireHttps
+        val probedCertPin = s.certPin.trim().takeIf { it.isNotBlank() }
+        viewModelScope.launch {
+            val start = System.currentTimeMillis()
+            val result = runCatchingCancellable {
+                withTimeoutOrNull(NetworkConfig.testCredentialsTimeoutMs) {
+                    container.probeServer(probedUrl, probedRequireHttps, probedCertPin)
+                } ?: throw java.net.SocketTimeoutException("Probe timed out")
+            }
+            val latency = System.currentTimeMillis() - start
+            _state.update {
+                if (it.baseUrl.trim() != probedUrl) return@update it.copy(testingConnection = false)
+                val verdict = result.fold(
+                    onSuccess = { probe ->
+                        when (probe) {
+                            ProbeResult.Reachable, is ProbeResult.NeedsAuth ->
+                                ConnectionProbeResult.Success(latency)
+                            is ProbeResult.Unreachable ->
+                                ConnectionProbeResult.Failed(probe.error)
+                        }
+                    },
+                    onFailure = { e -> ConnectionProbeResult.Failed(container.friendlyError(e)) },
+                )
+                it.copy(testingConnection = false, connectionResult = verdict)
+            }
+        }
+    }
+
+    /**
+     * Delete the profile being edited (only valid for an existing profile, not a new one).
+     * Fires [onDone] on success so the screen pops back to the list. The active profile can't
+     * be deleted here (the list enforces the same guard); surface an error instead.
+     */
+    fun delete(onDone: () -> Unit) {
+        val s = _state.value
+        val id = s.id ?: return
+        if (s.saving || s.testingConnection || s.testingCredentials) return
+        _state.update { it.copy(saving = true, error = null) }
+        viewModelScope.launch {
+            val result = runCatchingCancellable { container.profileStore.delete(id) }
+            result.onSuccess {
+                // If this was the active profile, disconnect so the app doesn't hold a stale
+                // connection to a deleted profile. The list screen also guards against deleting
+                // the active profile, but the edit screen reaches here via its own overflow.
+                if (container.activeConnection.value?.profile?.id == id) {
+                    runCatchingCancellable { container.disconnect() }
+                }
+                onDone()
+            }.onFailure { e ->
+                _state.update { it.copy(saving = false, error = container.friendlyError(e)) }
+            }
+        }
     }
 
     private fun saveInternal(connectAfter: Boolean, onDone: () -> Unit) {

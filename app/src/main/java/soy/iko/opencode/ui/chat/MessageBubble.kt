@@ -120,11 +120,17 @@ fun MessageBubble(
     onRetry: (() -> Unit)? = null,
     onDismiss: (() -> Unit)? = null,
     onShare: (() -> Unit)? = null,
+    // Whether this is the first message in a consecutive run of the same speaker. When false,
+    // the assistant avatar/header is suppressed to reduce visual noise in tool-heavy runs.
+    isFirstOfSpeaker: Boolean = true,
+    // When true, the bubble gets a transient highlight background (used by the global-search
+    // deep link to mark the matched message after scrolling it into view).
+    highlighted: Boolean = false,
 ) {
     when (message.info) {
         is UserMessage -> UserBubble(message, imageContext, modifier, onOpenFile, onRevert, onEdit, onQuote, onBranch, sendStatus, isEdited, onRetry, onDismiss, onShare)
         is UnknownMessage -> UnknownMessageBlock(message, imageContext, modifier, onOpenFile)
-        else -> AssistantBlock(message, isRunning, imageContext, modifier, modelLabel, agentLabel, onOpenFile, onRevert, onSpeak, isSpeaking, ttsState, onPause, onResume, onStop, onQuote, onBranch, onRegenerate, onContinue, isEdited, onShare)
+        else -> AssistantBlock(message, isRunning, imageContext, modifier, modelLabel, agentLabel, onOpenFile, onRevert, onSpeak, isSpeaking, ttsState, onPause, onResume, onStop, onQuote, onBranch, onRegenerate, onContinue, isEdited, onShare, isFirstOfSpeaker, highlighted)
     }
 }
 
@@ -682,6 +688,8 @@ private fun AssistantBlock(
     onContinue: (() -> Unit)? = null,
     isEdited: Boolean = false,
     onShare: (() -> Unit)? = null,
+    isFirstOfSpeaker: Boolean = true,
+    highlighted: Boolean = false,
 ) {
     // Long-press context menu state, hoisted to the block scope so the whole bubble (body and
     // footer) is the long-press target — see UserBubble for rationale.
@@ -697,9 +705,25 @@ private fun AssistantBlock(
     // only the model/agent label — giving a screen-reader user an explicit role signal
     // matching the user bubble's "You" prefix.
     val assistantRoleLabel = stringResource(R.string.role_assistant_message)
+    // Transient highlight background (from global-search deep link). Animated so the highlight
+    // fades in/out rather than flashing, and so the background clears smoothly when the focus
+    // is cleared after the delay.
+    val highlightColor = MaterialTheme.colorScheme.secondaryContainer
+    val highlightAlpha by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (highlighted) 1f else 0f,
+        animationSpec = androidx.compose.animation.core.tween(NetworkConfig.motionFadeDurationMs),
+        label = "msgHighlight",
+    )
     Column(
         modifier = modifier
             .fillMaxWidth()
+            .then(
+                if (highlightAlpha > 0f) {
+                    Modifier.background(highlightColor.copy(alpha = highlightAlpha * 0.6f))
+                } else {
+                    Modifier
+                },
+            )
             .semantics(mergeDescendants = true) { contentDescription = assistantRoleLabel }
             .pointerInput(Unit) {
                 detectTapGestures(onLongPress = { offset ->
@@ -714,10 +738,11 @@ private fun AssistantBlock(
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         val info = message.info
-        if (info is AssistantMessage) {
+        if (info is AssistantMessage && isFirstOfSpeaker) {
             // Avatar + model label row: the robot icon gives the assistant a consistent visual
             // identity (left-aligned, mirroring the user's right-aligned bubble) so on a long
-            // scroll the speaker is unambiguous without reading the label.
+            // scroll the speaker is unambiguous without reading the label. Suppressed on
+            // consecutive same-speaker messages to reduce visual noise in tool-heavy runs.
             AssistantHeader(label = modelLabel ?: info.modelID, agentLabel = agentLabel)
         }
         message.parts.forEachIndexed { index, part ->

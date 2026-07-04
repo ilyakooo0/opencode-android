@@ -906,9 +906,9 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
                 yesterdayLabel = stringResource(R.string.yesterday)
                 lastWeekLabel = stringResource(R.string.last_week)
                 olderLabel = stringResource(R.string.older)
-                val groupedEntries = remember(nodes, renderCap, state.pinnedIds, showGroups) {
+                val groupedSegments = remember(nodes, renderCap, state.pinnedIds, showGroups) {
                     val capped = if (nodes.size <= renderCap) nodes else nodes.take(renderCap)
-                    buildGroupedEntries(capped, state.pinnedIds, showGroups)
+                    buildGroupedSegments(capped, state.pinnedIds, showGroups)
                 }
                 PullToRefreshBox(
                     isRefreshing = refreshing,
@@ -929,18 +929,26 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
                             }
                         }
                     }
-                    LazyColumn(
-                        state = listState,
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = NetworkConfig.listFabInsetDp.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        items(groupedEntries, key = { it.key }) { entry ->
-                            when (entry) {
-                                is SessionListEntry.Header -> DateGroupHeader(entry.label)
-                                is SessionListEntry.Node -> {
-                                    val node = entry.node
-                                    val session = node.session
+                        LazyColumn(
+                            state = listState,
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = NetworkConfig.listFabInsetDp.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                        // Render each (header, nodes) segment: the header as a section label
+                        // followed by the session cards in that section. (Sticky headers would
+                        // require LazyListScope.stickyHeader, which is not available in the
+                        // current Compose version — the segments structure keeps the grouping
+                        // ready for a sticky upgrade when the API lands.)
+                        for ((header, segmentNodes) in groupedSegments) {
+                            if (header != null) {
+                                item(key = header.key, contentType = "header") {
+                                    DateGroupHeader(header.label)
+                                }
+                            }
+                            items(segmentNodes, key = { it.key }) { entry ->
+                                val node = entry.node
+                                val session = node.session
                             // Swipe end-to-start reveals a delete affordance and opens the
                             // same confirmation dialog as the trash icon. We never commit
                             // the dismissal (always reset to Settled) so the card snaps back
@@ -1075,7 +1083,6 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
                             }
                         }
                         }
-                    }
                 }
             }
         }
@@ -1121,41 +1128,53 @@ private fun sessionDateGroup(session: soy.iko.opencode.data.model.Session, now: 
  *  true. When [showGroups] is false (title sort, selection mode, active query/filter), the
  *  nodes are returned flat with only a Pinned header (still useful to signal why pinned
  *  sessions float to the top). */
-private fun buildGroupedEntries(
+private fun buildGroupedSegments(
     nodes: List<SessionNode>,
     pinnedIds: Set<String>,
     showGroups: Boolean,
-): List<SessionListEntry> {
+): List<Pair<SessionListEntry.Header?, List<SessionListEntry.Node>>> {
     if (nodes.isEmpty()) return emptyList()
     val now = System.currentTimeMillis()
-    val result = ArrayList<SessionListEntry>(nodes.size + 4)
+    val segments = ArrayList<Pair<SessionListEntry.Header?, MutableList<SessionListEntry.Node>>>(4)
     val pinnedHeaderAdded = booleanArrayOf(false)
     val dateHeaderAdded = HashMap<String, Boolean>()
 
-    fun maybeAddPinnedHeader() {
-        if (!pinnedHeaderAdded[0] && pinnedIds.isNotEmpty()) {
-            result.add(SessionListEntry.Header("__pinned", pinnedLabel))
+    fun ensureSegment(header: SessionListEntry.Header?) {
+        segments.add(header to mutableListOf())
+    }
+
+    fun maybeAddPinnedSegment(): MutableList<SessionListEntry.Node>? {
+        if (pinnedIds.isEmpty()) return null
+        if (!pinnedHeaderAdded[0]) {
+            ensureSegment(SessionListEntry.Header("__pinned", pinnedLabel))
             pinnedHeaderAdded[0] = true
         }
+        return segments.last().second
     }
 
     for (node in nodes) {
         val isPinned = node.session.id in pinnedIds
         if (isPinned) {
-            maybeAddPinnedHeader()
-            result.add(SessionListEntry.Node(node))
+            val seg = maybeAddPinnedSegment()
+            if (seg != null) seg.add(SessionListEntry.Node(node))
         } else {
             if (showGroups) {
                 val group = sessionDateGroup(node.session, now)
                 if (dateHeaderAdded[group] != true) {
                     dateHeaderAdded[group] = true
-                    result.add(SessionListEntry.Header("__date_$group", dateGroupLabel(group)))
+                    ensureSegment(SessionListEntry.Header("__date_$group", dateGroupLabel(group)))
                 }
+                segments.last().second.add(SessionListEntry.Node(node))
+            } else {
+                // No grouping: all non-pinned nodes go into a single headerless segment.
+                if (segments.isEmpty() || segments.last().first != null) {
+                    ensureSegment(null)
+                }
+                segments.last().second.add(SessionListEntry.Node(node))
             }
-            result.add(SessionListEntry.Node(node))
         }
     }
-    return result
+    return segments
 }
 
 /** Resolve a date-group key to its display label. */

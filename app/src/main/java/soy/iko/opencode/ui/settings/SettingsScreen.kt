@@ -780,27 +780,36 @@ fun SettingsScreen(
                             .padding(vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
+                        val langOptions = remember {
+                            listOf(
+                                "" to R.string.settings_language_system,
+                                "en" to R.string.language_english,
+                                "es" to R.string.language_spanish,
+                            )
+                        }
                         Column(modifier = Modifier.weight(1f)) {
                             Text(languageLabel)
+                            val langSubtitle = if (languageOverride.isEmpty()) languageDesc
+                                else langOptions.firstOrNull { it.first == languageOverride }?.let { stringResource(it.second) }
+                                    ?: languageOverride
                             Text(
-                                if (languageOverride.isEmpty()) languageDesc
-                                else languageOverride,
+                                langSubtitle,
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
-                        val langOptions = remember {
-                            listOf("" to R.string.settings_language_system, "en" to R.string.app_name, "es" to R.string.app_name)
-                        }
                         var langMenu by remember { mutableStateOf(false) }
                         Box {
                             TextButton(onClick = { langMenu = true }) {
-                                Text(if (languageOverride.isEmpty()) stringResource(R.string.settings_language_system) else languageOverride)
+                                Text(
+                                    langOptions.firstOrNull { it.first == languageOverride }?.let { stringResource(it.second) }
+                                        ?: stringResource(R.string.settings_language_system),
+                                )
                             }
                             DropdownMenu(expanded = langMenu, onDismissRequest = { langMenu = false }) {
-                                langOptions.forEach { (code, _) ->
+                                langOptions.forEach { (code, labelRes) ->
                                     DropdownMenuItem(
-                                        text = { Text(if (code.isEmpty()) stringResource(R.string.settings_language_system) else code) },
+                                        text = { Text(stringResource(labelRes)) },
                                         onClick = {
                                             langMenu = false
                                             langScope.launch {

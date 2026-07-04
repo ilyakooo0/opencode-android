@@ -82,6 +82,9 @@
     <string name="show_password">Mostrar contraseña</string>
     <string name="hide_password">Ocultar contraseña</string>
     <string name="test_credentials">Probar credenciales</string>
+    <string name="testing_connection">Probando…</string>
+    <string name="delete_server">Eliminar servidor</string>
+    <string name="delete_server_confirm">¿Eliminar este perfil de servidor?</string>
     <string name="discover_on_network">Descubrir en la red</string>
     <string name="searching_network">Buscando en la red local…</string>
     <string name="no_servers_found">No se encontraron servidores de opencode en la red local.</string>
@@ -373,6 +376,7 @@
     <!-- Revert -->
     <string name="revert_to_here">Revertir hasta aquí</string>
     <string name="reverted_banner">Revertido — los mensajes posteriores están ocultos.</string>
+    <string name="editing_banner">Editando mensaje — los mensajes posteriores están ocultos.</string>
 
     <!-- Sharing / summarize / init / shell -->
     <string name="create_share_link">Crear enlace para compartir</string>
@@ -453,6 +457,8 @@
     <!-- Message actions -->
     <string name="message_actions">Acciones del mensaje</string>
     <string name="quote_reply">Responder citando</string>
+    <string name="quote_reply_banner">Respondiendo a</string>
+    <string name="cancel_quote_reply">Cancelar respuesta</string>
     <string name="branch_session">Iniciar sesión nueva desde aquí</string>
     <string name="branch_created">Se inició una sesión nueva desde este mensaje</string>
     <string name="branch_failed">No se pudo iniciar una sesión nueva</string>
@@ -868,6 +874,8 @@
     <string name="settings_language">Idioma</string>
     <string name="settings_language_desc">Anular el idioma del sistema para la app.</string>
     <string name="settings_language_system">Predeterminado del sistema</string>
+    <string name="language_english">English</string>
+    <string name="language_spanish">Español</string>
     <string name="settings_notifications">Notificaciones</string>
     <string name="settings_notif_run_complete">Run completado</string>
     <string name="settings_notif_run_complete_desc">Notificar cuando termine una ejecución del agente.</string>

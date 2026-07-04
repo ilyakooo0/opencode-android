@@ -21,6 +21,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Visibility
@@ -115,6 +116,33 @@ fun ServerEditScreen(
                 navigationIcon = {
                     IconButton(onClick = ::safeExit) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
+                    }
+                },
+                actions = {
+                    // Delete action in the overflow, only for an existing (saved) profile.
+                    // The active profile is guarded in the ViewModel (delete disconnects it
+                    // if it's the active one). A confirmation dialog gates the destructive action.
+                    if (!state.isNew) {
+                        var showDeleteConfirm by remember { mutableStateOf(false) }
+                        IconButton(onClick = { showDeleteConfirm = true }) {
+                            Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.delete_server))
+                        }
+                        if (showDeleteConfirm) {
+                            AlertDialog(
+                                onDismissRequest = { showDeleteConfirm = false },
+                                title = { Text(stringResource(R.string.delete_server)) },
+                                text = { Text(stringResource(R.string.delete_server_confirm)) },
+                                confirmButton = {
+                                    TextButton(onClick = {
+                                        showDeleteConfirm = false
+                                        vm.delete(onDone)
+                                    }) { Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error) }
+                                },
+                                dismissButton = {
+                                    TextButton(onClick = { showDeleteConfirm = false }) { Text(stringResource(R.string.cancel)) }
+                                },
+                            )
+                        }
                     }
                 },
             )
@@ -265,6 +293,17 @@ private fun ServerEditForm(
                 onImeDone = { if (canSave && !state.saving) vm.connect(onDone) },
             )
         }
+        // Pre-save reachability probe: lets the user confirm the URL is reachable before
+        // committing. Extracted to [TestConnectionControl] to keep this function's complexity
+        // under the detekt threshold.
+        TestConnectionControl(
+            canSave = canSave,
+            testing = state.testingConnection,
+            saving = state.saving,
+            testingCredentials = state.testingCredentials,
+            result = state.connectionResult,
+            onTest = vm::testConnection,
+        )
         // Single primary action: probe-then-save-and-connect. Replaces the former
         // Check-connectivity / Save / Save-&-connect trio.
         Button(
@@ -411,6 +450,53 @@ private fun AuthFields(
             )
         }
     }
+}
+
+/** The "Test connection" button plus its success/failure feedback line. Extracted from
+ *  [ServerEditForm] to keep that function's cyclomatic complexity under the detekt threshold. */
+@Composable
+private fun TestConnectionControl(
+    canSave: Boolean,
+    testing: Boolean,
+    saving: Boolean,
+    testingCredentials: Boolean,
+    result: ConnectionProbeResult?,
+    onTest: () -> Unit,
+) {
+    OutlinedButton(
+        onClick = onTest,
+        enabled = canSave && !testing && !saving && !testingCredentials,
+        modifier = Modifier.fillMaxWidth().testTag("server_test_connection"),
+    ) {
+        if (testing) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(20.dp),
+                strokeWidth = 2.dp,
+            )
+            Text(stringResource(R.string.testing_connection), modifier = Modifier.padding(start = 8.dp))
+        } else {
+            Text(stringResource(R.string.test_connection))
+        }
+    }
+    ConnectionProbeFeedback(result)
+}
+
+/** Renders the success/failed feedback line for a "Test connection" probe. Extracted from
+ *  [ServerEditForm] to keep that function's cyclomatic complexity under the detekt threshold. */
+@Composable
+private fun ConnectionProbeFeedback(result: ConnectionProbeResult?) {
+    if (result == null) return
+    val (msg, color) = when (result) {
+        is ConnectionProbeResult.Success ->
+            stringResource(R.string.test_connection_success, result.latencyMs) to MaterialTheme.colorScheme.primary
+        is ConnectionProbeResult.Failed ->
+            stringResource(R.string.test_connection_failed, result.message) to MaterialTheme.colorScheme.error
+    }
+    Text(
+        msg,
+        style = MaterialTheme.typography.bodySmall,
+        color = color,
+    )
 }
 
 /**

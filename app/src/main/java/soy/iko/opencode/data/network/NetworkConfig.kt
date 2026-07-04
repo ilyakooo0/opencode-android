@@ -256,7 +256,7 @@ object NetworkConfig {
     /** Minimum number of sessions before the session list shows its search/filter field.
      *  Matches the sibling screens' convention: a short list is faster to scan by eye than
      *  type into, so the field earns its vertical space only once the list grows. */
-    const val sessionListSearchThreshold = 3
+    const val sessionListSearchThreshold = 5
     /** Extra bottom content padding (dp) for the chat message list, reserving room for the
      *  jump-to-latest FAB so it never floats over the last message. */
     const val chatListFabInsetDp = 80
@@ -309,11 +309,14 @@ object NetworkConfig {
      *  so the layout doesn't jump when the load completes and the image's intrinsic size is known. */
     const val inlineImageMinHeightDp = 120
 
-    /** Lines of a code fence rendered before collapsing to a head with a "show more" affordance. */
-    const val collapsedCodeLineThreshold = 200
+    /** Lines of a code fence rendered before collapsing to a head with a "show more" affordance.
+     *  Capped low for mobile: a 200-line block rendered at once can jank a low-end phone, so the
+     *  initial render is bounded and a "show more" reveals the rest in place. */
+    const val collapsedCodeLineThreshold = 80
 
-    /** Lines of a unified diff rendered before collapsing to a head with a "show more" affordance. */
-    const val collapsedDiffLineThreshold = 200
+    /** Lines of a unified diff rendered before collapsing to a head with a "show more" affordance.
+     *  Same mobile-performance rationale as [collapsedCodeLineThreshold]. */
+    const val collapsedDiffLineThreshold = 80
 
     /** Lines of tool output rendered before collapsing to a head with a "show more" affordance. */
     const val toolOutputCollapsedLimitChars = 4000
@@ -334,7 +337,7 @@ object NetworkConfig {
     const val imageViewerSwipeDismissThreshold = 200f
 
     /** Blink period (ms) of the streaming caret at the tail of a live assistant reply. */
-    const val streamingCaretPeriodMs = 550
+    const val streamingCaretPeriodMs = 500
 
     /** Auto-reject a tool-permission prompt after this many ms if the user hasn't responded,
      *  so a forgotten prompt doesn't block the run indefinitely. The foreground service keeps
@@ -376,8 +379,9 @@ object NetworkConfig {
 
     // --- Motion tokens (shared across screens) ---
 
-    /** Duration (ms) for horizontal slide push/pop nav transitions. */
-    const val motionSlideDurationMs = 220
+    /** Duration (ms) for horizontal slide push/pop nav transitions. M3 spec recommends 200ms
+     *  for medium-duration container transitions. */
+    const val motionSlideDurationMs = 200
     /** Duration (ms) for fade in/out nav and content transitions. */
     const val motionFadeDurationMs = 180
 

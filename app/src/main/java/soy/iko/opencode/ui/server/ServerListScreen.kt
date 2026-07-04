@@ -23,7 +23,7 @@ import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.QrCodeScanner
+import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -261,7 +261,7 @@ fun ServerListScreen(
                     // permissions; an image picker reuses the system gallery and covers the
                     // cross-device transfer use case.
                     IconButton(onClick = { qrImportLauncher.launch(arrayOf("image/*")) }) {
-                        Icon(Icons.Filled.QrCodeScanner, contentDescription = stringResource(R.string.import_from_image))
+                        Icon(Icons.Filled.PhotoLibrary, contentDescription = stringResource(R.string.import_from_image))
                     }
                 },
             )
@@ -687,7 +687,7 @@ private fun EmptyServers(onAdd: () -> Unit, onQrImport: () -> Unit, modifier: Mo
             actionIcon = Icons.Filled.Add,
             actionLabel = stringResource(R.string.add_server),
             onAction = onAdd,
-            secondaryActionIcon = Icons.Filled.QrCodeScanner,
+            secondaryActionIcon = Icons.Filled.PhotoLibrary,
             secondaryActionLabel = stringResource(R.string.import_from_image),
             onSecondaryAction = onQrImport,
         )

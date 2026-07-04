@@ -34,13 +34,16 @@ import java.util.concurrent.ConcurrentHashMap
 
 /** One search result: the [session] that matched, a [snippet] of the matching text, the total
  *  number of [matchCount] occurrences (across body + title), and whether the title itself matched
- *  ([matchedTitle]) so the UI can highlight it like the snippet. */
+ *  ([matchedTitle]) so the UI can highlight it like the snippet. [firstMatchMessageId] carries
+ *  the id of the first message whose text matched, so opening the result can scroll the chat
+ *  to that message instead of the conversation's tail. Null when only the title matched. */
 @Immutable
 data class SearchHit(
     val session: Session,
     val snippet: String,
     val matchCount: Int = 1,
     val matchedTitle: Boolean = false,
+    val firstMatchMessageId: String? = null,
 )
 
 @Immutable
@@ -209,7 +212,7 @@ class GlobalSearchViewModel(private val container: AppContainer) : ViewModel() {
                                     Log.w("GlobalSearch", "listMessages failed: " + safeExceptionSummary(it))
                                     emptyList()
                                 }
-                        val snippet = matchSnippet(messages, query, ignoreCase, filter)
+                        val (snippet, matchMessageId) = matchSnippet(messages, query, ignoreCase, filter)
                         // The session title isn't a message part, so the type filter doesn't
                         // apply to it — a title match is always surfaced.
                         val titleMatched = session.displayTitle.contains(query, ignoreCase = ignoreCase)
@@ -222,6 +225,7 @@ class GlobalSearchViewModel(private val container: AppContainer) : ViewModel() {
                                     ?: session.displayTitle.takeIf { titleMatched }.orEmpty(),
                                 matchCount = count.coerceAtLeast(1),
                                 matchedTitle = titleMatched,
+                                firstMatchMessageId = matchMessageId,
                             )
                         }
                         // Publish progress so the spinner can show "Searched N / M sessions".
@@ -242,21 +246,23 @@ class GlobalSearchViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     /** Find the first searchable text containing [query] across [messages] and return a short
-     *  snippet centered on the match, or null if nothing matches. [ignoreCase] controls
-     *  case-sensitivity; [filter] restricts which part types contribute searchable text. */
+     *  snippet centered on the match plus the id of the matching message, or `(null, null)` if
+     *  nothing matches. [ignoreCase] controls case-sensitivity; [filter] restricts which part
+     *  types contribute searchable text. The message id lets the caller scroll the chat to the
+     *  match when the result is opened. */
     private fun matchSnippet(
         messages: List<soy.iko.opencode.data.model.MessageWithParts>,
         query: String,
         ignoreCase: Boolean,
         filter: SearchTypeFilter = SearchTypeFilter.ALL,
-    ): String? {
+    ): Pair<String?, String?> {
         for (message in messages) {
             for (candidate in searchableTexts(message.parts, filter)) {
                 val idx = candidate.indexOf(query, ignoreCase = ignoreCase)
-                if (idx >= 0) return buildSnippet(candidate, idx, query.length)
+                if (idx >= 0) return buildSnippet(candidate, idx, query.length) to message.info.id
             }
         }
-        return null
+        return null to null
     }
 
     /** The ordered list of searchable strings for a message's parts, scoped by [filter].

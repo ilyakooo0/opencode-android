@@ -1,6 +1,8 @@
 package soy.iko.opencode.ui.components
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Row
@@ -37,6 +39,7 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import soy.iko.opencode.R
 import soy.iko.opencode.data.network.EventStreamClient
+import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.di.AppContainer
 
 /**
@@ -98,10 +101,18 @@ fun ConnectionBanner(
         // rejected the connection (not when the device itself is offline).
         val isServerFailure = state == EventStreamClient.ConnectionState.Failed ||
             state == EventStreamClient.ConnectionState.AuthFailed
-        val container = if (isFailed) MaterialTheme.colorScheme.errorContainer
-            else MaterialTheme.colorScheme.tertiaryContainer
-        val onContainer = if (isFailed) MaterialTheme.colorScheme.onErrorContainer
-            else MaterialTheme.colorScheme.onTertiaryContainer
+        val container by animateColorAsState(
+            targetValue = if (isFailed) MaterialTheme.colorScheme.errorContainer
+                else MaterialTheme.colorScheme.tertiaryContainer,
+            animationSpec = tween(NetworkConfig.motionFadeDurationMs),
+            label = "bannerContainer",
+        )
+        val onContainer by animateColorAsState(
+            targetValue = if (isFailed) MaterialTheme.colorScheme.onErrorContainer
+                else MaterialTheme.colorScheme.onTertiaryContainer,
+            animationSpec = tween(NetworkConfig.motionFadeDurationMs),
+            label = "bannerOnContainer",
+        )
         Surface(
             modifier = modifier
                 .fillMaxWidth()

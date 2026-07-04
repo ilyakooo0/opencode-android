@@ -80,7 +80,7 @@ import soy.iko.opencode.util.runCatchingCancellable
 @Composable
 fun GlobalSearchScreen(
     container: AppContainer,
-    onOpenSession: (String) -> Unit,
+    onOpenSession: (String, String?) -> Unit,
     onBack: () -> Unit,
 ) {
     val vm: GlobalSearchViewModel = viewModel(factory = vmFactory { GlobalSearchViewModel(container) })
@@ -260,7 +260,7 @@ fun GlobalSearchScreen(
                                 hit = hit,
                                 query = state.query.trim(),
                                 ignoreCase = !state.matchCase,
-                                onClick = { onOpenSession(hit.session.id) },
+                                onClick = { onOpenSession(hit.session.id, hit.firstMatchMessageId) },
                                 modifier = Modifier.then(reducedMotionAnimateItem()),
                             )
                         }

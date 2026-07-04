@@ -19,7 +19,16 @@ object Routes {
     fun serverEditDuplicate(sourceId: String) = "$SERVER_EDIT?dup=${android.net.Uri.encode(sourceId)}"
 
     const val CHAT = "chat"
-    fun chat(sessionId: String) = "$CHAT/${android.net.Uri.encode(sessionId)}"
+    fun chat(sessionId: String, focusMessageId: String? = null): String {
+        val base = "$CHAT/${android.net.Uri.encode(sessionId)}"
+        // An optional focusMessageId scrolls the chat to (and briefly highlights) that message,
+        // used by global search to jump directly to the matched message instead of the tail.
+        return if (focusMessageId != null && focusMessageId.isNotBlank()) {
+            "$base?focus=${android.net.Uri.encode(focusMessageId)}"
+        } else {
+            base
+        }
+    }
 
     const val FILE_VIEW = "file_view"
     fun fileView(path: String, line: Int? = null): String {

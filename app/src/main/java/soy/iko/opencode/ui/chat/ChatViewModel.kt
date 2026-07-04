@@ -540,6 +540,13 @@ class ChatViewModel(
     private val _draft = MutableStateFlow(container.draftStore.get(sessionId))
     val draft: StateFlow<String> = _draft.asStateFlow()
 
+    /** A pending quote-reply preview (the raw text the user quoted), shown as a dismissible
+     *  card above the composer so the user can see and cancel the quote before sending. Cleared
+     *  on send or via [cancelQuoteReply]. The actual `>` prefixed lines are still folded into
+     *  the draft for the server; this state is purely for the visual preview chip. */
+    private val _pendingQuote = MutableStateFlow<String?>(null)
+    val pendingQuote: StateFlow<String?> = _pendingQuote.asStateFlow()
+
     /** Messages composed for this session while offline/disconnected, queued in the outbox and
      *  awaiting an automatic flush on reconnect. Surfaced so the composer can show a "queued"
      *  chip with a discard/send-now affordance. */
@@ -563,6 +570,12 @@ class ChatViewModel(
      *  server-side). Drives the "reverted" banner with its Undo. */
     private val _reverted = MutableStateFlow(false)
     val reverted: StateFlow<Boolean> = _reverted.asStateFlow()
+
+    /** True when the revert was triggered by an Edit action (vs a bare Revert). Drives the
+     *  banner's copy so it reads "Editing message" rather than "Reverted", making the composer's
+     *  prefilled text unambiguous. Cleared on unrevert and on send. */
+    private val _editing = MutableStateFlow(false)
+    val editing: StateFlow<Boolean> = _editing.asStateFlow()
 
     /** The diff of the active revert checkpoint, when the server includes one. Shown in the
      *  revert banner so the user can see what changed before deciding to undo. Null when the
@@ -1019,6 +1032,8 @@ class ChatViewModel(
         if (_draft.value.trim() == trimmed) {
             suppressDraftPersist.set(true)
             _draft.value = ""
+            _pendingQuote.value = null
+            _editing.value = false
         }
         // Inject an optimistic user message so the outgoing prompt is visible immediately,
         // before the server echoes it back via SSE. Removed by reconcileOptimistic once the
@@ -1343,6 +1358,7 @@ class ChatViewModel(
                 .onSuccess {
                     _reverted.value = it.isReverted
                     _revertDiff.value = it.revert?.diff?.takeIf { diff -> diff.isNotBlank() }
+                    _editing.value = false
                 }
                 .onFailure { _errorEvents.trySend(ChatError(container.friendlyError(it))) }
         }
@@ -1401,11 +1417,14 @@ class ChatViewModel(
     fun editMessage(messageId: String, text: String) {
         revertTo(messageId)
         _draft.value = text.take(NetworkConfig.maxDraftLengthChars)
+        _pendingQuote.value = null
+        _editing.value = true
     }
 
     /** Prefill the composer with [text] as a Markdown blockquote so the user can respond to a
      *  specific message inline. Appends to any existing draft (with a blank line) rather than
-     *  overwriting, so quoting doesn't discard text already being typed. */
+     *  overwriting, so quoting doesn't discard text already being typed. Also stashes the raw
+     *  quoted text in [pendingQuote] so the composer can show a dismissible preview card. */
     fun quoteReply(text: String) {
         val quoted = text.trim().lineSequence().joinToString("\n") { "> $it" }
         if (quoted.isBlank()) return
@@ -1414,6 +1433,21 @@ class ChatViewModel(
         // Cap like the composer's typed/pasted/dictated input so quoting onto a near-full draft
         // can't push it past the limit (negative remaining counter + an over-cap prompt sent).
         _draft.value = combined.take(NetworkConfig.maxDraftLengthChars)
+        _pendingQuote.value = text.trim().takeIf { it.isNotBlank() }
+    }
+
+    /** Remove the pending quote-reply preview and strip the `>`-prefixed blockquote lines from
+     *  the draft so canceling the quote card actually removes the quoted text, not just the chip. */
+    fun cancelQuoteReply() {
+        val removed = _pendingQuote.value ?: return
+        _pendingQuote.value = null
+        val quotedBlock = removed.trim().lineSequence().joinToString("\n") { "> $it" }
+        _draft.value = _draft.value
+            .replace("\n\n$quotedBlock\n\n", "\n\n", ignoreCase = false)
+            .replace("$quotedBlock\n\n", "", ignoreCase = false)
+            .replace("\n\n$quotedBlock", "", ignoreCase = false)
+            .replace(quotedBlock, "", ignoreCase = false)
+            .trimStart()
     }
 
     /** Fork the conversation by creating a brand-new session seeded with [text] as its first
@@ -1448,6 +1482,7 @@ class ChatViewModel(
                 .onSuccess {
                     _reverted.value = it.isReverted
                     _revertDiff.value = it.revert?.diff?.takeIf { diff -> diff.isNotBlank() }
+                    _editing.value = false
                 }
                 .onFailure { _errorEvents.trySend(ChatError(container.friendlyError(it))) }
         }

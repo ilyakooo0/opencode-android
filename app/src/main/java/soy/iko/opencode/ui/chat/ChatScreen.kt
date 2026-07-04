@@ -55,6 +55,7 @@ import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Expand
+import androidx.compose.material.icons.filled.FormatQuote
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Search
@@ -190,6 +191,9 @@ import soy.iko.opencode.ui.components.toImageContext
 import soy.iko.opencode.ui.vmFactory
 import soy.iko.opencode.util.runCatchingCancellable
 
+// Optional message id to scroll to and briefly highlight on first load (from global search).
+// Consumed once: after the message is scrolled into view and highlighted, the focus is
+// cleared so subsequent recompositions don't re-trigger the scroll.
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatScreen(
@@ -198,6 +202,7 @@ fun ChatScreen(
     onBack: () -> Unit,
     onOpenFile: ((String) -> Unit)? = null,
     onOpenSession: ((String) -> Unit)? = null,
+    focusMessageId: String? = null,
 ) {
     val vm: ChatViewModel = viewModel(key = sessionId, factory = vmFactory { ChatViewModel(container, sessionId) })
     val hasMessages by vm.hasMessages.collectAsStateWithLifecycle()
@@ -224,8 +229,10 @@ fun ChatScreen(
     val sessionTitle by vm.sessionTitle.collectAsStateWithLifecycle()
     val sessionDeleted by vm.sessionDeleted.collectAsStateWithLifecycle()
     val draft by vm.draft.collectAsStateWithLifecycle()
+    val pendingQuote by vm.pendingQuote.collectAsStateWithLifecycle()
     val attachments by vm.attachments.collectAsStateWithLifecycle()
     val reverted by vm.reverted.collectAsStateWithLifecycle()
+    val editing by vm.editing.collectAsStateWithLifecycle()
     val revertDiff by vm.revertDiff.collectAsStateWithLifecycle()
     val shareUrl by vm.shareUrl.collectAsStateWithLifecycle()
     val reconnecting by vm.reconnecting.collectAsStateWithLifecycle()
@@ -855,6 +862,7 @@ fun ChatScreen(
                 ) {
                     RevertBanner(
                         diff = revertDiff,
+                        isEditing = editing,
                         onUndo = { vm.unrevert() },
                     )
                 }
@@ -869,6 +877,13 @@ fun ChatScreen(
                         onFlush = { vm.flushQueued() },
                         onDiscard = { vm.discardAllQueued() },
                     )
+                }
+                AnimatedVisibility(
+                    visible = pendingQuote != null,
+                    enter = bannerMotion.enter,
+                    exit = bannerMotion.exit,
+                ) {
+                    pendingQuote?.let { QuoteReplyBanner(it, onCancel = { vm.cancelQuoteReply() }) }
                 }
                 ChatInputBar(
                     value = draft,
@@ -1057,6 +1072,23 @@ fun ChatScreen(
                 it is MessageListItem.Message && it.message.info.id == target.info.id
             }
             if (index >= 0) runCatchingCancellable { listState.animateScrollToItem(index) }
+        }
+
+        // Global-search deep link: scroll to and briefly highlight the matched message. The
+        // focus id is threaded through the chat route from GlobalSearchScreen. The highlight
+        // clears itself after a short delay so the user can re-read the surrounding context
+        // without a persistent marker. Runs once per focusMessageId (cleared on consume).
+        var focusedMessageId by remember(focusMessageId) { mutableStateOf(focusMessageId) }
+        LaunchedEffect(focusedMessageId, listItems) {
+            val focus = focusedMessageId ?: return@LaunchedEffect
+            if (listItems.isEmpty()) return@LaunchedEffect
+            val index = listItems.indexOfFirst {
+                it is MessageListItem.Message && it.message.info.id == focus
+            }
+            if (index < 0) return@LaunchedEffect
+            runCatchingCancellable { listState.animateScrollToItem(index) }
+            kotlinx.coroutines.delay(2500)
+            focusedMessageId = null
         }
 
         // Scroll to bottom when the IME opens and the user was already pinned to bottom, so the
@@ -1406,8 +1438,7 @@ fun ChatScreen(
                                     agentLabel = agentLabel,
                                     onOpenFile = onOpenFile,
                                     onRevert = { vm.revertTo(message.info.id) },
-                                    onEdit = { text ->
-                                        // editMessage reverts to before this message (hiding it and
+                                    onEdit = { text ->                                        // editMessage reverts to before this message (hiding it and
                                         // everything after); the revert banner surfaces the rewind
                                         // with an Undo. Focus + scroll the composer into view like the
                                         // Quote action so the prefilled draft isn't off-screen.
@@ -1486,6 +1517,8 @@ fun ChatScreen(
                                                 .onFailure { showToast(shareContext, shareContext.getString(R.string.no_share_app)) }
                                         }
                                     },
+                                    isFirstOfSpeaker = item.isFirstOfSpeaker,
+                                    highlighted = focusedMessageId != null && message.info.id == focusedMessageId,
                                 )
                                 }
                             }
@@ -2561,7 +2594,7 @@ private fun EmptyConversation(
  *  server included a diff of the revert, a collapsible "Show what changed" affordance reveals
  *  it inline via [DiffView] so the user can see what was rolled back before deciding to undo. */
 @Composable
-private fun RevertBanner(diff: String?, onUndo: () -> Unit) {
+private fun RevertBanner(diff: String?, isEditing: Boolean, onUndo: () -> Unit) {
     val haptics = LocalHapticFeedback.current
     var showDiff by rememberSaveable { mutableStateOf(false) }
     val expandMotion = rememberVisibilityTransitions()
@@ -2578,13 +2611,13 @@ private fun RevertBanner(diff: String?, onUndo: () -> Unit) {
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
                     Icon(
-                        Icons.Filled.Restore,
+                        if (isEditing) Icons.Filled.Edit else Icons.Filled.Restore,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.onTertiaryContainer,
                         modifier = Modifier.size(18.dp),
                     )
                     Text(
-                        stringResource(R.string.reverted_banner),
+                        stringResource(if (isEditing) R.string.editing_banner else R.string.reverted_banner),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onTertiaryContainer,
                         modifier = Modifier.padding(start = 8.dp),
@@ -2638,6 +2671,57 @@ private fun RevertBanner(diff: String?, onUndo: () -> Unit) {
                         DiffView(diff, saveKey = "revertDiff")
                     }
                 }
+            }
+        }
+    }
+}
+
+/** A dismissible preview card shown above the composer when the user quote-replied to a
+ *  message. Displays the quoted text (truncated) with a Cancel affordance so the user can
+ *  abort the quote without digging into the draft to strip the `>`-prefixed lines. Mirrors
+ *  the Discord/Slack quote-preview pattern. */
+@Composable
+private fun QuoteReplyBanner(quotedText: String, onCancel: () -> Unit) {
+    val haptics = LocalHapticFeedback.current
+    Surface(
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        tonalElevation = 2.dp,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.Top,
+        ) {
+            Icon(
+                Icons.Filled.FormatQuote,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                modifier = Modifier.size(18.dp).padding(top = 2.dp),
+            )
+            Column(modifier = Modifier.weight(1f).padding(start = 8.dp)) {
+                Text(
+                    stringResource(R.string.quote_reply_banner),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                )
+                Text(
+                    quotedText,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            IconButton(onClick = {
+                haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                onCancel()
+            }) {
+                Icon(
+                    Icons.Filled.Close,
+                    contentDescription = stringResource(R.string.cancel_quote_reply),
+                    tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                    modifier = Modifier.size(18.dp),
+                )
             }
         }
     }
@@ -2818,7 +2902,15 @@ private sealed interface MessageListItem {
     val key: Any
     val contentType: Any
 
-    data class Message(val message: MessageWithParts, override val key: Any) : MessageListItem {
+    data class Message(
+        val message: MessageWithParts,
+        override val key: Any,
+        // Whether this is the first message in a consecutive run of the same speaker (role).
+        // Used to suppress the assistant avatar/header on follow-up messages in the same run,
+        // reducing visual noise in tool-heavy conversations where many assistant messages
+        // appear back-to-back. A separator or a role change resets the flag.
+        val isFirstOfSpeaker: Boolean,
+    ) : MessageListItem {
         override val contentType: Any get() = message.info::class
     }
 
@@ -2859,6 +2951,11 @@ private fun buildMessageListItems(
     var sepOrdinal = 0
     var emptyIdOrdinal = 0
     var first = true
+    // Track the previous message's role to detect consecutive same-speaker runs, so the
+    // avatar/header can be suppressed on follow-up messages in the same run. A null means
+    // "no previous message or a separator just interrupted the run", both of which make the
+    // next message the first of its group.
+    var prevRoleClass: kotlin.reflect.KClass<out soy.iko.opencode.data.model.MessageInfo>? = null
     for (message in messages) {
         val ts = message.info.time?.created ?: message.info.time?.updated ?: message.info.time?.completed
         val dayKey = ts?.let { dayKey(it) } ?: ""
@@ -2869,6 +2966,9 @@ private fun buildMessageListItems(
         // message would see a "" -> "<today>" transition and emit a duplicate "Today" header.
         if (first || (dayKey.isNotEmpty() && dayKey != lastDayKey)) {
             result.add(MessageListItem.Separator(dayLabel(dayKey, ts ?: 0L, today, todayLabel, yesterdayLabel, dateFmt), sepOrdinal++))
+            // A date separator visually breaks a speaker run, so the next message is treated
+            // as the first of its group (even if the same role continues across the day break).
+            prevRoleClass = null
         }
         if (dayKey.isNotEmpty()) lastDayKey = dayKey
         first = false
@@ -2882,7 +2982,10 @@ private fun buildMessageListItems(
             while (!seenKeys.add("$key#$suffix")) suffix++
             key = "$key#$suffix"
         }
-        result.add(MessageListItem.Message(message, key))
+        val roleClass = message.info::class
+        val isFirstOfSpeaker = prevRoleClass == null || roleClass != prevRoleClass
+        result.add(MessageListItem.Message(message, key, isFirstOfSpeaker))
+        prevRoleClass = roleClass
     }
     return result
 }

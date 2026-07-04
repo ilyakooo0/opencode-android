@@ -52,6 +52,7 @@ import soy.iko.opencode.ui.server.ServerEditScreen
 import soy.iko.opencode.ui.server.ServerListScreen
 import soy.iko.opencode.ui.search.GlobalSearchScreen
 import soy.iko.opencode.ui.components.LargeScreenNavRail
+import soy.iko.opencode.ui.components.CompactNavBar
 import soy.iko.opencode.ui.components.LocalChatTextScale
 import soy.iko.opencode.ui.components.LocalCodeWrap
 import soy.iko.opencode.ui.components.LocalReducedMotion
@@ -426,12 +427,16 @@ fun OpencodeApp(container: AppContainer) {
         }
 
         composable(
-            route = "${Routes.CHAT}/{sessionId}",
-            arguments = listOf(navArgument("sessionId") { type = NavType.StringType }),
+            route = "${Routes.CHAT}/{sessionId}?focus={focus}",
+            arguments = listOf(
+                navArgument("sessionId") { type = NavType.StringType },
+                navArgument("focus") { type = NavType.StringType; nullable = true; defaultValue = null },
+            ),
         ) { entry ->
             ChatScreen(
                 container = container,
                 sessionId = entry.arguments?.getString("sessionId").orEmpty(),
+                focusMessageId = entry.arguments?.getString("focus"),
                 onBack = { navController.popBackStack() },
                 onOpenFile = { path -> navController.navigate(Routes.fileView(path)) },
                 onOpenSession = { id ->
@@ -518,19 +523,20 @@ fun OpencodeApp(container: AppContainer) {
         composable(Routes.SEARCH) {
             GlobalSearchScreen(
                 container = container,
-                onOpenSession = { id -> navController.navigate(Routes.chat(id)) },
+                onOpenSession = { id, focusMessageId -> navController.navigate(Routes.chat(id, focusMessageId)) },
                 onBack = { navController.popBackStack() },
             )
         }
         }
         }
 
+        // Collect unread/run state for nav badges (rail on large screens, bottom bar on
+        // compact screens), so a user on Files/Settings sees pending activity at a glance.
+        val unread by container.unread.collectAsStateWithLifecycle()
+        val anyRunActive by container.anyRunActive.collectAsStateWithLifecycle()
+        val totalUnread = remember(unread) { unread.values.sum() }
+
         if (showNavRail) {
-            // Collect unread/run state for the nav rail's Sessions badge, so a user on
-            // Files/Settings sees pending activity at a glance.
-            val unread by container.unread.collectAsStateWithLifecycle()
-            val anyRunActive by container.anyRunActive.collectAsStateWithLifecycle()
-            val totalUnread = remember(unread) { unread.values.sum() }
             Row(modifier = Modifier.fillMaxSize()) {
                 LargeScreenNavRail(
                     currentRoute = currentRoute,
@@ -555,7 +561,28 @@ fun OpencodeApp(container: AppContainer) {
                 Box(modifier = Modifier.weight(1f).fillMaxHeight()) { navHost() }
             }
         } else {
-            navHost()
+            // Compact screens: a bottom NavigationBar surfaces the top-level destinations one
+            // tap away (Sessions/Search/Files/Settings/Servers) instead of buried in each
+            // screen's overflow menu. The navHost fills the space above the bar; the bar's
+            // own height is accounted for by the NavigationBar's intrinsic measurement.
+            androidx.compose.foundation.layout.Column(modifier = Modifier.fillMaxSize()) {
+                Box(modifier = Modifier.weight(1f).fillMaxHeight()) { navHost() }
+                CompactNavBar(
+                    currentRoute = currentRoute,
+                    connected = connection != null,
+                    unreadCount = totalUnread,
+                    runActive = anyRunActive,
+                    onNavigate = { route ->
+                        navController.navigate(route) {
+                            popUpTo(navController.graph.findStartDestination().id) {
+                                saveState = true
+                            }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    },
+                )
+            }
         }
     }
     }
