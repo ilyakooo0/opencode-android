@@ -32,6 +32,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -71,6 +72,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.coroutineScope
@@ -84,6 +87,7 @@ import soy.iko.opencode.util.runCatchingCancellable
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
 import soy.iko.opencode.ui.components.EmptyState
+import soy.iko.opencode.ui.components.SkeletonRow
 import soy.iko.opencode.ui.components.reducedMotionAnimateItem
 import soy.iko.opencode.ui.components.rememberRelativeTime
 import soy.iko.opencode.ui.vmFactory
@@ -111,6 +115,11 @@ fun ServerListScreen(
         .collectAsStateWithLifecycle(initialValue = soy.iko.opencode.data.network.EventStreamClient.ConnectionState.Connected)
     val haptics = LocalHapticFeedback.current
     val snackbar = remember { SnackbarHostState() }
+    // Separate host for transient error messages (connect/probe failures, QR import results)
+    // so a transient error can't preempt an undo snackbar's full window — the undo and error
+    // channels don't share a queue, so a connect error can't cancel an in-flight undo and
+    // strand a pending server delete.
+    val errorSnackbar = remember { SnackbarHostState() }
     val retryLabel = stringResource(R.string.retry)
     val undoLabel = stringResource(R.string.undo)
     val serverRemovedLabel = stringResource(R.string.server_removed)
@@ -130,16 +139,16 @@ fun ServerListScreen(
     val qrImportLauncher = ServerQrImportHandler(
         vm = vm,
         scope = scope,
-        snackbar = snackbar,
+        snackbar = errorSnackbar,
         context = context,
     )
 
     LaunchedEffect(Unit) {
         vm.errorEvents.collect { event ->
             val result = if (event.profile != null) {
-                snackbar.showSnackbar(message = event.message, actionLabel = retryLabel)
+                errorSnackbar.showSnackbar(message = event.message, actionLabel = retryLabel)
             } else {
-                snackbar.showSnackbar(event.message)
+                errorSnackbar.showSnackbar(event.message)
             }
             if (result == SnackbarResult.ActionPerformed && event.profile != null) {
                 vm.connect(event.profile, onConnected)
@@ -158,7 +167,7 @@ fun ServerListScreen(
                 is ProbeTestResult.Success -> probeSuccessLabel.format(result.latencyMs)
                 is ProbeTestResult.Failed -> probeFailedLabel.format(result.message)
             }
-            snackbar.showSnackbar(message)
+            errorSnackbar.showSnackbar(message)
         }
     }
 
@@ -257,11 +266,23 @@ fun ServerListScreen(
                 },
             )
         },
-        snackbarHost = { SnackbarHost(snackbar) },
-        floatingActionButton = {
-            FloatingActionButton(onClick = onAddProfile) {
-                Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.add_server))
+        snackbarHost = {
+            // Stack both hosts; the undo snackbar takes priority (rendered first), the error
+            // host renders below it so both can be visible simultaneously without preempting.
+            Column {
+                SnackbarHost(snackbar)
+                SnackbarHost(errorSnackbar)
             }
+        },
+        floatingActionButton = {
+            // Extended FAB with a text label, matching the session list's "New session" FAB
+            // so the two home screens read consistently. The icon-only FAB here was the lone
+            // exception among the app's primary surfaces.
+            ExtendedFloatingActionButton(
+                onClick = onAddProfile,
+                icon = { Icon(Icons.Filled.Add, contentDescription = null) },
+                text = { Text(stringResource(R.string.add_server)) },
+            )
         },
     ) { padding ->
         // Consume the top inset on the Column so the reconnecting indicator (its first child)
@@ -277,41 +298,46 @@ fun ServerListScreen(
                         .semantics { contentDescription = reconnectingLabel },
                 )
             }
-            if (loading) {
-                // Initial DataStore read in flight: show a spinner rather than flashing the
-                // "No servers yet" empty state, which would appear then vanish once profiles
-                // arrive. Mirrors the session list's explicit loading state.
-                val loadingLabel = stringResource(R.string.loading)
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center,
+            // Crossfade between content states (loading/empty/list) so the transition reads as a
+            // smooth fade instead of an instant snap. Matches the session list's Crossfade
+            // pattern; reduced motion is honored by Crossfade's default spec.
+            val stateKey = when {
+                loading -> "loading"
+                profiles.isEmpty() -> "empty"
+                else -> "list"
+            }
+            Crossfade(
+                targetState = stateKey,
+                animationSpec = tween(NetworkConfig.motionFadeDurationMs.toInt()),
+                label = "server_list_state",
+            ) { key ->
+                when (key) {
+                "loading" -> Column(
+                    modifier = Modifier.fillMaxSize().padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        CircularProgressIndicator(Modifier.semantics { contentDescription = loadingLabel })
-                        Spacer(Modifier.size(12.dp))
-                        Text(loadingLabel, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
+                    repeat(6) { SkeletonRow() }
                 }
-            } else if (profiles.isEmpty()) {
-                EmptyServers(
+                "empty" -> EmptyServers(
                     onAdd = onAddProfile,
+                    onQrImport = { qrImportLauncher.launch(arrayOf("image/*")) },
                     modifier = Modifier.fillMaxSize(),
                 )
-            } else {
-                val filtered = remember(profiles, serverQuery) { filterServerProfiles(profiles, serverQuery) }
-                PullToRefreshBox(
-                    isRefreshing = connectingId != null,
-                    onRefresh = { vm.refresh(onConnected) },
-                    modifier = Modifier.fillMaxSize(),
-                ) {
-                    LazyColumn(
+                else -> {
+                    val filtered = remember(profiles, serverQuery) { filterServerProfiles(profiles, serverQuery) }
+                    PullToRefreshBox(
+                        isRefreshing = connectingId != null,
+                        onRefresh = { vm.refresh(onConnected) },
                         modifier = Modifier.fillMaxSize(),
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                            start = 16.dp, end = 16.dp, top = 16.dp,
-                            bottom = 96.dp + padding.calculateBottomPadding(),
-                        ),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                                start = 16.dp, end = 16.dp, top = 16.dp,
+                                bottom = 96.dp + padding.calculateBottomPadding(),
+                            ),
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
                         // Show the filter field only past a small threshold so a typical
                         // 1–2 server setup isn't cluttered with a search bar.
                         if (profiles.size >= NetworkConfig.serverListSearchThreshold) {
@@ -429,10 +455,11 @@ fun ServerListScreen(
                         }
                     }
                 }
+                }
+                }
             }
         }
     }
-
     profiles.find { it.id == pendingDeleteId }?.let { profile ->
         val isActiveProfile = profile.id == connectedId
         AlertDialog(
@@ -651,7 +678,7 @@ private fun LastUsedText(lastUsed: Long) {
 }
 
 @Composable
-private fun EmptyServers(onAdd: () -> Unit, modifier: Modifier = Modifier) {
+private fun EmptyServers(onAdd: () -> Unit, onQrImport: () -> Unit, modifier: Modifier = Modifier) {
     Box(modifier = modifier, contentAlignment = Alignment.Center) {
         EmptyState(
             icon = Icons.Filled.Dns,
@@ -660,6 +687,9 @@ private fun EmptyServers(onAdd: () -> Unit, modifier: Modifier = Modifier) {
             actionIcon = Icons.Filled.Add,
             actionLabel = stringResource(R.string.add_server),
             onAction = onAdd,
+            secondaryActionIcon = Icons.Filled.QrCodeScanner,
+            secondaryActionLabel = stringResource(R.string.import_from_image),
+            onSecondaryAction = onQrImport,
         )
     }
 }
@@ -745,7 +775,8 @@ private fun ServerListSearchField(query: String, onQueryChange: (String) -> Unit
     OutlinedTextField(
         value = query,
         onValueChange = onQueryChange,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().testTag("server_search"),
+        label = { Text(stringResource(R.string.search_servers)) },
         placeholder = { Text(stringResource(R.string.search_servers)) },
         singleLine = true,
         leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },

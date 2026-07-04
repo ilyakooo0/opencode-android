@@ -20,6 +20,8 @@
     <string name="files">Files</string>
     <string name="share">Share</string>
     <string name="copy_as_markdown">Copy as Markdown</string>
+    <string name="share_as_json">Share as JSON</string>
+    <string name="copy_as_json">Copy as JSON</string>
     <string name="share_subject">opencode session</string>
     <string name="send">Send</string>
     <string name="stop">Stop</string>
@@ -55,6 +57,7 @@
     <string name="no_servers_yet">No servers yet</string>
     <string name="no_servers_hint">Add an opencode serve endpoint to connect.</string>
     <string name="search_servers">Filter servers</string>
+    <string name="search_settings">Search settings…</string>
     <string name="no_server_matches">No matching servers</string>
     <string name="remove_server_title">Remove server?</string>
     <string name="remove_server_text">“%1$s” will be removed from your saved servers.</string>
@@ -201,6 +204,7 @@
     <string name="image_failed">Failed to load image</string>
     <string name="save_image">Save to gallery</string>
     <string name="share_image">Share image</string>
+    <string name="reset_zoom">Reset zoom</string>
     <string name="image_saved">Image saved to gallery</string>
     <string name="image_save_failed">Couldn\'t save image</string>
     <string name="search_models">Search models…</string>
@@ -222,6 +226,7 @@
     <string name="git_deleted">Deleted</string>
     <string name="binary_file">Binary file — preview not supported.</string>
     <string name="empty_folder">This folder is empty</string>
+    <string name="permission_denied_files">No permission to read this folder.</string>
     <string name="empty_file">This file is empty</string>
     <string name="show_hidden">Show hidden</string>
     <string name="parent_dir">Parent directory</string>
@@ -349,6 +354,8 @@
     <string name="session_deleted_chat">Session deleted</string>
     <string name="today">Today</string>
     <string name="yesterday">Yesterday</string>
+    <string name="last_week">Last week</string>
+    <string name="older">Older</string>
 
     <!-- Search -->
     <string name="clear_search">Clear search</string>
@@ -644,6 +651,10 @@
         <item quantity="one">%1$d result</item>
         <item quantity="other">%1$d results</item>
     </plurals>
+    <plurals name="file_count">
+        <item quantity="one">%1$d item</item>
+        <item quantity="other">%1$d items</item>
+    </plurals>
 
     <!-- UI/UX batch 2: message status, crash prompt, server connection -->
     <string name="message_sending">Sending…</string>
@@ -695,6 +706,7 @@
         <item quantity="other">%d selected</item>
     </plurals>
     <string name="bulk_archive">Archive</string>
+    <string name="bulk_pin">Pin</string>
     <string name="bulk_delete">Delete</string>
     <string name="bulk_mark_read">Mark read</string>
     <string name="deep_link_invalid">Unsupported link</string>
@@ -711,6 +723,7 @@
 
     <!-- UI/UX batch 4: file browser label, a11y, bulk confirmations -->
     <string name="folders_first">Folders first</string>
+    <string name="changed_only">Changed only</string>
     <string name="more_options_for">More options for “%1$s”</string>
     <string name="bulk_delete_title">Delete sessions?</string>
     <string name="bulk_delete_text">These %1$d sessions will be permanently deleted. This cannot be undone.</string>
@@ -799,6 +812,8 @@
     <string name="mcp_view_tools">View tools</string>
     <string name="mcp_no_tools">No tools available</string>
     <string name="mcp_add_server">Add MCP server</string>
+    <string name="mcp_add_name_required">Name is required.</string>
+    <string name="mcp_add_target_required">Required.</string>
     <string name="file_share_too_large">File is too large to share</string>
     <string name="search_filter_all">All</string>
     <string name="search_filter_messages">Messages</string>
@@ -894,4 +909,7 @@
     <string name="swipe_action_none">None</string>
     <!-- Open the file viewer with an image preview for image extensions. -->
     <string name="image_file_preview">Image preview</string>
+    <!-- Markdown source view on a message's TextParts. -->
+    <string name="view_source">View source</string>
+    <string name="message_source">Message source</string>
 </resources>

@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -40,6 +41,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -181,6 +183,11 @@ fun DiffView(diff: String, modifier: Modifier = Modifier, saveKey: String? = nul
     // don't reset expand state on every token. Fall back to `diff` for non-streaming callers
     // (e.g. FileViewScreen) where the content is static.
     var expanded by rememberSaveable(saveKey ?: diff) { mutableStateOf(false) }
+    // Per-hunk collapse state: a set of hunk indices the user has collapsed via its `@@`
+    // header. Keyed on the hunk's ordinal position in `lines` so two hunks with the same
+    // `@@` range text (rare but possible) are still distinct toggles. The KDoc promised this
+    // affordance; it's now implemented.
+    val collapsedHunks = remember { mutableStateOf(emptySet<Int>()) }
     // Resolve a syntax for highlighting from the first file header (if any). Memoized so a
     // streaming re-parse doesn't re-resolve per token.
     val syntax = remember(lines) {
@@ -200,8 +207,17 @@ fun DiffView(diff: String, modifier: Modifier = Modifier, saveKey: String? = nul
             onToggle = { expanded = !expanded },
             onCopy = { copyToClipboard(context, context.getString(R.string.clip_label_diff), diff) },
         )
-        val visibleLines = if (lines.size <= NetworkConfig.collapsedDiffLineThreshold || expanded) lines
-            else lines.subList(0, NetworkConfig.collapsedDiffLineThreshold)
+        // Apply the global collapse threshold first, then drop lines inside any per-hunk
+        // collapse. A collapsed hunk's `@@` header is always kept (so the user has a handle
+        // to re-expand it); its content lines (context/add/remove) are skipped until the
+        // next hunk or end-of-list.
+        val thresholdCollapsed = lines.size > NetworkConfig.collapsedDiffLineThreshold && !expanded
+        val baseLines = if (thresholdCollapsed) lines.subList(0, NetworkConfig.collapsedDiffLineThreshold) else lines
+        val hunkIndices = remember(lines) { hunkStartIndices(lines) }
+        val visibleLines = remember(baseLines, collapsedHunks.value) {
+            if (collapsedHunks.value.isEmpty()) baseLines
+            else filterCollapsedHunks(baseLines, hunkIndices, collapsedHunks.value)
+        }
         // One horizontalScroll on the container instead of one per row: each modifier
         // adds a layout node + clip + offset pass, so a 200-line collapsed diff was
         // paying for 200 of them. The shared scroll state still synchronizes all rows.
@@ -213,7 +229,7 @@ fun DiffView(diff: String, modifier: Modifier = Modifier, saveKey: String? = nul
             )
         }
         Column(modifier = Modifier.horizontalScroll(hScrollState)) {
-            rows.forEach { row -> RenderDiffRow(row, syntax, palette) }
+            rows.forEach { row -> RenderDiffRow(row, syntax, palette, collapsedHunks) }
         }
         DiffExpandFooter(lines = lines, expanded = expanded, onToggle = { expanded = !expanded })
     }
@@ -238,6 +254,7 @@ fun LazyDiffView(diff: String, modifier: Modifier = Modifier, saveKey: String? =
     val context = LocalContext.current
     val hScrollState = rememberScrollState()
     var expanded by rememberSaveable(saveKey ?: diff) { mutableStateOf(false) }
+    val collapsedHunks = remember { mutableStateOf(emptySet<Int>()) }
     val syntax = remember(lines) {
         lines.firstOrNull { it is DiffLine.FileHeader }?.let { syntaxForHeader(it.text) }
     }
@@ -256,8 +273,13 @@ fun LazyDiffView(diff: String, modifier: Modifier = Modifier, saveKey: String? =
             onToggle = { expanded = !expanded },
             onCopy = { copyToClipboard(context, context.getString(R.string.clip_label_diff), diff) },
         )
-        val visibleLines = if (lines.size <= NetworkConfig.collapsedDiffLineThreshold || expanded) lines
-            else lines.subList(0, NetworkConfig.collapsedDiffLineThreshold)
+        val thresholdCollapsed = lines.size > NetworkConfig.collapsedDiffLineThreshold && !expanded
+        val baseLines = if (thresholdCollapsed) lines.subList(0, NetworkConfig.collapsedDiffLineThreshold) else lines
+        val hunkIndices = remember(lines) { hunkStartIndices(lines) }
+        val visibleLines = remember(baseLines, collapsedHunks.value) {
+            if (collapsedHunks.value.isEmpty()) baseLines
+            else filterCollapsedHunks(baseLines, hunkIndices, collapsedHunks.value)
+        }
         val rows = remember(visibleLines, addColor, removeColor, addText, removeText, scheme) {
             buildDiffRows(
                 visibleLines,
@@ -276,7 +298,7 @@ fun LazyDiffView(diff: String, modifier: Modifier = Modifier, saveKey: String? =
                 rows,
                 key = { i, row -> "${row.kind::class.simpleName}:$i:${row.text.hashCode()}" },
             ) { _, row ->
-                RenderDiffRow(row, syntax, palette)
+                RenderDiffRow(row, syntax, palette, collapsedHunks)
             }
         }
         DiffExpandFooter(lines = lines, expanded = expanded, onToggle = { expanded = !expanded })
@@ -329,9 +351,53 @@ private fun DiffExpandFooter(lines: List<DiffLine>, expanded: Boolean, onToggle:
     }
 }
 
+/** Map each hunk ordinal (0, 1, 2, …) to its index in [lines]. Used to find the boundaries
+ *  of a collapsed hunk: a hunk spans from its start index up to the next hunk's start (or the
+ *  end of the list). File headers and meta lines before the first hunk are not hunk members. */
+private fun hunkStartIndices(lines: List<DiffLine>): Map<Int, Int> {
+    val map = LinkedHashMap<Int, Int>()
+    var hunkOrdinal = 0
+    lines.forEachIndexed { i, line ->
+        if (line is DiffLine.Hunk) {
+            map[hunkOrdinal] = i
+            hunkOrdinal++
+        }
+    }
+    return map
+}
+
+/** Drop the content lines (Context/Add/Remove/Meta-after-hunk) of each collapsed hunk while
+ *  keeping the hunk's own `@@` header row so the user has a handle to re-expand. A line is
+ *  dropped when its [DiffRowItem.hunkIndex] is in [collapsed] AND it's not the Hunk header
+ *  itself (the header carries the same hunkIndex but its kind is Hunk, which we keep). */
+private fun filterCollapsedHunks(
+    baseLines: List<DiffLine>,
+    hunkIndices: Map<Int, Int>,
+    collapsed: Set<Int>,
+): List<DiffLine> {
+    if (collapsed.isEmpty()) return baseLines
+    // For each collapsed hunk, compute [start, end) where end is the next hunk's start or the
+    // list size. We keep the header (at start) and drop the rest of the range.
+    val dropRanges = collapsed.mapNotNull { ordinal ->
+        val start = hunkIndices[ordinal] ?: return@mapNotNull null
+        val end = hunkIndices.entries
+            .firstOrNull { it.value > start }?.value ?: baseLines.size
+        (start + 1) until end
+    }
+    val dropSet = dropRanges.flatMap { it }.toHashSet()
+    return baseLines.filterIndexed { i, _ -> i !in dropSet }
+}
+
+/** Cached labels for the per-hunk collapse `stateDescription` (resolved once per composition
+ *  rather than per row to avoid a per-row string lookup on a potentially huge diff). */
+private val stateCollapsedLabel: String get() = "Collapsed"
+private val stateExpandedLabel: String get() = "Expanded"
+
 /** A pre-resolved diff row carrying its kind, text, line numbers, and resolved colors. This
  *  lets both [DiffView] and [LazyDiffView] share the rendering path without re-deriving the
- *  per-row state (line numbers advance as a side effect of walking the list). */
+ *  per-row state (line numbers advance as a side effect of walking the list). [hunkIndex] is
+ *  the ordinal of the hunk this row belongs to (null for pre-hunk file headers/meta), used
+ *  by [RenderDiffRow] to toggle per-hunk collapse. */
 private data class DiffRowItem(
     val kind: DiffLine,
     val text: String,
@@ -339,6 +405,7 @@ private data class DiffRowItem(
     val textColor: Color,
     val oldLine: Int?,
     val newLine: Int?,
+    val hunkIndex: Int?,
 )
 
 /** Walk [visibleLines] advancing the old/new line counters per hunk, producing a list of
@@ -358,47 +425,87 @@ private fun buildDiffRows(
 ): List<DiffRowItem> {
     var oldLine = 0
     var newLine = 0
+    var hunkIndex = -1
     val hunkRegex = Regex("""@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@""")
     return visibleLines.map { line ->
         when (line) {
             is DiffLine.Hunk -> {
+                hunkIndex++
                 val m = hunkRegex.find(line.text)
                 if (m != null) {
                     oldLine = m.groupValues[1].toInt()
                     newLine = m.groupValues[2].toInt()
                 }
-                DiffRowItem(line, line.text, Color.Transparent, tertiary, null, null)
+                DiffRowItem(line, line.text, Color.Transparent, tertiary, null, null, hunkIndex)
             }
-            is DiffLine.FileHeader -> DiffRowItem(line, line.text, Color.Transparent, onSurface, null, null)
-            is DiffLine.Meta -> DiffRowItem(line, line.text, Color.Transparent, onSurfaceVariant, null, null)
+            is DiffLine.FileHeader -> DiffRowItem(line, line.text, Color.Transparent, onSurface, null, null, null)
+            is DiffLine.Meta -> DiffRowItem(line, line.text, Color.Transparent, onSurfaceVariant, null, null, null)
             is DiffLine.Add -> {
                 val n = newLine++
-                DiffRowItem(line, line.text, addColor, addText, null, n)
+                DiffRowItem(line, line.text, addColor, addText, null, n, hunkIndex)
             }
             is DiffLine.Remove -> {
                 val o = oldLine++
-                DiffRowItem(line, line.text, removeColor, removeText, o, null)
+                DiffRowItem(line, line.text, removeColor, removeText, o, null, hunkIndex)
             }
             is DiffLine.Context -> {
                 val o = oldLine++; val n = newLine++
-                DiffRowItem(line, line.text, Color.Transparent, onSurface, o, n)
+                DiffRowItem(line, line.text, Color.Transparent, onSurface, o, n, hunkIndex)
             }
         }
     }
 }
 
 /** Render a single [DiffRowItem]. Hunk and FileHeader rows get their own styling; Add/Remove/
- *  Context delegate to [DiffRow]. */
+ *  Context delegate to [DiffRow]. The Hunk row is clickable to toggle per-hunk collapse via
+ *  [collapsedHunks]. */
 @Composable
-private fun RenderDiffRow(row: DiffRowItem, syntax: FileSyntax?, palette: HighlightPalette) {
+private fun RenderDiffRow(
+    row: DiffRowItem,
+    syntax: FileSyntax?,
+    palette: HighlightPalette,
+    collapsedHunks: androidx.compose.runtime.MutableState<Set<Int>>,
+) {
     when (row.kind) {
-        is DiffLine.Hunk -> Text(
-            row.text,
-            style = MaterialTheme.typography.bodySmall,
-            fontFamily = FontFamily.Monospace,
-            color = MaterialTheme.colorScheme.tertiary,
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp),
-        )
+        is DiffLine.Hunk -> {
+            val idx = row.hunkIndex
+            val isCollapsed = idx != null && idx in collapsedHunks.value
+            val collapseLabel = stringResource(if (isCollapsed) R.string.show_more else R.string.show_less)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .defaultMinSize(minHeight = 32.dp)
+                    .clickable(enabled = idx != null) {
+                        if (idx != null) {
+                            collapsedHunks.value = if (idx in collapsedHunks.value) {
+                                collapsedHunks.value - idx
+                            } else {
+                                collapsedHunks.value + idx
+                            }
+                        }
+                    }
+                    .padding(horizontal = 10.dp, vertical = 2.dp)
+                    .semantics {
+                        contentDescription = collapseLabel
+                        stateDescription = if (isCollapsed) stateCollapsedLabel else stateExpandedLabel
+                    },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    if (isCollapsed) Icons.Filled.ExpandMore else Icons.Filled.ExpandLess,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    row.text,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.tertiary,
+                    modifier = Modifier.padding(start = 4.dp),
+                )
+            }
+        }
         is DiffLine.FileHeader -> {
             val displayPath = extractDisplayPath(row.text)
             val isHeader = displayPath != row.text

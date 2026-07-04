@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Code
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.CircularProgressIndicator
@@ -147,6 +148,7 @@ private fun MessageLongPressMenu(
     onRegenerate: (() -> Unit)? = null,
     onSpeak: (() -> Unit)? = null,
     speakLabel: String? = null,
+    onViewSource: (() -> Unit)? = null,
 ) {
     DropdownMenu(expanded = expanded, onDismissRequest = onDismiss, offset = offset) {
         if (text != null && onCopy != null) {
@@ -207,6 +209,16 @@ private fun MessageLongPressMenu(
                 onClick = { onDismiss(); onBranch(text) },
             )
         }
+        // View source: show the raw markdown of the message's TextParts in a dialog, so a user can
+        // inspect malformed tables/rendering or copy the exact source. Gated on text so an
+        // image-only message doesn't show a no-op entry.
+        if (text != null && onViewSource != null) {
+            DropdownMenuItem(
+                leadingIcon = { Icon(Icons.Filled.Code, contentDescription = null) },
+                text = { Text(stringResource(R.string.view_source)) },
+                onClick = { onDismiss(); onViewSource() },
+            )
+        }
         if (onRevert != null) {
             DropdownMenuItem(
                 leadingIcon = { Icon(Icons.Filled.Restore, contentDescription = null) },
@@ -255,7 +267,7 @@ private fun UserMessageLongPressMenu(
     )
 }
 
-/** Overflow menu of secondary per-message actions (quote-reply, branch-a-new-session).
+/** Overflow menu of secondary per-message actions (quote-reply, branch-a-new-session, view source).
  *  Shown when at least one action is available and there's text to act on. Keeps the
  *  inline action row (copy/edit/revert/speak) uncluttered while still surfacing the extras. */
 @Composable
@@ -263,8 +275,9 @@ private fun MessageOverflow(
     text: String,
     onQuote: ((String) -> Unit)?,
     onBranch: ((String) -> Unit)?,
+    onViewSource: (() -> Unit)? = null,
 ) {
-    if (onQuote == null && onBranch == null) return
+    if (onQuote == null && onBranch == null && onViewSource == null) return
     var expanded by remember { mutableStateOf(false) }
     val moreLabel = stringResource(R.string.message_actions)
     val haptics = LocalHapticFeedback.current
@@ -297,6 +310,17 @@ private fun MessageOverflow(
                         expanded = false
                         haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         branch(text)
+                    },
+                )
+            }
+            onViewSource?.let { viewSource ->
+                DropdownMenuItem(
+                    leadingIcon = { Icon(Icons.Filled.Code, contentDescription = null) },
+                    text = { Text(stringResource(R.string.view_source)) },
+                    onClick = {
+                        expanded = false
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        viewSource()
                     },
                 )
             }
@@ -333,7 +357,14 @@ private fun UnknownMessageBlock(
 ) {
     // Forward-compat: a role the client doesn't model. Render a muted note so the user
     // sees *something* rather than an unlabeled block, plus any parts (e.g. text) the
-    // server attached, so content isn't silently dropped.
+    // server attached, so content isn't silently dropped. A copy action is wired so a user
+    // can at least extract the content (e.g. to report a new server role's payload).
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val textToCopy = remember(message.parts) {
+        message.parts.filterIsInstance<soy.iko.opencode.data.model.TextPart>()
+            .joinToString("\n\n") { it.text }
+            .takeIf { it.isNotBlank() }
+    }
     Column(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -351,6 +382,18 @@ private fun UnknownMessageBlock(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(start = 6.dp),
             )
+            if (textToCopy != null) {
+                IconButton(onClick = {
+                    copyToClipboard(context, context.getString(R.string.clip_label_message), textToCopy)
+                }) {
+                    Icon(
+                        Icons.Filled.ContentCopy,
+                        contentDescription = stringResource(R.string.copy),
+                        modifier = Modifier.size(16.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
         }
         // key() per part so each PartView gets a distinct saveable registry slot: rememberSaveable
         // inside PartView keys its RESET on part.id but its registry key is the positional
@@ -647,6 +690,9 @@ private fun AssistantBlock(
     val assistantDensity = androidx.compose.ui.platform.LocalDensity.current
     var longPressMenu by remember { mutableStateOf(false) }
     var longPressOffset by remember { mutableStateOf(androidx.compose.ui.unit.DpOffset(0.dp, 0.dp)) }
+    // View-source dialog state: shown from the long-press menu's "View source" entry to display
+    // the raw markdown of the message's TextParts.
+    var showSource by remember { mutableStateOf(false) }
     // A11y: announce the speaker role so TalkBack reads "Assistant, <text>" instead of
     // only the model/agent label — giving a screen-reader user an explicit role signal
     // matching the user bubble's "You" prefix.
@@ -773,6 +819,7 @@ private fun AssistantBlock(
                     onBranch = onBranch,
                     onRegenerate = onRegenerate,
                     onContinue = onContinue,
+                    onViewSource = textToCopy?.let { { showSource = true } },
                 )
             }
             AssistantMessageLongPressMenu(
@@ -791,7 +838,14 @@ private fun AssistantBlock(
                 ttsState = ttsState,
                 onPause = onPause,
                 onResume = onResume,
+                onViewSource = textToCopy?.let { { showSource = true } },
             )
+            }
+            if (showSource && textToCopy != null) {
+                ViewSourceDialog(
+                    source = textToCopy,
+                    onDismiss = { showSource = false },
+                )
             }
         } else {
             MessageTimestampText(message.info)
@@ -819,6 +873,7 @@ private fun AssistantMessageLongPressMenu(
     ttsState: TtsState,
     onPause: (() -> Unit)?,
     onResume: (() -> Unit)?,
+    onViewSource: (() -> Unit)? = null,
 ) {
     val speakForMenu: (() -> Unit)? = if (onSpeak != null && text != null) {
         {
@@ -855,6 +910,7 @@ private fun AssistantMessageLongPressMenu(
         onRegenerate = onRegenerate,
         onSpeak = speakForMenu,
         speakLabel = speakLabel,
+        onViewSource = onViewSource,
     )
 }
 
@@ -917,6 +973,7 @@ private fun AssistantActions(
     onBranch: ((String) -> Unit)? = null,
     onRegenerate: (() -> Unit)? = null,
     onContinue: (() -> Unit)? = null,
+    onViewSource: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val haptics = LocalHapticFeedback.current
@@ -986,8 +1043,11 @@ private fun AssistantActions(
             }
         }
         // Assistant replies can be quoted into the composer or branched into a new session.
-        if (textToCopy != null && (onQuote != null || onBranch != null)) {
-            MessageOverflow(text = textToCopy, onQuote = onQuote, onBranch = onBranch)
+        // View source is also available here for assistant replies (in addition to the long-press
+        // menu) so the action is discoverable without a long-press. MessageOverflow itself
+        // no-ops when all callbacks are null, so the guard only needs to check text.
+        if (textToCopy != null) {
+            MessageOverflow(text = textToCopy, onQuote = onQuote, onBranch = onBranch, onViewSource = onViewSource)
         }
     }
 }

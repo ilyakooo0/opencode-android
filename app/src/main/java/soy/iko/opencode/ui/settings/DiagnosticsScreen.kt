@@ -3,6 +3,8 @@ package soy.iko.opencode.ui.settings
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.util.Log
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -11,6 +13,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -246,7 +250,7 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
         },
     ) { padding ->
         CompositionLocalProvider(LocalRelativeTimeTick provides timeTick) {
-        Column(modifier = Modifier.fillMaxSize().imePadding().padding(padding).nestedScroll(scrollBehavior.nestedScrollConnection)) {
+        Column(modifier = Modifier.fillMaxWidth().wrapContentWidth(Alignment.CenterHorizontally).widthIn(max = soy.iko.opencode.data.network.NetworkConfig.listContentMaxWidthDp.dp).imePadding().padding(padding).nestedScroll(scrollBehavior.nestedScrollConnection)) {
             Text(
                 stringResource(R.string.diagnostics_desc),
                 style = MaterialTheme.typography.bodySmall,
@@ -261,11 +265,29 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                     .padding(start = 16.dp, bottom = 8.dp)
                     .semantics { heading() },
             )
-            if (reports.isEmpty()) {
+            // Crossfade between empty and list states so the transition reads as a smooth fade
+            // instead of an instant snap. Matches the session list's Crossfade pattern; reduced
+            // motion is honored by Crossfade's default spec.
+            val stateKey = if (reports.isEmpty()) "empty" else "list"
+            @Suppress("UnusedCrossfadeTargetStateParameter")
+            Crossfade(
+                targetState = stateKey,
+                animationSpec = tween(NetworkConfig.motionFadeDurationMs.toInt()),
+                label = "diagnostics_state",
+            ) {
+                if (reports.isEmpty()) {
                 EmptyState(
                     icon = Icons.Filled.BugReport,
                     title = stringResource(R.string.no_crash_reports),
                     description = stringResource(R.string.no_crash_reports_desc),
+                    actionLabel = stringResource(R.string.report_issue),
+                    onAction = {
+                        runCatching {
+                            context.startActivity(
+                                Intent(Intent.ACTION_VIEW, android.net.Uri.parse(context.getString(R.string.url_report_issue))),
+                            )
+                        }
+                    },
                     modifier = Modifier.fillMaxWidth().padding(24.dp),
                 )
             } else {
@@ -326,11 +348,22 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                                     tint = MaterialTheme.colorScheme.error,
                                 )
                                 Column(modifier = Modifier.weight(1f)) {
-                                    Text(report.preview, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+                                    Text(report.preview, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                                     Text(
                                         rememberRelativeTime(report.timestamp),
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    // The filename often encodes the exception class (the
+                                    // CrashLogger names reports "<ExceptionClass>_<ts>.txt"),
+                                    // so showing it muted under the relative time lets a user
+                                    // scan for a specific exception type without opening each.
+                                    Text(
+                                        report.fileName,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                                     )
                                 }
                                 IconButton(onClick = {
@@ -384,6 +417,7 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                         HorizontalDivider()
                     }
                 }
+            }
             }
         }
         }

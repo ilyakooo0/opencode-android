@@ -1,5 +1,7 @@
 package soy.iko.opencode.ui.search
 
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -14,6 +16,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardActions
@@ -44,6 +48,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -93,14 +98,16 @@ fun GlobalSearchScreen(
             AppTopBar(title = stringResource(R.string.search_all_title), onBack = onBack)
         },
     ) { padding ->
-        Column(modifier = Modifier.fillMaxSize().imePadding().padding(padding)) {
+        Column(modifier = Modifier.fillMaxWidth().wrapContentWidth(Alignment.CenterHorizontally).widthIn(max = soy.iko.opencode.data.network.NetworkConfig.listContentMaxWidthDp.dp).imePadding().padding(padding)) {
             OutlinedTextField(
                 value = state.query,
                 onValueChange = vm::setQuery,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 8.dp)
-                    .focusRequester(focusRequester),
+                    .focusRequester(focusRequester)
+                    .testTag("global_search"),
+                label = { Text(stringResource(R.string.search_all_hint)) },
                 placeholder = { Text(stringResource(R.string.search_all_hint)) },
                 singleLine = true,
                 leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
@@ -147,7 +154,17 @@ fun GlobalSearchScreen(
             Box(modifier = Modifier.fillMaxSize()) {
                 ConnectionBannerFor(container)
                 val searchingLabel = stringResource(R.string.searching)
-                when {
+                // Crossfade between content states so transitions read as a smooth fade instead
+                // of an instant snap. Matches the session list's Crossfade pattern; reduced
+                // motion is honored by Crossfade's default spec.
+                val stateKey = globalSearchStateKey(state)
+                    @Suppress("UnusedCrossfadeTargetStateParameter")
+                    Crossfade(
+                        targetState = stateKey,
+                        animationSpec = tween(soy.iko.opencode.data.network.NetworkConfig.motionFadeDurationMs.toInt()),
+                        label = "global_search_state",
+                    ) {
+                    when {
                     state.searching -> Column(
                         modifier = Modifier.align(Alignment.Center),
                         horizontalAlignment = Alignment.CenterHorizontally,
@@ -248,10 +265,24 @@ fun GlobalSearchScreen(
                             )
                         }
                     }
+                    }
                 }
             }
         }
     }
+}
+
+/** Maps the global-search view state to a stable string key for the Crossfade, so the screen's
+ *  content-state transitions fade smoothly. Extracted from [GlobalSearchScreen] to keep its
+ *  cyclomatic complexity under the detekt threshold. */
+private fun globalSearchStateKey(state: GlobalSearchState): String = when {
+    state.searching -> "searching"
+    state.error != null -> "error"
+    state.hasSearched && state.results.isEmpty() -> "no_matches"
+    state.query.isNotBlank() && !state.hasSearched -> "keep_typing"
+    state.query.isBlank() && state.history.isNotEmpty() -> "history"
+    state.results.isEmpty() -> "start"
+    else -> "results"
 }
 
 @OptIn(ExperimentalLayoutApi::class)

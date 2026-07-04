@@ -659,6 +659,8 @@ fun ChatScreen(
                     val loadingLabel = stringResource(R.string.loading)
                     val shareLabel = stringResource(R.string.share_conversation)
                     val copyAsMarkdownLabel = stringResource(R.string.copy_as_markdown)
+                    val shareAsJsonLabel = stringResource(R.string.share_as_json)
+                    val copyAsJsonLabel = stringResource(R.string.copy_as_json)
                     val commandsLabel = stringResource(R.string.commands)
                     val renameLabel = stringResource(R.string.rename_session_chat)
                     val deleteLabel = stringResource(R.string.delete_session_chat)
@@ -707,6 +709,41 @@ fun ChatScreen(
                                             buildConversationMarkdown(vm.messages.value, sessionTitle)
                                         }
                                         copyToClipboard(shareContext, shareContext.getString(R.string.clip_label_message), md)
+                                    }
+                                },
+                            )
+                            // Lossless JSON share: the full List<MessageWithParts> serialized with
+                            // the shared OpencodeJson, so tool outputs, file sources, and reasoning
+                            // survive verbatim (the Markdown export truncates/summarizes them).
+                            DropdownMenuItem(
+                                text = { Text(shareAsJsonLabel) },
+                                enabled = hasMessages,
+                                onClick = {
+                                    showOverflowMenu = false
+                                    scope.launch {
+                                        val json = withContext(Dispatchers.Default) {
+                                            buildConversationJson(vm.messages.value)
+                                        }
+                                        val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                            type = "application/json"
+                                            putExtra(android.content.Intent.EXTRA_SUBJECT, sessionTitle ?: defaultShareSubject)
+                                            putExtra(android.content.Intent.EXTRA_TEXT, json)
+                                        }
+                                        runCatchingCancellable { shareContext.startActivity(android.content.Intent.createChooser(send, shareAsJsonLabel)) }
+                                            .onFailure { showToast(shareContext, shareContext.getString(R.string.no_share_app)) }
+                                    }
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(copyAsJsonLabel) },
+                                enabled = hasMessages,
+                                onClick = {
+                                    showOverflowMenu = false
+                                    scope.launch {
+                                        val json = withContext(Dispatchers.Default) {
+                                            buildConversationJson(vm.messages.value)
+                                        }
+                                        copyToClipboard(shareContext, shareContext.getString(R.string.clip_label_message), json)
                                     }
                                 },
                             )
@@ -1464,9 +1501,17 @@ fun ChatScreen(
                             // start on the real false→true transition (send/run/init), not on
                             // SSE-reconnect relight, so reconnects don't restart the clock. Updates
                             // once per second; the value is decorative (the a11y label is the row's).
+                            // The clock freezes when an abort is confirmed (aborting = true) so the
+                            // user can see how long the run lasted before they stopped it, rather
+                            // than the clock continuing to tick until SessionIdle clears _running.
                             val startMs by vm.runStartMs.collectAsStateWithLifecycle()
-                            val elapsedMs by produceState(0L, startMs) {
+                            val elapsedMs by produceState(0L, startMs, aborting) {
                                 if (startMs == 0L) return@produceState
+                                if (aborting) {
+                                    // Freeze at the last-computed value: one final snapshot then stop.
+                                    value = (System.currentTimeMillis() - startMs).coerceAtLeast(0L)
+                                    return@produceState
+                                }
                                 while (true) {
                                     value = (System.currentTimeMillis() - startMs).coerceAtLeast(0L)
                                     delay(1000)

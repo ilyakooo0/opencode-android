@@ -843,14 +843,27 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         )
     }
 
-    /** Reverse a bulk archive action surfaced via [bulkSessionActionEvents] (Undo snackbar). */
+    /** Pin or unpin all of the given sessions. Emits a single bulk action event so the UI can
+     *  show one Undo snackbar for the batch (per-session snackbars would spam). */
+    fun bulkPin(ids: Set<String>, pin: Boolean) {
+        if (ids.isEmpty()) return
+        ids.forEach { applyPin(it, pin) }
+        _bulkSessionActionEvents.tryEmit(
+            BulkSessionActionEvent(
+                ids,
+                if (pin) SessionActionKind.PINNED else SessionActionKind.UNPINNED,
+            ),
+        )
+    }
+
+    /** Reverse a bulk archive/pin action surfaced via [bulkSessionActionEvents] (Undo snackbar). */
     fun undoBulkAction(event: BulkSessionActionEvent) {
-        val undo = when (event.kind) {
-            SessionActionKind.ARCHIVED -> false
-            SessionActionKind.UNARCHIVED -> true
-            SessionActionKind.PINNED, SessionActionKind.UNPINNED -> return
+        when (event.kind) {
+            SessionActionKind.ARCHIVED -> event.ids.forEach { applyArchive(it, false) }
+            SessionActionKind.UNARCHIVED -> event.ids.forEach { applyArchive(it, true) }
+            SessionActionKind.PINNED -> event.ids.forEach { applyPin(it, false) }
+            SessionActionKind.UNPINNED -> event.ids.forEach { applyPin(it, true) }
         }
-        event.ids.forEach { applyArchive(it, undo) }
     }
 
     /** Mark all of the given sessions as read (clears their unread badge). Emits a transient

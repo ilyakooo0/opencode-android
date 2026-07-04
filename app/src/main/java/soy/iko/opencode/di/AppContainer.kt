@@ -29,6 +29,7 @@ import soy.iko.opencode.data.repo.AttachmentDraftStore
 import soy.iko.opencode.data.repo.BackupManager
 import soy.iko.opencode.data.repo.DraftStore
 import soy.iko.opencode.data.repo.ErrorKind
+import soy.iko.opencode.data.repo.FileBrowserPrefs
 import soy.iko.opencode.data.repo.MessageCacheStore
 import soy.iko.opencode.data.repo.OutboxMessage
 import soy.iko.opencode.data.repo.OutboxStore
@@ -117,6 +118,7 @@ open class AppContainer private constructor(
     open val outboxStore: OutboxStore by lazy { OutboxStore(appContext!!) }
     open val searchHistoryStore: SearchHistoryStore by lazy { SearchHistoryStore(appContext!!) }
     open val recentModelsStore: RecentModelsStore by lazy { RecentModelsStore(appContext!!) }
+    open val fileBrowserPrefs: FileBrowserPrefs by lazy { FileBrowserPrefs(appContext!!) }
     open val backupManager: BackupManager by lazy { BackupManager(profileStore, settingsStore, sessionPrefsStore) }
 
     /** True while the outbox is actively flushing queued messages to the server, so the UI

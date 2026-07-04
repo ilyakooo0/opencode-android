@@ -20,6 +20,8 @@
     <string name="files">Archivos</string>
     <string name="share">Compartir</string>
     <string name="copy_as_markdown">Copiar como Markdown</string>
+    <string name="share_as_json">Compartir como JSON</string>
+    <string name="copy_as_json">Copiar como JSON</string>
     <string name="share_subject">Sesión de opencode</string>
     <string name="send">Enviar</string>
     <string name="stop">Detener</string>
@@ -54,6 +56,7 @@
     <string name="no_servers_yet">Aún no hay servidores</string>
     <string name="no_servers_hint">Añade un endpoint de opencode serve para conectar.</string>
     <string name="search_servers">Filtrar servidores</string>
+    <string name="search_settings">Buscar ajustes…</string>
     <string name="no_server_matches">Ningún servidor coincide</string>
     <string name="remove_server_title">¿Quitar servidor?</string>
     <string name="remove_server_text">Se quitará «%1$s» de tus servidores guardados.</string>
@@ -192,6 +195,7 @@
     <string name="image_failed">Error al cargar la imagen</string>
     <string name="save_image">Guardar en galería</string>
     <string name="share_image">Compartir imagen</string>
+    <string name="reset_zoom">Restablecer zoom</string>
     <string name="image_saved">Imagen guardada en la galería</string>
     <string name="image_save_failed">No se pudo guardar la imagen</string>
     <string name="search_models">Buscar modelos…</string>
@@ -213,6 +217,7 @@
     <string name="git_deleted">Eliminado</string>
     <string name="binary_file">Archivo binario — vista previa no compatible.</string>
     <string name="empty_folder">Esta carpeta está vacía</string>
+    <string name="permission_denied_files">Sin permiso para leer esta carpeta.</string>
     <string name="empty_file">Este archivo está vacío</string>
     <string name="show_hidden">Mostrar ocultos</string>
     <string name="parent_dir">Directorio superior</string>
@@ -339,6 +344,8 @@
     <string name="session_deleted_chat">Sesión eliminada</string>
     <string name="today">Hoy</string>
     <string name="yesterday">Ayer</string>
+    <string name="last_week">Semana pasada</string>
+    <string name="older">Anteriores</string>
 
     <!-- Search -->
     <string name="clear_search">Borrar búsqueda</string>
@@ -621,6 +628,10 @@
         <item quantity="one">%1$d resultado</item>
         <item quantity="other">%1$d resultados</item>
     </plurals>
+    <plurals name="file_count">
+        <item quantity="one">%1$d elemento</item>
+        <item quantity="other">%1$d elementos</item>
+    </plurals>
 
     <!-- UI/UX batch 2: message status, crash prompt, server connection -->
     <string name="message_sending">Enviando…</string>
@@ -694,6 +705,7 @@
         <item quantity="other">%d seleccionados</item>
     </plurals>
     <string name="bulk_archive">Archivar</string>
+    <string name="bulk_pin">Fijar</string>
     <string name="bulk_delete">Eliminar</string>
     <string name="bulk_mark_read">Marcar leído</string>
     <string name="deep_link_invalid">Enlace no admitido</string>
@@ -710,6 +722,7 @@
 
     <!-- UI/UX batch 4: file browser label, a11y, bulk confirmations -->
     <string name="folders_first">Carpetas primero</string>
+    <string name="changed_only">Solo modificados</string>
     <string name="more_options_for">Más opciones para “%1$s”</string>
     <string name="bulk_delete_title">¿Eliminar sesiones?</string>
     <string name="bulk_delete_text">Estas %1$d sesiones se eliminarán permanentemente. No se puede deshacer.</string>
@@ -799,6 +812,8 @@
     <string name="mcp_view_tools">Ver herramientas</string>
     <string name="mcp_no_tools">No hay herramientas disponibles</string>
     <string name="mcp_add_server">Añadir servidor MCP</string>
+    <string name="mcp_add_name_required">El nombre es obligatorio.</string>
+    <string name="mcp_add_target_required">Obligatorio.</string>
     <string name="file_share_too_large">El archivo es demasiado grande para compartir</string>
     <string name="search_filter_all">Todo</string>
     <string name="search_filter_messages">Mensajes</string>
@@ -868,4 +883,6 @@
     <string name="swipe_action_mark_read">Marcar leído / no leído</string>
     <string name="swipe_action_none">Ninguno</string>
     <string name="image_file_preview">Vista previa de imagen</string>
+    <string name="view_source">Ver código</string>
+    <string name="message_source">Código del mensaje</string>
 </resources>

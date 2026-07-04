@@ -2,6 +2,7 @@ package soy.iko.opencode.ui.chat
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -39,10 +40,17 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import soy.iko.opencode.R
+import soy.iko.opencode.data.network.NetworkConfig
+import java.util.Locale
 
 /**
  * The staged-attachment UI for the chat composer — extracted from ChatScreen so that (large)
  * file stays focused on the conversation surface. `internal` so ChatScreen can call it.
+ *
+ * When at least one attachment is staged, a muted total-size label is rendered at the end of
+ * the strip so the user can see how close they are to the cumulative [NetworkConfig.maxTotalAttachmentBytes]
+ * cap — a bare per-file cap doesn't surface the combined total, and a failed send is the only
+ * other feedback.
  */
 @Composable
 internal fun AttachmentStrip(
@@ -61,6 +69,7 @@ internal fun AttachmentStrip(
             .horizontalScroll(rememberScrollState())
             .padding(start = 8.dp, end = 8.dp, top = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         attachments.forEach { att ->
             AttachmentChip(att, onRemove = { onRemove(att.id) })
@@ -68,7 +77,40 @@ internal fun AttachmentStrip(
         // A placeholder chip with an indeterminate spinner while any pick is still being
         // read + base64-encoded off the main thread (chips only materialize once done).
         if (staging) StagingChip(stagingFileCount)
+        // Total staged size label — surfaced so the user can see how close they are to the
+        // cumulative cap before a send fails. Hidden while staging (the total is in flux).
+        if (!staging && attachments.isNotEmpty()) {
+            val totalBytes = remember(attachments) {
+                attachments.sumOf { base64DataUrlByteSize(it.part.url) }
+            }
+            val maxBytes = NetworkConfig.maxTotalAttachmentBytes
+            val label = remember(totalBytes, maxBytes) { formatAttachmentTotal(totalBytes, maxBytes) }
+            val over = totalBytes > maxBytes
+            Text(
+                label,
+                style = MaterialTheme.typography.labelSmall,
+                color = if (over) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 4.dp, end = 4.dp),
+            )
+        }
     }
+}
+
+/** Format the staged-attachment total as "N.N MB / max" (or KB when small), for the strip label. */
+private fun formatAttachmentTotal(bytes: Long, max: Long): String {
+    val mb = 1024.0 * 1024.0
+    val kb = 1024.0
+    val used = when {
+        bytes >= mb -> String.format(Locale.US, "%.1f MB", bytes / mb)
+        bytes >= kb -> String.format(Locale.US, "%.0f KB", bytes / kb)
+        else -> "$bytes B"
+    }
+    val maxStr = when {
+        max >= mb -> String.format(Locale.US, "%.0f MB", max / mb)
+        max >= kb -> String.format(Locale.US, "%.0f KB", max / kb)
+        else -> "$max B"
+    }
+    return "$used / $maxStr"
 }
 
 /** A placeholder chip shown while an attachment is being encoded. */

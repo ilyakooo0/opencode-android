@@ -12,9 +12,37 @@ import soy.iko.opencode.data.model.ToolRunning
 import soy.iko.opencode.data.model.UserMessage
 import soy.iko.opencode.data.model.sourcePath
 import soy.iko.opencode.data.network.NetworkConfig
+import soy.iko.opencode.data.network.OpencodeJson
+import kotlinx.serialization.builtins.ListSerializer
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+
+/**
+ * Render a conversation as a lossless JSON document for sharing/exporting. Unlike
+ * [buildConversationMarkdown], this preserves the full fidelity of the server's
+ * message stream: tool outputs are not truncated, file parts keep their source
+ * objects and data URLs, reasoning keeps its raw text, and the polymorphic
+ * `type`/`role` discriminators are retained. That makes the JSON export suitable
+ * for re-importing into another client, for auditing exactly what the agent did,
+ * and for bug reports where the Markdown summary would have dropped detail.
+ *
+ * Uses the shared [OpencodeJson] so the on-the-wire shape round-trips — the same
+ * serializer that decoded the messages re-encodes them, including the `Unknown*`
+ * fallback variants for parts/roles the client doesn't otherwise model.
+ */
+fun buildConversationJson(messages: List<MessageWithParts>): String =
+    try {
+        // Explicit serializer (mirrors MessageCacheStore) rather than the reified
+        // encodeToString overload, so the polymorphic Part/MessageInfo discriminators
+        // registered in OpencodeJson are exercised on the way back out.
+        OpencodeJson.encodeToString(ListSerializer(MessageWithParts.serializer()), messages)
+    } catch (e: Throwable) {
+        // Fall back to an explicit error document rather than crashing the share
+        // flow; a serialization failure here is most likely a model invariant bug
+        // and a silent empty string would be harder to diagnose than this stub.
+        "{\"error\":\"conversation_json_export_failed\",\"message\":\"${e.message ?: e.javaClass.simpleName}\"}"
+    }
 
 /**
  * Render a conversation as Markdown for sharing/exporting. Each message becomes a

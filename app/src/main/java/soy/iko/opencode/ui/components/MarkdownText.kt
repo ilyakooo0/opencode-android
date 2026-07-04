@@ -11,6 +11,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -50,6 +51,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalUriHandler
@@ -62,22 +65,34 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.delay
 import com.mikepenz.markdown.compose.LocalMarkdownAnnotator
+import com.mikepenz.markdown.compose.LocalMarkdownColors
+import com.mikepenz.markdown.compose.LocalMarkdownTypography
 import com.mikepenz.markdown.compose.components.MarkdownComponentModel
 import com.mikepenz.markdown.compose.components.markdownComponents
+import com.mikepenz.markdown.compose.elements.MarkdownText as LibraryMarkdownText
 import com.mikepenz.markdown.m3.Markdown
 import com.mikepenz.markdown.model.DefaultMarkdownAnnotator
+import com.mikepenz.markdown.utils.buildMarkdownAnnotatedString
 import org.intellij.markdown.MarkdownElementTypes
 import org.intellij.markdown.ast.ASTNode
 import org.intellij.markdown.ast.getTextInNode
 import soy.iko.opencode.R
 import soy.iko.opencode.data.model.FilePart
 import soy.iko.opencode.data.network.NetworkConfig
+
+/** String-annotation tag stamped onto each inline-code (`CODE_SPAN`) range by the inline-code
+ *  annotator wrapper, so [ParagraphWithInlineCodeCopy]'s `pointerInput` can resolve a long-press
+ *  offset back to the code text and copy it. Mirrors the library's own `MARKDOWN_TAG_URL` pattern
+ *  for link-tap hit-testing. */
+private const val MARKDOWN_TAG_INLINE_CODE = "MARKDOWN_INLINE_CODE"
 
 /**
  * Renders markdown using [multiplatform-markdown-renderer](https://github.com/mikepenz/multiplatform-markdown-renderer)
@@ -144,10 +159,14 @@ private fun MarkdownBody(
     // Without this the library's default image loader fetches with no auth and fails on
     // server-relative URLs. When no context is available, fall back to the library default
     // by not overriding the image component.
+    // The `paragraph` component is overridden with [ParagraphWithInlineCodeCopy] so a long-press
+    // on a single-backtick inline code span copies its text — matching the copy affordance the
+    // fenced/indented code blocks already have via [CodeWithCopy].
     val components = if (imageContext != null) {
         markdownComponents(
             codeFence = { CodeWithCopy(it) },
             codeBlock = { CodeWithCopy(it) },
+            paragraph = { ParagraphWithInlineCodeCopy(it) },
             image = { MarkdownImage(it, imageContext) },
         )
     } else {
@@ -155,6 +174,7 @@ private fun MarkdownBody(
             markdownComponents(
                 codeFence = { CodeWithCopy(it) },
                 codeBlock = { CodeWithCopy(it) },
+                paragraph = { ParagraphWithInlineCodeCopy(it) },
             )
         }
     }
@@ -182,13 +202,63 @@ private fun MarkdownBody(
     val searchQuery = LocalSearchHighlight.current?.takeIf { it.isNotBlank() }
     val highlightColor = MaterialTheme.colorScheme.secondaryContainer
     val baseAnnotator = LocalMarkdownAnnotator.current
-    val highlightAnnotator = if (searchQuery != null && !streaming) {
-        remember(baseAnnotator, searchQuery, highlightColor) {
+    // Capture the inline-code typography/colors in the composable scope (the annotator lambda is
+    // NOT a @Composable scope, so it can't read LocalMarkdownTypography.current itself). The
+    // library's buildMarkdownAnnotatedString reads these in its own @Composable body for the
+    // default CODE_SPAN branch; since we intercept CODE_SPAN in the annotator, we capture them
+    // here and close over them in appendInlineCodeSpan.
+    val inlineCodeTypography = LocalMarkdownTypography.current
+    val inlineCodeColors = LocalMarkdownColors.current
+    // Inline-code tag annotator: stamps a MARKDOWN_TAG_INLINE_CODE string annotation onto each
+    // CODE_SPAN range so [ParagraphWithInlineCodeCopy] can resolve a long-press offset to the
+    // code text and copy it. The library's default CODE_SPAN branch in buildMarkdownAnnotatedString
+    // is bypassed (the annotator returns true) so the span is rendered exactly once, with the tag.
+    // The CODE_SPAN rendering (padding spaces, inlineCode typography span, colors) is inlined here
+    // rather than extracted to a helper to keep this file under detekt's TooManyFunctions threshold.
+    val inlineCodeAnnotator = remember(baseAnnotator, inlineCodeTypography, inlineCodeColors) {
+        val codeStyle = inlineCodeTypography.inlineCode.copy(
+            color = inlineCodeColors.inlineCodeText,
+            background = inlineCodeColors.inlineCodeBackground,
+        ).toSpanStyle()
+        DefaultMarkdownAnnotator(
+            annotate = { content, node ->
+                if (node.type == MarkdownElementTypes.CODE_SPAN) {
+                    pushStyle(codeStyle)
+                    append(' ')
+                    val codeStart = this.length
+                    // Drop the opening/closing backtick children (matching the library's internal
+                    // innerList(), which is inaccessible from here).
+                    val codeText = StringBuilder()
+                    for (child in node.children) {
+                        if (child.type == org.intellij.markdown.MarkdownTokenTypes.BACKTICK) continue
+                        val text = child.getTextInNode(content).toString()
+                        codeText.append(text)
+                        append(text)
+                    }
+                    val codeEnd = this.length
+                    if (codeEnd > codeStart) {
+                        pushStringAnnotation(MARKDOWN_TAG_INLINE_CODE, codeText.toString())
+                        pop()
+                    }
+                    append(' ')
+                    pop()
+                    true
+                } else {
+                    baseAnnotator.annotate?.invoke(this, content, node) ?: false
+                }
+            },
+        )
+    }
+    // Compose the inline-code tagger with the search-highlight wrapper when a query is active.
+    // The highlight wrapper runs on top, so it sees the final (tagged) builder output and can
+    // highlight matches inside inline code too.
+    val effectiveAnnotator = if (searchQuery != null && !streaming) {
+        remember(inlineCodeAnnotator, searchQuery, highlightColor) {
+            val inner = inlineCodeAnnotator.annotate
             DefaultMarkdownAnnotator(
                 annotate = { text, node ->
-                    // `this` is the AnnotatedString.Builder being filled for this node.
                     val startLen = this.length
-                    val handled = baseAnnotator.annotate?.invoke(this, text, node) ?: false
+                    val handled = inner?.invoke(this, text, node) ?: false
                     val endLen = this.length
                     if (endLen > startLen) {
                         addSearchHighlights(
@@ -204,7 +274,7 @@ private fun MarkdownBody(
             )
         }
     } else {
-        null
+        inlineCodeAnnotator
     }
     if (streaming) {
         // Bridge the markdown parameter into snapshot state so snapshotFlow can observe it.
@@ -245,7 +315,10 @@ private fun MarkdownBody(
         // A polite live region announces streaming content to TalkBack users. The throttle
         // (50ms) plus TalkBack's own polite-queue coalescing keeps announcements from
         // interrupting on every token; the reader hears the reply grow in measured chunks.
-        CompositionLocalProvider(LocalUriHandler provides safeUriHandler) {
+        CompositionLocalProvider(
+            LocalUriHandler provides safeUriHandler,
+            LocalMarkdownAnnotator provides effectiveAnnotator,
+        ) {
             Markdown(
                 content = renderedContent,
                 modifier = modifier.semantics { liveRegion = LiveRegionMode.Polite },
@@ -266,14 +339,11 @@ private fun MarkdownBody(
                 )
             }
         }
-        CompositionLocalProvider(LocalUriHandler provides safeUriHandler) {
-            if (highlightAnnotator != null) {
-                CompositionLocalProvider(LocalMarkdownAnnotator provides highlightAnnotator) {
-                    content()
-                }
-            } else {
-                content()
-            }
+        CompositionLocalProvider(
+            LocalUriHandler provides safeUriHandler,
+            LocalMarkdownAnnotator provides effectiveAnnotator,
+        ) {
+            content()
         }
     }
     // Open/copy dialog for the most recently tapped markdown link. Offer Open only for
@@ -372,6 +442,58 @@ private fun LinkActionDialog(
         dismissButton = {
             TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
         },
+    )
+}
+
+/**
+ * Custom markdown `paragraph` component that adds a long-press-to-copy affordance for inline
+ * code spans (single-backtick `` `code` ``). The library renders CODE_SPAN inline as a styled
+ * run within the paragraph's [AnnotatedString]; there's no discrete `inlineCode` component to
+ * override. Instead, [MarkdownBody] installs an annotator that stamps each CODE_SPAN range with
+ * a [MARKDOWN_TAG_INLINE_CODE] string annotation; this component builds the paragraph's
+ * [AnnotatedString] via the library's [buildMarkdownAnnotatedString] (so the annotator runs and
+ * the tags land), then renders it with a `pointerInput` that hit-tests a long-press against the
+ * tagged ranges and copies the span's text on hit — mirroring the copy affordance fenced/indented
+ * code blocks get via [CodeWithCopy], for the common case of short inline commands/identifiers.
+ * A long-press inside a [SelectionContainer] is consumed by the selection machinery first, so
+ * the copy fires from non-selectable contexts (e.g. while streaming, where no SelectionContainer
+ * wraps the text); when selection is active the user can still copy via the selection handles.
+ * Haptic feedback matches every other copy affordance.
+ */
+@Composable
+private fun ParagraphWithInlineCodeCopy(model: MarkdownComponentModel) {
+    val context = LocalContext.current
+    val haptics = LocalHapticFeedback.current
+    val style = model.typography.paragraph
+    // buildMarkdownAnnotatedString is @Composable (it reads LocalMarkdownAnnotator to run the
+    // inline-code tagger installed in MarkdownBody), so the annotated string can't be built in
+    // a `remember` block. The library's own MarkdownParagraph does the same.
+    val styledText = buildAnnotatedString {
+        pushStyle(style.toSpanStyle())
+        buildMarkdownAnnotatedString(model.content, model.node)
+        pop()
+    }
+    // Capture the layout result so a long-press position can be mapped to a character offset,
+    // then to a tagged range — the same hit-testing pattern the library uses for link taps.
+    var layoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
+    LibraryMarkdownText(
+        content = styledText,
+        style = style,
+        modifier = Modifier.pointerInput(styledText) {
+            detectTapGestures(
+                onLongPress = { pos ->
+                    val result = layoutResult ?: return@detectTapGestures
+                    val offset = result.getOffsetForPosition(pos)
+                    val span = styledText.getStringAnnotations(MARKDOWN_TAG_INLINE_CODE, offset, offset)
+                        .firstOrNull()
+                        ?: return@detectTapGestures
+                    val code = span.item
+                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    copyToClipboard(context, context.getString(R.string.clip_label_code), code)
+                },
+            )
+        },
+        onTextLayout = { layoutResult = it },
     )
 }
 

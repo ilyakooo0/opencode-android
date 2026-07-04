@@ -74,7 +74,7 @@ class RunForegroundService : Service() {
         val contentText = progress ?: sessionTitle ?: getString(R.string.notif_running_text)
         val builder = NotificationCompat.Builder(this, NotificationChannels.STATUS)
             .setSmallIcon(R.drawable.ic_stat_notify)
-            .setColor(BRAND_COLOR)
+            .setColor(brandColor(this))
             .setContentTitle(getString(R.string.notif_running_title))
             .setContentText(contentText)
             .setContentIntent(pendingIntent)
@@ -135,7 +135,7 @@ class RunForegroundService : Service() {
         runCatching {
             val notification = NotificationCompat.Builder(this, NotificationChannels.STATUS)
                 .setSmallIcon(R.drawable.ic_stat_notify)
-                .setColor(BRAND_COLOR)
+                .setColor(brandColor(this))
                 .setContentTitle(getString(R.string.notif_running_title))
                 .setContentText(getString(R.string.notif_fg_timeout_text))
                 .setContentIntent(mainContentIntent())
@@ -159,8 +159,16 @@ class RunForegroundService : Service() {
         private const val TAG = "RunForegroundService"
         private const val NOTIF_ID = 1
         private const val NOTIF_TIMEOUT_ID = 2
-        // Brand accent for the foreground notifications' small-icon tint circle.
-        private val BRAND_COLOR = 0xFF34548A.toInt()
+        // Brand accent for the foreground notifications' small-icon tint circle. Resolved
+        // from resources (R.color.notif_brand) so it follows the app theme (light/dark)
+        // instead of a hardcoded constant. Lazily computed on first use from the app context.
+        private var brandColorCache: Int = 0
+        private fun brandColor(context: Context): Int {
+            if (brandColorCache == 0) {
+                brandColorCache = androidx.core.content.ContextCompat.getColor(context, R.color.notif_brand)
+            }
+            return brandColorCache
+        }
         const val EXTRA_SESSION_TITLE = "soy.iko.opencode.extra.SESSION_TITLE"
         const val EXTRA_SESSION_ID = "soy.iko.opencode.extra.SESSION_ID"
         const val EXTRA_PROGRESS = "soy.iko.opencode.extra.PROGRESS"

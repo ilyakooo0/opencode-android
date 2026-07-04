@@ -99,34 +99,31 @@ fun TwoPaneSessionChat(
         onClear = { selected = null },
     )
 
-    // Auto-select the most-recent session into the detail pane so a wide screen doesn't
-    // open on a blank right pane. Runs at most once per Activity instance (the `autoSelected`
-    // latch, saveable so an explicit "clear detail pane" via BackHandler survives a rotation
-    // — otherwise rotation resets the latch, re-arms the effect, and re-selects a session the
-    // user just cleared), and only once the first list load has completed. It defers to any
-    // explicit selection already present — a restored `selected`, a deep-link/notification
-    // (pendingOpenSession), or a user pick — and, since the latch is set the moment any of
-    // those wins, it never re-selects after a user clears the pane (BackHandler) or a server
-    // switch nulls `selected`.
+    // Auto-select the top of the sorted/filtered list into the detail pane so a wide screen
+    // doesn't open on a blank right pane. Runs at most once per Activity instance (the
+    // `autoSelected` latch, saveable so an explicit "clear detail pane" via BackHandler
+    // survives a rotation — otherwise rotation resets the latch, re-arms the effect, and
+    // re-selects a session the user just cleared), and only once the first list load has
+    // completed. It defers to any explicit selection already present — a restored `selected`,
+    // a deep-link/notification (pendingOpenSession), or a user pick — and, since the latch
+    // is set the moment any of those wins, it never re-selects after a user clears the pane
+    // (BackHandler) or a server switch nulls `selected`. Using state.filtered (not a raw
+    // recency sort) means the auto-selected detail matches the top list row under the
+    // active sort mode, pinned float, archived-hidden, and directory filter.
     var autoSelected by rememberSaveable { mutableStateOf(false) }
+    val autoSelectCandidate = sessionListState.filtered.firstOrNull()?.id
     LaunchedEffect(
         sessionListState.loading,
-        sessionListState.sessions,
-        sessionListState.archivedIds,
-        sessionListState.showArchived,
+        autoSelectCandidate,
         pendingOpenSession,
         selected,
     ) {
         if (autoSelected || sessionListState.loading) return@LaunchedEffect
         // A pending deep-link or an existing selection takes precedence; yield the pane to it.
         if (pendingOpenSession != null || selected != null) { autoSelected = true; return@LaunchedEffect }
-        // Pick by recency regardless of the list's current sort mode, but only among
-        // sessions visible under the current archive filter so we never open a hidden row.
-        val id = mostRecentSessionId(
-            sessionListState.sessions,
-            sessionListState.archivedIds,
-            sessionListState.showArchived,
-        ) ?: return@LaunchedEffect
+        // Pick the top of the filtered list (respects sort mode, pinned, archived-hidden,
+        // and directory filter) so the auto-selected detail matches the top list row.
+        val id = autoSelectCandidate ?: return@LaunchedEffect
         selected = id
         autoSelected = true
     }
@@ -198,22 +195,6 @@ fun TwoPaneSessionChat(
         }
     }
 }
-
-/**
- * Id of the most recently updated (or created) session that is *visible* under the current
- * archive filter (archived sessions excluded unless [showArchived]), or null when none
- * qualify. Auto-selecting a hidden/archived session would open the detail pane on a row with
- * no corresponding highlighted entry in the list.
- */
-private fun mostRecentSessionId(
-    sessions: List<Session>,
-    archivedIds: Set<String>,
-    showArchived: Boolean,
-): String? =
-    sessions
-        .filter { showArchived || it.id !in archivedIds }
-        .maxByOrNull { it.time?.updated ?: it.time?.created ?: 0L }
-        ?.id
 
 /** Whether a session with [id] is present in [sessions]. */
 private fun containsSession(sessions: List<Session>, id: String): Boolean =

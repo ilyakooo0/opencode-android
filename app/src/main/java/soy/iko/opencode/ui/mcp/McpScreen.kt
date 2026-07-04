@@ -8,10 +8,14 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CloudOff
@@ -53,6 +57,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -63,6 +68,7 @@ import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.ui.components.AppTopBar
 import soy.iko.opencode.ui.components.ConnectionBannerFor
 import soy.iko.opencode.ui.components.EmptyState
+import soy.iko.opencode.ui.components.SkeletonRow
 import soy.iko.opencode.ui.components.reducedMotionAnimateItem
 import soy.iko.opencode.ui.vmFactory
 
@@ -117,21 +123,29 @@ fun McpScreen(container: AppContainer, onBack: () -> Unit) {
         PullToRefreshBox(
             isRefreshing = refreshing,
             onRefresh = { vm.load() },
-            modifier = Modifier.fillMaxSize().padding(padding),
+            modifier = Modifier.fillMaxSize().imePadding().padding(padding),
         ) {
-            Box(modifier = Modifier.fillMaxSize()) {
+            Box(
+                modifier = Modifier.fillMaxSize().widthIn(max = 600.dp),
+                contentAlignment = Alignment.Center,
+            ) {
                 ConnectionBannerFor(container)
-                val loadingLabel = stringResource(R.string.loading)
-                when (val s = state) {
-                    is McpViewModel.State.Loading -> Column(
-                        modifier = Modifier.align(Alignment.Center),
-                        horizontalAlignment = Alignment.CenterHorizontally,
+                // Crossfade between content states so transitions read as a smooth fade instead
+                // of an instant snap. Matches the session list's Crossfade pattern; reduced
+                // motion is honored by Crossfade's default spec.
+                val stateKey = state::class.simpleName
+                    @Suppress("UnusedCrossfadeTargetStateParameter")
+                    Crossfade(
+                        targetState = stateKey,
+                        animationSpec = tween(soy.iko.opencode.data.network.NetworkConfig.motionFadeDurationMs.toInt()),
+                        label = "mcp_state",
                     ) {
-                        CircularProgressIndicator(
-                            Modifier.semantics { contentDescription = loadingLabel },
-                        )
-                        Spacer(Modifier.size(12.dp))
-                        Text(loadingLabel, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    when (val s = state) {
+                    is McpViewModel.State.Loading -> Column(
+                        modifier = Modifier.fillMaxSize().padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        repeat(6) { SkeletonRow() }
                     }
                     is McpViewModel.State.Disconnected -> EmptyState(
                         icon = Icons.Filled.CloudOff,
@@ -158,9 +172,9 @@ fun McpScreen(container: AppContainer, onBack: () -> Unit) {
                             )
                         } else {
                             LazyColumn(
-                                modifier = Modifier.fillMaxSize(),
+                                modifier = Modifier.fillMaxWidth(),
                                 contentPadding = PaddingValues(
-                                    start = 16.dp, end = 16.dp, top = 16.dp, bottom = 96.dp,
+                                    start = 16.dp, end = 16.dp, top = 16.dp, bottom = soy.iko.opencode.data.network.NetworkConfig.listFabInsetDp.dp,
                                 ),
                                 verticalArrangement = Arrangement.spacedBy(12.dp),
                             ) {
@@ -169,6 +183,7 @@ fun McpScreen(container: AppContainer, onBack: () -> Unit) {
                                 }
                             }
                         }
+                    }
                 }
             }
         }
@@ -218,6 +233,7 @@ private fun McpServerCard(server: McpServerInfo, modifier: Modifier = Modifier) 
     Card(
         modifier = modifier
             .fillMaxWidth()
+            .testTag("mcp_card")
             .semantics(mergeDescendants = true) { contentDescription = cardDesc },
     ) {
         Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
@@ -400,6 +416,10 @@ private fun AddMcpDialog(
                     label = { Text(stringResource(R.string.mcp_add_name)) },
                     singleLine = true,
                     enabled = !adding,
+                    isError = !nameValid,
+                    supportingText = if (!nameValid) {
+                        { Text(stringResource(R.string.mcp_add_name_required)) }
+                    } else null,
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(
@@ -426,6 +446,10 @@ private fun AddMcpDialog(
                     },
                     singleLine = true,
                     enabled = !adding,
+                    isError = !targetValid,
+                    supportingText = if (!targetValid) {
+                        { Text(stringResource(R.string.mcp_add_target_required)) }
+                    } else null,
                 )
                 // Warn that the local command is split on whitespace and quoted args aren't
                 // supported, so a user entering `"my program" --arg` isn't surprised when it's
@@ -447,6 +471,10 @@ private fun AddMcpDialog(
                     supportingText = { Text(stringResource(R.string.mcp_env_hint)) },
                     enabled = !adding,
                     minLines = 2,
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        capitalization = androidx.compose.ui.text.input.KeyboardCapitalization.None,
+                        imeAction = androidx.compose.ui.text.input.ImeAction.Default,
+                    ),
                 )
             }
         },

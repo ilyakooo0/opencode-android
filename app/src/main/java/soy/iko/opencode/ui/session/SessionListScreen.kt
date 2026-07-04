@@ -1,3 +1,5 @@
+@file:Suppress("TooManyFunctions")
+
 package soy.iko.opencode.ui.session
 
 import androidx.compose.foundation.background
@@ -93,6 +95,7 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
@@ -186,6 +189,10 @@ fun SessionListScreen(
     val connectedId = activeConnection?.profile?.id
     val haptics = LocalHapticFeedback.current
     val snackbar = remember { SnackbarHostState() }
+    // Separate host for transient error messages so a transient error can't preempt an undo
+    // snackbar's full window — the undo and error channels don't share a queue, so a share
+    // error can't cancel an in-flight undo and strand a pending delete.
+    val errorSnackbar = remember { SnackbarHostState() }
     val undoLabel = stringResource(R.string.undo)
     val retryLabel = stringResource(R.string.retry)
     val sessionDeletedLabel = stringResource(R.string.session_deleted)
@@ -247,13 +254,13 @@ fun SessionListScreen(
 
     LaunchedEffect(Unit) {
         vm.transientErrors.collect { msg ->
-            snackbar.showSnackbar(msg)
+            errorSnackbar.showSnackbar(msg)
         }
     }
 
     LaunchedEffect(Unit) {
         vm.transientInfo.collect { msg ->
-            snackbar.showSnackbar(msg)
+            errorSnackbar.showSnackbar(msg)
         }
     }
 
@@ -261,7 +268,7 @@ fun SessionListScreen(
     // is recoverable in one tap instead of forcing the user back through the dialog/FAB.
     LaunchedEffect(Unit) {
         vm.retryableErrors.collect { err ->
-            val result = snackbar.showSnackbar(
+            val result = errorSnackbar.showSnackbar(
                 message = err.message,
                 actionLabel = retryLabel,
                 duration = androidx.compose.material3.SnackbarDuration.Long,
@@ -339,6 +346,12 @@ fun SessionListScreen(
                             selectedIds = emptySet()
                         }) {
                             Icon(Icons.Filled.MarkChatRead, contentDescription = stringResource(R.string.bulk_mark_read))
+                        }
+                        IconButton(onClick = {
+                            vm.bulkPin(selectedIds, pin = true)
+                            selectedIds = emptySet()
+                        }) {
+                            Icon(Icons.Filled.PushPin, contentDescription = stringResource(R.string.bulk_pin))
                         }
                         IconButton(onClick = {
                             vm.bulkArchive(selectedIds, archive = true)
@@ -452,7 +465,14 @@ fun SessionListScreen(
             )
             }
         },
-        snackbarHost = { SnackbarHost(snackbar) },
+        snackbarHost = {
+            // Stack both hosts; the undo snackbar takes priority (rendered first), the error
+            // host renders below it so both can be visible simultaneously without preempting.
+            Column {
+                SnackbarHost(snackbar)
+                SnackbarHost(errorSnackbar)
+            }
+        },
         floatingActionButton = {
             if (!inSelection) {
                 ExtendedFloatingActionButton(
@@ -871,8 +891,24 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
                 var renderCap by remember {
                     mutableStateOf(NetworkConfig.sessionListInitialPage)
                 }
-                val visibleNodes = remember(nodes, renderCap) {
-                    if (nodes.size <= renderCap) nodes else nodes.take(renderCap)
+                // Build the grouped entry list: a Pinned header (if any pinned sessions are
+                // present), then date-grouped sections (Today / Yesterday / Last week / Older)
+                // when sorted by recency, or a flat list when sorted by title. Date grouping
+                // the home screen makes a long flat list scannable; the headers are suppressed
+                // during selection mode and when a query/filter is active (those re-order the
+                // list away from recency, so date headers would mislead).
+                val showGroups = state.sortMode == SessionSortMode.RECENT &&
+                    !inSelection && state.query.isEmpty() && state.directoryFilter == null
+                // Resolve section labels once (in the @Composable scope) so buildGroupedEntries
+                // can stay a plain function. Captured into the file-level lateinit fields.
+                pinnedLabel = stringResource(R.string.session_pinned)
+                todayLabel = stringResource(R.string.today)
+                yesterdayLabel = stringResource(R.string.yesterday)
+                lastWeekLabel = stringResource(R.string.last_week)
+                olderLabel = stringResource(R.string.older)
+                val groupedEntries = remember(nodes, renderCap, state.pinnedIds, showGroups) {
+                    val capped = if (nodes.size <= renderCap) nodes else nodes.take(renderCap)
+                    buildGroupedEntries(capped, state.pinnedIds, showGroups)
                 }
                 PullToRefreshBox(
                     isRefreshing = refreshing,
@@ -896,11 +932,15 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
                     LazyColumn(
                         state = listState,
                         modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 96.dp),
+                        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = NetworkConfig.listFabInsetDp.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        items(visibleNodes, key = { it.session.id }) { node ->
-                            val session = node.session
+                        items(groupedEntries, key = { it.key }) { entry ->
+                            when (entry) {
+                                is SessionListEntry.Header -> DateGroupHeader(entry.label)
+                                is SessionListEntry.Node -> {
+                                    val node = entry.node
+                                    val session = node.session
                             // Swipe end-to-start reveals a delete affordance and opens the
                             // same confirmation dialog as the trash icon. We never commit
                             // the dismissal (always reset to Settled) so the card snaps back
@@ -1032,6 +1072,8 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
                                     modifier = Modifier.testTag("session_card"),
                                 )
                             }
+                            }
+                        }
                         }
                     }
                 }
@@ -1043,6 +1085,109 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
 
 /** A session plus its nesting [depth] (0 = top level) for the sub-session tree. */
 private data class SessionNode(val session: soy.iko.opencode.data.model.Session, val depth: Int)
+
+/** A renderable entry in the grouped session list: either a section header (Pinned, Today,
+ *  Yesterday, Last week, Older) or a session [SessionNode]. The sealed type lets the
+ *  LazyColumn mix headers and cards in one `items()` call with stable keys. */
+private sealed interface SessionListEntry {
+    val key: String
+
+    /** A section header carrying a display label. */
+    data class Header(override val key: String, val label: String) : SessionListEntry
+
+    /** A session row. */
+    data class Node(val node: SessionNode) : SessionListEntry {
+        override val key: String get() = node.session.id
+    }
+}
+
+/** Bucket a session's last-activity timestamp into a display group. Returns null when no
+ *  timestamp is available (the session is then grouped under "Older"). */
+private fun sessionDateGroup(session: soy.iko.opencode.data.model.Session, now: Long): String {
+    val ts = session.time?.updated ?: session.time?.created ?: return "older"
+    val dayMs = 24L * 60 * 60 * 1000
+    val todayStart = (now / dayMs) * dayMs
+    return when {
+        ts >= todayStart -> "today"
+        ts >= todayStart - dayMs -> "yesterday"
+        ts >= todayStart - 7 * dayMs -> "last_week"
+        else -> "older"
+    }
+}
+
+/** Build the grouped entry list for the LazyColumn. Inserts a "Pinned" header before pinned
+ *  sessions (when [showGroups] is true and pinned sessions exist), and date-group headers
+ *  (Today / Yesterday / Last week / Older) between unpinned sessions when [showGroups] is
+ *  true. When [showGroups] is false (title sort, selection mode, active query/filter), the
+ *  nodes are returned flat with only a Pinned header (still useful to signal why pinned
+ *  sessions float to the top). */
+private fun buildGroupedEntries(
+    nodes: List<SessionNode>,
+    pinnedIds: Set<String>,
+    showGroups: Boolean,
+): List<SessionListEntry> {
+    if (nodes.isEmpty()) return emptyList()
+    val now = System.currentTimeMillis()
+    val result = ArrayList<SessionListEntry>(nodes.size + 4)
+    val pinnedHeaderAdded = booleanArrayOf(false)
+    val dateHeaderAdded = HashMap<String, Boolean>()
+
+    fun maybeAddPinnedHeader() {
+        if (!pinnedHeaderAdded[0] && pinnedIds.isNotEmpty()) {
+            result.add(SessionListEntry.Header("__pinned", pinnedLabel))
+            pinnedHeaderAdded[0] = true
+        }
+    }
+
+    for (node in nodes) {
+        val isPinned = node.session.id in pinnedIds
+        if (isPinned) {
+            maybeAddPinnedHeader()
+            result.add(SessionListEntry.Node(node))
+        } else {
+            if (showGroups) {
+                val group = sessionDateGroup(node.session, now)
+                if (dateHeaderAdded[group] != true) {
+                    dateHeaderAdded[group] = true
+                    result.add(SessionListEntry.Header("__date_$group", dateGroupLabel(group)))
+                }
+            }
+            result.add(SessionListEntry.Node(node))
+        }
+    }
+    return result
+}
+
+/** Resolve a date-group key to its display label. */
+private fun dateGroupLabel(group: String): String = when (group) {
+    "today" -> todayLabel
+    "yesterday" -> yesterdayLabel
+    "last_week" -> lastWeekLabel
+    else -> olderLabel
+}
+
+// Cached labels resolved lazily from resources at first use. Resolved in the composable
+// scope via stringResource and captured here so buildGroupedEntries (a plain function) can
+// use them without a @Composable context.
+private lateinit var pinnedLabel: String
+private lateinit var todayLabel: String
+private lateinit var yesterdayLabel: String
+private lateinit var lastWeekLabel: String
+private lateinit var olderLabel: String
+
+/** A date-group section header in the session list. Rendered as a muted titleSmall label
+ *  with heading semantics so TalkBack users can skip between groups. */
+@Composable
+private fun DateGroupHeader(label: String) {
+    Text(
+        label,
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier
+            .padding(top = 8.dp, bottom = 4.dp)
+            .semantics { heading() },
+    )
+}
 
 /**
  * Keep the home-screen widget, launcher shortcuts, and "Resume last" in sync with the

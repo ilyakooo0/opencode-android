@@ -12,4 +12,7 @@
     <color name="widget_on_surface_variant">#9AA5CE</color>
     <color name="widget_divider">#33565F89</color>
     <color name="widget_background">#EE1F2335</color>
+
+    <!-- Notification brand accent at night — the Tokyo Night primary blue. -->
+    <color name="notif_brand">#7AA2F7</color>
 </resources>

@@ -28,6 +28,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -153,7 +154,9 @@ fun ConnectionBanner(
                     TextButton(
                         onClick = onRetry,
                         contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp),
-                        modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                        modifier = Modifier
+                            .defaultMinSize(minHeight = 48.dp)
+                            .testTag("connection_retry"),
                     ) {
                         Text(stringResource(R.string.retry_now), color = onContainer)
                     }

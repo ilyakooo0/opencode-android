@@ -1,6 +1,8 @@
 package soy.iko.opencode.ui.file
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -17,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -32,6 +35,7 @@ import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Article
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -40,7 +44,6 @@ import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SortByAlpha
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -60,6 +63,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -94,16 +98,19 @@ import soy.iko.opencode.data.model.FindMatch
 import soy.iko.opencode.data.model.SymbolResult
 import soy.iko.opencode.data.model.symbolKindLabel
 import soy.iko.opencode.data.network.NetworkConfig
+import soy.iko.opencode.data.repo.FileSortKey
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
 import soy.iko.opencode.ui.components.AppTopBar
 import soy.iko.opencode.ui.components.ConnectionBannerFor
 import soy.iko.opencode.ui.components.EmptyState
+import soy.iko.opencode.ui.components.SkeletonRow
 import soy.iko.opencode.ui.components.reducedMotionAnimateItem
 import soy.iko.opencode.ui.components.copyToClipboard
 import soy.iko.opencode.ui.components.relativeTime
 import soy.iko.opencode.ui.vmFactory
 import soy.iko.opencode.util.runCatchingCancellable
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -156,7 +163,9 @@ fun FileBrowserScreen(
         val scale = 1f - (backProgress.floatValue * 0.05f)
         Column(
             modifier = Modifier
-                .fillMaxSize()
+                .fillMaxWidth()
+                .wrapContentWidth(Alignment.CenterHorizontally)
+                .widthIn(max = soy.iko.opencode.data.network.NetworkConfig.listContentMaxWidthDp.dp)
                 .imePadding()
                 .padding(padding)
                 .graphicsLayer { scaleX = scale; scaleY = scale },
@@ -226,37 +235,56 @@ fun FileBrowserScreen(
             ) {
                 Box(modifier = Modifier.fillMaxSize()) {
                     val loadingLabel = stringResource(R.string.loading)
-                    when {
-                        // Full-screen spinner only for the initial directory load. An in-flight
-                        // search keeps the previous results visible (a slim top bar below shows the
-                        // progress) instead of blanking the list behind a spinner on every keystroke.
+                    // Crossfade between content states so transitions read as a smooth fade
+                    // instead of an instant snap. Matches the session list's Crossfade pattern;
+                    // reduced motion is honored by Crossfade's default spec.
+                    val stateKey = fileBrowserStateKey(state)
+                    @Suppress("UnusedCrossfadeTargetStateParameter")
+                    Crossfade(
+                        targetState = stateKey,
+                        animationSpec = tween(NetworkConfig.motionFadeDurationMs.toInt()),
+                        label = "file_browser_state",
+                    ) {
+                        when {
+                        // Skeleton loader for the initial directory load. An in-flight search
+                        // keeps the previous results visible (a slim top bar below shows the
+                        // progress) instead of blanking the list on every keystroke.
                         state.loading -> Column(
-                            modifier = Modifier.align(Alignment.Center).padding(24.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.fillMaxSize().padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
-                            CircularProgressIndicator(
-                                Modifier.semantics { contentDescription = loadingLabel },
-                            )
-                            Text(
-                                stringResource(R.string.loading),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(top = 8.dp),
-                            )
+                            repeat(6) { SkeletonRow() }
                         }
-                        state.error != null -> Column(
+                        state.error != null -> {
+                            // Detect a permission-denied error (the server returns a 403/EACCES
+                            // when the workspace directory isn't readable) and show a specific
+                            // message + icon instead of the generic error, so the user
+                            // understands the cause is access, not a network failure.
+                            val err = state.error
+                            val isPermissionDenied = err != null && (
+                                err.contains("permission", ignoreCase = true) ||
+                                    err.contains("denied", ignoreCase = true) ||
+                                    err.contains("403", ignoreCase = true)
+                            )
+                            val errorIcon = if (isPermissionDenied) Icons.Filled.Lock else Icons.Filled.ErrorOutline
+                            val errorText = if (isPermissionDenied) {
+                                stringResource(R.string.permission_denied_files)
+                            } else {
+                                err ?: ""
+                            }
+                            Column(
                             modifier = Modifier.align(Alignment.Center).padding(24.dp),
                             horizontalAlignment = Alignment.CenterHorizontally,
                         ) {
                             Icon(
-                                Icons.Filled.ErrorOutline,
+                                errorIcon,
                                 contentDescription = null,
                                 tint = MaterialTheme.colorScheme.error,
                                 modifier = Modifier.size(56.dp),
                             )
                             androidx.compose.foundation.layout.Spacer(Modifier.size(12.dp))
                             Text(
-                                state.error ?: "",
+                                errorText,
                                 color = MaterialTheme.colorScheme.error,
                             )
                             androidx.compose.foundation.layout.Spacer(Modifier.size(12.dp))
@@ -268,6 +296,7 @@ fun FileBrowserScreen(
                             ) {
                                 Text(stringResource(R.string.retry))
                             }
+                        }
                         }
                         state.mode == SearchMode.TEXT ->
                             TextResults(
@@ -281,6 +310,7 @@ fun FileBrowserScreen(
                             ) { path, line -> onOpenFile(path, line) }
                         state.isSearching -> SearchResults(state.results) { onOpenFile(it, null) }
                         else -> DirectoryListing(
+                            container = container,
                             state = state,
                             onOpenDir = vm::open,
                             onUp = vm::up,
@@ -290,6 +320,7 @@ fun FileBrowserScreen(
                                 container.requestNewSession()
                             },
                         )
+                        }
                     }
                     // Slim progress bar for an in-flight search; the results list stays visible
                     // underneath so incremental typing doesn't flash an empty screen each keystroke.
@@ -305,6 +336,18 @@ fun FileBrowserScreen(
             }
         }
     }
+}
+
+/** Maps the file-browser view state to a stable string key for the Crossfade, so the screen's
+ *  content-state transitions fade smoothly. Extracted from [FileBrowserScreen] to keep its
+ *  cyclomatic complexity under the detekt threshold. */
+private fun fileBrowserStateKey(state: FileBrowserState): String = when {
+    state.loading -> "loading"
+    state.error != null -> "error"
+    state.mode == SearchMode.TEXT -> "text"
+    state.mode == SearchMode.SYMBOL -> "symbol"
+    state.isSearching -> "search"
+    else -> "dir"
 }
 
 @Composable
@@ -576,6 +619,7 @@ private fun highlightMatchLine(match: FindMatch): androidx.compose.ui.text.Annot
 @Suppress("CyclomaticComplexMethod")
 @Composable
 private fun DirectoryListing(
+    container: AppContainer,
     state: FileBrowserState,
     onOpenDir: (String) -> Unit,
     onUp: () -> Unit,
@@ -591,20 +635,39 @@ private fun DirectoryListing(
         )
         return
     }
-    // Sort preference for the directory listing. Folders-first + name sort is the most useful
-    // default; the toggle flips between folders-first name sort and the server's raw order.
-    var foldersFirst by rememberSaveable { mutableStateOf(true) }
-    // Hidden-files preference. The server may already include dotfiles in its listing; this
-    // hides them by default (the common case for browsing a repo) and lets the user reveal
-    // .env / .git / .opencode on demand. Default off so the listing isn't cluttered.
-    var showHidden by rememberSaveable { mutableStateOf(false) }
-    // Sort key for files within the listing. Name is the default (and the only axis the server
-    // reliably supports); Size/Modified appear only when the server emits size/mtime (otherwise
-    // those sorts are no-ops on null fields), gated behind a menu so they don't clutter the bar.
-    var sortKey by rememberSaveable { mutableStateOf(FileSortKey.NAME) }
-    var sortDesc by rememberSaveable { mutableStateOf(false) }
-    val visible = remember(state.entries, showHidden) {
-        if (showHidden) state.entries else state.entries.filterNot { it.name.startsWith(".") }
+    // Sort/filter preferences are persisted via FileBrowserPrefs (DataStore) so a user who
+    // prefers size-sort or hidden-files-visible keeps it across process death, not just
+    // rotation. Defaults match the prior rememberSaveable defaults so the first-run view is
+    // unchanged: folders-first ON, hidden OFF, sort NAME ascending, changed-only OFF.
+    val prefs = container.fileBrowserPrefs
+    val scope = rememberCoroutineScope()
+    val foldersFirst by prefs.foldersFirst.collectAsStateWithLifecycle(initialValue = true)
+    val showHidden by prefs.showHidden.collectAsStateWithLifecycle(initialValue = false)
+    val sortKey by prefs.sortKey.collectAsStateWithLifecycle(initialValue = FileSortKey.NAME)
+    val sortDesc by prefs.sortDesc.collectAsStateWithLifecycle(initialValue = false)
+    val changedOnly by prefs.changedOnly.collectAsStateWithLifecycle(initialValue = false)
+    fun updateFoldersFirst(value: Boolean) {
+        scope.launch { runCatchingCancellable { prefs.setFoldersFirst(value) } }
+    }
+    fun updateShowHidden(value: Boolean) {
+        scope.launch { runCatchingCancellable { prefs.setShowHidden(value) } }
+    }
+    fun updateSortKey(key: FileSortKey) {
+        scope.launch { runCatchingCancellable { prefs.setSortKey(key) } }
+    }
+    fun updateSortDesc(value: Boolean) {
+        scope.launch { runCatchingCancellable { prefs.setSortDesc(value) } }
+    }
+    fun updateChangedOnly(value: Boolean) {
+        scope.launch { runCatchingCancellable { prefs.setChangedOnly(value) } }
+    }
+    val visible = remember(state.entries, showHidden, changedOnly, state.statusMap) {
+        val byHidden = if (showHidden) state.entries else state.entries.filterNot { it.name.startsWith(".") }
+        // "Changed only" narrows to entries with a git status badge (A/M/D). Directories are
+        // kept when the filter is OFF (so navigation isn't broken mid-review) but dropped when
+        // it's ON, since git status is per-file and a directory row would never match.
+        if (changedOnly) byHidden.filter { !it.isDirectory && state.statusMap[it.path] != null }
+        else byHidden
     }
     val sorted = remember(visible, foldersFirst, sortKey, sortDesc) {
         // Null size/mtime coerce to values that sink the unknown entries to the bottom in the
@@ -634,6 +697,19 @@ private fun DirectoryListing(
         if (sorted.size <= renderCap) sorted else sorted.take(renderCap)
     }
     LazyColumn(modifier = Modifier.fillMaxSize()) {
+        // Item-count summary header so a large directory is self-describing ("137 items")
+        // mirroring the search-results count header. Uses the pre-hidden-filter count so the
+        // user sees the true directory size; hidden entries are a display filter, not a
+        // property of the folder.
+        item(key = "__count") {
+            val count = state.entries.size
+            Text(
+                pluralStringResource(R.plurals.file_count, count, count),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 4.dp),
+            )
+        }
         if (state.path.isNotBlank()) {
             item(key = "__up") {
                 FileRow(icon = true, label = "..", onClick = onUp)
@@ -687,7 +763,8 @@ private fun DirectoryListing(
                             onClick = {
                                 // Tapping the active key flips the direction; tapping a different
                                 // key switches to it (ascending by default).
-                                if (sortKey == key) sortDesc = !sortDesc else { sortKey = key; sortDesc = false }
+                                if (sortKey == key) updateSortDesc(!sortDesc)
+                                else { updateSortKey(key); updateSortDesc(false) }
                                 showSortMenu = false
                             },
                         )
@@ -695,18 +772,28 @@ private fun DirectoryListing(
                 }
                 androidx.compose.material3.FilterChip(
                     selected = showHidden,
-                    onClick = { showHidden = !showHidden },
+                    onClick = { updateShowHidden(!showHidden) },
                     label = { Text(stringResource(R.string.show_hidden), style = MaterialTheme.typography.labelSmall) },
                 )
                 androidx.compose.material3.FilterChip(
                     selected = foldersFirst,
-                    onClick = { foldersFirst = !foldersFirst },
+                    onClick = { updateFoldersFirst(!foldersFirst) },
                     leadingIcon = {
                         if (foldersFirst) {
                             Icon(Icons.Filled.Folder, contentDescription = null, modifier = Modifier.size(16.dp))
                         }
                     },
                     label = { Text(stringResource(R.string.folders_first), style = MaterialTheme.typography.labelSmall) },
+                )
+                androidx.compose.material3.FilterChip(
+                    selected = changedOnly,
+                    onClick = { updateChangedOnly(!changedOnly) },
+                    leadingIcon = {
+                        if (changedOnly) {
+                            Icon(Icons.Filled.Code, contentDescription = null, modifier = Modifier.size(16.dp))
+                        }
+                    },
+                    label = { Text(stringResource(R.string.changed_only), style = MaterialTheme.typography.labelSmall) },
                 )
             }
         }
@@ -899,13 +986,9 @@ private fun StatusBadge(status: FileStatusEntry) {
     }
 }
 
-/** Sort axis for the directory listing. Name is always available; Size/Modified depend on the
- *  server emitting size/mtime (otherwise they sort nulls to the bottom). */
-private enum class FileSortKey { NAME, SIZE, MODIFIED }
-
 /** Format a byte count as a compact human-readable size (e.g. 1.2 KB, 3.4 MB). Uses 1024-based
  *  units with one decimal place, matching how file managers render sizes. */
-private fun formatFileSize(bytes: Long): String {
+internal fun formatFileSize(bytes: Long): String {
     if (bytes < 1024) return "$bytes B"
     val units = arrayOf("KB", "MB", "GB", "TB")
     var value = bytes.toDouble() / 1024.0

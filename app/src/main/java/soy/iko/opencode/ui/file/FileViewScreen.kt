@@ -11,7 +11,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
-import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.layout.Box
@@ -41,6 +41,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.WrapText
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Link
@@ -77,7 +78,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
@@ -85,6 +85,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
@@ -95,14 +96,18 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import coil.compose.SubcomposeAsyncImage
+import coil.request.ImageRequest
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
 import soy.iko.opencode.ui.components.ConnectionBannerFor
 import soy.iko.opencode.ui.components.DiffView
+import soy.iko.opencode.ui.components.FullscreenImageViewer
 import soy.iko.opencode.ui.components.LocalChatTextScale
 import soy.iko.opencode.ui.components.LocalCodeWrap
 import soy.iko.opencode.ui.components.copyToClipboard
 import soy.iko.opencode.ui.components.highlightLine
+import soy.iko.opencode.ui.components.relativeTime
 import soy.iko.opencode.ui.components.syntaxFor
 import soy.iko.opencode.ui.components.rememberHighlightPalette
 import soy.iko.opencode.ui.components.scaledBy
@@ -161,6 +166,14 @@ fun FileViewScreen(
         val trimmed = path.trimEnd('/')
         val parent = trimmed.substringBeforeLast('/', "")
         parent.ifBlank { path }
+    }
+    // Compact "12.3 KB · 2d ago" metadata line for the top bar. Built from the size/mtime the
+    // ViewModel resolved via the parent directory listing (null when the server doesn't emit
+    // them). Uses the same formatFileSize/relativeTime helpers as the file browser's FileRow so
+    // the formatting is identical across screens. Built here (not in the top bar) because it
+    // needs the Context and the state, and the top bar is a stateless composable.
+    val metadataLine = remember(state.size, state.mtime) {
+        buildMetadataLine(context, state.size, state.mtime)
     }
     // Split the raw text exactly once here (the line viewer and find-in-file both consume this
     // list) and cap it so a huge file doesn't get split twice or overwhelm the LazyColumn.
@@ -226,6 +239,7 @@ fun FileViewScreen(
             FileViewTopBar(
                 filename = filename,
                 subtitle = pathSubtitle,
+                metadata = metadataLine,
                 loading = state.loading,
                 content = rawText,
                 wrap = wrap,
@@ -459,11 +473,24 @@ private fun rememberJumpToLineHighlight(
     return highlight
 }
 
+/** Build the compact "12.3 KB · 2d ago" metadata line for the file viewer's top bar from the
+ *  size/mtime the ViewModel resolved. Returns an empty string when neither is present so the
+ *  caller can drop the line in unconditionally. Uses the same helpers as the file browser's
+ *  FileRow so the formatting is identical across screens. */
+private fun buildMetadataLine(context: android.content.Context, size: Long?, mtime: Long?): String {
+    val parts = buildList {
+        size?.let { add(formatFileSize(it)) }
+        mtime?.let { add(relativeTime(context, it)) }
+    }
+    return parts.joinToString(" · ")
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun FileViewTopBar(
     filename: String,
     subtitle: String,
+    metadata: String,
     loading: Boolean,
     content: String,
     wrap: Boolean,
@@ -480,9 +507,10 @@ private fun FileViewTopBar(
 ) {
     TopAppBar(
         title = {
-            // Two-line title: filename (primary) + the directory portion of the path
-            // (secondary), so a file opened from deep in a workspace keeps its location
-            // visible without an extra breadcrumb row.
+            // Two- or three-line title: filename (primary), the directory portion of the path
+            // (secondary), and an optional muted metadata line (size · mtime) so a user who
+            // has drilled into a deep workspace keeps context of where this file lives and how
+            // stale it is without an extra breadcrumb row.
             Column {
                 Text(filename, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 if (subtitle.isNotBlank()) {
@@ -491,6 +519,15 @@ private fun FileViewTopBar(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (metadata.isNotEmpty()) {
+                    Text(
+                        metadata,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
@@ -662,6 +699,13 @@ private fun BoxScope.FileViewStateContent(
             modifier = Modifier.align(Alignment.Center).padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
+            Icon(
+                Icons.Filled.ErrorOutline,
+                contentDescription = null,
+                modifier = Modifier.size(56.dp),
+                tint = MaterialTheme.colorScheme.error,
+            )
+            Spacer(Modifier.size(12.dp))
             Text(state.error ?: "", color = MaterialTheme.colorScheme.error)
             Spacer(Modifier.size(12.dp))
             TextButton(onClick = onRetry) { Text(stringResource(R.string.retry)) }
@@ -1061,8 +1105,10 @@ private fun FileTextContent(
 /**
  * Renders an image file (PNG/JPG/GIF/WebP/BMP/SVG) inline in the file viewer instead of
  * the generic "Binary file" label. Decodes the base64 content from [FileContent.content]
- * into a [Bitmap] and displays it. Falls back to the binary-file label if decoding fails
- * (corrupt content or an unsupported encoding).
+ * into bytes and hands them to Coil, which renders the image and powers the fullscreen
+ * zoomable viewer (pinch-zoom, save, share) on tap — the same [FullscreenImageViewer] the
+ * chat attachments use. Falls back to the binary-file label if the base64 payload can't be
+ * decoded (corrupt content or an unsupported encoding).
  */
 @Composable
 private fun ImageFilePreview(
@@ -1070,31 +1116,49 @@ private fun ImageFilePreview(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
-    val bitmap = remember(content.content) {
-        runCatching {
-            val bytes = android.util.Base64.decode(content.content, android.util.Base64.DEFAULT)
-            android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-        }.getOrNull()
+    val desc = stringResource(R.string.image_file_preview)
+    // Decode the base64 payload to bytes once (off-thread via produceState so a large image
+    // doesn't block the first frame). Coil takes the ByteArray as its model and decodes it to
+    // a Bitmap internally — the same request drives both the inline preview and the fullscreen
+    // viewer, so a tap reuses the already-cached decode for the zoomed view.
+    val bytesState by produceState<ByteArray?>(initialValue = null, content.content) {
+        value = withContext(Dispatchers.Default) {
+            runCatching {
+                android.util.Base64.decode(content.content, android.util.Base64.DEFAULT)
+            }.getOrNull()
+        }
     }
-    if (bitmap == null) {
+    val bytes = bytesState
+    if (bytes == null) {
         Text(
             stringResource(R.string.binary_file),
             modifier = modifier,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-    } else {
-        Column(
-            modifier = modifier.fillMaxWidth(),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Image(
-                bitmap = bitmap.asImageBitmap(),
-                contentDescription = stringResource(R.string.image_file_preview),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 400.dp)
-                    .clip(MaterialTheme.shapes.medium),
-            )
-        }
+        return
+    }
+    var showFullscreen by remember { mutableStateOf(false) }
+    val request = remember(bytes) {
+        ImageRequest.Builder(context)
+            .data(bytes)
+            .crossfade(true)
+            .build()
+    }
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        SubcomposeAsyncImage(
+            model = request,
+            contentDescription = desc,
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 400.dp)
+                .clip(MaterialTheme.shapes.medium)
+                .clickable(role = Role.Button) { showFullscreen = true },
+        )
+    }
+    if (showFullscreen) {
+        FullscreenImageViewer(request = request, contentDescription = desc) { showFullscreen = false }
     }
 }

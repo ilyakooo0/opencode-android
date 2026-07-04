@@ -260,6 +260,12 @@ object NetworkConfig {
     /** Extra bottom content padding (dp) for the chat message list, reserving room for the
      *  jump-to-latest FAB so it never floats over the last message. */
     const val chatListFabInsetDp = 80
+
+    /** Extra bottom content padding (dp) for single-pane list screens that host a FAB
+     *  (session list, server list, MCP), reserving room so the FAB never floats over the
+     *  last row. Unified across screens so the inset doesn't drift (the session list
+     *  previously hardcoded 96dp while the chat list used [chatListFabInsetDp]). */
+    const val listFabInsetDp = 96
     /** Left pane weight in the two-pane layout (session list). */
     const val twoPaneLeftWeight = 0.38f
     /** Right pane weight in the two-pane layout (chat detail). */
@@ -277,6 +283,13 @@ object NetworkConfig {
      *  readability — capping and centering the list (like Gmail/Telegram on tablets)
      *  keeps line lengths comfortable. Applied only above [twoPaneWidthThresholdDp]. */
     const val chatContentMaxWidthDp = 800
+
+    /** Maximum width (dp) for a single-pane list/form screen on large screens (Diagnostics,
+     *  MCP, Usage, Global Search, File Browser). Mirrors [chatContentMaxWidthDp]'s rationale
+     *  at a tighter width suited to dense list rows and form fields. Settings and ServerEdit
+     *  use 600dp directly; this constant centralizes the same value for the screens that
+     *  previously stretched edge-to-edge on tablets. */
+    const val listContentMaxWidthDp = 600
 
     /** Maximum width (dp) for the full-screen chat composer dialog on large screens, so
      *  the editor doesn't stretch edge-to-edge on a tablet (matching [chatContentMaxWidthDp]'s

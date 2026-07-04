@@ -16,8 +16,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Close
@@ -28,7 +32,6 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SearchOff
 import androidx.compose.material3.Card
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -68,6 +71,7 @@ import soy.iko.opencode.ui.components.AppTopBar
 import soy.iko.opencode.ui.components.ConnectionBannerFor
 import soy.iko.opencode.ui.components.EmptyState
 import soy.iko.opencode.ui.components.SectionHeader
+import soy.iko.opencode.ui.components.SkeletonRow
 import soy.iko.opencode.ui.components.reducedMotionAnimateItem
 import soy.iko.opencode.ui.vmFactory
 import java.text.NumberFormat
@@ -98,18 +102,26 @@ fun UsageScreen(container: AppContainer, onBack: () -> Unit, onOpenSession: (Str
         PullToRefreshBox(
             isRefreshing = refreshing,
             onRefresh = { vm.load() },
-            modifier = Modifier.fillMaxSize().imePadding().padding(padding),
+            modifier = Modifier.fillMaxSize().wrapContentWidth(Alignment.CenterHorizontally).widthIn(max = soy.iko.opencode.data.network.NetworkConfig.listContentMaxWidthDp.dp).imePadding().padding(padding),
         ) {
             Box(modifier = Modifier.fillMaxSize()) {
                 ConnectionBannerFor(container)
-                val loadingLabel = stringResource(R.string.usage_loading)
-                when (val s = state) {
-                    is UsageViewModel.State.Loading -> Centered {
-                        CircularProgressIndicator(
-                            Modifier.semantics { contentDescription = loadingLabel },
-                        )
-                        Spacer(Modifier.size(12.dp))
-                        Text(loadingLabel, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                // Crossfade between content states so transitions read as a smooth fade instead
+                // of an instant snap. Matches the session list's Crossfade pattern; reduced
+                // motion is honored by Crossfade's default spec.
+                val stateKey = state::class.simpleName
+                    @Suppress("UnusedCrossfadeTargetStateParameter")
+                    Crossfade(
+                        targetState = stateKey,
+                        animationSpec = tween(NetworkConfig.motionFadeDurationMs.toInt()),
+                        label = "usage_state",
+                    ) {
+                    when (val s = state) {
+                    is UsageViewModel.State.Loading -> Column(
+                        modifier = Modifier.fillMaxSize().padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        repeat(6) { SkeletonRow() }
                     }
                     is UsageViewModel.State.Disconnected -> EmptyState(
                         icon = Icons.Filled.CloudOff,
@@ -141,16 +153,10 @@ fun UsageScreen(container: AppContainer, onBack: () -> Unit, onOpenSession: (Str
                                 onTimeRangeChange = vm::setTimeRange,
                             )
                         }
+                    }
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun Centered(content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) {
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally, content = content)
     }
 }
 

@@ -47,6 +47,9 @@ class MainActivity : FragmentActivity() {
     private var openSessionHandled = false
     private var newSessionHandled = false
     private var openFileHandled = false
+    // Set when a deep link was present but failed validation (malformed id/path). Surfaced
+    // as a toast from onResume so the user knows the link was rejected, not silently ignored.
+    private var showInvalidLinkToast = false
     // Cold-start prompts (crash report, notification rationale) rendered as Compose M3
     // dialogs. Hoisted as Activity-level mutableState so the non-composable trigger logic
     // (onCreate/onResume) can flip them and the Compose tree (inside OpencodeTheme) reads
@@ -91,6 +94,26 @@ class MainActivity : FragmentActivity() {
         // before app lock resolves. Mirrors the SettingsScreen's null-gate.
         var settingsLoaded = false
         splash.setKeepOnScreenCondition { !settingsLoaded }
+        // Custom splash exit: a quick fade-out instead of the system default's slide, so the
+        // hand-off to Compose reads as a branded dissolve. The listener must call
+        // splashScreenViewProvider.remove() to release the splash view; otherwise the system
+        // keeps it on screen for its default duration. Reduced-motion is respected via the
+        // animator's duration scale (the system zeroes it under reduced motion).
+        splash.setOnExitAnimationListener { splashScreenViewProvider ->
+            val view = splashScreenViewProvider.view
+            val fade = android.view.animation.AlphaAnimation(1f, 0f).apply {
+                duration = 180
+                fillAfter = true
+            }
+            fade.setAnimationListener(object : android.view.animation.Animation.AnimationListener {
+                override fun onAnimationStart(animation: android.view.animation.Animation?) {}
+                override fun onAnimationEnd(animation: android.view.animation.Animation?) {
+                    splashScreenViewProvider.remove()
+                }
+                override fun onAnimationRepeat(animation: android.view.animation.Animation?) {}
+            })
+            view.startAnimation(fade)
+        }
         setContent {
             val theme by remember(container) {
                 container.settingsStore.themeMode
@@ -210,6 +233,12 @@ class MainActivity : FragmentActivity() {
         // ensures the user is prompted once per Activity instance when still ungranted rather
         // than silently losing all notifications.
         maybeRequestNotificationPermission()
+        // Surface a rejected deep link once, so a malformed opencode:// link doesn't appear
+        // to be silently ignored. Cleared after firing so a rotation doesn't re-toast.
+        if (showInvalidLinkToast) {
+            showInvalidLinkToast = false
+            android.widget.Toast.makeText(this, R.string.deep_link_invalid, android.widget.Toast.LENGTH_SHORT).show()
+        }
     }
 
     /** Capture text shared from another app so it can be prefilled into a session draft,
@@ -240,6 +269,24 @@ class MainActivity : FragmentActivity() {
                     container.setPendingSharedMedia(uris.map { it.toString() })
                     shareIntentHandled = true
                 }
+            } else if (action == Intent.ACTION_SEND) {
+                // A non-image file (e.g. a PDF or text file shared from another app): stage it
+                // as an attachment too, so the user can send it to the agent. The attachment
+                // pipeline handles non-image mimes with a generic file icon. Falls back to
+                // EXTRA_TEXT when no stream is present (a plain text share).
+                val uri = IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)
+                if (uri != null) {
+                    container.setPendingSharedMedia(listOf(uri.toString()))
+                    shareIntentHandled = true
+                } else {
+                    val text = intent.getStringExtra(Intent.EXTRA_TEXT)
+                        ?.takeIf { it.isNotBlank() }
+                        ?.take(10_000) // cap to prevent unbounded memory usage from malicious shares
+                    if (text != null) {
+                        container.setPendingShare(text)
+                        shareIntentHandled = true
+                    }
+                }
             } else {
                 val text = intent.getStringExtra(Intent.EXTRA_TEXT)
                     ?.takeIf { it.isNotBlank() }
@@ -266,6 +313,11 @@ class MainActivity : FragmentActivity() {
                             ?.takeIf { it.isNotBlank() }
                         container.requestOpenSession(it, profileId)
                         openSessionHandled = true
+                    } ?: run {
+                        // The link carried a session host but no valid id (or a blank/traversal
+                        // attempt). Surface a toast so the user knows the link was rejected,
+                        // rather than silently no-op'ing (which reads as "the app did nothing").
+                        if (!seg.isNullOrBlank()) showInvalidLinkToast = true
                     }
                 }
             }
@@ -275,7 +327,9 @@ class MainActivity : FragmentActivity() {
                 val rawPath = data.path?.removePrefix("/file/")?.let { android.net.Uri.decode(it) }
                 if (!openFileHandled) {
                     rawPath?.takeIf { it.isNotBlank() && VALID_FILE_PATH.containsMatchIn(it) && !it.contains("..") }
-                        ?.let { container.requestOpenFile(it); openFileHandled = true }
+                        ?.let { container.requestOpenFile(it); openFileHandled = true } ?: run {
+                            if (!rawPath.isNullOrBlank()) showInvalidLinkToast = true
+                        }
                 }
             }
             "new" -> {

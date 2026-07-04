@@ -231,7 +231,7 @@ fun RemoteImage(part: FilePart, ctx: ImageLoadContext, modifier: Modifier = Modi
  * the whole screen. Offers Save-to-gallery and Share actions via the top bar.
  */
 @Composable
-private fun FullscreenImageViewer(
+internal fun FullscreenImageViewer(
     request: ImageRequest,
     contentDescription: String,
     onDismiss: () -> Unit,
@@ -418,6 +418,37 @@ private fun FullscreenImageViewer(
                         maxLines = 2,
                         overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                         modifier = Modifier.semantics { invisibleToUser() },
+                    )
+                }
+            }
+            // Zoom-level indicator: a small chip at the top-start showing the current zoom
+            // factor (e.g. "2.5×") whenever the image is zoomed beyond 1×, with a tap action
+            // to reset to 1×. Aids orientation when deep-zoomed and gives a one-tap reset
+            // (otherwise only a double-tap toggles between 1× and the zoom target).
+            if (scale.value > 1.01f) {
+                val zoomText = remember(scale.value) {
+                    String.format(java.util.Locale.US, "%.1f×", scale.value)
+                }
+                val resetLabel = stringResource(R.string.reset_zoom)
+                androidx.compose.material3.Surface(
+                    color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.6f),
+                    shape = MaterialTheme.shapes.small,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(12.dp)
+                        .windowInsetsPadding(WindowInsets.statusBars)
+                        .clickable(role = Role.Button) {
+                            scope.launch { scale.animateTo(1f, zoomSpec) }
+                            offsetX = 0f
+                            offsetY = 0f
+                        }
+                        .semantics { this.contentDescription = "$zoomText, $resetLabel" },
+                ) {
+                    Text(
+                        zoomText,
+                        color = androidx.compose.ui.graphics.Color.White,
+                        style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                     )
                 }
             }
