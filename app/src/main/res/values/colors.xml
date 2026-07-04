@@ -5,4 +5,13 @@
     <!-- Matches the Compose light colorScheme background so the pre-Compose window
          doesn't flash a different shade than the UI paints. -->
     <color name="window_background">#F6F7FB</color>
+
+    <!-- Home-screen widget palette (light). Mirrors the Tokyo Night Light colorScheme so
+         the widget matches the app's theme instead of always showing the dark palette.
+         values-night/colors.xml carries the dark counterparts. -->
+    <color name="widget_on_background">#1A1B26</color>
+    <color name="widget_primary">#34548A</color>
+    <color name="widget_on_surface_variant">#444B6E</color>
+    <color name="widget_divider">#33747DAA</color>
+    <color name="widget_background">#EEF1F3FA</color>
 </resources>

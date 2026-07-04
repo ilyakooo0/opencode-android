@@ -9,12 +9,15 @@ import androidx.compose.material3.Typography
  *
  *  - [LocalChatTextScale]: a multiplier applied to chat/message/code font sizes.
  *  - [LocalCodeWrap]: whether code blocks soft-wrap long lines (vs. horizontal scroll).
+ *  - [LocalSearchHighlight]: an in-conversation search query; when non-null, matching
+ *    spans in completed (non-streaming) markdown are highlighted in-place.
  *
  * Provided once near the app root from the persisted [soy.iko.opencode.data.repo.SettingsStore]
  * values. Defaults keep the design behavior when no provider is present (e.g. previews/tests).
  */
 val LocalChatTextScale = compositionLocalOf { 1f }
 val LocalCodeWrap = compositionLocalOf { false }
+val LocalSearchHighlight = compositionLocalOf<String?> { null }
 
 /**
  * Return a copy of this [Typography] with every text role's font size and line height

@@ -5,4 +5,11 @@
     <color name="ic_launcher_background">#34548A</color>
     <!-- Matches the Compose dark colorScheme background (#1A1B26). -->
     <color name="window_background">#1A1B26</color>
+
+    <!-- Home-screen widget palette (dark). Mirrors the Tokyo Night dark colorScheme. -->
+    <color name="widget_on_background">#C0CAF5</color>
+    <color name="widget_primary">#7AA2F7</color>
+    <color name="widget_on_surface_variant">#9AA5CE</color>
+    <color name="widget_divider">#33565F89</color>
+    <color name="widget_background">#EE1F2335</color>
 </resources>

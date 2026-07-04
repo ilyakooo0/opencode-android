@@ -119,6 +119,9 @@ fun CommandPickerSheet(
             var query by rememberSaveable { mutableStateOf("") }
             val keyboardController = LocalSoftwareKeyboardController.current
             val haptics = LocalHapticFeedback.current
+            // Resolved once (not per-row): the semantics lambda below isn't a composable scope,
+            // so stringResource can't be called inside it.
+            val destructiveStateLabel = stringResource(R.string.command_confirmation_required)
             // Auto-focus the search field (and raise the keyboard) when the sheet opens, but skip
             // it for a short list that's faster to scan by eye than to filter.
             val searchFocus = remember { FocusRequester() }
@@ -183,7 +186,7 @@ fun CommandPickerSheet(
                                     }
                                 }
                                 .semantics {
-                                    if (destructive) stateDescription = "destructive"
+                                    if (destructive) stateDescription = destructiveStateLabel
                                 }
                                 .padding(horizontal = 24.dp, vertical = 12.dp),
                         ) {

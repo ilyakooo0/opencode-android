@@ -643,6 +643,11 @@
     <string name="shortcut_close">Cerrar diálogo / paleta</string>
     <string name="open_externally">Abrir externamente</string>
     <string name="open_externally_failed">No hay ninguna app para abrir este archivo</string>
+    <!-- Markdown links -->
+    <string name="open_link">Abrir</string>
+    <string name="copy_link">Copiar enlace</string>
+    <string name="link_unsupported">Tipo de enlace no admitido</string>
+    <string name="command_confirmation_required">Confirmación requerida</string>
     <string name="sort_by">Ordenar por</string>
     <string name="sort_size">Tamaño</string>
     <string name="sort_modified">Modificación</string>

@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -36,6 +37,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Typography
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -47,19 +49,28 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.delay
+import com.mikepenz.markdown.compose.LocalMarkdownAnnotator
 import com.mikepenz.markdown.compose.components.MarkdownComponentModel
 import com.mikepenz.markdown.compose.components.markdownComponents
 import com.mikepenz.markdown.m3.Markdown
+import com.mikepenz.markdown.model.DefaultMarkdownAnnotator
 import org.intellij.markdown.MarkdownElementTypes
 import org.intellij.markdown.ast.ASTNode
 import org.intellij.markdown.ast.getTextInNode
@@ -146,6 +157,54 @@ private fun MarkdownBody(
             )
         }
     }
+    val context = LocalContext.current
+    // Intercept link taps so the scheme can be validated before the library fires an
+    // implicit ACTION_VIEW. A hallucinated javascript:/file:/intent: URL must not launch
+    // an unexpected intent chooser. Taps are routed to a dialog offering Open (only for
+    // http/https/mailto) and Copy link. The default handler is captured here and invoked
+    // from the dialog's Open action.
+    val defaultUriHandler = LocalUriHandler.current
+    var pendingLink by remember { mutableStateOf<String?>(null) }
+    val safeUriHandler = remember {
+        object : UriHandler {
+            override fun openUri(uri: String) {
+                pendingLink = uri
+            }
+        }
+    }
+    // In-conversation search highlighting: when LocalSearchHighlight carries a query,
+    // wrap the default MarkdownAnnotator to add a translucent background span over each
+    // case-insensitive match in the rendered text. Skipped while streaming so the
+    // throttled re-render isn't invalidated on every token. Offsets are derived from the
+    // builder's actual rendered output (not the raw markdown), so highlights land on the
+    // right characters even inside formatted spans.
+    val searchQuery = LocalSearchHighlight.current?.takeIf { it.isNotBlank() }
+    val highlightColor = MaterialTheme.colorScheme.secondaryContainer
+    val baseAnnotator = LocalMarkdownAnnotator.current
+    val highlightAnnotator = if (searchQuery != null && !streaming) {
+        remember(baseAnnotator, searchQuery, highlightColor) {
+            DefaultMarkdownAnnotator(
+                annotate = { text, node ->
+                    // `this` is the AnnotatedString.Builder being filled for this node.
+                    val startLen = this.length
+                    val handled = baseAnnotator.annotate?.invoke(this, text, node) ?: false
+                    val endLen = this.length
+                    if (endLen > startLen) {
+                        addSearchHighlights(
+                            this,
+                            this.toString().substring(startLen, endLen),
+                            startLen,
+                            searchQuery,
+                            highlightColor,
+                        )
+                    }
+                    handled
+                },
+            )
+        }
+    } else {
+        null
+    }
     if (streaming) {
         // Bridge the markdown parameter into snapshot state so snapshotFlow can observe it.
         val markdownState = rememberUpdatedState(markdown)
@@ -182,24 +241,137 @@ private fun MarkdownBody(
         // selection handles would flicker) on each throttle commit. Partial selection
         // becomes available once the stream finishes; the per-message Copy button in
         // MessageBubble copies all TextParts at any time.
-        Markdown(
-            content = renderedContent,
-            modifier = modifier,
-            components = components,
-        )
+        // A polite live region announces streaming content to TalkBack users. The throttle
+        // (50ms) plus TalkBack's own polite-queue coalescing keeps announcements from
+        // interrupting on every token; the reader hears the reply grow in measured chunks.
+        CompositionLocalProvider(LocalUriHandler provides safeUriHandler) {
+            Markdown(
+                content = renderedContent,
+                modifier = modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                components = components,
+            )
+        }
         // A blinking caret at the end of a streaming reply gives a "live" typewriter feel.
         // Skipped under reduced motion (where blinking is discouraged). It's a tiny separate
         // element so the markdown AST isn't re-parsed to toggle it.
         if (!LocalReducedMotion.current) StreamingCaret()
     } else {
-        SelectionContainer {
-            Markdown(
-                content = markdown,
-                modifier = modifier,
-                components = components,
-            )
+        val content: @Composable () -> Unit = {
+            SelectionContainer {
+                Markdown(
+                    content = markdown,
+                    modifier = modifier,
+                    components = components,
+                )
+            }
+        }
+        CompositionLocalProvider(LocalUriHandler provides safeUriHandler) {
+            if (highlightAnnotator != null) {
+                CompositionLocalProvider(LocalMarkdownAnnotator provides highlightAnnotator) {
+                    content()
+                }
+            } else {
+                content()
+            }
         }
     }
+    // Open/copy dialog for the most recently tapped markdown link. Offer Open only for
+    // schemes the app is willing to hand to the system (http/https/mailto); for anything
+    // else, copy is the only escape so a model hallucination can't fire an unexpected intent.
+    pendingLink?.let { url ->
+        LinkActionDialog(
+            url = url,
+            canOpen = isSafeLinkScheme(url),
+            onDismiss = { pendingLink = null },
+            onOpen = {
+                pendingLink = null
+                runCatching { defaultUriHandler.openUri(url) }
+            },
+            onCopy = {
+                pendingLink = null
+                copyToClipboard(context, context.getString(R.string.copy_link), url)
+            },
+        )
+    }
+}
+
+/**
+ * Adds a translucent background span over each case-insensitive occurrence of [query] found
+ * in [chunk], mapping the chunk-relative offsets into the builder via [baseOffset]. Called
+ * from the search-highlight annotator wrapper; [chunk] is the text the default annotator
+ * appended to the builder for a single markdown node, so the offsets line up with what the
+ * user actually sees (markdown syntax already stripped).
+ */
+private fun addSearchHighlights(
+    builder: AnnotatedString.Builder,
+    chunk: String,
+    baseOffset: Int,
+    query: String,
+    color: Color,
+) {
+    val q = query.trim()
+    if (q.isEmpty()) return
+    var idx = chunk.indexOf(q, ignoreCase = true)
+    while (idx >= 0) {
+        builder.addStyle(
+            SpanStyle(background = color),
+            baseOffset + idx,
+            baseOffset + idx + q.length,
+        )
+        idx = chunk.indexOf(q, idx + q.length, ignoreCase = true)
+    }
+}
+
+/** Schemes the app is willing to forward to the system's URI handler from a markdown link. */
+private fun isSafeLinkScheme(uri: String): Boolean {
+    val scheme = uri.substringBefore(':', "").lowercase()
+    return scheme == "http" || scheme == "https" || scheme == "mailto"
+}
+
+/**
+ * Dialog shown when the user taps a markdown link. For http/https/mailto URIs, offers Open
+ * (via the platform default handler) and Copy link. For any other scheme, only Copy is
+ * offered (with an "unsupported link type" note) so a hallucinated javascript:/file: URL
+ * can't launch an unexpected intent.
+ */
+@Composable
+private fun LinkActionDialog(
+    url: String,
+    canOpen: Boolean,
+    onDismiss: () -> Unit,
+    onOpen: () -> Unit,
+    onCopy: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = url,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        },
+        text = {
+            if (!canOpen) {
+                Text(
+                    stringResource(R.string.link_unsupported),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+        },
+        confirmButton = {
+            androidx.compose.foundation.layout.Row {
+                TextButton(onClick = onCopy) { Text(stringResource(R.string.copy_link)) }
+                if (canOpen) {
+                    TextButton(onClick = onOpen) { Text(stringResource(R.string.open_link)) }
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
+        },
+    )
 }
 
 /**

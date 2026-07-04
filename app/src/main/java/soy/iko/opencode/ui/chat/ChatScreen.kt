@@ -165,6 +165,7 @@ import soy.iko.opencode.ui.components.ConnectionBanner
 import soy.iko.opencode.ui.components.DiffView
 import soy.iko.opencode.ui.components.PaletteAction
 import soy.iko.opencode.ui.components.LocalReducedMotion
+import soy.iko.opencode.ui.components.LocalSearchHighlight
 import soy.iko.opencode.ui.components.reducedMotionAnimateItem
 import soy.iko.opencode.ui.components.copyToClipboard
 import soy.iko.opencode.ui.components.LocalRelativeTimeTick
@@ -1138,6 +1139,11 @@ fun ChatScreen(
                 val tts = rememberTtsController()
                 val speakingMessageId by tts.speakingId
                 val ttsState by tts.state
+                // Provide the in-conversation search query to the markdown renderer so matching
+                // text spans are highlighted in-place (in addition to the focused-row highlight
+                // above). Scoped to the list so cleared search stops highlighting immediately.
+                val activeSearchQuery = searchQuery.takeIf { searchActive && it.isNotEmpty() }
+                CompositionLocalProvider(LocalSearchHighlight provides activeSearchQuery) {
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize(),
@@ -1325,13 +1331,13 @@ fun ChatScreen(
                     if (running) {
                         item(key = "__typing") {
                             val workingText = stringResource(R.string.working)
-                            // Elapsed-since-run chip: the typing row only composes while a run is
-                            // active, so anchoring the timer to first composition approximates the
-                            // run start and gives the user a sense of how long the agent has been
-                            // working — distinguishing a healthy long run from a hung one. Updates
+                            // Elapsed-since-run chip driven by the VM's runStartMs so the timer
+                            // survives LazyColumn recycling — a local remember reset to 0:00 when
+                            // the row was disposed and scrolled back into view. The VM stamps the
+                            // start on the real false→true transition (send/run/init), not on
+                            // SSE-reconnect relight, so reconnects don't restart the clock. Updates
                             // once per second; the value is decorative (the a11y label is the row's).
-                            var startMs by remember { mutableLongStateOf(0L) }
-                            LaunchedEffect(Unit) { startMs = System.currentTimeMillis() }
+                            val startMs by vm.runStartMs.collectAsStateWithLifecycle()
                             val elapsedMs by produceState(0L, startMs) {
                                 if (startMs == 0L) return@produceState
                                 while (true) {
@@ -1397,6 +1403,7 @@ fun ChatScreen(
                             }
                         }
                     }
+                }
                 }
                 }
                 }

@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Rounded, slightly translucent Tokyo Night surface for the sessions widget. -->
+<!-- Rounded, slightly translucent surface for the sessions widget. References a color
+     resource so it follows the light/dark theme (values/ vs values-night/) instead of
+     always rendering the dark Tokyo Night surface. -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
-    <solid android:color="#EE1F2335" />
+    <solid android:color="@color/widget_background" />
     <corners android:radius="16dp" />
 </shape>

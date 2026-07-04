@@ -329,6 +329,28 @@ class ChatViewModel(
     private val _running = MutableStateFlow(false)
     val running: StateFlow<Boolean> = _running.asStateFlow()
 
+    /**
+     * Wall-clock millis at which the current run started (0L when no run is active). Drives
+     * the typing row's elapsed timer so it survives LazyColumn recycling — a local `remember`
+     * in the row resets to 0:00 when the row is disposed and scrolled back into view. Stamped
+     * only on a real false→[beginRun] transition (send/run/init), not on SSE-reconnect relight
+     * (which continues an existing run and should keep its original elapsed time).
+     */
+    private val _runStartMs = MutableStateFlow(0L)
+    val runStartMs: StateFlow<Long> = _runStartMs.asStateFlow()
+
+    /**
+     * Atomically transition `_running` false→true and stamp the run-start timestamp. Returns
+     * false (with no state change) when a run is already in flight, so callers can surface a
+     * "busy" message instead of silently dropping the action. Centralizes the transition so
+     * every run-start path captures [runStartMs] consistently.
+     */
+    private fun beginRun(): Boolean {
+        if (!_running.compareAndSet(false, true)) return false
+        _runStartMs.value = System.currentTimeMillis()
+        return true
+    }
+
     /** True once the current run ended via SessionIdle/SessionError, until the next run starts
      *  (a send) or an SSE reconnect. Gates the run-indicator re-light below: isRunActivity
      *  returns true for ANY message.part.updated, so without this a trailing/replayed part
@@ -931,7 +953,7 @@ class ChatViewModel(
         if (conn == null || !container.isOnline.value) {
             return enqueueOffline(trimmed, attachments)
         }
-        if (!_running.compareAndSet(false, true)) return false
+        if (!beginRun()) return false
         // A new run is starting: reopen the re-light gate so this run's streamed parts keep the
         // indicator lit (and a later SessionIdle re-closes it).
         runEndedByIdle = false
@@ -1202,7 +1224,7 @@ class ChatViewModel(
         val conn = connection ?: return
         // A run is already in flight — surface feedback instead of silently dropping the
         // command (the picker stays openable during a run and dismisses on select).
-        if (!_running.compareAndSet(false, true)) {
+        if (!beginRun()) {
             _errorEvents.trySend(ChatError(container.string(R.string.command_busy)))
             return
         }
@@ -1416,7 +1438,7 @@ class ChatViewModel(
             _errorEvents.trySend(ChatError(container.string(R.string.needs_model)))
             return
         }
-        if (!_running.compareAndSet(false, true)) {
+        if (!beginRun()) {
             _errorEvents.trySend(ChatError(container.string(R.string.command_busy)))
             return
         }
@@ -1435,7 +1457,7 @@ class ChatViewModel(
     /** Analyze the project and (re)generate its AGENTS.md; the run streams back via SSE. */
     fun initProject() {
         val conn = connection ?: return
-        if (!_running.compareAndSet(false, true)) {
+        if (!beginRun()) {
             _errorEvents.trySend(ChatError(container.string(R.string.command_busy)))
             return
         }
@@ -1461,7 +1483,7 @@ class ChatViewModel(
             ?: _agents.value.firstOrNull { it.isPrimary }?.name
             ?: _agents.value.firstOrNull()?.name
             ?: DEFAULT_SHELL_AGENT
-        if (!_running.compareAndSet(false, true)) {
+        if (!beginRun()) {
             _errorEvents.trySend(ChatError(container.string(R.string.command_busy)))
             return
         }
