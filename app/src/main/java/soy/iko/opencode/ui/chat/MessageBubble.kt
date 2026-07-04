@@ -22,6 +22,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.FormatQuote
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.StopCircle
@@ -100,6 +101,7 @@ fun MessageBubble(
     isSpeaking: Boolean = false,
     onQuote: ((String) -> Unit)? = null,
     onBranch: ((String) -> Unit)? = null,
+    onRegenerate: (() -> Unit)? = null,
     sendStatus: MessageSendStatus? = null,
     isEdited: Boolean = false,
     onRetry: (() -> Unit)? = null,
@@ -108,7 +110,7 @@ fun MessageBubble(
     when (message.info) {
         is UserMessage -> UserBubble(message, imageContext, modifier, onOpenFile, onRevert, onEdit, onQuote, onBranch, sendStatus, isEdited, onRetry, onDismiss)
         is UnknownMessage -> UnknownMessageBlock(message, imageContext, modifier, onOpenFile)
-        else -> AssistantBlock(message, isRunning, imageContext, modifier, modelLabel, onOpenFile, onRevert, onSpeak, isSpeaking, onQuote, onBranch, isEdited)
+        else -> AssistantBlock(message, isRunning, imageContext, modifier, modelLabel, onOpenFile, onRevert, onSpeak, isSpeaking, onQuote, onBranch, onRegenerate, isEdited)
     }
 }
 
@@ -510,6 +512,7 @@ private fun AssistantBlock(
     isSpeaking: Boolean = false,
     onQuote: ((String) -> Unit)? = null,
     onBranch: ((String) -> Unit)? = null,
+    onRegenerate: (() -> Unit)? = null,
     isEdited: Boolean = false,
 ) {
     Column(
@@ -639,6 +642,7 @@ private fun AssistantBlock(
                     onRevert = onRevert,
                     onQuote = onQuote,
                     onBranch = onBranch,
+                    onRegenerate = onRegenerate,
                 )
             }
             MessageLongPressMenu(
@@ -668,11 +672,28 @@ private fun AssistantActions(
     onRevert: (() -> Unit)?,
     onQuote: ((String) -> Unit)? = null,
     onBranch: ((String) -> Unit)? = null,
+    onRegenerate: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val haptics = LocalHapticFeedback.current
     val copyLabel = stringResource(R.string.copy)
     Row(verticalAlignment = Alignment.CenterVertically) {
+        // Regenerate: re-run the preceding user prompt to get a fresh reply. Only meaningful
+        // for a completed, non-streaming message, so the caller gates it on !isRunning.
+        if (onRegenerate != null) {
+            val regenerateLabel = stringResource(R.string.regenerate)
+            IconButton(onClick = {
+                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onRegenerate()
+            }) {
+                Icon(
+                    Icons.Filled.Refresh,
+                    contentDescription = regenerateLabel,
+                    modifier = Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
         // Read-aloud toggle: speaks the assistant text via TextToSpeech, showing a Stop
         // icon while this message is the one being spoken.
         if (onSpeak != null && textToCopy != null) {

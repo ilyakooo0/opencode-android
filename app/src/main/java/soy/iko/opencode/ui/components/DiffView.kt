@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -216,6 +217,7 @@ fun DiffView(diff: String, modifier: Modifier = Modifier, saveKey: String? = nul
             TextButton(
                 onClick = { expanded = !expanded },
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp),
+                modifier = Modifier.defaultMinSize(minHeight = 48.dp),
             ) {
                 Text(
                     if (expanded) stringResource(R.string.show_less)

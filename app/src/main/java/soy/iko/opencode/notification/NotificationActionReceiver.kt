@@ -122,6 +122,26 @@ class NotificationActionReceiver : BroadcastReceiver() {
                     finishOnce()
                 }
             }
+            ACTION_RETRY_LAST -> {
+                // "Retry last" from an error notification: re-send the most recent user prompt
+                // for this session without opening the app. Cancels the error notification on
+                // success so the user sees the retry took effect.
+                val profileId = intent.getStringExtra(EXTRA_PROFILE_ID)?.takeIf { it.isNotBlank() }
+                val pending = goAsync()
+                val finished = AtomicBoolean(false)
+                var watchdogThread: Thread? = null
+                val finishOnce = {
+                    if (finished.compareAndSet(false, true)) {
+                        watchdogThread?.interrupt()
+                        pending.finish()
+                    }
+                }
+                watchdogThread = watchdog(finishOnce)
+                container.retryLastFromNotification(sessionId, profileId) { success ->
+                    if (success) SessionNotifications.cancel(context, sessionId)
+                    finishOnce()
+                }
+            }
         }
     }
 
@@ -145,6 +165,7 @@ class NotificationActionReceiver : BroadcastReceiver() {
         const val ACTION_REPLY = "soy.iko.opencode.action.REPLY"
         const val ACTION_STOP_RUN = "soy.iko.opencode.action.STOP_RUN"
         const val ACTION_MARK_READ = "soy.iko.opencode.action.MARK_READ"
+        const val ACTION_RETRY_LAST = "soy.iko.opencode.action.RETRY_LAST"
         const val EXTRA_SESSION_ID = "soy.iko.opencode.extra.SESSION_ID"
         const val EXTRA_PERMISSION_ID = "soy.iko.opencode.extra.PERMISSION_ID"
         const val EXTRA_PROFILE_ID = "soy.iko.opencode.extra.PROFILE_ID"

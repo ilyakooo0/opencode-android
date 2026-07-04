@@ -249,6 +249,28 @@ class ServerEditViewModel(
     }
 
     /**
+     * Populate the form from a pasted/decoded QR payload (a JSON blob the Share-as-QR flow
+     * produces) or an `opencode://server/...` link. Returns true when [text] was recognized and
+     * applied so the caller can surface a "fields filled" confirmation. Lets a user transfer a
+     * server config by pasting instead of scanning an image.
+     */
+    fun applyQrPayload(text: String): Boolean {
+        val qr = soy.iko.opencode.ui.components.parseQrPayload(text.trim()) ?: return false
+        _state.update {
+            it.copy(
+                baseUrl = qr.baseUrl,
+                username = qr.username.orEmpty(),
+                password = qr.password.orEmpty(),
+                requireHttps = qr.requireHttps,
+                certPin = qr.certPin.orEmpty(),
+                credentialsResult = null,
+                error = null,
+            )
+        }
+        return true
+    }
+
+    /**
      * Primary action: save the profile and connect to it. When the server needs auth and the
      * user hasn't supplied credentials yet, a connectivity probe reveals the username/password
      * fields instead of connecting with none — folding the former separate "Check connectivity"

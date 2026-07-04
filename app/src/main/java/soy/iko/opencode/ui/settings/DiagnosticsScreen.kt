@@ -21,8 +21,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.filled.IosShare
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
@@ -117,6 +119,26 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
     val shareSubject = stringResource(R.string.crash_report_share_subject)
     val timeTick = rememberRelativeTimeTick()
 
+    // "Export all": let the user save every crash report into a single text file they pick via
+    // SAF (CreateDocument). Concatenating avoids needing a zip dependency; each report is
+    // delimited so a single file stays readable and shareable for support/debugging.
+    val exportAllLauncher = rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.CreateDocument("text/plain"),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        shareScope.launch {
+            val ok = runCatchingCancellable {
+                withContext(Dispatchers.IO) {
+                    val all = reports.joinToString("\n\n${"=".repeat(60)}\n\n") { report ->
+                        "### ${report.fileName}\n\n" + logger.readReport(report.fileName).orEmpty()
+                    }
+                    context.contentResolver.openOutputStream(uri)?.use { it.write(all.toByteArray()) }
+                }
+            }.isSuccess
+            if (ok) showToast(context, context.getString(R.string.export_all))
+        }
+    }
+
     // Report-delete undo events, shown via a single collectLatest collector rather than a
     // per-confirm launch: a serialized showSnackbar would queue each report's undo behind the
     // previous one's full window. collectLatest instead cancels the current snackbar and shows
@@ -186,6 +208,13 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                 onBack = onBack,
                 actions = {
                     if (reports.isNotEmpty()) {
+                        IconButton(onClick = {
+                            runCatching {
+                                exportAllLauncher.launch("opencode-crash-reports.txt")
+                            }
+                        }) {
+                            Icon(Icons.Filled.IosShare, contentDescription = stringResource(R.string.export_all))
+                        }
                         IconButton(onClick = {
                             showClearAll = true
                         }) {

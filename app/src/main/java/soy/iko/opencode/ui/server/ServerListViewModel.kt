@@ -26,6 +26,9 @@ import kotlinx.coroutines.withTimeoutOrNull
  *  failed to connect so the snackbar can offer a Retry action. */
 data class ConnectError(val message: String, val profile: ServerProfile?)
 
+/** Sort order for the server list. RECENT (by lastUsed, the default) or NAME (A→Z). */
+enum class ServerSortMode { RECENT, NAME }
+
 class ServerListViewModel(private val container: AppContainer) : ViewModel() {
 
     /** Ids optimistically hidden while their deferred delete's undo window is open, so a
@@ -33,9 +36,25 @@ class ServerListViewModel(private val container: AppContainer) : ViewModel() {
      *  undo window. Mirrors [SessionListViewModel]'s optimistic-removal pattern. */
     private val _hiddenIds = MutableStateFlow<Set<String>>(emptySet())
 
+    /** Sort order for the list. A simple recent/name toggle (no persistence — the list is
+     *  short enough that re-picking is cheap, matching the screen's other ephemeral state). */
+    private val _sortMode = MutableStateFlow(ServerSortMode.RECENT)
+    val sortMode: StateFlow<ServerSortMode> = _sortMode.asStateFlow()
+
+    fun setSortMode(mode: ServerSortMode) {
+        if (_sortMode.value != mode) _sortMode.value = mode
+    }
+
     val profiles: StateFlow<List<ServerProfile>> =
-        combine(container.profileStore.profiles, _hiddenIds) { profiles, hidden ->
-            profiles.filterNot { it.id in hidden }
+        combine(container.profileStore.profiles, _hiddenIds, _sortMode) { profiles, hidden, sort ->
+            val visible = profiles.filterNot { it.id in hidden }
+            when (sort) {
+                ServerSortMode.RECENT -> visible.sortedByDescending { it.lastUsed }
+                ServerSortMode.NAME -> visible.sortedWith(
+                    compareBy<ServerProfile, String>(String.CASE_INSENSITIVE_ORDER) { it.displayLabel }
+                        .thenByDescending { it.lastUsed },
+                )
+            }
         }.stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(NetworkConfig.stateFlowSubscriptionTimeoutMs),

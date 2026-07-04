@@ -46,6 +46,7 @@ class MainActivity : FragmentActivity() {
     private var shareIntentHandled = false
     private var openSessionHandled = false
     private var newSessionHandled = false
+    private var openFileHandled = false
     // Cold-start prompts (crash report, notification rationale) rendered as Compose M3
     // dialogs. Hoisted as Activity-level mutableState so the non-composable trigger logic
     // (onCreate/onResume) can flip them and the Compose tree (inside OpencodeTheme) reads
@@ -72,6 +73,7 @@ class MainActivity : FragmentActivity() {
             shareIntentHandled = it.getBoolean(KEY_SHARE_HANDLED, false)
             openSessionHandled = it.getBoolean(KEY_OPEN_SESSION_HANDLED, false)
             newSessionHandled = it.getBoolean(KEY_NEW_SESSION_HANDLED, false)
+            openFileHandled = it.getBoolean(KEY_OPEN_FILE_HANDLED, false)
         }
         val container = (application as OpencodeApp).container
         handleIntent(intent)
@@ -183,6 +185,7 @@ class MainActivity : FragmentActivity() {
         shareIntentHandled = false
         openSessionHandled = false
         newSessionHandled = false
+        openFileHandled = false
         handleIntent(intent)
     }
 
@@ -247,21 +250,45 @@ class MainActivity : FragmentActivity() {
                 }
             }
         }
-        // Deep link: opencode://session/{sessionId}  (or the EXTRA_SESSION_ID extra).
-        val deepLinkId = intent?.takeIf { it.action == Intent.ACTION_VIEW }
-            ?.data
-            ?.takeIf { it.host == "session" }
-            ?.lastPathSegment
-        val id = deepLinkId ?: intent?.getStringExtra(EXTRA_SESSION_ID)?.takeIf { it.isNotBlank() }
-        // Validate: session ids are opaque server-generated identifiers. Reject anything
-        // with path separators or other traversal/control characters so a malicious deep
-        // link can't inject path components into the REST URL path.
-        // Guard against re-firing the retained ACTION_VIEW intent after process-death
-        // restore: onCreate calls handleIntent again with the original intent, so without
-        // this flag (mirroring shareIntentHandled) the session would re-open unexpectedly.
+        // Deep links under the opencode:// scheme. The manifest exposes several hosts:
+        //   session/{id}  → open (and switch to) that conversation
+        //   file/{path}   → open the file viewer at that workspace path
+        //   new           → start a fresh session
+        // The file path is percent-encoded by the link source; decode it here and validate the
+        // segment to keep path-traversal out of the REST path (mirroring the session guard).
+        val data = intent?.takeIf { it.action == Intent.ACTION_VIEW }?.data
+        when (data?.host) {
+            "session" -> {
+                val seg = data.lastPathSegment
+                if (!openSessionHandled) {
+                    seg?.takeIf { it.isNotBlank() && it.matches(VALID_SESSION_ID) }?.let {
+                        val profileId = intent.getStringExtra(NotificationActionReceiver.EXTRA_PROFILE_ID)
+                            ?.takeIf { it.isNotBlank() }
+                        container.requestOpenSession(it, profileId)
+                        openSessionHandled = true
+                    }
+                }
+            }
+            "file" -> {
+                // Reconstruct the path from the path segments after "file", preserving internal
+                // slashes. Decoded + validated against traversal/control characters.
+                val rawPath = data.path?.removePrefix("/file/")?.let { android.net.Uri.decode(it) }
+                if (!openFileHandled) {
+                    rawPath?.takeIf { it.isNotBlank() && VALID_FILE_PATH.containsMatchIn(it) && !it.contains("..") }
+                        ?.let { container.requestOpenFile(it); openFileHandled = true }
+                }
+            }
+            "new" -> {
+                if (!newSessionHandled) {
+                    container.requestNewSession()
+                    newSessionHandled = true
+                }
+            }
+        }
+        // Fall back to the EXTRA_SESSION_ID extra (notifications / widget) when no deep link matched.
         if (!openSessionHandled) {
-            id?.takeIf { it.isNotBlank() && it.matches(VALID_SESSION_ID) }?.let {
-                val profileId = intent?.getStringExtra(NotificationActionReceiver.EXTRA_PROFILE_ID)
+            intent?.getStringExtra(EXTRA_SESSION_ID)?.takeIf { it.isNotBlank() && it.matches(VALID_SESSION_ID) }?.let {
+                val profileId = intent.getStringExtra(NotificationActionReceiver.EXTRA_PROFILE_ID)
                     ?.takeIf { it.isNotBlank() }
                 container.requestOpenSession(it, profileId)
                 openSessionHandled = true
@@ -279,9 +306,14 @@ class MainActivity : FragmentActivity() {
         /** Session ids are alphanumeric with dashes/underscores. Reject path traversal. */
         private val VALID_SESSION_ID = Regex("[A-Za-z0-9_-]+")
 
+        /** A file path must be made of path-ish characters and not carry traversal. Used to
+         *  sanity-check the file deep link before handing it to the viewer. */
+        private val VALID_FILE_PATH = Regex("[A-Za-z0-9_\\-./ ]+")
+
         private const val KEY_SHARE_HANDLED = "shareIntentHandled"
         private const val KEY_OPEN_SESSION_HANDLED = "openSessionHandled"
         private const val KEY_NEW_SESSION_HANDLED = "newSessionHandled"
+        private const val KEY_OPEN_FILE_HANDLED = "openFileHandled"
         private const val KEY_NOTIF_PERM_REQUESTED = "notificationPermissionRequested"
     }
 
@@ -299,9 +331,11 @@ class MainActivity : FragmentActivity() {
         val openConsumed = container.pendingOpenSession.value == null
         val newConsumed = container.pendingNewSession.value == 0
         val shareConsumed = container.pendingShare.value == null && container.pendingSharedMedia.value.isEmpty()
+        val fileConsumed = container.pendingOpenFile.value == null
         outState.putBoolean(KEY_SHARE_HANDLED, shareIntentHandled && shareConsumed)
         outState.putBoolean(KEY_OPEN_SESSION_HANDLED, openSessionHandled && openConsumed)
         outState.putBoolean(KEY_NEW_SESSION_HANDLED, newSessionHandled && newConsumed)
+        outState.putBoolean(KEY_OPEN_FILE_HANDLED, openFileHandled && fileConsumed)
         outState.putBoolean(KEY_NOTIF_PERM_REQUESTED, notificationPermissionRequested)
     }
 

@@ -5,26 +5,35 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.os.Build
 import android.widget.Toast
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.automirrored.filled.WrapText
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Typography
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -32,12 +41,15 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -157,6 +169,10 @@ private fun MarkdownBody(
             modifier = modifier,
             components = components,
         )
+        // A blinking caret at the end of a streaming reply gives a "live" typewriter feel.
+        // Skipped under reduced motion (where blinking is discouraged). It's a tiny separate
+        // element so the markdown AST isn't re-parsed to toggle it.
+        if (!LocalReducedMotion.current) StreamingCaret()
     } else {
         SelectionContainer {
             Markdown(
@@ -174,6 +190,10 @@ private fun MarkdownBody(
  * copy button. Self-contained so it doesn't depend on the library's internal code-block
  * composables. The wrap toggle starts from the user's [LocalCodeWrap] preference but can
  * be flipped per-block.
+ *
+ * To avoid composing thousands of [Text] nodes at once (which can ANR/OOM on a long
+ * response), code blocks over [COLLAPSED_CODE_LINES] lines render only the head until the
+ * user expands — mirroring the collapse already applied to tool output and diffs.
  */
 @Composable
 private fun CodeWithCopy(model: MarkdownComponentModel) {
@@ -189,15 +209,32 @@ private fun CodeWithCopy(model: MarkdownComponentModel) {
     val code = remember(raw, isFenced) { extractCodeText(raw, isFenced) }
     val language = remember(raw, isFenced) { extractFenceLanguage(raw, isFenced) }
     val codeStyle = model.typography.code.copy(fontFamily = FontFamily.Monospace)
+    // A long code fence can carry hundreds of lines; computing lineCount walks the string
+    // once, memoized so a recomposition that doesn't change `code` (e.g. a wrap/expand flip)
+    // doesn't re-walk it.
+    val lineCount = remember(code) { code.count { it == '\n' } + 1 }
+    val canCollapse = lineCount > COLLAPSED_CODE_LINES
+    // Key expand state on the content so a growing (streaming) block re-seeds it. Collapsing
+    // primarily benefits completed messages; a streaming block that crosses the cap may snap
+    // to collapsed on the token that crosses it, which is acceptable (the head stays visible).
+    var expanded by rememberSaveable(code) { mutableStateOf(false) }
+    val displayCode = if (canCollapse && !expanded) {
+        remember(code, expanded) {
+            code.lineSequence().take(COLLAPSED_CODE_LINES).joinToString("\n")
+        }
+    } else {
+        code
+    }
     // Heuristic syntax highlighting, reusing the same highlighter the file viewer uses.
     // Resolved from the fence's info string (e.g. "kotlin"), not a filename. Memoized so a
     // scroll-induced recomposition doesn't re-tokenize; during streaming the MarkdownBody
     // throttle coalesces re-highlights. Falls back to plain text for unknown/missing tags
-    // (NONE) so un-tagged fences render unchanged.
+    // (NONE) so un-tagged fences render unchanged. Re-derived when displayCode changes so a
+    // collapsed head and the full expanded block are both highlighted correctly.
     val palette = rememberHighlightPalette()
     val syntax = remember(language) { language?.let { syntaxForLanguageTag(it) } }
-    val highlighted = remember(code, syntax, palette) {
-        if (syntax != null) highlightCode(code, syntax, palette) else AnnotatedString(code)
+    val highlighted = remember(displayCode, syntax, palette) {
+        if (syntax != null) highlightCode(displayCode, syntax, palette) else AnnotatedString(displayCode)
     }
     // Default per-block wrap from the global preference; re-seed if the preference changes
     // while this block is composed (rememberSaveable would over-persist across blocks).
@@ -231,6 +268,18 @@ private fun CodeWithCopy(model: MarkdownComponentModel) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.weight(1f),
             )
+            if (canCollapse) {
+                val moreLines = lineCount - COLLAPSED_CODE_LINES
+                IconButton(onClick = { expanded = !expanded }) {
+                    Icon(
+                        if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                        contentDescription = if (expanded) context.getString(R.string.show_less)
+                            else context.resources.getQuantityString(R.plurals.show_more_lines, moreLines, moreLines),
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
             val wrapLabel = context.getString(if (wrap) R.string.code_no_wrap else R.string.code_wrap)
             IconButton(onClick = { wrap = !wrap }) {
                 Icon(
@@ -273,7 +322,43 @@ private fun CodeWithCopy(model: MarkdownComponentModel) {
                 },
             )
         }
+        if (canCollapse && !expanded) {
+            val hidden = lineCount - COLLAPSED_CODE_LINES
+            TextButton(
+                onClick = { expanded = true },
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp),
+                modifier = Modifier
+                    .defaultMinSize(minHeight = 48.dp)
+                    .padding(bottom = 4.dp),
+            ) {
+                Text(pluralStringResource(R.plurals.show_more_lines, hidden, hidden))
+            }
+        }
     }
+}
+
+/** Max lines a code fence renders before collapsing to a head with a "show more" affordance. */
+private const val COLLAPSED_CODE_LINES = 200
+
+/**
+ * A small blinking caret shown at the tail of a streaming assistant reply for a "live"
+ * typewriter feel. Respects reduced motion (callers gate it). The blink is a gentle 1s alpha
+ * pulse; the caret sits inline at the leading edge so it reads as the next character arriving.
+ */
+@Composable
+private fun StreamingCaret() {
+    val transition = rememberInfiniteTransition(label = "caret")
+    val alpha by transition.animateFloat(
+        initialValue = 0.2f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(550), RepeatMode.Reverse),
+        label = "caretAlpha",
+    )
+    Text(
+        "▋",
+        style = MaterialTheme.typography.bodyLarge,
+        color = MaterialTheme.colorScheme.primary.copy(alpha = alpha),
+    )
 }
 
 /**

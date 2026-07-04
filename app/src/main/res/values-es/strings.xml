@@ -262,6 +262,12 @@
     <string name="notif_channel_permission_desc">Se muestra cuando un agente en ejecución necesita tu aprobación para continuar.</string>
     <string name="notif_channel_error">Errores de sesión</string>
     <string name="notif_channel_error_desc">Se muestra cuando falla la ejecución de una sesión en segundo plano.</string>
+    <string name="notif_channel_unread">Insignia de no leídos</string>
+    <string name="notif_channel_unread_desc">Muestra silenciosamente en el icono del launcher el recuento de sesiones no leídas.</string>
+    <plurals name="unread_sessions">
+        <item quantity="one">%d sesión sin leer</item>
+        <item quantity="other">%d sesiones sin leer</item>
+    </plurals>
     <string name="notif_permission_title">Se necesita aprobación en «%1$s»</string>
     <string name="notif_permission_fallback">Una herramienta quiere ejecutarse.</string>
     <string name="notif_error_title">La ejecución falló</string>
@@ -571,6 +577,7 @@
     <string name="clip_label_diff">Diferencias</string>
     <string name="clip_label_reasoning">Razonamiento</string>
     <string name="clip_label_output">Salida</string>
+    <string name="clip_label_input">Entrada</string>
     <string name="clip_label_path">Ruta</string>
     <string name="clip_label_message">Mensaje</string>
     <string name="clip_label_share">Enlace para compartir</string>
@@ -619,4 +626,49 @@
         <item quantity="one">%1$d minuto</item>
         <item quantity="other">%1$d minutos</item>
     </plurals>
+
+    <!-- UI/UX batch 3 -->
+    <string name="queue">Encolar</string>
+    <string name="tts_unavailable">La lectura en voz alta no está disponible</string>
+    <string name="regenerate">Regenerar</string>
+    <string name="find_in_conversation">Buscar en la conversación</string>
+    <string name="search_in_conversation">Buscar en la conversación</string>
+    <string name="search_match_count">%1$d de %2$d</string>
+    <string name="keyboard_shortcuts">Atajos de teclado</string>
+    <string name="keyboard_shortcuts_title">Atajos de teclado</string>
+    <string name="shortcut_open_palette">Abrir paleta de comandos</string>
+    <string name="shortcut_stop_run">Detener la ejecución activa</string>
+    <string name="shortcut_send">Enviar mensaje</string>
+    <string name="shortcut_newline">Salto de línea</string>
+    <string name="shortcut_close">Cerrar diálogo / paleta</string>
+    <string name="open_externally">Abrir externamente</string>
+    <string name="open_externally_failed">No hay ninguna app para abrir este archivo</string>
+    <string name="sort_by">Ordenar por</string>
+    <string name="sort_size">Tamaño</string>
+    <string name="sort_modified">Modificación</string>
+    <string name="show_file_details">Mostrar detalles del archivo</string>
+    <string name="export_all">Exportar todo</string>
+    <string name="source_code">Código fuente</string>
+    <string name="open_source_licenses">Licencias de código abierto</string>
+    <string name="report_issue">Reportar un problema</string>
+    <string name="privacy_policy">Privacidad</string>
+    <string name="url_source_code" translatable="false">https://github.com/anomalyco/opencode-android</string>
+    <string name="url_report_issue" translatable="false">https://github.com/anomalyco/opencode-android/issues</string>
+    <string name="retry_last">Reintentar último</string>
+    <string name="select_all">Seleccionar todo</string>
+    <string name="select">Seleccionar</string>
+    <plurals name="selected_count">
+        <item quantity="one">%d seleccionado</item>
+        <item quantity="other">%d seleccionados</item>
+    </plurals>
+    <string name="bulk_archive">Archivar</string>
+    <string name="bulk_delete">Eliminar</string>
+    <string name="bulk_mark_read">Marcar leído</string>
+    <string name="deep_link_invalid">Enlace no admitido</string>
+    <string name="file_details_size">%1$s</string>
+    <string name="file_details_size_date">%1$s · %2$s</string>
+    <string name="filter_by_project">Filtrar por este proyecto</string>
+    <string name="clear_project_filter">Quitar filtro de proyecto</string>
+    <string name="empty_file_detail_title">Ningún archivo seleccionado</string>
+    <string name="empty_file_detail_desc">Elige un archivo de la lista para verlo aquí.</string>
 </resources>

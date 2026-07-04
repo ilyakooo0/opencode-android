@@ -22,6 +22,7 @@ object NotificationChannels {
     const val COMPLETED = "session_completed"
     const val PERMISSION = "permission_request"
     const val ERROR = "session_error"
+    const val UNREAD = "unread_badge"
 
     fun create(context: Context) {
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
@@ -46,6 +47,18 @@ object NotificationChannels {
             // sound/vibration — both are actionable, but a failure is time-sensitive.
             NotificationChannel(ERROR, context.getString(R.string.notif_channel_error), NotificationManager.IMPORTANCE_HIGH).apply {
                 description = context.getString(R.string.notif_channel_error_desc)
+            },
+        )
+        // A silent, badge-only channel that carries the launcher icon's unread count (the only
+        // way to badge the launcher icon on Android is via a notification on a badge-enabled
+        // channel). Low importance + no sound/vibration so it never alerts; setShowBadge(true)
+        // so its number renders on the launcher icon.
+        nm.createNotificationChannel(
+            NotificationChannel(UNREAD, context.getString(R.string.notif_channel_unread), NotificationManager.IMPORTANCE_MIN).apply {
+                description = context.getString(R.string.notif_channel_unread_desc)
+                setShowBadge(true)
+                setSound(null, null)
+                enableVibration(false)
             },
         )
     }

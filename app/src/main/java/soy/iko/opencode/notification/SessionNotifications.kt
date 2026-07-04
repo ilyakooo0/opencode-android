@@ -35,6 +35,7 @@ object SessionNotifications {
 
     private const val NOTIF_ID_PREFIX = 4000
     private const val TAG = "SessionNotifications"
+    private const val UNREAD_BADGE_ID = NOTIF_ID_PREFIX + 9999
 
     // Distinct namespaces so a session can have a completion, a permission, and an error
     // notification outstanding at once without their ids colliding.
@@ -253,7 +254,7 @@ object SessionNotifications {
     fun postError(context: Context, sessionId: String, title: String, profileId: String? = null) {
         if (!canPost(context)) return
         val notifId = notifId(NS_ERROR, sessionId)
-        val notification = NotificationCompat.Builder(context, NotificationChannels.ERROR)
+        val builder = NotificationCompat.Builder(context, NotificationChannels.ERROR)
             .setSmallIcon(R.drawable.ic_stat_notify)
             .setContentTitle(context.getString(R.string.notif_error_title))
             .setContentText(context.getString(R.string.notif_error_text, title))
@@ -271,7 +272,19 @@ object SessionNotifications {
                     .setContentTitle(context.getString(R.string.notif_error_public))
                     .build(),
             )
-            .build()
+        // A "Retry last" action lets the user re-run the failed prompt straight from the shade
+        // without opening the app — a failed run is exactly when a one-tap retry is most useful.
+        val retryIntent = Intent(context, NotificationActionReceiver::class.java).apply {
+            action = NotificationActionReceiver.ACTION_RETRY_LAST
+            putExtra(NotificationActionReceiver.EXTRA_SESSION_ID, sessionId)
+            profileId?.let { putExtra(NotificationActionReceiver.EXTRA_PROFILE_ID, it) }
+        }
+        val retryPending = PendingIntent.getBroadcast(
+            context, notifId + 10, retryIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        builder.addAction(R.drawable.ic_action_refresh, context.getString(R.string.retry_last), retryPending)
+        val notification = builder.build()
         runCatching { NotificationManagerCompat.from(context).notify(notifId, notification) }
             .onFailure { Log.w(TAG, "Failed to post error notification", it) }
         runCatching { postGroupSummary(context, NotificationChannels.ERROR, GROUP_ERROR, SUMMARY_ERROR_ID) }
@@ -330,6 +343,35 @@ object SessionNotifications {
     fun cancel(context: Context, sessionId: String) {
         NotificationManagerCompat.from(context).cancel(notifId(NS_COMPLETED, sessionId))
         maybeCancelSummary(context, GROUP_COMPLETED, SUMMARY_COMPLETED_ID)
+    }
+
+    /**
+     * Reflect the total number of unread sessions as a launcher-icon badge. Android only badges
+     * the launcher icon via a notification on a badge-enabled channel, so this posts a silent,
+     * min-importance notification with [.setNumber] on the [NotificationChannels.UNREAD] channel
+     * when [totalUnread] > 0, and cancels it when it drops to 0. Skipped entirely without
+     * POST_NOTIFICATIONS permission (Android 13+) — the badge just won't show, no error.
+     */
+    @SuppressLint("MissingPermission")
+    fun updateUnreadBadge(context: Context, totalUnread: Int) {
+        val nm = NotificationManagerCompat.from(context)
+        if (totalUnread <= 0) {
+            nm.cancel(UNREAD_BADGE_ID)
+            return
+        }
+        if (!canPost(context)) return
+        val notification = NotificationCompat.Builder(context, NotificationChannels.UNREAD)
+            .setSmallIcon(R.drawable.ic_stat_notify)
+            .setContentTitle(context.getString(R.string.app_name))
+            .setContentText(context.resources.getQuantityString(R.plurals.unread_sessions, totalUnread, totalUnread))
+            .setNumber(totalUnread.coerceAtMost(999))
+            .setOnlyAlertOnce(true)
+            .setSilent(true)
+            .setShowWhen(false)
+            .setPriority(NotificationCompat.PRIORITY_MIN)
+            .build()
+        runCatching { nm.notify(UNREAD_BADGE_ID, notification) }
+            .onFailure { Log.w(TAG, "Failed to post unread badge notification", it) }
     }
 
     /** Cancel a session's permission notification (on reply, or when the user opens it). */

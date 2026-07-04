@@ -30,9 +30,12 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Article
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.SortByAlpha
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -80,6 +83,7 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import soy.iko.opencode.data.model.FileNode
 import soy.iko.opencode.data.model.FileStatusEntry
 import soy.iko.opencode.data.model.FindMatch
 import soy.iko.opencode.data.model.SymbolResult
@@ -90,6 +94,7 @@ import soy.iko.opencode.ui.components.AppTopBar
 import soy.iko.opencode.ui.components.ConnectionBannerFor
 import soy.iko.opencode.ui.components.EmptyState
 import soy.iko.opencode.ui.components.copyToClipboard
+import soy.iko.opencode.ui.components.relativeTime
 import soy.iko.opencode.ui.vmFactory
 import soy.iko.opencode.util.runCatchingCancellable
 
@@ -514,14 +519,29 @@ private fun DirectoryListing(
     // hides them by default (the common case for browsing a repo) and lets the user reveal
     // .env / .git / .opencode on demand. Default off so the listing isn't cluttered.
     var showHidden by rememberSaveable { mutableStateOf(false) }
+    // Sort key for files within the listing. Name is the default (and the only axis the server
+    // reliably supports); Size/Modified appear only when the server emits size/mtime (otherwise
+    // those sorts are no-ops on null fields), gated behind a menu so they don't clutter the bar.
+    var sortKey by rememberSaveable { mutableStateOf(FileSortKey.NAME) }
+    var sortDesc by rememberSaveable { mutableStateOf(false) }
     val visible = remember(state.entries, showHidden) {
         if (showHidden) state.entries else state.entries.filterNot { it.name.startsWith(".") }
     }
-    val sorted = remember(visible, foldersFirst) {
-        if (!foldersFirst) visible
-        else {
+    val sorted = remember(visible, foldersFirst, sortKey, sortDesc) {
+        // Null size/mtime coerce to values that sink the unknown entries to the bottom in the
+        // default (ascending) view, so a partially-populated listing keeps sized/dated files on top.
+        val comparator = when (sortKey) {
+            FileSortKey.NAME -> compareBy<FileNode> { it.name.lowercase() }
+            FileSortKey.SIZE -> compareBy<FileNode> { it.size ?: Long.MAX_VALUE }
+            FileSortKey.MODIFIED -> compareBy<FileNode> { it.mtime ?: 0L }
+        }.let { if (sortDesc) it.reversed() else it }
+        if (foldersFirst) {
             val (dirs, files) = visible.partition { it.isDirectory }
-            dirs.sortedBy { it.name.lowercase() } + files.sortedBy { it.name.lowercase() }
+            // Directories always sort by name (size/date on a folder is rarely meaningful);
+            // the chosen key applies to the files within.
+            dirs.sortedBy { it.name.lowercase() } + files.sortedWith(comparator)
+        } else {
+            visible.sortedWith(comparator)
         }
     }
     LazyColumn(modifier = Modifier.fillMaxSize()) {
@@ -537,6 +557,46 @@ private fun DirectoryListing(
                 horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                var showSortMenu by remember { mutableStateOf(false) }
+                androidx.compose.material3.FilterChip(
+                    selected = sortKey != FileSortKey.NAME || sortDesc,
+                    onClick = { showSortMenu = true },
+                    leadingIcon = {
+                        Icon(Icons.Filled.SortByAlpha, contentDescription = null, modifier = Modifier.size(16.dp))
+                    },
+                    label = { Text(stringResource(R.string.sort_by), style = MaterialTheme.typography.labelSmall) },
+                )
+                DropdownMenu(expanded = showSortMenu, onDismissRequest = { showSortMenu = false }) {
+                    val labels = remember {
+                        mapOf(
+                            FileSortKey.NAME to R.string.sort_name,
+                            FileSortKey.SIZE to R.string.sort_size,
+                            FileSortKey.MODIFIED to R.string.sort_modified,
+                        )
+                    }
+                    FileSortKey.entries.forEach { key ->
+                        DropdownMenuItem(
+                            text = {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(stringResource(labels[key]!!), modifier = Modifier.weight(1f))
+                                    if (sortKey == key) {
+                                        Icon(
+                                            if (sortDesc) Icons.Filled.KeyboardArrowDown else Icons.Filled.KeyboardArrowUp,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(18.dp),
+                                        )
+                                    }
+                                }
+                            },
+                            onClick = {
+                                // Tapping the active key flips the direction; tapping a different
+                                // key switches to it (ascending by default).
+                                if (sortKey == key) sortDesc = !sortDesc else { sortKey = key; sortDesc = false }
+                                showSortMenu = false
+                            },
+                        )
+                    }
+                }
                 androidx.compose.material3.FilterChip(
                     selected = showHidden,
                     onClick = { showHidden = !showHidden },
@@ -562,6 +622,8 @@ private fun DirectoryListing(
                 onCopyPath = {
                     copyToClipboard(context, context.getString(R.string.clip_label_path), node.path)
                 },
+                size = node.size,
+                mtime = node.mtime,
                 status = state.statusMap[node.path],
                 modifier = Modifier.animateItem(),
             )
@@ -585,6 +647,8 @@ private fun FileRow(
     onClick: () -> Unit,
     status: FileStatusEntry? = null,
     sublabel: String? = null,
+    size: Long? = null,
+    mtime: Long? = null,
     onCopyPath: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
@@ -634,9 +698,19 @@ private fun FileRow(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            if (sublabel != null) {
+            // Secondary line: a caller-supplied sublabel (directory in search results) and/or
+            // the file's size + last-modified time when the server provides them. Combines the
+            // fragments so a single muted line carries all metadata instead of stacking rows.
+            val detailParts = buildList {
+                if (sublabel != null) add(sublabel)
+                if (!icon) {
+                    size?.let { add(formatFileSize(it)) }
+                    mtime?.let { add(relativeTime(it)) }
+                }
+            }
+            if (detailParts.isNotEmpty()) {
                 Text(
-                    sublabel,
+                    detailParts.joinToString(" · "),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -690,6 +764,25 @@ private fun StatusBadge(status: FileStatusEntry) {
             )
         }
     }
+}
+
+/** Sort axis for the directory listing. Name is always available; Size/Modified depend on the
+ *  server emitting size/mtime (otherwise they sort nulls to the bottom). */
+private enum class FileSortKey { NAME, SIZE, MODIFIED }
+
+/** Format a byte count as a compact human-readable size (e.g. 1.2 KB, 3.4 MB). Uses 1024-based
+ *  units with one decimal place, matching how file managers render sizes. */
+private fun formatFileSize(bytes: Long): String {
+    if (bytes < 1024) return "$bytes B"
+    val units = arrayOf("KB", "MB", "GB", "TB")
+    var value = bytes.toDouble() / 1024.0
+    var unit = 0
+    while (value >= 1024 && unit < units.lastIndex) {
+        value /= 1024.0
+        unit++
+    }
+    val formatted = if (value >= 100) "%.0f".format(value) else "%.1f".format(value)
+    return "$formatted ${units[unit]}"
 }
 
 /** Pick an icon for a file by its extension so the directory listing is scannable instead of a

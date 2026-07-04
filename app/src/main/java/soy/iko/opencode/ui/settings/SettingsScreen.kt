@@ -28,8 +28,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Feedback
 import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.QueryStats
@@ -609,6 +611,33 @@ fun SettingsScreen(
                 }
                 Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+            // Discoverability links from the About section: source code and issue tracker.
+            // Opens in the browser via ACTION_VIEW; if nothing can handle it, the chooser just
+            // shows no options (a no-op), which is acceptable for these optional links.
+            NavRow(
+                icon = Icons.Filled.Code,
+                label = stringResource(R.string.source_code),
+                enabled = true,
+                onClick = {
+                    runCatching {
+                        context.startActivity(
+                            Intent(Intent.ACTION_VIEW, android.net.Uri.parse(context.getString(R.string.url_source_code))),
+                        )
+                    }
+                },
+            )
+            NavRow(
+                icon = Icons.Filled.Feedback,
+                label = stringResource(R.string.report_issue),
+                enabled = true,
+                onClick = {
+                    runCatching {
+                        context.startActivity(
+                            Intent(Intent.ACTION_VIEW, android.net.Uri.parse(context.getString(R.string.url_report_issue))),
+                        )
+                    }
+                },
+            )
         }
     }
 

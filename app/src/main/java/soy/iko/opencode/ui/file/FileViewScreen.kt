@@ -40,6 +40,7 @@ import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -239,6 +240,30 @@ fun FileViewScreen(
                     runCatchingCancellable { context.startActivity(Intent.createChooser(send, shareLabel)) }
                         .onFailure { scope.launch { snackbar.showSnackbar(context.getString(R.string.no_share_app)) } }
                 },
+                onOpenExternally = {
+                    // Write the viewed content to a cache file and hand a content:// URI to an
+                    // external app via ACTION_VIEW, so a file the in-app viewer can only show as
+                    // text (or a large file beyond the render cap) can be opened in a real editor.
+                    scope.launch {
+                        val ok = runCatchingCancellable {
+                            withContext(Dispatchers.IO) {
+                                val dir = java.io.File(context.cacheDir, "external").apply { mkdirs() }
+                                val file = java.io.File(dir, filename.ifBlank { "file.txt" })
+                                file.writeText(rawText)
+                                val authority = context.packageName + ".fileprovider"
+                                val uri = androidx.core.content.FileProvider.getUriForFile(context, authority, file)
+                                val view = Intent(Intent.ACTION_VIEW).apply {
+                                    setDataAndType(uri, android.webkit.MimeTypeMap.getSingleton()
+                                        .getMimeTypeFromExtension(filename.substringAfterLast('.', ""))
+                                        ?: "text/plain")
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+                                }
+                                context.startActivity(view)
+                            }
+                        }.isSuccess
+                        if (!ok) scope.launch { snackbar.showSnackbar(context.getString(R.string.open_externally_failed)) }
+                    }
+                },
             )
         },
         snackbarHost = { SnackbarHost(snackbar) },
@@ -420,6 +445,7 @@ private fun FileViewTopBar(
     onCopy: () -> Unit,
     onCopyPath: () -> Unit,
     onShare: () -> Unit,
+    onOpenExternally: () -> Unit,
 ) {
     TopAppBar(
         title = {
@@ -509,6 +535,11 @@ private fun FileViewTopBar(
                         text = { Text(stringResource(R.string.share)) },
                         onClick = { onShare(); menuExpanded = false },
                         leadingIcon = { Icon(Icons.Filled.Share, contentDescription = null) },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.open_externally)) },
+                        onClick = { onOpenExternally(); menuExpanded = false },
+                        leadingIcon = { Icon(Icons.Filled.OpenInNew, contentDescription = null) },
                     )
                 }
             }

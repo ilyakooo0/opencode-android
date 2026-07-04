@@ -15,8 +15,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Sort
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Dns
@@ -196,6 +198,31 @@ fun ServerListScreen(
             TopAppBar(
                 title = { Text(stringResource(R.string.servers_title)) },
                 actions = {
+                    // Sort menu (recent / name). Only earns its space once there are a few
+                    // servers to order; with one or two it's faster to scan by eye.
+                    if (profiles.size > 1) {
+                        val sortMode by vm.sortMode.collectAsStateWithLifecycle()
+                        var sortMenu by remember { mutableStateOf(false) }
+                        IconButton(onClick = { sortMenu = true }) {
+                            Icon(Icons.Filled.Sort, contentDescription = stringResource(R.string.sort_by))
+                        }
+                        DropdownMenu(expanded = sortMenu, onDismissRequest = { sortMenu = false }) {
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.sort_recent)) },
+                                trailingIcon = {
+                                    if (sortMode == ServerSortMode.RECENT) Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(18.dp))
+                                },
+                                onClick = { vm.setSortMode(ServerSortMode.RECENT); sortMenu = false },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.sort_name)) },
+                                trailingIcon = {
+                                    if (sortMode == ServerSortMode.NAME) Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(18.dp))
+                                },
+                                onClick = { vm.setSortMode(ServerSortMode.NAME); sortMenu = false },
+                            )
+                        }
+                    }
                     // Import a server by decoding a QR code from a saved image (e.g. a screenshot
                     // of another device's Share-as-QR dialog). Camera scanning would need extra
                     // permissions; an image picker reuses the system gallery and covers the

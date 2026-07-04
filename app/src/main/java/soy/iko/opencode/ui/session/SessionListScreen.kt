@@ -3,6 +3,7 @@ package soy.iko.opencode.ui.session
 import androidx.compose.foundation.background
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -34,6 +35,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DoneAll
+import androidx.compose.material.icons.filled.MarkChatRead
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Link
@@ -91,6 +93,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -169,6 +172,14 @@ fun SessionListScreen(
     var pendingDeleteId by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingRenameId by rememberSaveable { mutableStateOf<String?>(null) }
     var showDisconnectConfirm by rememberSaveable { mutableStateOf(false) }
+    // Multi-select: a set of selected session ids. Non-empty ⇒ selection mode (contextual top
+    // bar, tap-to-toggle instead of tap-to-open, FAB hidden). Long-press a card to enter it.
+    var selectedIds by rememberSaveable { mutableStateOf(emptySet<String>()) }
+    val inSelection = selectedIds.isNotEmpty()
+    var showBulkDelete by rememberSaveable { mutableStateOf(false) }
+    fun toggleSelected(id: String) {
+        selectedIds = if (id in selectedIds) selectedIds - id else selectedIds + id
+    }
     val pendingDelete = pendingDeleteId?.let { id -> state.sessions.firstOrNull { it.id == id } }
     val pendingRename = pendingRenameId?.let { id -> state.sessions.firstOrNull { it.id == id } }
 
@@ -177,6 +188,13 @@ fun SessionListScreen(
     // thread (the store write dispatches to IO); the widget refresh no-ops when none is placed.
     val platformContext = LocalContext.current.applicationContext
     SyncShortcutsAndWidget(platformContext, state)
+
+    // Reflect total unread sessions as a launcher-icon badge (silent notification on a
+    // badge-enabled channel). Skips itself when the session list isn't loading a server yet.
+    val totalUnread = remember(unread) { unread.values.sum() }
+    LaunchedEffect(totalUnread) {
+        soy.iko.opencode.notification.SessionNotifications.updateUnreadBadge(platformContext, totalUnread)
+    }
 
     // Close the open dropdown on back press instead of navigating away.
     BackHandler(enabled = showServerMenu) { showServerMenu = false }
@@ -239,6 +257,43 @@ fun SessionListScreen(
 
     Scaffold(
         topBar = {
+            // Contextual action bar while sessions are selected (long-press to enter): count as
+            // the title, with select-all and bulk archive / mark-read / delete actions. Mirrors
+            // the standard Android selection-mode pattern; exits (clearing the selection) on the
+            // back/close action or the system back gesture (BackHandler below).
+            if (inSelection) {
+                TopAppBar(
+                    title = { Text(pluralStringResource(R.plurals.selected_count, selectedIds.size, selectedIds.size)) },
+                    navigationIcon = {
+                        IconButton(onClick = { selectedIds = emptySet() }) {
+                            Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.cancel))
+                        }
+                    },
+                    actions = {
+                        val visibleSessions = state.filtered
+                        IconButton(onClick = {
+                            selectedIds = visibleSessions.map { it.id }.toSet()
+                        }) {
+                            Icon(Icons.Filled.DoneAll, contentDescription = stringResource(R.string.select_all))
+                        }
+                        IconButton(onClick = {
+                            vm.bulkMarkRead(selectedIds)
+                            selectedIds = emptySet()
+                        }) {
+                            Icon(Icons.Filled.MarkChatRead, contentDescription = stringResource(R.string.bulk_mark_read))
+                        }
+                        IconButton(onClick = {
+                            vm.bulkArchive(selectedIds, archive = true)
+                            selectedIds = emptySet()
+                        }) {
+                            Icon(Icons.Filled.Archive, contentDescription = stringResource(R.string.bulk_archive))
+                        }
+                        IconButton(onClick = { showBulkDelete = true }) {
+                            Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.bulk_delete))
+                        }
+                    },
+                )
+            } else {
             TopAppBar(
                 title = {
                     ServerSwitcherMenu(
@@ -318,30 +373,35 @@ fun SessionListScreen(
                     }
                 },
             )
+            }
         },
         snackbarHost = { SnackbarHost(snackbar) },
         floatingActionButton = {
-            ExtendedFloatingActionButton(
-                onClick = openNewSession,
-                icon = {
-                    if (creating) {
-                        CircularProgressIndicator(
-                            Modifier.size(24.dp),
-                            strokeWidth = 2.dp,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer,
-                        )
-                    } else {
-                        Icon(Icons.Filled.Add, contentDescription = null)
-                    }
-                },
-                text = { Text(stringResource(R.string.new_session)) },
-                // Disable while a creation is in flight so a double-tap can't spawn two
-                // sessions. The container guard in createSession is the real protection;
-                // this is the visual signal.
-                expanded = !creating,
-            )
+            if (!inSelection) {
+                ExtendedFloatingActionButton(
+                    onClick = openNewSession,
+                    icon = {
+                        if (creating) {
+                            CircularProgressIndicator(
+                                Modifier.size(24.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            )
+                        } else {
+                            Icon(Icons.Filled.Add, contentDescription = null)
+                        }
+                    },
+                    text = { Text(stringResource(R.string.new_session)) },
+                    // Disable while a creation is in flight so a double-tap can't spawn two
+                    // sessions. The container guard in createSession is the real protection;
+                    // this is the visual signal.
+                    expanded = !creating,
+                )
+            }
         },
     ) { padding ->
+        // Exit selection mode on the system back gesture instead of navigating away.
+        androidx.activity.compose.BackHandler(enabled = inSelection) { selectedIds = emptySet() }
         CompositionLocalProvider(LocalRelativeTimeTick provides timeTick) {
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
             ConnectionBanner(
@@ -364,6 +424,10 @@ fun SessionListScreen(
                 onDelete = { pendingDeleteId = it },
                 onPin = { vm.togglePin(it) },
                 onArchive = { vm.toggleArchive(it) },
+                onFilterByDirectory = vm::setDirectoryFilter,
+                inSelection = inSelection,
+                selectedIds = selectedIds,
+                onToggleSelect = ::toggleSelected,
             )
         }
         }
@@ -408,6 +472,25 @@ fun SessionListScreen(
         )
     }
 
+    if (showBulkDelete) {
+        val count = selectedIds.size
+        AlertDialog(
+            onDismissRequest = { showBulkDelete = false },
+            title = { Text(stringResource(R.string.delete)) },
+            text = { Text(pluralStringResource(R.plurals.selected_count, count, count)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    showBulkDelete = false
+                    vm.bulkDelete(selectedIds)
+                    selectedIds = emptySet()
+                }) { Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showBulkDelete = false }) { Text(stringResource(R.string.cancel)) }
+            },
+        )
+    }
+
     if (showNewSessionDialog) {
         // Distinct session directories, most-recent first (state.sessions is sorted), so the
         // picker can offer directories the user has recently worked in even if the server's
@@ -447,6 +530,10 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
     onDelete: (String) -> Unit,
     onPin: (Session) -> Unit,
     onArchive: (Session) -> Unit,
+    onFilterByDirectory: (String) -> Unit,
+    inSelection: Boolean,
+    selectedIds: Set<String>,
+    onToggleSelect: (String) -> Unit,
 ) {
     when {
         state.loading -> {
@@ -657,7 +744,8 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
                                     session = session,
                                     preview = state.previews[session.id],
                                     unreadCount = unread[session.id] ?: 0,
-                                    isSelected = session.id == selectedSessionId,
+                                    isSelected = if (inSelection) session.id in selectedIds
+                                        else session.id == selectedSessionId,
                                     isPinned = isPinned,
                                     isArchived = isArchived,
                                     onClick = onCardClick,
@@ -665,6 +753,11 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
                                     onDelete = onCardDelete,
                                     onPin = onCardPin,
                                     onArchive = onCardArchive,
+                                    onFilterByDirectory = onFilterByDirectory,
+                                    isDirectoryFiltered = state.directoryFilter != null &&
+                                        session.directory?.trimEnd('/') == state.directoryFilter,
+                                    inSelection = inSelection,
+                                    onToggleSelect = { onToggleSelect(session.id) },
                                     modifier = Modifier.testTag("session_card"),
                                 )
                             }
@@ -800,7 +893,7 @@ private fun SessionTitle(text: String, unread: Boolean) {
     )
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun SessionCard(
     session: Session,
@@ -815,10 +908,15 @@ private fun SessionCard(
     isSelected: Boolean = false,
     isPinned: Boolean = false,
     isArchived: Boolean = false,
+    onFilterByDirectory: ((String) -> Unit)? = null,
+    isDirectoryFiltered: Boolean = false,
+    inSelection: Boolean = false,
+    onToggleSelect: (() -> Unit)? = null,
 ) {
     // In two-pane mode the selected row is highlighted (border + container tint) so
     // the user can tell which conversation is open in the detail pane at a glance —
-    // without it every row looks identical and the open session is a guess.
+    // without it every row looks identical and the open session is a guess. In multi-select
+    // mode a checked row is tinted the same way.
     val containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer
         else MaterialTheme.colorScheme.surface
     val borderColor = if (isSelected) MaterialTheme.colorScheme.primary
@@ -832,7 +930,16 @@ private fun SessionCard(
             // Merge the row's text into one semantics node so TalkBack reads it as a single
             // item; the overflow menu button stays its own actionable node.
             .semantics(mergeDescendants = true) {}
-            .clickable(role = Role.Button) { onClick() },
+            .combinedClickable(
+                role = Role.Button,
+                // In selection mode a tap toggles the row's checked state; otherwise it opens
+                // the conversation. A long-press enters selection mode on that row.
+                onClick = {
+                    if (inSelection && onToggleSelect != null) onToggleSelect() else onClick()
+                },
+                onLongClick = onToggleSelect?.let { { it() } },
+                onLongClickLabel = onToggleSelect?.let { stringResource(R.string.select) },
+            ),
         colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = containerColor),
         border = androidx.compose.foundation.BorderStroke(1.dp, borderColor),
     ) {
@@ -841,11 +948,21 @@ private fun SessionCard(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                // In multi-select mode a checkbox leads the row so the checked state is obvious,
+                // and the monogram is hidden (it competes for the leading slot).
+                if (inSelection) {
+                    androidx.compose.material3.Checkbox(
+                        checked = isSelected,
+                        onCheckedChange = { onToggleSelect?.invoke() },
+                    )
+                }
+                if (!inSelection) {
                 // Leading monogram avatar so a long list is scannable at a glance instead of a
                 // wall of identical text rows. Color is derived (stably) from the session id so
                 // the same session always gets the same tint, while staying within tonal theme
                 // roles to match the Tokyo Night palette.
                 SessionAvatar(session)
+                }
                 Column(modifier = Modifier.weight(1f).padding(start = 12.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         if (unreadCount > 0) {
@@ -928,22 +1045,40 @@ private fun SessionCard(
                     // otherwise-similar sessions apart at a glance.
                     session.displayDirectory?.let { dir ->
                         val dirDesc = stringResource(R.string.session_directory_desc, session.directory.orEmpty())
+                        // Tapping the directory chip filters the list to this project (and taps
+                        // again to clear), so a user working across sessions in one repo can scope
+                        // the list without typing. Highlighted while the filter is active.
+                        val filterLabel = stringResource(
+                            if (isDirectoryFiltered) R.string.clear_project_filter else R.string.filter_by_project,
+                        )
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
                                 .padding(top = 2.dp)
+                                .clip(MaterialTheme.shapes.small)
+                                .then(
+                                    if (onFilterByDirectory != null) {
+                                        Modifier.clickable(role = Role.Button, onClickLabel = filterLabel) {
+                                            onFilterByDirectory(session.directory ?: dir)
+                                        }
+                                    } else {
+                                        Modifier
+                                    },
+                                )
                                 .semantics(mergeDescendants = true) { contentDescription = dirDesc },
                         ) {
                             Icon(
                                 Icons.Filled.Folder,
                                 contentDescription = null,
                                 modifier = Modifier.size(12.dp),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                tint = if (isDirectoryFiltered) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                             Text(
                                 dir,
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                color = if (isDirectoryFiltered) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.padding(start = 4.dp),

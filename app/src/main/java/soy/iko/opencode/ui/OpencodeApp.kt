@@ -38,6 +38,7 @@ import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.ui.chat.ChatScreen
 import soy.iko.opencode.ui.file.FileBrowserScreen
 import soy.iko.opencode.ui.file.FileViewScreen
+import soy.iko.opencode.ui.file.TwoPaneFileBrowser
 import soy.iko.opencode.ui.server.ServerEditScreen
 import soy.iko.opencode.ui.server.ServerListScreen
 import soy.iko.opencode.ui.search.GlobalSearchScreen
@@ -62,6 +63,7 @@ fun OpencodeApp(container: AppContainer) {
     val pendingSharedMedia by container.pendingSharedMedia.collectAsStateWithLifecycle()
     val pendingOpenSession by container.pendingOpenSession.collectAsStateWithLifecycle()
     val pendingNewSession by container.pendingNewSession.collectAsStateWithLifecycle()
+    val pendingOpenFile by container.pendingOpenFile.collectAsStateWithLifecycle()
     val pendingDiagnostics by container.pendingDiagnostics.collectAsStateWithLifecycle()
     val connection by container.activeConnection.collectAsStateWithLifecycle()
     // Chat presentation preferences, provided to the whole nav graph so the markdown/code
@@ -215,6 +217,19 @@ fun OpencodeApp(container: AppContainer) {
             navController.navigate(Routes.chat(pending.sessionId)) { launchSingleTop = true }
         }
 
+        // Deep-linked file open (opencode://file/{path}): navigate to the file viewer once a
+        // connection exists (the viewer fetches content from the server). Path comes pre-validated
+        // by MainActivity's deep-link guard.
+        LaunchedEffect(pendingOpenFile, connection) {
+            val path = pendingOpenFile ?: return@LaunchedEffect
+            if (connection == null) return@LaunchedEffect
+            container.consumePendingOpenFile()
+            if (!navController.popBackStack(Routes.FILES, inclusive = false)) {
+                navController.navigate(Routes.FILES) { launchSingleTop = true }
+            }
+            navController.navigate(Routes.fileView(path)) { launchSingleTop = true }
+        }
+
         val navHost = @Composable {
         NavHost(
             modifier = Modifier.fillMaxSize(),
@@ -348,11 +363,18 @@ fun OpencodeApp(container: AppContainer) {
         }
 
         composable(Routes.FILES) {
-            FileBrowserScreen(
-                container = container,
-                onOpenFile = { path, line -> navController.navigate(Routes.fileView(path, line)) },
-                onBack = { navController.popBackStack() },
-            )
+            if (isTwoPane) {
+                TwoPaneFileBrowser(
+                    container = container,
+                    onBack = { navController.popBackStack() },
+                )
+            } else {
+                FileBrowserScreen(
+                    container = container,
+                    onOpenFile = { path, line -> navController.navigate(Routes.fileView(path, line)) },
+                    onBack = { navController.popBackStack() },
+                )
+            }
         }
 
         composable(

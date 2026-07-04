@@ -3,4 +3,7 @@
     <!-- Camera captures are written to cache/captures and shared with the camera app via
          the app's FileProvider (see AndroidManifest). -->
     <cache-path name="captures" path="captures/" />
+    <!-- "Open externally" writes a viewed file's content to cache/external and hands a
+         content:// URI to another app via ACTION_VIEW (see FileViewScreen). -->
+    <cache-path name="external" path="external/" />
 </paths>

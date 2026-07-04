@@ -86,6 +86,9 @@ class RunForegroundService : Service() {
             .setShowWhen(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
+            // An indeterminate progress bar so the notification reads as actively "in progress"
+            // at a glance (alongside the chronometer), matching the conventional run affordance.
+            .setProgress(0, 0, true)
         // Add a Stop action so the user can cancel the run without opening the app — the
         // core of the "kick it off and walk away" flow. Only when a specific session is
         // known (multiple concurrent runs can't be targeted individually).

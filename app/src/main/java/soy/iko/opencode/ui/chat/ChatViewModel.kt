@@ -1280,6 +1280,36 @@ class ChatViewModel(
         }
     }
 
+    /**
+     * Regenerate an assistant reply: revert the conversation to that assistant message (removing
+     * it and everything after), then re-send the user prompt that immediately preceded it. A
+     * one-tap "try again" mirroring ChatGPT/Claude, instead of the two-step revert + re-Send.
+     *
+     * Captures the preceding user text *before* the revert (the messages list updates
+     * asynchronously via SSE once the revert lands). No-op if there's no preceding user prompt
+     * or the assistant message isn't found.
+     */
+    fun regenerate(assistantMessageId: String) {
+        val conn = connection ?: return
+        val msgs = messages.value
+        val idx = msgs.indexOfFirst { it.info.id == assistantMessageId }
+        if (idx < 0) return
+        val precedingUserText = (idx - 1 downTo 0)
+            .asSequence()
+            .map { msgs[it] }
+            .firstOrNull { it.info is UserMessage }
+            ?.parts
+            ?.filterIsInstance<TextPart>()
+            ?.joinToString("\n\n") { it.text }
+            ?.takeIf { it.isNotBlank() }
+            ?: return
+        viewModelScope.launch {
+            runCatchingCancellable { conn.api.revert(sessionId, assistantMessageId) }
+                .onSuccess { send(precedingUserText, includeAttachments = false) }
+                .onFailure { _errorEvents.trySend(ChatError(container.friendlyError(it))) }
+        }
+    }
+
     /** Load a previously-sent user prompt back into the composer to edit and re-send.
      *  Reverts the conversation to just before [messageId] (hiding it and everything after)
      *  and prefills the draft with [text]. The next Send continues from that checkpoint,

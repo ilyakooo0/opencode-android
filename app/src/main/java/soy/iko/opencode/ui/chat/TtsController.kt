@@ -62,15 +62,21 @@ class TtsController(context: Context) : RememberObserver {
         mainHandler.post { if (_speakingId.value == utteranceId) _speakingId.value = null }
     }
 
-    /** Speak [text] for message [id], or stop if [id] is already the one being spoken. */
-    fun toggle(id: String, text: String) {
-        if (_speakingId.value == id) { stop(); return }
-        if (!ready || text.isBlank()) return
+    /**
+     * Speak [text] for message [id], or stop if [id] is already the one being spoken.
+     *
+     * @return true if playback was (de)queued or stopped; false if the request was a no-op
+     *   because the engine isn't ready (init failed or still pending) or the text is blank.
+     *   Callers use this to surface feedback instead of the button appearing dead.
+     */
+    fun toggle(id: String, text: String): Boolean {
+        if (_speakingId.value == id) { stop(); return true }
+        if (!ready || text.isBlank()) return false
         // TextToSpeech.speak() silently returns ERROR (enqueuing nothing, firing no callback)
         // when a single input exceeds getMaxSpeechInputLength(), which would leave the Stop
         // button stuck with no audio. Chunk long text and enqueue the parts back-to-back.
         val chunks = chunkForTts(text)
-        if (chunks.isEmpty()) return
+        if (chunks.isEmpty()) return false
         chunks.forEachIndexed { index, chunk ->
             val queueMode = if (index == 0) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
             // Only the final chunk carries the tracked [id]; intermediate chunks get a
@@ -85,10 +91,11 @@ class TtsController(context: Context) : RememberObserver {
             if (result != TextToSpeech.SUCCESS) {
                 if (index == 0) _speakingId.value = null
                 else stop()
-                return
+                return false
             }
         }
         _speakingId.value = id
+        return true
     }
 
     /**

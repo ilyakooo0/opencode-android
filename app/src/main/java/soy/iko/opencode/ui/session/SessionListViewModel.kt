@@ -77,18 +77,24 @@ data class SessionListState(
     val pinnedIds: Set<String> = emptySet(),
     val archivedIds: Set<String> = emptySet(),
     val showArchived: Boolean = false,
+    // When non-null, only sessions whose working directory matches are shown. Tapped into via
+    // a session card's directory chip ("filter by this project"); null clears it.
+    val directoryFilter: String? = null,
 ) {
     /** Sessions to display: archived ones hidden (unless [showArchived]), filtered by the
-     *  search query (title or preview text), with pinned sessions floated to the top. */
+     *  search query (title or preview text) and the optional [directoryFilter], with pinned
+     *  sessions floated to the top. */
     val filtered: List<Session>
         get() {
             val q = query.trim()
             // Fast path: nothing to filter or reorder — return the same instance so
             // downstream can skip a recomposition.
             val noArchivedHidden = showArchived || archivedIds.isEmpty()
-            if (q.isEmpty() && pinnedIds.isEmpty() && noArchivedHidden) return sessions
+            if (q.isEmpty() && pinnedIds.isEmpty() && noArchivedHidden && directoryFilter == null) return sessions
+            val dirFilter = directoryFilter?.trimEnd('/')
             fun visible(session: Session): Boolean {
                 if (!showArchived && session.id in archivedIds) return false
+                if (dirFilter != null && session.directory?.trimEnd('/') != dirFilter) return false
                 if (q.isEmpty()) return true
                 return session.displayTitle.contains(q, ignoreCase = true) ||
                     (previews[session.id]?.contains(q, ignoreCase = true) == true)
@@ -253,6 +259,35 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             container.sessionPrefsStore.archived.collect { ids -> _state.update { it.copy(archivedIds = ids) } }
         }
+        // Persisted list-display prefs (sort + show-archived) so a user's chosen ordering
+        // survives process death, not just rotation. The initial seed restores them before
+        // the first list flush; subsequent emissions keep the VM in sync if the store changes
+        // elsewhere (it won't, but the collector is the canonical single-source-of-truth read).
+        // settingsStore is best-effort (it may be unavailable in tests), so a missing store just
+        // skips persistence — the in-memory defaults still drive the list.
+        viewModelScope.launch {
+            val store = runCatching { container.settingsStore }.getOrNull() ?: return@launch
+            store.sessionSortMode.collect { name ->
+                val mode = runCatching { SessionSortMode.valueOf(name) }.getOrDefault(SessionSortMode.RECENT)
+                if (_state.value.sortMode != mode) setSortMode(mode, persist = false)
+            }
+        }
+        viewModelScope.launch {
+            val store = runCatching { container.settingsStore }.getOrNull() ?: return@launch
+            store.sessionSortDescending.collect { desc ->
+                if (_state.value.sortDescending != desc) {
+                    _state.update {
+                        it.copy(sortDescending = desc, sessions = it.sessions.sortedByMode(it.sortMode, desc))
+                    }
+                }
+            }
+        }
+        viewModelScope.launch {
+            val store = runCatching { container.settingsStore }.getOrNull() ?: return@launch
+            store.sessionShowArchived.collect { show ->
+                if (_state.value.showArchived != show) _state.update { it.copy(showArchived = show) }
+            }
+        }
     }
 
     /** Pin or unpin [session] (pinned sessions sort to the top of the list). */
@@ -305,6 +340,9 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
     /** Toggle whether archived sessions are shown in the list. */
     fun setShowArchived(show: Boolean) {
         _state.update { it.copy(showArchived = show) }
+        viewModelScope.launch {
+            runCatchingCancellable { container.settingsStore.setSessionShowArchived(show) }
+        }
     }
 
     /**
@@ -455,6 +493,16 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
 
     fun setQuery(query: String) {
         _state.update { it.copy(query = query) }
+    }
+
+    /** Restrict the list to sessions in [directory] (null clears it). Toggled by a session
+     *  card's directory chip so the user can scope the list to one project. */
+    fun setDirectoryFilter(directory: String?) {
+        val normalized = directory?.takeIf { it.isNotBlank() }?.trimEnd('/')
+        _state.update {
+            val toggleOff = normalized != null && it.directoryFilter == normalized
+            it.copy(directoryFilter = if (toggleOff) null else normalized)
+        }
     }
 
     /** Force the SSE stream to reconnect (recovery path for a Failed banner) and
@@ -716,13 +764,63 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    fun setSortMode(mode: SessionSortMode) {
+    /** Bulk-archive (or unarchive) the given sessions. Quietly applies state + persists; the
+     *  caller surfaces a single confirmation (bulk actions batch, so per-item snackbars would
+     *  spam). Reversible by toggling "show archived" and un-archiving. */
+    fun bulkArchive(ids: Set<String>, archive: Boolean) {
+        ids.forEach { applyArchive(it, archive) }
+    }
+
+    /** Mark all of the given sessions as read (clears their unread badge). */
+    fun bulkMarkRead(ids: Set<String>) {
+        ids.forEach { container.markSessionRead(it) }
+    }
+
+    /**
+     * Permanently delete the given sessions. Unlike a single swipe-delete this is NOT undoable
+     * (the batch undo would need to cancel N deferred deletes); the caller confirms via a dialog
+     * first, mirroring other destructive bulk actions. Each delete is scheduled on the
+     * container's process-lived scope so it commits even if the user navigates away.
+     */
+    fun bulkDelete(ids: Set<String>) {
+        val toDelete = _state.value.sessions.filter { it.id in ids }
+        if (toDelete.isEmpty()) return
+        _state.update { s -> s.copy(sessions = s.sessions.filterNot { it.id in ids }) }
+        toDelete.forEach { session ->
+            pendingDeletes[session.id] = session
+            pendingSessionUpdates.remove(session.id)
+            container.scheduleSessionDelete(
+                id = session.id,
+                delayMs = NetworkConfig.undoDeleteDelayMs,
+                onDeleted = {
+                    viewModelScope.launch { pendingDeletes.remove(session.id); refresh() }
+                },
+                onError = { err ->
+                    viewModelScope.launch {
+                        pendingDeletes.remove(session.id)
+                        _transientErrors.tryEmit(container.friendlyError(err))
+                    }
+                },
+            )
+        }
+    }
+
+    fun setSortMode(mode: SessionSortMode, persist: Boolean = true) {
         if (mode == _state.value.sortMode) return
         // Reset to the new mode's natural direction (RECENT=desc, TITLE=asc) so switching
         // modes doesn't inherit a surprising reversed order from the previous mode.
         val descending = mode == SessionSortMode.RECENT
         _state.update { s ->
             s.copy(sortMode = mode, sortDescending = descending, sessions = s.sessions.sortedByMode(mode, descending))
+        }
+        if (persist) {
+            viewModelScope.launch {
+                runCatchingCancellable {
+                    val store = container.settingsStore
+                    store.setSessionSortMode(mode.name)
+                    store.setSessionSortDescending(descending)
+                }
+            }
         }
     }
 
@@ -731,6 +829,9 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         _state.update { s ->
             val descending = !s.sortDescending
             s.copy(sortDescending = descending, sessions = s.sessions.sortedByMode(s.sortMode, descending))
+        }
+        viewModelScope.launch {
+            runCatchingCancellable { container.settingsStore.setSessionSortDescending(_state.value.sortDescending) }
         }
     }
 

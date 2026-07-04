@@ -10,6 +10,12 @@ data class FileNode(
     val name: String = "",
     val path: String = "",
     val type: String? = null,
+    // Size in bytes and last-modified epoch-ms. The server doesn't currently emit these, so
+    // they default to null and the browser renders nothing extra; optional + defaulted keeps
+    // the client forward-compatible (resilient decoding) so the moment the server adds them
+    // the listing shows size/date with no client change.
+    val size: Long? = null,
+    val mtime: Long? = null,
 ) {
     val isDirectory: Boolean get() = type == "directory"
 }

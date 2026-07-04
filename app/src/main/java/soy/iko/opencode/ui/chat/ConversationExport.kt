@@ -1,6 +1,7 @@
 package soy.iko.opencode.ui.chat
 
 import soy.iko.opencode.data.model.AssistantMessage
+import soy.iko.opencode.data.model.FilePart
 import soy.iko.opencode.data.model.MessageWithParts
 import soy.iko.opencode.data.model.ReasoningPart
 import soy.iko.opencode.data.model.TextPart
@@ -9,6 +10,10 @@ import soy.iko.opencode.data.model.ToolError
 import soy.iko.opencode.data.model.ToolPart
 import soy.iko.opencode.data.model.ToolRunning
 import soy.iko.opencode.data.model.UserMessage
+import soy.iko.opencode.data.model.sourcePath
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
  * Render a conversation as Markdown for sharing/exporting. Each message becomes a
@@ -40,16 +45,33 @@ fun buildConversationMarkdown(messages: List<MessageWithParts>, title: String?):
                     is ReasoningPart -> part.text.takeIf { it.isNotBlank() }
                         ?.let { text -> text.trim().lines().joinToString("\n") { "> _${escapeMarkdown(it)}_" } }
                     is ToolPart -> formatToolCall(part)
+                    is FilePart -> {
+                        // Image/file attachments aren't portable in a text export; emit a
+                        // labeled placeholder so the transcript records that one was present
+                        // (useful for debugging) instead of silently dropping it.
+                        val name = part.sourcePath ?: part.url ?: part.filename ?: "attachment"
+                        if (part.mime?.startsWith("image/") == true) "_[image: ${escapeMarkdown(name)}]_"
+                        else "_[file: ${escapeMarkdown(name)}]_"
+                    }
                     else -> null
                 }
             }
             .joinToString("\n\n")
             .trim()
         if (body.isEmpty()) continue
-        sb.append(heading).append("\n\n").append(body).append("\n\n")
+        sb.append(heading).append("\n\n")
+        // Per-message timestamp (ISO, local zone) so an exported transcript is useful for
+        // support/debugging — without it only the metadata header's global range has timing.
+        message.info.time?.created?.let { ts -> sb.append("_").append(formatExportTimestamp(ts)).append("_\n\n") }
+        sb.append(body).append("\n\n")
     }
     return sb.toString().trimEnd()
 }
+
+/** Format an epoch-millis as a locale-stable ISO-ish timestamp for the export. Thread-confined
+ *  to the exporting coroutine, so a shared SimpleDateFormat (not thread-safe) is fine. */
+private fun formatExportTimestamp(epochMillis: Long): String =
+    SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date(epochMillis))
 
 /** Append a metadata header (message counts + timestamp range) so a shared transcript has
  *  context for support/debugging. Skipped when there are no messages. */

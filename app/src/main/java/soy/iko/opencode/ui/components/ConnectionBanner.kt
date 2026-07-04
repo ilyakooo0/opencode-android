@@ -6,6 +6,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -133,7 +134,11 @@ fun ConnectionBanner(
                 // already reconnecting), when offline (retry can't help), and when no
                 // callback is wired (callers that don't have a reconnect path).
                 if (isServerFailure && !isOffline && onRetry != null) {
-                    TextButton(onClick = onRetry, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp)) {
+                    TextButton(
+                        onClick = onRetry,
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp),
+                        modifier = Modifier.defaultMinSize(minHeight = 48.dp),
+                    ) {
                         Text(stringResource(R.string.retry_now), color = onContainer)
                     }
                 }

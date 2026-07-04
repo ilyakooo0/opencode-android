@@ -18,6 +18,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.content.contentReceiver
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -48,8 +49,10 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Expand
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Mic
@@ -262,6 +265,9 @@ fun ChatScreen(
     var showDeleteDialog by rememberSaveable { mutableStateOf(false) }
     var showShellDialog by rememberSaveable { mutableStateOf(false) }
     var showPalette by rememberSaveable { mutableStateOf(false) }
+    var showShortcutsDialog by rememberSaveable { mutableStateOf(false) }
+    var searchActive by rememberSaveable { mutableStateOf(false) }
+    var chatSearch by rememberSaveable { mutableStateOf("") }
     // Summarize and init (generate AGENTS.md) are irreversible, so a single tap is gated behind
     // a confirmation dialog (from both the overflow menu and the command palette).
     var showSummarizeConfirm by rememberSaveable { mutableStateOf(false) }
@@ -347,6 +353,7 @@ fun ChatScreen(
     val noVoiceMsg = stringResource(R.string.no_voice_app)
     val voicePrompt = stringResource(R.string.voice_prompt)
     val linkCopiedMsg = stringResource(R.string.link_copied)
+    val ttsUnavailableMsg = stringResource(R.string.tts_unavailable)
 
     // Count of picks currently being read + base64-encoded off the main thread, so the
     // composer can show a staging placeholder immediately (chips only materialize once done).
@@ -643,6 +650,18 @@ fun ChatScreen(
                                 enabled = !commandsLoading || commands.isNotEmpty(),
                                 onClick = { showOverflowMenu = false; showCommandPicker = true },
                             )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.keyboard_shortcuts)) },
+                                onClick = { showOverflowMenu = false; showShortcutsDialog = true },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.find_in_conversation)) },
+                                onClick = {
+                                    showOverflowMenu = false
+                                    searchActive = true
+                                    runCatching { inputFocusRequester.requestFocus() }
+                                },
+                            )
                             androidx.compose.material3.HorizontalDivider()
                             // Session sharing: create a public link, copy an existing one, or revoke it.
                             if (shareUrl == null) {
@@ -767,6 +786,7 @@ fun ChatScreen(
                     onPickFile = { filePicker.launch("*/*") },
                     onCamera = { launchCamera() },
                     onVoice = { launchVoice() },
+                    onPasteImage = { stageUris(it) },
                 )
             }
         },
@@ -795,8 +815,17 @@ fun ChatScreen(
         // raw messages list, so scroll targets must be in listItems space).
         val todayLabel = stringResource(R.string.today)
         val yesterdayLabel = stringResource(R.string.yesterday)
-        val listItems = remember(messages, todayLabel, yesterdayLabel) {
-            buildMessageListItems(messages, todayLabel, yesterdayLabel)
+        // In-conversation search: when active, narrow to messages whose text contains the query.
+        // Computed on the filtered set so day separators still align with the visible messages.
+        val searchQuery = chatSearch.trim()
+        val searchMessages = remember(messages, searchQuery) {
+            if (searchQuery.isEmpty()) messages
+            else messages.filter { m ->
+                m.parts.any { p -> (p as? TextPart)?.text?.contains(searchQuery, ignoreCase = true) == true }
+            }
+        }
+        val listItems = remember(searchMessages, todayLabel, yesterdayLabel) {
+            buildMessageListItems(searchMessages, todayLabel, yesterdayLabel)
         }
         // listItems is a plain (non-snapshot) local, rebuilt each recomposition. The
         // derivedStateOf and snapshotFlow lambdas below are created once (keyless
@@ -808,9 +837,10 @@ fun ChatScreen(
         // whose value tracks the latest list.
         val currentListItems by rememberUpdatedState(listItems)
 
-        // New-content signal for the jump-to-latest FAB: set when content grows while the user
-        // is scrolled away from the bottom, cleared once they return (see the collector below).
-        var hasNewContent by remember { mutableStateOf(false) }
+        // New-content signal for the jump-to-latest FAB: counts how many new items arrived
+        // while the user was scrolled away from the bottom, cleared once they return. A count
+        // (vs. a bare dot) tells the user how much they missed at a glance.
+        var newContentCount by remember { mutableIntStateOf(0) }
 
         val isPinnedToBottom by remember {
             derivedStateOf {
@@ -873,7 +903,7 @@ fun ChatScreen(
             }.collect { signal ->
                 if (signal.pinned) {
                     // Back at the bottom: clear the new-content badge.
-                    hasNewContent = false
+                    newContentCount = 0
                     if (signal.size > 0) {
                         // Scroll to the effective last index, including the trailing
                         // "__typing" row when a run is active so the working indicator
@@ -883,8 +913,11 @@ fun ChatScreen(
                         listState.scrollToItem(target)
                     }
                 } else if (signal.size > prevSize || signal.lastTextLength > prevLen) {
-                    // Content arrived while scrolled up — badge the jump-to-latest FAB.
-                    hasNewContent = true
+                    // Content arrived while scrolled up — increment the jump-to-latest badge.
+                    // Only count whole new items (not per-token growth) so the number reflects
+                    // new messages, not a token count.
+                    if (signal.size > prevSize) newContentCount += signal.size - prevSize
+                    else if (newContentCount == 0) newContentCount = 1
                 }
                 prevSize = signal.size
                 prevLen = signal.lastTextLength
@@ -1159,13 +1192,26 @@ fun ChatScreen(
                                             }
                                         }
                                     },
-                                    onSpeak = { text -> tts.toggle(message.info.id, text) },
+                                    onSpeak = { text ->
+                                        if (!tts.toggle(message.info.id, text)) {
+                                            // TTS engine unavailable (init failed / not yet ready
+                                            // / blank text): surface feedback so the button doesn't
+                                            // appear dead. Throttled so a rapid double-tap (stop
+                                            // then immediate re-tap before ready) doesn't spam.
+                                            scope.launch { snackbar.showSnackbar(ttsUnavailableMsg) }
+                                        }
+                                    },
                                     isSpeaking = message.info.id == speakingMessageId,
                                     onQuote = { text ->
                                         vm.quoteReply(text)
                                         runCatching { inputFocusRequester.requestFocus() }
                                     },
                                     onBranch = { text -> vm.branchFrom(text) },
+                                    // Regenerate is only meaningful for a finished assistant reply
+                                    // (not the actively-streaming one), so gate it on !running.
+                                    onRegenerate = if (!running) {
+                                        { vm.regenerate(message.info.id) }
+                                    } else null,
                                     sendStatus = optimisticStatuses[message.info.id]?.let { failed ->
                                         if (failed) soy.iko.opencode.ui.chat.MessageSendStatus.FAILED
                                         else soy.iko.opencode.ui.chat.MessageSendStatus.SENDING
@@ -1234,6 +1280,17 @@ fun ChatScreen(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.padding(start = 4.dp),
                                 )
+                                // A trailing Stop on the working row so the run can be aborted
+                                // without scrolling back to the composer (which may be off-screen
+                                // while the user reads the streaming output up-thread).
+                                Spacer(Modifier.weight(1f))
+                                val stopLabel = stringResource(R.string.stop)
+                                IconButton(
+                                    onClick = { showStopConfirm = true },
+                                    modifier = Modifier.semantics { contentDescription = stopLabel },
+                                ) {
+                                    Icon(Icons.Filled.Stop, contentDescription = null)
+                                }
                             }
                         }
                     }
@@ -1252,16 +1309,18 @@ fun ChatScreen(
                     // they know there's something new to jump to (cleared once back at bottom).
                     BadgedBox(
                         badge = {
-                            if (hasNewContent) {
+                            if (newContentCount > 0) {
                                 val newContentLabel = stringResource(R.string.new_messages)
-                                Badge(modifier = Modifier.semantics { contentDescription = newContentLabel })
+                                Badge(modifier = Modifier.semantics { contentDescription = newContentLabel }) {
+                                    Text(if (newContentCount > 99) "99+" else newContentCount.toString())
+                                }
                             }
                         },
                         modifier = Modifier.padding(end = 16.dp, bottom = 16.dp),
                     ) {
                         ExtendedFloatingActionButton(
                             onClick = {
-                                hasNewContent = false
+                                newContentCount = 0
                                 if (listItems.isNotEmpty()) {
                                     // Scroll to the effective last index, including the
                                     // trailing "__typing" row when a run is active.
@@ -1299,6 +1358,61 @@ fun ChatScreen(
                             contentDescription = stringResource(R.string.scroll_to_top),
                         )
                     }
+                }
+                // In-conversation search bar. Overlays the list so typing filters messages in
+                // place; the match count + a no-matches note give immediate feedback.
+                val searchMotion = rememberVisibilityTransitions()
+                AnimatedVisibility(
+                    visible = searchActive,
+                    enter = searchMotion.enter,
+                    exit = searchMotion.exit,
+                    modifier = Modifier.align(Alignment.TopCenter),
+                ) {
+                    Surface(
+                        tonalElevation = 3.dp,
+                        modifier = Modifier
+                            .padding(horizontal = 12.dp, vertical = 4.dp)
+                            .fillMaxWidth(),
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(start = 8.dp, end = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            OutlinedTextField(
+                                value = chatSearch,
+                                onValueChange = { chatSearch = it },
+                                modifier = Modifier.weight(1f),
+                                placeholder = { Text(stringResource(R.string.search_in_conversation)) },
+                                singleLine = true,
+                                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                            )
+                            Text(
+                                if (searchQuery.isNotEmpty()) {
+                                    stringResource(R.string.search_match_count, searchMessages.size, messages.size)
+                                } else "",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 4.dp),
+                            )
+                            IconButton(onClick = {
+                                searchActive = false
+                                chatSearch = ""
+                            }) {
+                                Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.clear_search))
+                            }
+                        }
+                    }
+                }
+                // When a search yields no matches (but the conversation isn't empty), say so
+                // instead of showing a blank list.
+                if (searchActive && searchQuery.isNotEmpty() && searchMessages.isEmpty() && messages.isNotEmpty()) {
+                    Text(
+                        stringResource(R.string.search_no_matches),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.align(Alignment.Center),
+                    )
                 }
             }
         }
@@ -1462,8 +1576,48 @@ fun ChatScreen(
     if (showPalette) {
         CommandPalette(actions = paletteActions, onDismiss = { showPalette = false })
     }
+
+    if (showShortcutsDialog) {
+        // Surfaces the hardware-keyboard shortcuts (Ctrl+K palette, Escape stop, Enter send)
+        // that are otherwise wired but undiscoverable. A simple key/value list; Enter behavior
+        // depends on the "Send on Enter" setting, noted inline.
+        AlertDialog(
+            onDismissRequest = { showShortcutsDialog = false },
+            title = { Text(stringResource(R.string.keyboard_shortcuts_title)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    ShortcutRow("Ctrl + K", stringResource(R.string.shortcut_open_palette))
+                    ShortcutRow("Esc", stringResource(R.string.shortcut_stop_run))
+                    ShortcutRow("Esc", stringResource(R.string.shortcut_close))
+                    ShortcutRow("Enter", stringResource(R.string.shortcut_send))
+                    ShortcutRow("Shift + Enter / Ctrl + Enter", stringResource(R.string.shortcut_newline))
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showShortcutsDialog = false }) { Text(stringResource(R.string.action_continue)) }
+            },
+        )
+    }
 }
 
+@Composable
+private fun ShortcutRow(keys: String, desc: String) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            keys,
+            style = MaterialTheme.typography.labelLarge,
+            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+            modifier = Modifier.widthIn(min = 160.dp),
+        )
+        Text(
+            desc,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun ChatInputBar(
     value: String,
@@ -1485,6 +1639,7 @@ private fun ChatInputBar(
     onPickFile: () -> Unit,
     onCamera: () -> Unit,
     onVoice: () -> Unit,
+    onPasteImage: (List<Uri>) -> Unit,
 ) {
     // Sendable when there's text OR at least one attachment (an image-only prompt is valid).
     val hasContent = value.isNotBlank() || attachments.isNotEmpty()
@@ -1495,13 +1650,25 @@ private fun ChatInputBar(
             // A queued follow-up replaces the Stop button with a "queued" chip so the
             // user sees their message will be sent when the run finishes, and can cancel.
             if (queuedFollowUp != null) {
+                val editLabel = stringResource(R.string.edit)
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(start = 12.dp, top = 6.dp, end = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
+                    // Tapping the chip reloads the queued text into the draft (and clears the
+                    // queue) so a typo spotted while queuing can be fixed without retyping.
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(MaterialTheme.shapes.small)
+                            .clickable(role = Role.Button, onClickLabel = editLabel) {
+                                onValueChange(queuedFollowUp)
+                                onCancelQueue()
+                            }
+                            .padding(vertical = 4.dp),
+                    ) {
                         Text(
                             stringResource(R.string.queued),
                             style = MaterialTheme.typography.labelSmall,
@@ -1569,6 +1736,31 @@ private fun ChatInputBar(
                         .weight(1f)
                         .focusRequester(focusRequester)
                         .testTag("chat_input")
+                        // Intercept image content pasted/dropped into the field (keyboard paste
+                        // of a copied screenshot, drag from Files, etc.) and route it through the
+                        // same staging path as the attach menu. Non-image content (text) falls
+                        // through unchanged so normal typing/paste works.
+                        .contentReceiver(
+                            remember {
+                                androidx.compose.foundation.content.ReceiveContentListener { transferable ->
+                                    val clipData = transferable.clipEntry?.clipData
+                                    if (clipData != null) {
+                                        val imageUris = (0 until clipData.itemCount).mapNotNull { i ->
+                                            val item = clipData.getItemAt(i)
+                                            item.uri?.takeIf { uri ->
+                                                item.text == null && uri.toString().let { s ->
+                                                    s.startsWith("content:") || s.startsWith("file:")
+                                                }
+                                            }
+                                        }
+                                        if (imageUris.isNotEmpty()) {
+                                            onPasteImage(imageUris)
+                                        }
+                                    }
+                                    transferable
+                                }
+                            },
+                        )
                         .onPreviewKeyEvent { event ->
                             if (event.type != KeyEventType.KeyDown || event.key != Key.Enter) return@onPreviewKeyEvent false
                             // With "Send on Enter" on, Enter sends (Shift+Enter newlines).
@@ -1643,8 +1835,19 @@ private fun ChatInputBar(
                 value = value,
                 onValueChange = onValueChange,
                 onDismiss = { showFullScreenEditor = false },
-                onSend = { showFullScreenEditor = false; onSend() },
+                onSend = {
+                    showFullScreenEditor = false
+                    // Mirror the inline composer's behavior: while a run is active a send
+                    // can't go immediately, so queue the follow-up instead of silently
+                    // dropping it (vm.send() returns false during a run, which previously
+                    // lost the typed message with no feedback).
+                    if (running) onQueueFollowUp(value) else onSend()
+                },
                 canSend = enabled && hasContent,
+                running = running,
+                attachments = attachments,
+                onRemoveAttachment = onRemoveAttachment,
+                staging = staging,
             )
         }
     }
@@ -1660,6 +1863,10 @@ private fun FullScreenEditor(
     onDismiss: () -> Unit,
     onSend: () -> Unit,
     canSend: Boolean,
+    running: Boolean = false,
+    attachments: List<PendingAttachment> = emptyList(),
+    onRemoveAttachment: (String) -> Unit = {},
+    staging: Boolean = false,
 ) {
     androidx.compose.ui.window.Dialog(
         onDismissRequest = onDismiss,
@@ -1683,20 +1890,26 @@ private fun FullScreenEditor(
                         horizontalArrangement = Arrangement.End,
                     ) {
                         androidx.compose.material3.Button(onClick = onSend, enabled = canSend) {
-                            Text(stringResource(R.string.send))
+                            Text(stringResource(if (running) R.string.queue else R.string.send))
                         }
                     }
                 }
             },
         ) { padding ->
-            OutlinedTextField(
-                value = value,
-                onValueChange = { v -> onValueChange(v.take(NetworkConfig.maxDraftLengthChars)) },
-                modifier = Modifier.fillMaxSize().padding(padding),
-                placeholder = { Text(stringResource(R.string.message_placeholder)) },
-                maxLines = Int.MAX_VALUE,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default, capitalization = KeyboardCapitalization.Sentences),
-            )
+            Column(modifier = Modifier.fillMaxSize().padding(padding)) {
+                // Show staged attachments in the full-screen editor too, so a user who staged
+                // images then expanded for a long prompt can still see and remove them without
+                // collapsing first (mirrors the inline composer's AttachmentStrip).
+                AttachmentStrip(attachments, onRemove = onRemoveAttachment, staging = staging)
+                OutlinedTextField(
+                    value = value,
+                    onValueChange = { v -> onValueChange(v.take(NetworkConfig.maxDraftLengthChars)) },
+                    modifier = Modifier.fillMaxSize().weight(1f),
+                    placeholder = { Text(stringResource(R.string.message_placeholder)) },
+                    maxLines = Int.MAX_VALUE,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default, capitalization = KeyboardCapitalization.Sentences),
+                )
+            }
         }
     }
 }

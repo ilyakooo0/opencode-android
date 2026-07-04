@@ -206,6 +206,19 @@ open class AppContainer private constructor(
     }
 
     /**
+     * A file path requested to be opened (via deep link `opencode://file/{path}` or future
+     * entry points), consumed by the NavHost to navigate to the file viewer. Mirrors the
+     * session open-signal pattern: a StateFlow the NavHost observes, drained atomically.
+     */
+    private val _pendingOpenFile = MutableStateFlow<String?>(null)
+    open val pendingOpenFile: StateFlow<String?> = _pendingOpenFile.asStateFlow()
+    open fun requestOpenFile(path: String) { _pendingOpenFile.value = path }
+    open fun consumePendingOpenFile(): String? {
+        val current = _pendingOpenFile.value ?: return null
+        return if (_pendingOpenFile.compareAndSet(current, null)) current else null
+    }
+
+    /**
      * The session the user is currently viewing (or null when not in a chat). Drives the
      * unread tracker: messages arriving for any *other* session mark it unread, and
      * opening a session clears its unread state.
@@ -904,6 +917,45 @@ open class AppContainer private constructor(
                 } ?: activeConnection.value
                 if (conn != null) {
                     success = runCatchingCancellable { conn.repository.abort(sessionId) }.isSuccess
+                }
+            } finally {
+                onDone(success)
+            }
+        }
+    }
+
+    /**
+     * Retry the last user prompt for [sessionId] from an error notification's "Retry last"
+     * action. Fetches the session's messages, re-sends the most recent user prompt, and
+     * cancels the error notification on success. Routes to the originating profile's
+     * connection (falling back to the active one) so the send reaches the server that owns
+     * the session. A no-op (reported as false) when there's no connection or no prior prompt.
+     */
+    open fun retryLastFromNotification(sessionId: String, originProfileId: String?, onDone: (Boolean) -> Unit) {
+        appScope.launch {
+            var success = false
+            try {
+                val conn = activeConnection.value?.takeIf {
+                    originProfileId == null || it.profile.id == originProfileId
+                } ?: activeConnection.value
+                if (conn != null) {
+                    success = runCatchingCancellable {
+                        val messages = conn.api.listMessages(sessionId)
+                        val lastPrompt = messages
+                            .lastOrNull { it.info is soy.iko.opencode.data.model.UserMessage }
+                            ?.parts
+                            ?.filterIsInstance<soy.iko.opencode.data.model.TextPart>()
+                            ?.joinToString("\n\n") { it.text }
+                            ?.takeIf { it.isNotBlank() }
+                        if (lastPrompt != null) {
+                            // model=null lets the server reuse the session's current model; we
+                            // don't know the originally-selected model from a notification context.
+                            conn.repository.sendPrompt(sessionId, lastPrompt, model = null)
+                            true
+                        } else {
+                            false
+                        }
+                    }.isSuccess
                 }
             } finally {
                 onDone(success)

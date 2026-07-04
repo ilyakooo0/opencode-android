@@ -214,6 +214,20 @@ private fun ReasoningBlock(text: String, streaming: Boolean, keyId: String, modi
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(start = 6.dp),
             )
+            // When collapsed, show a muted word count so the user has a signal of how much
+            // content is hidden before deciding to expand. Skipped while streaming (the
+            // content is growing and the label already says "Thinking…").
+            if (!streaming && !expanded) {
+                val wordCount = remember(text) {
+                    text.trim().split(Regex("\\s+")).count { it.isNotEmpty() }
+                }
+                Text(
+                    "($wordCount)",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                    modifier = Modifier.padding(start = 4.dp),
+                )
+            }
         }
         val expandMotion = rememberVisibilityTransitions()
         AnimatedVisibility(
@@ -243,7 +257,9 @@ private fun ReasoningBlock(text: String, streaming: Boolean, keyId: String, modi
                 copyToClipboard(context, context.getString(R.string.clip_label_reasoning), text)
             },
             contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp),
-            modifier = Modifier.semantics(mergeDescendants = true) {},
+            modifier = Modifier
+                .defaultMinSize(minHeight = 48.dp)
+                .semantics(mergeDescendants = true) {},
         ) {
             Icon(Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(14.dp))
             Text(stringResource(R.string.copy), style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(start = 4.dp))
@@ -308,6 +324,13 @@ private fun ToolCallView(part: ToolPart, modifier: Modifier) {
                     // rather than an empty state (the defaults are "").
                     expandedState = stringResource(R.string.state_expanded),
                     collapsedState = stringResource(R.string.state_collapsed),
+                    // Mirror the output block's copy affordance so a tool's arguments (e.g. a
+                    // bash command or file-write content) can be copied for reuse without manual
+                    // text selection.
+                    onCopy = {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        copyToClipboard(context, context.getString(R.string.clip_label_input), pretty)
+                    },
                 )
             }
         }
@@ -427,7 +450,9 @@ private fun CollapsibleDetail(
             TextButton(
                 onClick = onToggleExpand,
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp),
-                modifier = Modifier.semantics { stateDescription = if (expanded) expandedState else collapsedState },
+                modifier = Modifier
+                    .defaultMinSize(minHeight = 48.dp)
+                    .semantics { stateDescription = if (expanded) expandedState else collapsedState },
             ) {
                 Icon(
                     if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
@@ -449,7 +474,9 @@ private fun CollapsibleDetail(
             TextButton(
                 onClick = onCopy,
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp),
-                modifier = Modifier.semantics(mergeDescendants = true) {},
+                modifier = Modifier
+                    .defaultMinSize(minHeight = 48.dp)
+                    .semantics(mergeDescendants = true) {},
             ) {
                 Icon(Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(14.dp))
                 Text(stringResource(R.string.copy), style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(start = 4.dp))

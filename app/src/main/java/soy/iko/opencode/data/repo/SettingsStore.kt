@@ -25,6 +25,9 @@ class SettingsStore(context: Context) {
     private val appLockReLockSecondsKey = intPreferencesKey("app_lock_relock_seconds")
     private val chatTextScaleKey = floatPreferencesKey("chat_text_scale")
     private val codeWrapKey = booleanPreferencesKey("code_wrap")
+    private val sessionSortModeKey = stringPreferencesKey("session_sort_mode")
+    private val sessionSortDescendingKey = booleanPreferencesKey("session_sort_descending")
+    private val sessionShowArchivedKey = booleanPreferencesKey("session_show_archived")
 
     companion object {
         /** Bounds for the chat text-size multiplier so the UI can't be scaled into
@@ -86,6 +89,22 @@ class SettingsStore(context: Context) {
         prefs[codeWrapKey] ?: false
     }
 
+    /** Persisted session-list sort mode so a chosen ordering survives process death (not just
+     *  rotation). Stored as the enum name; an unknown value falls back to RECENT. */
+    val sessionSortMode: Flow<String> = appContext.settingsDataStore.data.map { prefs ->
+        prefs[sessionSortModeKey] ?: "RECENT"
+    }
+
+    /** Persisted session-list sort direction. Defaults to descending (newest first). */
+    val sessionSortDescending: Flow<Boolean> = appContext.settingsDataStore.data.map { prefs ->
+        prefs[sessionSortDescendingKey] ?: true
+    }
+
+    /** Persisted "show archived sessions" toggle so the choice survives process death. */
+    val sessionShowArchived: Flow<Boolean> = appContext.settingsDataStore.data.map { prefs ->
+        prefs[sessionShowArchivedKey] ?: false
+    }
+
     suspend fun setThemeMode(mode: ThemeMode) {
         appContext.settingsDataStore.edit { it[themeKey] = mode.name }
     }
@@ -113,8 +132,21 @@ class SettingsStore(context: Context) {
             it[chatTextScaleKey] = scale.coerceIn(MIN_CHAT_TEXT_SCALE, MAX_CHAT_TEXT_SCALE)
         }
     }
-
     suspend fun setCodeWrap(enabled: Boolean) {
-        appContext.settingsDataStore.edit { it[codeWrapKey] = enabled }
+        appContext.settingsDataStore.edit {
+            it[codeWrapKey] = enabled
+        }
+    }
+
+    suspend fun setSessionSortMode(mode: String) {
+        appContext.settingsDataStore.edit { it[sessionSortModeKey] = mode }
+    }
+
+    suspend fun setSessionSortDescending(descending: Boolean) {
+        appContext.settingsDataStore.edit { it[sessionSortDescendingKey] = descending }
+    }
+
+    suspend fun setSessionShowArchived(show: Boolean) {
+        appContext.settingsDataStore.edit { it[sessionShowArchivedKey] = show }
     }
 }
