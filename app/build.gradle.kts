@@ -17,6 +17,11 @@ val gitCommitCount: Int = runCatching {
     }.standardOutput.asText.get().trim().toInt()
 }.getOrDefault(1)
 
+// Optional versionName override supplied via `-PversionName=...` (used by the
+// release workflow to stamp the commit-date version into the APK). Falls back to
+// the hard-coded version when absent so local builds are unaffected.
+val versionNameOverride: String? = providers.gradleProperty("versionName").orNull
+
 android {
     namespace = "soy.iko.opencode"
     compileSdk = 35
@@ -31,7 +36,7 @@ android {
         // (and never triggers a "downgrade" install block). Falls back to 1 when the
         // .git history isn't available (e.g. a plain source export).
         versionCode = gitCommitCount
-        versionName = "0.1.0"
+        versionName = versionNameOverride ?: "0.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

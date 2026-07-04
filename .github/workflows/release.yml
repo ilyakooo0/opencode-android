@@ -1,0 +1,82 @@
+name: Release
+
+# Build the production (release) APK and publish a GitHub Release for every
+# commit that lands on master. The version -- and the git tag / release name --
+# is derived from the commit's committer date in UTC, formatted as
+# YYYY.MM.DD.HHMM (e.g. 2026.07.04.1430). It is passed to the Gradle build as
+# `-PversionName=...` so it is stamped into the APK and surfaces in-app.
+on:
+  push:
+    branches: [master]
+
+# A release run should never be aborted mid-flight by a newer push (a
+# half-published release with a missing artifact is worse than a slightly stale
+# one), so the group is per-ref but cancel-in-progress is left off.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # required to push the tag and create the release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history so the versionCode (git rev-list --count HEAD) is
+          # accurate instead of collapsing to 1 on a shallow clone.
+          fetch-depth: 0
+
+      - name: Compute version from commit date
+        id: version
+        run: |
+          VERSION="$(TZ=UTC git log -1 --format=%cd --date=format-local:%Y.%m.%d.%H%M)"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Version: $VERSION"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # The keystore ships as base64 in a secret so it never touches the repo.
+      # When the secret isn't configured the Gradle build falls back to an
+      # unsigned APK (the same behavior as a local build), so this workflow is
+      # green even before signing is wired up.
+      - name: Decode signing keystore
+        if: secrets.OPENCODE_STORE_BASE64 != ''
+        env:
+          OPENCODE_STORE_BASE64: ${{ secrets.OPENCODE_STORE_BASE64 }}
+        run: |
+          STORE_FILE="$RUNNER_TEMP/release.keystore"
+          printf '%s' "$OPENCODE_STORE_BASE64" | base64 -d > "$STORE_FILE"
+          echo "OPENCODE_STORE_FILE=$STORE_FILE" >> "$GITHUB_ENV"
+
+      - name: Build release APK
+        env:
+          OPENCODE_STORE_FILE: ${{ env.OPENCODE_STORE_FILE }}
+          OPENCODE_STORE_PASSWORD: ${{ secrets.OPENCODE_STORE_PASSWORD }}
+          OPENCODE_KEY_ALIAS: ${{ secrets.OPENCODE_KEY_ALIAS }}
+          OPENCODE_KEY_PASSWORD: ${{ secrets.OPENCODE_KEY_PASSWORD }}
+        run: ./gradlew assembleRelease -PversionName="${{ steps.version.outputs.version }}" --no-daemon
+
+      # Rename to a stable, version-tagged filename so the release attachment is
+      # recognizable regardless of the release/ vs release-signed/ output dir.
+      - name: Stage APK
+        run: |
+          mkdir -p staging
+          APK="$(find app/build/outputs/apk -name '*.apk' | head -n1)"
+          cp "$APK" "staging/opencode-${{ steps.version.outputs.version }}.apk"
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: ${{ steps.version.outputs.version }}
+          generate_release_notes: true
+          files: staging/*.apk
