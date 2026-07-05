@@ -262,19 +262,8 @@ private fun ServerEditForm(
                 onImeDone = { if (canSave && !state.saving) vm.connect(onDone) },
             )
         }
-        // Pre-save reachability probe: lets the user confirm the URL is reachable before
-        // committing. Extracted to [TestConnectionControl] to keep this function's complexity
-        // under the detekt threshold.
-        TestConnectionControl(
-            canSave = canSave,
-            testing = state.testingConnection,
-            saving = state.saving,
-            testingCredentials = state.testingCredentials,
-            result = state.connectionResult,
-            onTest = vm::testConnection,
-        )
-        // Single primary action: probe-then-save-and-connect. Replaces the former
-        // Check-connectivity / Save / Save-&-connect trio.
+        // Single primary action: probe-then-save-and-connect. The probe IS the connection
+        // test — a failed probe keeps the user on this screen with the error shown below.
         Button(
             onClick = {
                 haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
@@ -303,17 +292,6 @@ private fun ServerEditForm(
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.fillMaxWidth(),
             )
-        }
-        // Secondary, low-emphasis: persist without connecting (offline setup).
-        TextButton(
-            onClick = {
-                haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                vm.save(onDone)
-            },
-            enabled = canSave && !state.saving,
-            modifier = Modifier.fillMaxWidth().testTag("server_save"),
-        ) {
-            Text(stringResource(R.string.save_without_connecting))
         }
         // De-emphasized optional label at the bottom: displayLabel already falls back to the
         // URL, so most servers don't need one.
@@ -419,53 +397,6 @@ private fun AuthFields(
             )
         }
     }
-}
-
-/** The "Test connection" button plus its success/failure feedback line. Extracted from
- *  [ServerEditForm] to keep that function's cyclomatic complexity under the detekt threshold. */
-@Composable
-private fun TestConnectionControl(
-    canSave: Boolean,
-    testing: Boolean,
-    saving: Boolean,
-    testingCredentials: Boolean,
-    result: ConnectionProbeResult?,
-    onTest: () -> Unit,
-) {
-    OutlinedButton(
-        onClick = onTest,
-        enabled = canSave && !testing && !saving && !testingCredentials,
-        modifier = Modifier.fillMaxWidth().testTag("server_test_connection"),
-    ) {
-        if (testing) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(20.dp),
-                strokeWidth = 2.dp,
-            )
-            Text(stringResource(R.string.testing_connection), modifier = Modifier.padding(start = 8.dp))
-        } else {
-            Text(stringResource(R.string.test_connection))
-        }
-    }
-    ConnectionProbeFeedback(result)
-}
-
-/** Renders the success/failed feedback line for a "Test connection" probe. Extracted from
- *  [ServerEditForm] to keep that function's cyclomatic complexity under the detekt threshold. */
-@Composable
-private fun ConnectionProbeFeedback(result: ConnectionProbeResult?) {
-    if (result == null) return
-    val (msg, color) = when (result) {
-        is ConnectionProbeResult.Success ->
-            stringResource(R.string.test_connection_success, result.latencyMs) to MaterialTheme.colorScheme.primary
-        is ConnectionProbeResult.Failed ->
-            stringResource(R.string.test_connection_failed, result.message) to MaterialTheme.colorScheme.error
-    }
-    Text(
-        msg,
-        style = MaterialTheme.typography.bodySmall,
-        color = color,
-    )
 }
 
 /**

@@ -161,15 +161,19 @@ class ServerEditViewModelTest {
         assertTrue(vm.state.value.canSave)
     }
 
-    // --- save() ---
+    // --- connect() save path (probe Reachable → save + connect + ping) ---
+    // The former save()-specific tests now exercise the same persist path via connect(),
+    // since the standalone "Save without connecting" action was removed: connect() is the
+    // single primary action and its probe IS the connection test.
 
     @Test
-    fun save_persistsProfileAndCallsOnDone() = testScope.runTest {
+    fun connect_persistsProfileAndCallsOnDone() = testScope.runTest {
         val container = FakeAppContainer()
+        container.probeResult = ProbeResult.Reachable
         val vm = makeVm(container)
         vm.update { it.copy(baseUrl = "http://localhost:3000", label = "Test") }
         var doneCalled = false
-        vm.save { doneCalled = true }
+        vm.connect { doneCalled = true }
         testScheduler.advanceUntilIdle()
         assertTrue(doneCalled)
         assertNotNull(container.fakeProfileStore.savedProfile)
@@ -178,36 +182,12 @@ class ServerEditViewModelTest {
     }
 
     @Test
-    fun save_invalidUrlDoesNotSave() = testScope.runTest {
+    fun connect_generatesIdForNewProfile() = testScope.runTest {
         val container = FakeAppContainer()
-        val vm = makeVm(container)
-        vm.update { it.copy(baseUrl = "not a url") }
-        var doneCalled = false
-        vm.save { doneCalled = true }
-        testScheduler.advanceUntilIdle()
-        assertFalse(doneCalled)
-        assertNull(container.fakeProfileStore.savedProfile)
-    }
-
-    @Test
-    fun save_whileSavingDoesNotSaveAgain() = testScope.runTest {
-        val container = FakeAppContainer()
+        container.probeResult = ProbeResult.Reachable
         val vm = makeVm(container)
         vm.update { it.copy(baseUrl = "http://localhost:3000") }
-        var doneCount = 0
-        vm.save { doneCount++ }
-        // While saving, try to save again
-        vm.save { doneCount++ }
-        testScheduler.advanceUntilIdle()
-        assertEquals(1, doneCount)
-    }
-
-    @Test
-    fun save_generatesIdForNewProfile() = testScope.runTest {
-        val container = FakeAppContainer()
-        val vm = makeVm(container)
-        vm.update { it.copy(baseUrl = "http://localhost:3000") }
-        vm.save { }
+        vm.connect { }
         testScheduler.advanceUntilIdle()
         val saved = container.fakeProfileStore.savedProfile
         assertNotNull(saved?.id)
@@ -215,23 +195,25 @@ class ServerEditViewModelTest {
     }
 
     @Test
-    fun save_preservesIdForExistingProfile() = testScope.runTest {
+    fun connect_preservesIdForExistingProfile() = testScope.runTest {
         val container = FakeAppContainer()
+        container.probeResult = ProbeResult.Reachable
         val profile = ServerProfile(id = "existing-id", label = "Old", baseUrl = "http://old")
         container.fakeProfileStore.setProfiles(listOf(profile))
         val vm = makeVm(container, profileId = "existing-id")
         vm.update { it.copy(baseUrl = "http://new") }
-        vm.save { }
+        vm.connect { }
         testScheduler.advanceUntilIdle()
         assertEquals("existing-id", container.fakeProfileStore.savedProfile?.id)
     }
 
     @Test
-    fun save_trimsFields() = testScope.runTest {
+    fun connect_trimsFields() = testScope.runTest {
         val container = FakeAppContainer()
+        container.probeResult = ProbeResult.Reachable
         val vm = makeVm(container)
         vm.update { it.copy(baseUrl = "  http://localhost:3000  ", label = "  Test  ", username = "  admin  ") }
-        vm.save { }
+        vm.connect { }
         testScheduler.advanceUntilIdle()
         val saved = container.fakeProfileStore.savedProfile!!
         assertEquals("http://localhost:3000", saved.baseUrl)
@@ -240,11 +222,12 @@ class ServerEditViewModelTest {
     }
 
     @Test
-    fun save_appliesHttpsSchemeToBareLanHost() = testScope.runTest {
+    fun connect_appliesHttpsSchemeToBareLanHost() = testScope.runTest {
         val container = FakeAppContainer()
+        container.probeResult = ProbeResult.Reachable
         val vm = makeVm(container)
         vm.update { it.copy(baseUrl = "localhost:3000", label = "LAN") }
-        vm.save { }
+        vm.connect { }
         testScheduler.advanceUntilIdle()
         val saved = container.fakeProfileStore.savedProfile!!
         // A bare host is always schemed to https:// (the safe default). The user can still
@@ -258,35 +241,38 @@ class ServerEditViewModelTest {
     }
 
     @Test
-    fun save_appliesHttpsSchemeToBarePublicDomain() = testScope.runTest {
+    fun connect_appliesHttpsSchemeToBarePublicDomain() = testScope.runTest {
         val container = FakeAppContainer()
+        container.probeResult = ProbeResult.Reachable
         val vm = makeVm(container)
         vm.update { it.copy(baseUrl = "example.com") }
-        vm.save { }
+        vm.connect { }
         testScheduler.advanceUntilIdle()
         val saved = container.fakeProfileStore.savedProfile!!
         assertEquals("https://example.com", saved.baseUrl)
     }
 
     @Test
-    fun save_preservesExplicitHttpSchemeForPublicDomain() = testScope.runTest {
+    fun connect_preservesExplicitHttpSchemeForPublicDomain() = testScope.runTest {
         val container = FakeAppContainer()
+        container.probeResult = ProbeResult.Reachable
         val vm = makeVm(container)
         // The user typed the scheme explicitly — don't upgrade a public domain to https://
         // behind their back; preserve their explicit http:// choice.
         vm.update { it.copy(baseUrl = "http://example.com") }
-        vm.save { }
+        vm.connect { }
         testScheduler.advanceUntilIdle()
         val saved = container.fakeProfileStore.savedProfile!!
         assertEquals("http://example.com", saved.baseUrl)
     }
 
     @Test
-    fun save_emptyUsernameClearsCredentials() = testScope.runTest {
+    fun connect_emptyUsernameClearsCredentials() = testScope.runTest {
         val container = FakeAppContainer()
+        container.probeResult = ProbeResult.Reachable
         val vm = makeVm(container)
         vm.update { it.copy(baseUrl = "http://localhost:3000", username = "", password = "") }
-        vm.save { }
+        vm.connect { }
         testScheduler.advanceUntilIdle()
         val saved = container.fakeProfileStore.savedProfile!!
         assertNull(saved.username)
@@ -294,13 +280,14 @@ class ServerEditViewModelTest {
     }
 
     @Test
-    fun save_failureSetsErrorAndClearsSaving() = testScope.runTest {
+    fun connect_saveFailureSetsErrorAndClearsSaving() = testScope.runTest {
         val container = FakeAppContainer()
+        container.probeResult = ProbeResult.Reachable
         container.fakeProfileStore.saveException = RuntimeException("disk full")
         val vm = makeVm(container)
         vm.update { it.copy(baseUrl = "http://localhost:3000") }
         var doneCalled = false
-        vm.save { doneCalled = true }
+        vm.connect { doneCalled = true }
         testScheduler.advanceUntilIdle()
         assertFalse(doneCalled)
         assertFalse(vm.state.value.saving)
@@ -310,12 +297,13 @@ class ServerEditViewModelTest {
     }
 
     @Test
-    fun save_failureDoesNotClobberUserEdits() = testScope.runTest {
+    fun connect_saveFailureDoesNotClobberUserEdits() = testScope.runTest {
         val container = FakeAppContainer()
+        container.probeResult = ProbeResult.Reachable
         container.fakeProfileStore.saveException = RuntimeException("disk full")
         val vm = makeVm(container)
         vm.update { it.copy(baseUrl = "http://localhost:3000", label = "Original") }
-        vm.save { }
+        vm.connect { }
         // Simulate the user editing the label while the save coroutine is in-flight.
         vm.update { it.copy(label = "Edited") }
         testScheduler.advanceUntilIdle()

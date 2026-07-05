@@ -92,7 +92,6 @@
     <string name="username_optional">Usuario (opcional)</string>
     <string name="password_optional">Contraseña (opcional)</string>
     <string name="connect">Conectar</string>
-    <string name="save_without_connecting">Guardar sin conectar</string>
     <string name="discard_title">¿Descartar cambios?</string>
     <string name="discard_text">Se perderán tus cambios.</string>
     <string name="discard">Descartar</string>
@@ -100,7 +99,6 @@
     <string name="show_password">Mostrar contraseña</string>
     <string name="hide_password">Ocultar contraseña</string>
     <string name="test_credentials">Probar credenciales</string>
-    <string name="testing_connection">Probando…</string>
     <string name="delete_server">Eliminar servidor</string>
     <string name="delete_server_confirm">¿Eliminar este perfil de servidor?</string>
     <string name="testing_credentials">Probando…</string>
