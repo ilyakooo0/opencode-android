@@ -95,8 +95,7 @@ fun ServerListScreen(
     container: AppContainer,
     onConnected: () -> Unit,
     onAddProfile: () -> Unit,
-    onEditProfile: (String) -> Unit,
-    onDuplicateProfile: (String) -> Unit,
+    onServerSettings: (String) -> Unit,
 ) {
     val vm: ServerListViewModel = viewModel(factory = vmFactory { ServerListViewModel(container) })
     val profiles by vm.profiles.collectAsStateWithLifecycle()
@@ -389,8 +388,7 @@ fun ServerListScreen(
                                         isActive = true,
                                         isConnecting = false,
                                         activeState = activeSseState,
-                                        onEdit = { onEditProfile(profile.id) },
-                                        onDuplicate = { onDuplicateProfile(profile.id) },
+                                        onSettings = { onServerSettings(profile.id) },
                                         onPendingDelete = { pendingDeleteId = profile.id },
                                         onTestConnection = { vm.testConnection(profile) },
                                         isProbing = probingId == profile.id,
@@ -442,8 +440,7 @@ fun ServerListScreen(
                                         profile = profile,
                                         isActive = false,
                                         isConnecting = connectingId == profile.id,
-                                        onEdit = { onEditProfile(profile.id) },
-                                        onDuplicate = { onDuplicateProfile(profile.id) },
+                                        onSettings = { onServerSettings(profile.id) },
                                         onPendingDelete = { pendingDeleteId = profile.id },
                                         onTestConnection = { vm.testConnection(profile) },
                                         isProbing = probingId == profile.id,
@@ -495,8 +492,7 @@ private fun ServerCardContent(
     profile: ServerProfile,
     isActive: Boolean,
     isConnecting: Boolean,
-    onEdit: () -> Unit,
-    onDuplicate: () -> Unit,
+    onSettings: () -> Unit,
     onPendingDelete: () -> Unit,
     onTestConnection: () -> Unit = {},
     isProbing: Boolean = false,
@@ -597,8 +593,7 @@ private fun ServerCardContent(
             // Close this row's overflow on back press instead of navigating away, matching
             // the sort menu BackHandler above.
             BackHandler(enabled = showRowMenu) { showRowMenu = false }
-            val editLabel = stringResource(R.string.edit)
-            val duplicateLabel = stringResource(R.string.duplicate_server)
+            val settingsLabel = stringResource(R.string.settings)
             val removeLabel = stringResource(R.string.remove)
             val testConnLabel = stringResource(R.string.test_connection)
             val testConnDesc = stringResource(R.string.test_connection_desc, profile.displayLabel)
@@ -621,12 +616,8 @@ private fun ServerCardContent(
                         onDismissRequest = { showRowMenu = false },
                     ) {
                         DropdownMenuItem(
-                            text = { Text(editLabel) },
-                            onClick = { showRowMenu = false; onEdit() },
-                        )
-                        DropdownMenuItem(
-                            text = { Text(duplicateLabel) },
-                            onClick = { showRowMenu = false; onDuplicate() },
+                            text = { Text(settingsLabel) },
+                            onClick = { showRowMenu = false; onSettings() },
                         )
                         DropdownMenuItem(
                             text = { Text(testConnLabel) },

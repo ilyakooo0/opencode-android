@@ -12,11 +12,8 @@ object Routes {
     const val SEARCH = "search"
 
     const val SERVER_EDIT = "server_edit"
-    fun serverEdit(id: String? = null) =
-        if (id.isNullOrEmpty()) SERVER_EDIT else "$SERVER_EDIT?id=${android.net.Uri.encode(id)}"
-
-    /** Open the editor seeded with [sourceId]'s fields but creating a new profile. */
-    fun serverEditDuplicate(sourceId: String) = "$SERVER_EDIT?dup=${android.net.Uri.encode(sourceId)}"
+    const val SERVER_SETTINGS = "server_settings"
+    fun serverSettings(id: String) = "$SERVER_SETTINGS/${android.net.Uri.encode(id)}"
 
     const val CHAT = "chat"
     fun chat(sessionId: String, focusMessageId: String? = null): String {

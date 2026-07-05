@@ -115,96 +115,30 @@ fun isValidUrl(url: String): Boolean {
     return "https://$trimmed".toHttpUrlOrNull() != null
 }
 
+/** Derive a default display label from a base URL: the host plus port when non-default.
+ *  Used by the add-server flow which has no label field — the label is auto-derived from
+ *  the hostname so the server list can show a readable name without extra user input.
+ *  Default ports (80 for http, 443 for https) are omitted; an explicit non-default port
+ *  is included so two servers on the same host but different ports are distinguishable. */
+fun hostFromBaseUrl(url: String): String {
+    val normalized = normalizeForSave(url)
+    val httpUrl = normalized.toHttpUrlOrNull() ?: return url.trim()
+    val isDefaultPort = httpUrl.port == 80 || httpUrl.port == 443 || httpUrl.port == -1
+    return if (!isDefaultPort) "${httpUrl.host}:${httpUrl.port}" else httpUrl.host
+}
+
 class ServerEditViewModel(
     private val container: AppContainer,
-    private val profileId: String?,
-    private val sourceId: String? = null,
 ) : ViewModel() {
 
-    private val _state = MutableStateFlow(ServerEditState(id = profileId))
+    private val _state = MutableStateFlow(ServerEditState())
     val state: StateFlow<ServerEditState> = _state.asStateFlow()
 
     init {
+        // Add-only form: seed an initial snapshot of empty values so isDirty becomes true the
+        // moment the user types anything. No existing-profile load, no duplicate seeding, no
+        // delete — editing an existing server lives on the Server Settings screen.
         viewModelScope.launch {
-            if (profileId != null) {
-                val existing = withTimeoutOrNull(NetworkConfig.profileLoadTimeoutMs) {
-                    container.profileStore.profiles
-                        .first { list -> list.any { p -> p.id == profileId } }
-                        .firstOrNull { it.id == profileId }
-                }
-                if (existing != null) {
-                    // FIX 21(a): normalize (trim) the dirty-snapshot fields the same way
-                    // save() stores them, so a stored value with surrounding whitespace
-                    // doesn't make the freshly-opened editor spuriously dirty (isDirty
-                    // compares field.trim() against these).
-                    val init = InitialProfile(
-                        label = existing.label.trim(),
-                        baseUrl = existing.baseUrl.trim(),
-                        username = existing.username.orEmpty().trim(),
-                        password = existing.password.orEmpty().trim(),
-                        requireHttps = existing.requireHttps,
-                        certPin = existing.certPin.orEmpty().trim(),
-                    )
-                    _state.value = ServerEditState(
-                        id = existing.id,
-                        label = existing.label,
-                        baseUrl = existing.baseUrl,
-                        username = existing.username.orEmpty(),
-                        password = existing.password.orEmpty(),
-                        requireHttps = existing.requireHttps,
-                        certPin = existing.certPin.orEmpty(),
-                        loaded = true,
-                        authFieldsVisible = existing.hasAuth,
-                        initial = init,
-                    )
-                    return@launch
-                }
-                _state.value = ServerEditState(
-                    id = profileId,
-                    loaded = true,
-                    error = container.string(R.string.error_load_timeout),
-                )
-                return@launch
-            }
-            // Duplicate: seed the form from an existing profile but as a NEW profile
-            // (id stays null so save() generates a fresh one). Appends " (copy)" to the
-            // label so the user can tell the duplicate from the original at a glance.
-            if (sourceId != null) {
-                val source = withTimeoutOrNull(NetworkConfig.profileLoadTimeoutMs) {
-                    container.profileStore.profiles
-                        .first { list -> list.any { p -> p.id == sourceId } }
-                        .firstOrNull { it.id == sourceId }
-                }
-                if (source != null) {
-                    val dupLabel = if (source.label.isBlank()) source.baseUrl + " (copy)" else "${source.label} (copy)"
-                    _state.value = ServerEditState(
-                        id = null,
-                        label = dupLabel,
-                        baseUrl = source.baseUrl,
-                        username = source.username.orEmpty(),
-                        password = source.password.orEmpty(),
-                        requireHttps = source.requireHttps,
-                        certPin = source.certPin.orEmpty(),
-                        loaded = true,
-                        authFieldsVisible = source.hasAuth,
-                        // Snapshot the seeded (copy) values so an untouched duplicate isn't
-                        // immediately dirty — an empty initial would make backing out of a
-                        // freshly opened duplicate always trigger the discard-changes dialog.
-                        initial = InitialProfile(
-                            label = dupLabel.trim(),
-                            baseUrl = source.baseUrl.trim(),
-                            username = source.username.orEmpty().trim(),
-                            password = source.password.orEmpty().trim(),
-                            requireHttps = source.requireHttps,
-                            certPin = source.certPin.orEmpty().trim(),
-                        ),
-                    )
-                    return@launch
-                }
-                // Source not found — fall through to a blank new-profile form.
-            }
-            // New-profile form: seed an initial snapshot of empty values so isDirty
-            // becomes true the moment the user types anything.
             _state.update {
                 it.copy(
                     loaded = true,
@@ -326,32 +260,6 @@ class ServerEditViewModel(
         }
     }
 
-    /**
-     * Delete the profile being edited (only valid for an existing profile, not a new one).
-     * Fires [onDone] on success so the screen pops back to the list. The active profile can't
-     * be deleted here (the list enforces the same guard); surface an error instead.
-     */
-    fun delete(onDone: () -> Unit) {
-        val s = _state.value
-        val id = s.id ?: return
-        if (s.saving || s.testingCredentials) return
-        _state.update { it.copy(saving = true, error = null) }
-        viewModelScope.launch {
-            val result = runCatchingCancellable { container.profileStore.delete(id) }
-            result.onSuccess {
-                // If this was the active profile, disconnect so the app doesn't hold a stale
-                // connection to a deleted profile. The list screen also guards against deleting
-                // the active profile, but the edit screen reaches here via its own overflow.
-                if (container.activeConnection.value?.profile?.id == id) {
-                    runCatchingCancellable { container.disconnect() }
-                }
-                onDone()
-            }.onFailure { e ->
-                _state.update { it.copy(saving = false, error = container.friendlyError(e)) }
-            }
-        }
-    }
-
     private fun saveInternal(connectAfter: Boolean, onDone: () -> Unit) {
         val s = _state.value
         if (!s.canSave || s.saving) return
@@ -369,7 +277,11 @@ class ServerEditViewModel(
                 val existing = withTimeoutOrNull(NetworkConfig.profileLoadTimeoutMs) {
                     container.profileStore.profiles.first()
                 } ?: emptyList()
-                val duplicate = existing.any { it.id != s.id && it.baseUrl == savedBaseUrl && it.label == s.label.trim() }
+                // The add-server form has no label field, so derive a default label from the
+                // hostname (e.g. "192.168.1.10:4096") rather than saving an empty label. The
+                // user can rename it later from Server Settings.
+                val savedLabel = s.label.trim().ifBlank { hostFromBaseUrl(savedBaseUrl) }
+                val duplicate = existing.any { it.id != s.id && it.baseUrl == savedBaseUrl && it.label == savedLabel }
                 if (duplicate) {
                     throw java.io.IOException(container.string(R.string.duplicate_server_warning))
                 }
@@ -385,7 +297,7 @@ class ServerEditViewModel(
                 } else 0L
                 val saved = ServerProfile(
                     id = s.id ?: UUID.randomUUID().toString(),
-                    label = s.label.trim(),
+                    label = savedLabel,
                     baseUrl = savedBaseUrl,
                     username = s.username.trim().takeIf { it.isNotBlank() },
                     password = s.password.trim().takeIf { it.isNotEmpty() },
@@ -405,6 +317,7 @@ class ServerEditViewModel(
                 _state.update {
                     it.copy(
                         id = saved.id,
+                        label = saved.label,
                         baseUrl = saved.baseUrl,
                         initial = InitialProfile(
                             label = saved.label,

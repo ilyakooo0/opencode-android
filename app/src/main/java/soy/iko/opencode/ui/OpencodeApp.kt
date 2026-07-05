@@ -51,6 +51,7 @@ import soy.iko.opencode.ui.file.FileViewScreen
 import soy.iko.opencode.ui.file.TwoPaneFileBrowser
 import soy.iko.opencode.ui.server.ServerEditScreen
 import soy.iko.opencode.ui.server.ServerListScreen
+import soy.iko.opencode.ui.server.ServerSettingsScreen
 import soy.iko.opencode.ui.search.GlobalSearchScreen
 import androidx.compose.ui.platform.LocalHapticFeedback
 import soy.iko.opencode.ui.components.LargeScreenNavRail
@@ -390,23 +391,25 @@ fun OpencodeApp(container: AppContainer) {
                         navController.navigate(Routes.SESSIONS) { launchSingleTop = true }
                     }
                 },
-                onAddProfile = { navController.navigate(Routes.serverEdit()) },
-                onEditProfile = { id -> navController.navigate(Routes.serverEdit(id)) },
-                onDuplicateProfile = { id -> navController.navigate(Routes.serverEditDuplicate(id)) },
+                onAddProfile = { navController.navigate(Routes.SERVER_EDIT) },
+                onServerSettings = { id -> navController.navigate(Routes.serverSettings(id)) },
+            )
+        }
+
+        composable(Routes.SERVER_EDIT) {
+            ServerEditScreen(
+                container = container,
+                onDone = { navController.popBackStack() },
             )
         }
 
         composable(
-            route = "${Routes.SERVER_EDIT}?id={id}&dup={dup}",
-            arguments = listOf(
-                navArgument("id") { type = NavType.StringType; nullable = true; defaultValue = null },
-                navArgument("dup") { type = NavType.StringType; nullable = true; defaultValue = null },
-            ),
+            route = "${Routes.SERVER_SETTINGS}/{id}",
+            arguments = listOf(navArgument("id") { type = NavType.StringType }),
         ) { entry ->
-            ServerEditScreen(
+            ServerSettingsScreen(
                 container = container,
-                profileId = entry.arguments?.getString("id"),
-                sourceId = entry.arguments?.getString("dup"),
+                profileId = entry.arguments?.getString("id").orEmpty(),
                 onDone = { navController.popBackStack() },
             )
         }
@@ -423,8 +426,8 @@ fun OpencodeApp(container: AppContainer) {
                         scope.launch { runCatchingCancellable { container.disconnect() } }
                         navController.popBackStack(Routes.SERVERS, inclusive = false)
                     },
-                    onAddServer = { navController.navigate(Routes.serverEdit()) },
-                    onEditProfile = { id -> navController.navigate(Routes.serverEdit(id)) },
+                    onAddServer = { navController.navigate(Routes.SERVER_EDIT) },
+                    onEditProfile = { id -> navController.navigate(Routes.serverSettings(id)) },
                 )
             } else {
                 SessionListScreen(
@@ -446,8 +449,8 @@ fun OpencodeApp(container: AppContainer) {
                     onOpenFiles = { navController.navigate(Routes.FILES) },
                     onOpenSettings = { navController.navigate(Routes.SETTINGS) },
                     onOpenSearch = { navController.navigate(Routes.SEARCH) },
-                    onAddServer = { navController.navigate(Routes.serverEdit()) },
-                    onEditProfile = { id -> navController.navigate(Routes.serverEdit(id)) },
+                    onAddServer = { navController.navigate(Routes.SERVER_EDIT) },
+                    onEditProfile = { id -> navController.navigate(Routes.serverSettings(id)) },
                 )
             }
         }
@@ -473,7 +476,7 @@ fun OpencodeApp(container: AppContainer) {
                         launchSingleTop = true
                     }
                 },
-                onEditProfile = { id -> navController.navigate(Routes.serverEdit(id)) },
+                onEditProfile = { id -> navController.navigate(Routes.serverSettings(id)) },
             )
         }
 
@@ -528,7 +531,7 @@ fun OpencodeApp(container: AppContainer) {
                 onOpenDiagnostics = { navController.navigate(Routes.DIAGNOSTICS) },
                 onOpenUsage = { navController.navigate(Routes.USAGE) },
                 onOpenMcp = { navController.navigate(Routes.MCP) },
-                onEditProfile = { id -> navController.navigate(Routes.serverEdit(id)) },
+                onEditProfile = { id -> navController.navigate(Routes.serverSettings(id)) },
             )
         }
 

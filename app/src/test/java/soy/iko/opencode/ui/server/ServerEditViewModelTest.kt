@@ -35,8 +35,8 @@ class ServerEditViewModelTest {
         Dispatchers.resetMain()
     }
 
-    private fun makeVm(container: FakeAppContainer, profileId: String? = null): ServerEditViewModel {
-        val vm = ServerEditViewModel(container, profileId)
+    private fun makeVm(container: FakeAppContainer): ServerEditViewModel {
+        val vm = ServerEditViewModel(container)
         testScope.testScheduler.advanceUntilIdle()
         return vm
     }
@@ -46,45 +46,13 @@ class ServerEditViewModelTest {
     @Test
     fun init_newProfile_loadsEmptyForm() = testScope.runTest {
         val container = FakeAppContainer()
-        val vm = makeVm(container, profileId = null)
+        val vm = makeVm(container)
         assertTrue(vm.state.value.loaded)
         assertTrue(vm.state.value.isNew)
         assertEquals("", vm.state.value.baseUrl)
         assertEquals("", vm.state.value.label)
         assertFalse(vm.state.value.saving)
         assertNull(vm.state.value.error)
-    }
-
-    // --- existing profile ---
-
-    @Test
-    fun init_existingProfile_loadsFormFields() = testScope.runTest {
-        val container = FakeAppContainer()
-        val profile = ServerProfile(
-            id = "p1",
-            label = "My Server",
-            baseUrl = "http://localhost:3000",
-            username = "admin",
-            password = "secret",
-        )
-        container.fakeProfileStore.setProfiles(listOf(profile))
-        val vm = makeVm(container, profileId = "p1")
-        assertTrue(vm.state.value.loaded)
-        assertFalse(vm.state.value.isNew)
-        assertEquals("p1", vm.state.value.id)
-        assertEquals("My Server", vm.state.value.label)
-        assertEquals("http://localhost:3000", vm.state.value.baseUrl)
-        assertEquals("admin", vm.state.value.username)
-        assertEquals("secret", vm.state.value.password)
-    }
-
-    @Test
-    fun init_nonExistentProfile_showsError() = testScope.runTest {
-        val container = FakeAppContainer()
-        container.fakeProfileStore.setProfiles(emptyList())
-        val vm = makeVm(container, profileId = "nonexistent")
-        assertTrue(vm.state.value.loaded)
-        assertNotNull(vm.state.value.error)
     }
 
     // --- update() ---
@@ -161,24 +129,60 @@ class ServerEditViewModelTest {
         assertTrue(vm.state.value.canSave)
     }
 
+    // --- hostFromBaseUrl (default label derivation) ---
+
+    @Test
+    fun hostFromBaseUrl_extractsHostAndPort() {
+        assertEquals("localhost:3000", hostFromBaseUrl("http://localhost:3000"))
+        assertEquals("192.168.1.10:4096", hostFromBaseUrl("192.168.1.10:4096"))
+        assertEquals("example.com", hostFromBaseUrl("https://example.com"))
+        assertEquals("example.com", hostFromBaseUrl("example.com"))
+        // Default port (443 for https) is omitted.
+        assertEquals("example.com", hostFromBaseUrl("https://example.com:443"))
+    }
+
     // --- connect() save path (probe Reachable → save + connect + ping) ---
-    // The former save()-specific tests now exercise the same persist path via connect(),
-    // since the standalone "Save without connecting" action was removed: connect() is the
-    // single primary action and its probe IS the connection test.
+    // The add-server form has no label field, so the saved label is derived from the hostname
+    // via hostFromBaseUrl. Connect is the single primary action and its probe IS the
+    // connection test.
 
     @Test
     fun connect_persistsProfileAndCallsOnDone() = testScope.runTest {
         val container = FakeAppContainer()
         container.probeResult = ProbeResult.Reachable
         val vm = makeVm(container)
-        vm.update { it.copy(baseUrl = "http://localhost:3000", label = "Test") }
+        vm.update { it.copy(baseUrl = "http://localhost:3000") }
         var doneCalled = false
         vm.connect { doneCalled = true }
         testScheduler.advanceUntilIdle()
         assertTrue(doneCalled)
         assertNotNull(container.fakeProfileStore.savedProfile)
         assertEquals("http://localhost:3000", container.fakeProfileStore.savedProfile?.baseUrl)
-        assertEquals("Test", container.fakeProfileStore.savedProfile?.label)
+    }
+
+    @Test
+    fun connect_derivesLabelFromHostnameWhenLabelBlank() = testScope.runTest {
+        val container = FakeAppContainer()
+        container.probeResult = ProbeResult.Reachable
+        val vm = makeVm(container)
+        vm.update { it.copy(baseUrl = "192.168.1.10:4096") }
+        vm.connect { }
+        testScheduler.advanceUntilIdle()
+        val saved = container.fakeProfileStore.savedProfile!!
+        assertEquals("192.168.1.10:4096", saved.label)
+    }
+
+    @Test
+    fun connect_preservesExplicitLabelWhenProvided() = testScope.runTest {
+        val container = FakeAppContainer()
+        container.probeResult = ProbeResult.Reachable
+        val vm = makeVm(container)
+        // The add form has no label field, but the VM still honors a label set via update()
+        // (e.g. by a future caller) — only a blank label is derived.
+        vm.update { it.copy(baseUrl = "http://localhost:3000", label = "My Server") }
+        vm.connect { }
+        testScheduler.advanceUntilIdle()
+        assertEquals("My Server", container.fakeProfileStore.savedProfile?.label)
     }
 
     @Test
@@ -195,29 +199,15 @@ class ServerEditViewModelTest {
     }
 
     @Test
-    fun connect_preservesIdForExistingProfile() = testScope.runTest {
-        val container = FakeAppContainer()
-        container.probeResult = ProbeResult.Reachable
-        val profile = ServerProfile(id = "existing-id", label = "Old", baseUrl = "http://old")
-        container.fakeProfileStore.setProfiles(listOf(profile))
-        val vm = makeVm(container, profileId = "existing-id")
-        vm.update { it.copy(baseUrl = "http://new") }
-        vm.connect { }
-        testScheduler.advanceUntilIdle()
-        assertEquals("existing-id", container.fakeProfileStore.savedProfile?.id)
-    }
-
-    @Test
     fun connect_trimsFields() = testScope.runTest {
         val container = FakeAppContainer()
         container.probeResult = ProbeResult.Reachable
         val vm = makeVm(container)
-        vm.update { it.copy(baseUrl = "  http://localhost:3000  ", label = "  Test  ", username = "  admin  ") }
+        vm.update { it.copy(baseUrl = "  http://localhost:3000  ", username = "  admin  ") }
         vm.connect { }
         testScheduler.advanceUntilIdle()
         val saved = container.fakeProfileStore.savedProfile!!
         assertEquals("http://localhost:3000", saved.baseUrl)
-        assertEquals("Test", saved.label)
         assertEquals("admin", saved.username)
     }
 
@@ -226,14 +216,13 @@ class ServerEditViewModelTest {
         val container = FakeAppContainer()
         container.probeResult = ProbeResult.Reachable
         val vm = makeVm(container)
-        vm.update { it.copy(baseUrl = "localhost:3000", label = "LAN") }
+        vm.update { it.copy(baseUrl = "localhost:3000") }
         vm.connect { }
         testScheduler.advanceUntilIdle()
         val saved = container.fakeProfileStore.savedProfile!!
         // A bare host is always schemed to https:// (the safe default). The user can still
         // opt into cleartext by typing http:// explicitly.
         assertEquals("https://localhost:3000", saved.baseUrl)
-        assertEquals("LAN", saved.label)
         // The editor's own field is refreshed to the schemed form so a just-saved bare-host
         // entry doesn't read as dirty against its own stored value on re-open.
         assertEquals("https://localhost:3000", vm.state.value.baseUrl)
@@ -432,63 +421,5 @@ class ServerEditViewModelTest {
         assertTrue(vm.state.value.saving)
         testScheduler.advanceUntilIdle()
         assertFalse(vm.state.value.saving)
-    }
-
-    @Test
-    fun init_existingProfileWithAuth_showsAuthFields() = testScope.runTest {
-        val container = FakeAppContainer()
-        val profile = ServerProfile(
-            id = "p1",
-            label = "My Server",
-            baseUrl = "http://localhost:3000",
-            username = "admin",
-            password = "secret",
-        )
-        container.fakeProfileStore.setProfiles(listOf(profile))
-        val vm = makeVm(container, profileId = "p1")
-        assertTrue(vm.state.value.authFieldsVisible)
-    }
-
-    @Test
-    fun init_existingProfileWithoutAuth_hidesAuthFields() = testScope.runTest {
-        val container = FakeAppContainer()
-        val profile = ServerProfile(
-            id = "p1",
-            label = "My Server",
-            baseUrl = "http://localhost:3000",
-        )
-        container.fakeProfileStore.setProfiles(listOf(profile))
-        val vm = makeVm(container, profileId = "p1")
-        assertFalse(vm.state.value.authFieldsVisible)
-    }
-
-    @Test
-    fun init_newProfile_hidesAuthFields() = testScope.runTest {
-        val container = FakeAppContainer()
-        val vm = makeVm(container)
-        assertFalse(vm.state.value.authFieldsVisible)
-    }
-
-    @Test
-    fun duplicate_seedsFromSourceProfileAsNew() = testScope.runTest {
-        val container = FakeAppContainer()
-        val source = ServerProfile(
-            id = "src1",
-            label = "My Server",
-            baseUrl = "http://localhost:3000",
-            username = "admin",
-            password = "secret",
-        )
-        container.fakeProfileStore.setProfiles(listOf(source))
-        val vm = ServerEditViewModel(container, profileId = null, sourceId = "src1")
-        testScope.testScheduler.advanceUntilIdle()
-        assertTrue(vm.state.value.loaded)
-        // A duplicate is a NEW profile (no id), so save() generates a fresh one.
-        assertNull(vm.state.value.id)
-        assertEquals("My Server (copy)", vm.state.value.label)
-        assertEquals("http://localhost:3000", vm.state.value.baseUrl)
-        assertEquals("admin", vm.state.value.username)
-        assertEquals("secret", vm.state.value.password)
-        assertTrue(vm.state.value.authFieldsVisible)
     }
 }

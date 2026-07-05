@@ -69,7 +69,8 @@
     <string name="servers_title">Servidores de opencode</string>
     <string name="sessions_title">Sesiones</string>
     <string name="add_server">Añadir servidor</string>
-    <string name="edit_server">Editar servidor</string>
+    <string name="server_settings">Ajustes del servidor</string>
+    <string name="saving">Guardando…</string>
     <string name="connected">Conectado</string>
     <string name="no_servers_yet">Aún no hay servidores</string>
     <string name="no_servers_hint">Añade un endpoint de opencode serve para conectar.</string>
@@ -334,7 +335,6 @@
     <string name="sort_title">Título</string>
     <string name="last_used_never">Sin usar aún</string>
     <string name="last_used">Usado por última vez %1$s</string>
-    <string name="duplicate_server">Duplicar</string>
     <string name="find_in_file">Buscar en el archivo</string>
     <string name="find_previous">Buscar anterior</string>
     <string name="find_next">Buscar siguiente</string>

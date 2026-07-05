@@ -5,6 +5,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
@@ -18,6 +19,9 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AlertDialog
@@ -30,6 +34,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -45,33 +50,37 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
-import soy.iko.opencode.ui.components.autofillModifier
+import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.ui.components.AutofillHint
+import soy.iko.opencode.ui.components.autofillModifier
 import soy.iko.opencode.ui.vmFactory
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ServerEditScreen(
+fun ServerSettingsScreen(
     container: AppContainer,
+    profileId: String,
     onDone: () -> Unit,
 ) {
-    val vm: ServerEditViewModel =
-        viewModel(factory = vmFactory { ServerEditViewModel(container) })
+    val vm: ServerSettingsViewModel =
+        viewModel(factory = vmFactory { ServerSettingsViewModel(container, profileId) })
     val state by vm.state.collectAsStateWithLifecycle()
     var showDiscardConfirm by rememberSaveable { mutableStateOf(false) }
     var passwordVisible by rememberSaveable { mutableStateOf(false) }
@@ -95,10 +104,33 @@ fun ServerEditScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(stringResource(R.string.add_server)) },
+                title = { Text(stringResource(R.string.server_settings)) },
                 navigationIcon = {
                     IconButton(onClick = ::safeExit) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
+                    }
+                },
+                actions = {
+                    var showDeleteConfirm by remember { mutableStateOf(false) }
+                    IconButton(onClick = { showDeleteConfirm = true }) {
+                        Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.delete_server))
+                    }
+                    if (showDeleteConfirm) {
+                        val displayName = state.label.takeIf { it.isNotBlank() } ?: state.baseUrl
+                        AlertDialog(
+                            onDismissRequest = { showDeleteConfirm = false },
+                            title = { Text(stringResource(R.string.delete_server)) },
+                            text = { Text(stringResource(R.string.remove_server_text, displayName)) },
+                            confirmButton = {
+                                TextButton(onClick = {
+                                    showDeleteConfirm = false
+                                    vm.delete(onDone)
+                                }) { Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error) }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { showDeleteConfirm = false }) { Text(stringResource(R.string.cancel)) }
+                            },
+                        )
                     }
                 },
                 scrollBehavior = scrollBehavior,
@@ -111,7 +143,7 @@ fun ServerEditScreen(
                 CircularProgressIndicator(Modifier.semantics { contentDescription = loadingLabel })
             }
         } else {
-            ServerEditForm(
+            ServerSettingsForm(
                 state = state,
                 passwordVisible = passwordVisible,
                 onTogglePassword = { passwordVisible = !passwordVisible },
@@ -143,28 +175,18 @@ fun ServerEditScreen(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ServerEditForm(
+private fun ServerSettingsForm(
     state: ServerEditState,
     passwordVisible: Boolean,
     onTogglePassword: () -> Unit,
     padding: androidx.compose.foundation.layout.PaddingValues,
     scrollBehavior: androidx.compose.material3.TopAppBarScrollBehavior,
-    vm: ServerEditViewModel,
+    vm: ServerSettingsViewModel,
     onDone: () -> Unit,
 ) {
-    val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
+    val haptics = LocalHapticFeedback.current
     val canSave = remember(state.baseUrl, state.certPin) { state.canSave }
     val urlValid = remember(state.baseUrl) { isValidUrl(state.baseUrl) }
-    val baseUrlFocus = remember { FocusRequester() }
-    val keyboard = LocalSoftwareKeyboardController.current
-    // Focus the Base URL field (and raise the keyboard) on the fresh Add-server form so the
-    // user can start typing the required field immediately.
-    LaunchedEffect(Unit) {
-        if (state.baseUrl.isBlank()) {
-            baseUrlFocus.requestFocus()
-            keyboard?.show()
-        }
-    }
     Column(
         modifier = Modifier
             .imePadding()
@@ -177,8 +199,6 @@ private fun ServerEditForm(
             .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        // Base URL is the only required field, so it leads the form and takes focus on a
-        // fresh add form (via baseUrlFocus above).
         OutlinedTextField(
             value = state.baseUrl,
             onValueChange = { v -> vm.update { it.copy(baseUrl = v) } },
@@ -192,14 +212,8 @@ private fun ServerEditForm(
                 }
             },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done),
-            keyboardActions = KeyboardActions(onDone = { keyboard?.hide() }),
-            modifier = Modifier
-                .fillMaxWidth()
-                .focusRequester(baseUrlFocus)
-                .testTag("server_url"),
+            modifier = Modifier.fillMaxWidth().testTag("server_url"),
         )
-        // Auth fields appear only once a connect attempt learns the server requires them
-        // (or an authed profile is loaded) — the common no-auth server never sees them.
         AnimatedVisibility(visible = state.authFieldsVisible) {
             AuthFields(
                 state = state,
@@ -207,18 +221,16 @@ private fun ServerEditForm(
                 onTogglePassword = onTogglePassword,
                 onUpdate = vm::update,
                 onTestCredentials = vm::testCredentials,
-                onImeDone = { if (canSave && !state.saving) vm.connect(onDone) },
+                onImeDone = { if (canSave && !state.saving) vm.save(onDone) },
             )
         }
-        // Single primary action: probe-then-save-and-connect. The probe IS the connection
-        // test — a failed probe keeps the user on this screen with the error shown below.
         Button(
             onClick = {
-                haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                vm.connect(onDone)
+                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                vm.save(onDone)
             },
             enabled = canSave && !state.saving,
-            modifier = Modifier.fillMaxWidth().testTag("server_connect"),
+            modifier = Modifier.fillMaxWidth().testTag("server_save"),
         ) {
             if (state.saving) {
                 CircularProgressIndicator(
@@ -226,13 +238,11 @@ private fun ServerEditForm(
                     color = MaterialTheme.colorScheme.onPrimary,
                     strokeWidth = 2.dp,
                 )
-                Text(stringResource(R.string.connecting), modifier = Modifier.padding(start = 8.dp))
+                Text(stringResource(R.string.saving), modifier = Modifier.padding(start = 8.dp))
             } else {
-                Text(stringResource(R.string.connect))
+                Text(stringResource(R.string.save))
             }
         }
-        // Keep the error directly under the primary action so it's in view where the user is
-        // looking when a Connect/Save fails — not buried further down the form.
         state.error?.let { message ->
             Text(
                 message,
@@ -241,6 +251,15 @@ private fun ServerEditForm(
                 modifier = Modifier.fillMaxWidth(),
             )
         }
+        OutlinedTextField(
+            value = state.label,
+            onValueChange = { v -> vm.update { it.copy(label = v) } },
+            label = { Text(stringResource(R.string.label_optional)) },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+            modifier = Modifier.fillMaxWidth().testTag("server_label"),
+        )
+        AdvancedSection(state = state, onUpdate = vm::update)
     }
 }
 
@@ -255,15 +274,9 @@ private fun AuthFields(
 ) {
     val showPasswordLabel = stringResource(R.string.show_password)
     val hidePasswordLabel = stringResource(R.string.hide_password)
-    // Memoize the URI parse on baseUrl so the test-credentials button doesn't re-parse it on
-    // every keystroke's recomposition (see ServerEditForm).
     val canSave = remember(state.baseUrl, state.certPin) { state.canSave }
     val usernameFocus = remember { FocusRequester() }
     val passwordFocus = remember { FocusRequester() }
-    // AuthFields only enters composition once the server is known to require credentials
-    // (AnimatedVisibility in ServerEditForm), so a Unit-keyed effect fires once on reveal
-    // and focuses the username — otherwise the user has to tap into it after the probe flips
-    // the auth fields open.
     LaunchedEffect(Unit) {
         runCatching { usernameFocus.requestFocus() }
     }
@@ -310,8 +323,6 @@ private fun AuthFields(
         )
         OutlinedButton(
             onClick = onTestCredentials,
-            // Require at least one credential field: testCredentials() no-ops when both are
-            // blank, so without this the button is tappable but silently does nothing.
             enabled = canSave && !state.testingCredentials && !state.saving &&
                 (state.username.isNotBlank() || state.password.isNotBlank()),
             modifier = Modifier.fillMaxWidth().testTag("server_test_creds"),
@@ -333,5 +344,72 @@ private fun AuthFields(
                 color = if (ok) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
             )
         }
+    }
+}
+
+@Composable
+private fun AdvancedSection(
+    state: ServerEditState,
+    onUpdate: (((ServerEditState) -> ServerEditState)) -> Unit,
+) {
+    var expanded by rememberSaveable { mutableStateOf(state.requireHttps || state.certPin.isNotBlank()) }
+    val stateLabel = stringResource(if (expanded) R.string.state_expanded else R.string.state_collapsed)
+    Column(modifier = Modifier.fillMaxWidth()) {
+        TextButton(
+            onClick = { expanded = !expanded },
+            modifier = Modifier.semantics { stateDescription = stateLabel },
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp),
+        ) {
+            Icon(
+                if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+            )
+            Text(stringResource(R.string.server_security), modifier = Modifier.padding(start = 8.dp))
+        }
+        AnimatedVisibility(visible = expanded) {
+            SecurityFields(state = state, onUpdate = onUpdate)
+        }
+    }
+}
+
+@Composable
+private fun SecurityFields(
+    state: ServerEditState,
+    onUpdate: (((ServerEditState) -> ServerEditState)) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(stringResource(R.string.require_https), style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    stringResource(R.string.require_https_desc),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(
+                checked = state.requireHttps,
+                onCheckedChange = { v -> onUpdate { it.copy(requireHttps = v) } },
+            )
+        }
+        OutlinedTextField(
+            value = state.certPin,
+            onValueChange = { v -> onUpdate { it.copy(certPin = v) } },
+            label = { Text(stringResource(R.string.cert_pin)) },
+            placeholder = { Text(stringResource(R.string.cert_pin_hint)) },
+            singleLine = true,
+            isError = !state.certPinValid,
+            supportingText = {
+                Text(
+                    stringResource(if (state.certPinValid) R.string.cert_pin_desc else R.string.cert_pin_invalid),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (state.certPinValid) MaterialTheme.colorScheme.onSurfaceVariant
+                        else MaterialTheme.colorScheme.error,
+                )
+            },
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+            modifier = Modifier.fillMaxWidth().testTag("server_cert_pin"),
+        )
     }
 }
