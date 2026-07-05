@@ -624,28 +624,34 @@ private fun UserBubble(
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     // Crossfade the send-status slot so SENDING → FAILED → null transitions
                     // don't snap; a subtle fade reads as a polish detail rather than a pop.
-                    androidx.compose.animation.AnimatedContent(
-                        targetState = sendStatus,
-                        transitionSpec = {
-                            androidx.compose.animation.fadeIn() togetherWith
-                                androidx.compose.animation.fadeOut()
-                        },
-                        label = "send_status",
-                    ) { status ->
-                        when (status) {
-                            MessageSendStatus.SENDING -> {
-                                CircularProgressIndicator(
-                                    Modifier.size(12.dp),
-                                    strokeWidth = 1.5.dp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                                Text(
-                                    stringResource(R.string.message_sending),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            MessageSendStatus.FAILED -> {
+                    // Only mounted when there's an actual status to show: a null status (the
+                    // common case for any historical/confirmed message) renders nothing at all.
+                    // Passing null into AnimatedContent crashes its measure policy (an NPE in
+                    // the SubcomposeLayout's ChildData lookup when the null-state content is
+                    // empty), so gate the whole composable on sendStatus != null.
+                    sendStatus?.let { status ->
+                        androidx.compose.animation.AnimatedContent(
+                            targetState = status,
+                            transitionSpec = {
+                                androidx.compose.animation.fadeIn() togetherWith
+                                    androidx.compose.animation.fadeOut()
+                            },
+                            label = "send_status",
+                        ) { current ->
+                            when (current) {
+                                MessageSendStatus.SENDING -> {
+                                    CircularProgressIndicator(
+                                        Modifier.size(12.dp),
+                                        strokeWidth = 1.5.dp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    Text(
+                                        stringResource(R.string.message_sending),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                MessageSendStatus.FAILED -> {
                                 // Tap-to-retry: the whole failed label is tappable to re-send (far more
                                 // discoverable than relying on the transient snackbar). A dismiss (×) button
                                 // removes the abandoned message entirely, since its text will never match a
@@ -704,7 +710,7 @@ private fun UserBubble(
                                     }
                                 }
                             }
-                            null -> {}
+                            }
                         }
                     }
                     if (isEdited && sendStatus == null) {
