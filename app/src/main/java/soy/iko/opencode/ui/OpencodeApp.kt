@@ -25,6 +25,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isAltPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
@@ -51,12 +52,14 @@ import soy.iko.opencode.ui.file.TwoPaneFileBrowser
 import soy.iko.opencode.ui.server.ServerEditScreen
 import soy.iko.opencode.ui.server.ServerListScreen
 import soy.iko.opencode.ui.search.GlobalSearchScreen
+import androidx.compose.ui.platform.LocalHapticFeedback
 import soy.iko.opencode.ui.components.LargeScreenNavRail
 import soy.iko.opencode.ui.components.CompactNavBar
 import soy.iko.opencode.ui.components.LocalChatTextScale
 import soy.iko.opencode.ui.components.LocalCodeWrap
 import soy.iko.opencode.ui.components.LocalReducedMotion
 import soy.iko.opencode.ui.components.isReducedMotion
+import soy.iko.opencode.ui.components.rememberGatedHaptics
 import soy.iko.opencode.ui.session.SessionListScreen
 import soy.iko.opencode.ui.session.TwoPaneSessionChat
 import soy.iko.opencode.ui.settings.DiagnosticsScreen
@@ -81,6 +84,11 @@ fun OpencodeApp(container: AppContainer) {
     // renderers honor the user's text-size and code-wrap choices everywhere.
     val chatTextScale by container.settingsStore.chatTextScale.collectAsStateWithLifecycle(initialValue = 1f)
     val codeWrap by container.settingsStore.codeWrap.collectAsStateWithLifecycle(initialValue = false)
+    // Haptics gating: collected once at the root so the in-app toggle can disable all
+    // performHapticFeedback calls everywhere via a single CompositionLocalProvider, instead
+    // of each call site needing to read the setting. Defaults true (the prior behavior) so
+    // the brief window before DataStore loads still haptics as before.
+    val hapticsEnabled by container.settingsStore.hapticsEnabled.collectAsStateWithLifecycle(initialValue = true)
 
     // The foreground service that holds priority while any run is active is driven from the
     // process-lived AppContainer scope (see AppContainer.observeRunForegroundService), not
@@ -176,6 +184,7 @@ fun OpencodeApp(container: AppContainer) {
         LocalChatTextScale provides clampedChatTextScale,
         LocalCodeWrap provides codeWrap,
         LocalReducedMotion provides reducedMotion,
+        LocalHapticFeedback provides rememberGatedHaptics(hapticsEnabled),
     ) {
     // Slide direction for push/pop transitions, mirrored in RTL so the animation reads
     // naturally instead of "going the wrong way". +1 = LTR (push from right), -1 = RTL.
@@ -209,6 +218,21 @@ fun OpencodeApp(container: AppContainer) {
             // Esc stop, Ctrl+F find) are handled in each screen's own onPreviewKeyEvent and take
             // precedence (they're closer to the focused composable in the tree).
             if (ev.type != KeyEventType.KeyDown || !ev.isCtrlPressed) {
+                // Alt+Left (a familiar desktop "Back" gesture) pops the back stack. Not gated
+                // on Ctrl so it works as a standalone modifier. Per-screen shortcuts (Esc
+                // stop, Ctrl+F find, Ctrl+K palette) register their own onPreviewKeyEvent
+                // closer to the focused composable and consume first, so this only pops when
+                // nothing nearer handled the key — avoiding conflicts with open dialogs and
+                // text fields. Esc is deliberately NOT mapped to back here for that reason.
+                if (ev.type == KeyEventType.KeyDown &&
+                    ev.key == Key.DirectionLeft &&
+                    ev.isAltPressed
+                ) {
+                    if (navController.previousBackStackEntry != null) {
+                        navController.popBackStack()
+                        return@onPreviewKeyEvent true
+                    }
+                }
                 return@onPreviewKeyEvent false
             }
             val route = when (ev.key) {
@@ -504,6 +528,7 @@ fun OpencodeApp(container: AppContainer) {
                 onOpenDiagnostics = { navController.navigate(Routes.DIAGNOSTICS) },
                 onOpenUsage = { navController.navigate(Routes.USAGE) },
                 onOpenMcp = { navController.navigate(Routes.MCP) },
+                onEditProfile = { id -> navController.navigate(Routes.serverEdit(id)) },
             )
         }
 

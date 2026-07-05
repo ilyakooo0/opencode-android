@@ -17,6 +17,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import soy.iko.opencode.R
 import soy.iko.opencode.ui.Routes
@@ -62,6 +64,7 @@ fun CompactNavBar(
     runActive: Boolean = false,
 ) {
     NavigationBar(modifier = modifier.fillMaxWidth()) {
+        val haptics = LocalHapticFeedback.current
         BOTTOM_DESTINATIONS.forEach { dest ->
             val selected = currentRoute == dest.route ||
                 (dest.route == Routes.SESSIONS && currentRoute != null &&
@@ -73,7 +76,13 @@ fun CompactNavBar(
             NavigationBarItem(
                 selected = selected,
                 enabled = !dest.requiresConnection || connected,
-                onClick = { onNavigate(dest.route) },
+                onClick = {
+                    // Haptic on selection to match the app's haptic-everywhere ethos
+                    // (NavigationBarItem adds none by default). Gated by the root haptics
+                    // CompositionLocal, so the in-app toggle still silences it.
+                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    onNavigate(dest.route)
+                },
                 icon = {
                     if (showUnreadBadge || showRunBadge) {
                         BadgedBox(

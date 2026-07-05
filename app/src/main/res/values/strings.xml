@@ -115,6 +115,7 @@
     <string name="discover_on_network">Discover on network</string>
     <string name="searching_network">Searching the local network…</string>
     <string name="no_servers_found">No opencode servers found on the local network.</string>
+    <string name="scan_again">Scan again</string>
     <string name="testing_credentials">Testing…</string>
     <string name="credentials_ok">Credentials accepted.</string>
     <string name="credentials_rejected">Credentials rejected.</string>
@@ -314,6 +315,8 @@
     </plurals>
     <string name="notif_permission_title">Approval needed in “%1$s”</string>
     <string name="notif_permission_fallback">A tool wants to run.</string>
+    <string name="notif_permission_auto_rejected_title">Run stopped in “%1$s”</string>
+    <string name="notif_permission_auto_rejected_text">A permission prompt timed out and was auto-rejected.</string>
     <string name="notif_error_title">Run failed</string>
     <string name="notif_error_text">opencode hit an error in “%1$s”.</string>
     <string name="notif_action_allow_once">Allow once</string>
@@ -624,6 +627,7 @@
     <string name="session_reverted_badge">Reverted</string>
     <string name="bulk_archived">%1$d sessions archived</string>
     <string name="bulk_unarchived">%1$d sessions unarchived</string>
+    <string name="bulk_deleted">%1$d sessions deleted</string>
     <string name="bulk_marked_read">%1$d sessions marked as read</string>
     <string name="sort_active">Active sort</string>
     <string name="sort_descending">Descending</string>
@@ -635,6 +639,7 @@
     <string name="go_to_line">Go to line</string>
     <string name="go_to_line_hint">Line number (1–%1$d)</string>
     <string name="match_case">Match case</string>
+    <string name="regex_search">Regular expression search</string>
     <string name="share_full_file">Share full file</string>
 
     <!-- Settings backup/restore -->

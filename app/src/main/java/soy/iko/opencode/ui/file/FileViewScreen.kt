@@ -203,6 +203,9 @@ fun FileViewScreen(
     // Find-in-file match-case toggle (default case-insensitive). Persisted so a rotation keeps
     // the choice, and applied to the off-thread match scan below.
     var caseSensitive by rememberSaveable(path) { mutableStateOf(false) }
+    // Regex mode: when on, the query is interpreted as a regular expression (Java Pattern)
+    // instead of a plain substring. A power-user affordance mirroring editor find bars.
+    var regex by rememberSaveable(path) { mutableStateOf(false) }
     // Debounce the query so each keystroke doesn't trigger a full-file scan, and run the
     // scan on Dispatchers.Default so a large file doesn't jank the keyboard while typing.
     var debouncedFind by remember { mutableStateOf("") }
@@ -210,12 +213,28 @@ fun FileViewScreen(
         val q = findQuery.trim()
         if (q.isEmpty()) debouncedFind = "" else { delay(150); debouncedFind = q }
     }
-    val matchIndices by produceState(emptyList<Int>(), lines, debouncedFind, caseSensitive) {
+    val matchIndices by produceState(emptyList<Int>(), lines, debouncedFind, caseSensitive, regex) {
         val q = debouncedFind
         value = if (q.isEmpty()) emptyList()
         else withContext(Dispatchers.Default) {
+            // Compile the pattern once per scan when regex mode is on; a malformed pattern
+            // yields no matches (rather than throwing) and the FindBar surfaces the error
+            // state via the zero match count. Case-sensitivity maps to Pattern flags.
+            val pattern = if (regex) {
+                runCatching {
+                    val flags = if (caseSensitive) 0 else java.util.regex.Pattern.CASE_INSENSITIVE
+                    java.util.regex.Pattern.compile(q, flags)
+                }.getOrNull()
+            } else {
+                null
+            }
             lines.mapIndexedNotNull { index, line ->
-                index.takeIf { line.contains(q, ignoreCase = !caseSensitive) }
+                val matched = if (regex) {
+                    pattern?.matcher(line)?.find() == true
+                } else {
+                    line.contains(q, ignoreCase = !caseSensitive)
+                }
+                if (matched) index else null
             }
         }
     }
@@ -280,6 +299,14 @@ fun FileViewScreen(
                         val ok = runCatchingCancellable {
                             withContext(Dispatchers.IO) {
                                 val dir = java.io.File(context.cacheDir, "external").apply { mkdirs() }
+                                // Evict stale cache files handed to external apps so repeated
+                                // opens of large files don't accumulate forever. A TTL (vs.
+                                // wiping the dir) preserves files an external app may still be
+                                // reading from a recent open. Pruned before writing the new one.
+                                val cutoff = System.currentTimeMillis() - NetworkConfig.externalCacheTtlMs
+                                dir.listFiles()?.forEach { f ->
+                                    runCatching { if (f.lastModified() < cutoff) f.delete() }
+                                }
                                 val file = java.io.File(dir, filename.ifBlank { "file.txt" })
                                 file.writeText(rawText)
                                 val authority = context.packageName + ".fileprovider"
@@ -365,6 +392,8 @@ fun FileViewScreen(
                     onRetry = { vm.reload() },
                     caseSensitive = caseSensitive,
                     onToggleCaseSensitive = { caseSensitive = !caseSensitive },
+                    regex = regex,
+                    onToggleRegex = { regex = !regex },
                     onShareFull = {
                         val send = Intent(Intent.ACTION_SEND).apply {
                             type = "text/plain"
@@ -658,6 +687,8 @@ private fun BoxScope.FileViewStateContent(
     onShareFull: () -> Unit,
     caseSensitive: Boolean,
     onToggleCaseSensitive: () -> Unit,
+    regex: Boolean,
+    onToggleRegex: () -> Unit,
 ) {
     when {
         // Full-screen skeleton only on the initial load (no content yet). A reload keeps the
@@ -767,6 +798,8 @@ private fun BoxScope.FileViewStateContent(
             onShareFull = onShareFull,
             caseSensitive = caseSensitive,
             onToggleCaseSensitive = onToggleCaseSensitive,
+            regex = regex,
+            onToggleRegex = onToggleRegex,
         )
     }
 }
@@ -796,6 +829,8 @@ private fun BoxScope.FileViewContentBody(
     onShareFull: () -> Unit,
     caseSensitive: Boolean,
     onToggleCaseSensitive: () -> Unit,
+    regex: Boolean,
+    onToggleRegex: () -> Unit,
 ) {
     // Overlay bar: stacks the diff/raw chips and the find bar at the top so both stay
     // reachable while scrolling. Each contributes a top inset so the content below
@@ -856,6 +891,8 @@ private fun BoxScope.FileViewContentBody(
                     onClose = onCloseFind,
                     caseSensitive = caseSensitive,
                     onToggleCaseSensitive = onToggleCaseSensitive,
+                    regex = regex,
+                    onToggleRegex = onToggleRegex,
                 )
             }
         }
@@ -908,9 +945,12 @@ private fun FindBar(
     onClose: () -> Unit,
     caseSensitive: Boolean,
     onToggleCaseSensitive: () -> Unit,
+    regex: Boolean,
+    onToggleRegex: () -> Unit,
 ) {
     val keyboardController = LocalSoftwareKeyboardController.current
     val matchCaseLabel = stringResource(R.string.match_case)
+    val regexLabel = stringResource(R.string.regex_search)
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -932,6 +972,15 @@ private fun FindBar(
                         onClick = onToggleCaseSensitive,
                         label = { Text("Aa", style = MaterialTheme.typography.labelSmall) },
                         modifier = Modifier.semantics { contentDescription = matchCaseLabel },
+                    )
+                    Spacer(Modifier.size(8.dp))
+                    // Regex toggle (".*"): when on, the query is a Java Pattern. Mirrors
+                    // editor find bars; the label stays compact to match the "Aa" chip.
+                    FilterChip(
+                        selected = regex,
+                        onClick = onToggleRegex,
+                        label = { Text(".*", style = MaterialTheme.typography.labelSmall) },
+                        modifier = Modifier.semantics { contentDescription = regexLabel },
                     )
                     Spacer(Modifier.size(8.dp))
                     val countText = if (query.isBlank()) ""

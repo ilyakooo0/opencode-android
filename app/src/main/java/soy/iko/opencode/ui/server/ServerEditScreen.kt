@@ -20,6 +20,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ExpandLess
@@ -613,14 +614,19 @@ private fun DiscoverySection(onPick: (String) -> Unit, initiallyExpanded: Boolea
         }
         if (expanded) {
             val discovery = remember { NsdDiscovery(context) }
-            val servers by remember(discovery) { discovery.discover() }
+            // scanNonce drives a manual re-scan: bumping it recreates the discovery flow
+            // (cancelling the prior collection / Nsd listener) and restarts the no-result
+            // timeout, so a user on a flaky multicast network can retry without collapsing
+            // and re-expanding the section.
+            var scanNonce by remember { mutableStateOf(0) }
+            val servers by remember(discovery, scanNonce) { discovery.discover() }
                 .collectAsStateWithLifecycle(initialValue = emptyList())
             // mDNS discovery is a continuous flow that never emits a terminal "no results"
             // state — on a network with no opencode servers the spinner would spin forever.
             // After the timeout, swap the spinner for a "no servers found" message. Discovery
             // keeps running, so a late server can still replace the message when it arrives.
             var searchTimedOut by remember { mutableStateOf(false) }
-            LaunchedEffect(Unit) {
+            LaunchedEffect(scanNonce) {
                 searchTimedOut = false
                 kotlinx.coroutines.delay(NetworkConfig.nsdDiscoveryNoResultTimeoutMs)
                 searchTimedOut = true
@@ -663,6 +669,16 @@ private fun DiscoverySection(onPick: (String) -> Unit, initiallyExpanded: Boolea
                         modifier = Modifier.padding(start = 8.dp),
                     )
                 }
+            }
+            // Manual re-scan affordance: shown after a timeout (or while results are present)
+            // so a user on flaky multicast can retry discovery without leaving the section.
+            TextButton(
+                onClick = { scanNonce++ },
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp),
+                modifier = Modifier.padding(top = 4.dp),
+            ) {
+                Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                Text(stringResource(R.string.scan_again), modifier = Modifier.padding(start = 8.dp))
             }
         }
     }

@@ -144,7 +144,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.shape.RoundedCornerShape
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun SessionListScreen(
     container: AppContainer,
@@ -603,9 +603,9 @@ fun SessionListScreen(
         AlertDialog(
             onDismissRequest = { showBulkDelete = false },
             title = { Text(stringResource(R.string.bulk_delete_title)) },
-            // Bulk delete is NOT undoable (unlike single delete which offers Undo), so the
-            // warning must be explicit — matching the single-delete dialog's irreversibility text
-            // rather than the bare "%d selected" count.
+            // Bulk delete is destructive; the warning stays explicit even though an Undo
+            // snackbar now offers a recovery window (mirroring single delete). Matching the
+            // single-delete dialog's irreversibility text rather than the bare "%d selected".
             text = { Text(stringResource(R.string.bulk_delete_text, count)) },
             confirmButton = {
                 TextButton(onClick = {
@@ -952,14 +952,13 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
                             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = NetworkConfig.listFabInsetDp.dp),
                             verticalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
-                        // Render each (header, nodes) segment: the header as a section label
-                        // followed by the session cards in that section. (Sticky headers would
-                        // require LazyListScope.stickyHeader, which is not available in the
-                        // current Compose version — the segments structure keeps the grouping
-                        // ready for a sticky upgrade when the API lands.)
+                        // Render each (header, nodes) segment: the header as a sticky section
+                        // label (pinned while its segment scrolls past) followed by the session
+                        // cards in that section. stickyHeader keeps "Today"/"Yesterday" visible
+                        // so a user scrolling a long list keeps the date context.
                         for ((header, segmentNodes) in groupedSegments) {
                             if (header != null) {
-                                item(key = header.key, contentType = "header") {
+                                stickyHeader(key = header.key, contentType = "header") {
                                     DateGroupHeader(header.label)
                                 }
                             }
@@ -1729,6 +1728,8 @@ private fun SessionActionUndoEffect(vm: SessionListViewModel, snackbar: Snackbar
                 SessionActionKind.UNARCHIVED -> unarchived
                 SessionActionKind.PINNED -> pinned
                 SessionActionKind.UNPINNED -> unpinned
+                // Single deletes use the dedicated delete-undo effect, not this path.
+                SessionActionKind.DELETED -> return@collectLatest
             }
             val result = snackbar.showSnackbar(
                 message = message,
@@ -1754,20 +1755,44 @@ private fun BulkSessionActionUndoEffect(vm: SessionListViewModel, snackbar: Snac
     val undoLabel = stringResource(R.string.undo)
     val archived = stringResource(R.string.bulk_archived)
     val unarchived = stringResource(R.string.bulk_unarchived)
+    val deleted = stringResource(R.string.bulk_deleted)
     LaunchedEffect(Unit) {
         vm.bulkSessionActionEvents.collectLatest { event ->
             val message = when (event.kind) {
                 SessionActionKind.ARCHIVED -> archived.format(event.ids.size)
                 SessionActionKind.UNARCHIVED -> unarchived.format(event.ids.size)
                 SessionActionKind.PINNED, SessionActionKind.UNPINNED -> return@collectLatest
+                SessionActionKind.DELETED -> deleted.format(event.ids.size)
             }
-            val result = snackbar.showSnackbar(
-                message = message,
-                actionLabel = undoLabel,
-                duration = androidx.compose.material3.SnackbarDuration.Long,
-            )
-            if (result == androidx.compose.material3.SnackbarResult.ActionPerformed) {
-                vm.undoBulkAction(event)
+            // Bulk delete uses a timed Indefinite snackbar aligned to the undo window, so the
+            // Undo button stays live for exactly the window in which the deferred REST delete
+            // can still be cancelled (mirroring the single-delete undo effect). Other bulk
+            // actions are reversible flags and use the standard Long duration.
+            if (event.kind == SessionActionKind.DELETED) {
+                coroutineScope {
+                    val dismisser = launch {
+                        delay(NetworkConfig.undoDeleteDelayMs)
+                        snackbar.currentSnackbarData?.dismiss()
+                    }
+                    val result = snackbar.showSnackbar(
+                        message = message,
+                        actionLabel = undoLabel,
+                        duration = androidx.compose.material3.SnackbarDuration.Indefinite,
+                    )
+                    dismisser.cancel()
+                    if (result == androidx.compose.material3.SnackbarResult.ActionPerformed) {
+                        vm.undoBulkAction(event)
+                    }
+                }
+            } else {
+                val result = snackbar.showSnackbar(
+                    message = message,
+                    actionLabel = undoLabel,
+                    duration = androidx.compose.material3.SnackbarDuration.Long,
+                )
+                if (result == androidx.compose.material3.SnackbarResult.ActionPerformed) {
+                    vm.undoBulkAction(event)
+                }
             }
         }
     }

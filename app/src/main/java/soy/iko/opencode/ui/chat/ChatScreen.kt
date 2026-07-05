@@ -243,6 +243,7 @@ fun ChatScreen(
     val preferredModelId by container.settingsStore.preferredModelId.collectAsStateWithLifecycle(initialValue = "")
     val recentModelEntries by container.recentModelsStore.entries.collectAsStateWithLifecycle()
     val compactSpacing by container.settingsStore.compactMessageSpacing.collectAsStateWithLifecycle(initialValue = false)
+    val notifPermission by container.settingsStore.notifPermission.collectAsStateWithLifecycle(initialValue = true)
     val isOnline by container.isOnline.collectAsStateWithLifecycle()
     val haptics = LocalHapticFeedback.current
     val layoutDirection = LocalLayoutDirection.current
@@ -657,11 +658,14 @@ fun ChatScreen(
                     // auto-reconnect re-seed is slow or fails. Shows a brief spinner as
                     // immediate tap feedback — the SSE reconnect may not visibly change
                     // the connection state when already Connected, so without it the tap
-                    // appears to do nothing.
+                    // appears to do nothing. Disabled while a run is active: a mid-run
+                    // refresh forces a reconnect that can interrupt the streaming reply,
+                    // and the working spinner already signals "wait" — the recovery path
+                    // is only needed when nothing is actively streaming.
                     val refreshLabel = stringResource(R.string.refresh)
                     IconButton(
                         onClick = { vm.refreshMessages() },
-                        enabled = activeConnection != null && !refreshing,
+                        enabled = activeConnection != null && !refreshing && !running,
                     ) {
                         if (refreshing) {
                             CircularProgressIndicator(
@@ -1302,7 +1306,12 @@ fun ChatScreen(
                 // error/loading states reachable only via a button tap.
                 PullToRefreshBox(
                     isRefreshing = refreshing,
-                    onRefresh = { vm.refreshMessages() },
+                    // Suppress the refresh action while a run is active: a mid-stream
+                    // refresh forces an SSE reconnect that can interrupt the actively
+                    // streaming reply (matching the top-bar refresh button, which is
+                    // also disabled while running). The pull gesture still responds, but
+                    // the release no-ops instead of triggering a disruptive re-seed.
+                    onRefresh = { if (!running) vm.refreshMessages() },
                     // Cap width and center on large screens for readability — full-width
                     // bubbles stretch edge-to-edge on tablets, hurting line-length comfort.
                     modifier = Modifier.fillMaxSize().wrapContentWidth(Alignment.CenterHorizontally)
@@ -1462,6 +1471,8 @@ fun ChatScreen(
                                 // callback gives a haptic without triggering reply — so the user gets a
                                 // perceptible "can't quote this" signal instead of a silently dead gesture.
                                 val cantQuoteMsg = stringResource(R.string.cannot_quote_this)
+                                val undoLabel = stringResource(R.string.undo)
+                                val quoteReplyLabel = stringResource(R.string.quote_reply_banner)
                                 val swipeState = rememberSwipeToDismissBoxState(
                                     confirmValueChange = { value ->
                                         val replyValue = if (layoutDirection == LayoutDirection.Rtl) {
@@ -1474,6 +1485,18 @@ fun ChatScreen(
                                                 haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
                                                 vm.quoteReply(quoteText)
                                                 runCatching { inputFocusRequester.requestFocus() }
+                                                // Offer a quick Undo for an accidental swipe,
+                                                // mirroring the app's undo-everywhere ethos so
+                                                // the user needn't reach for the banner's X.
+                                                scope.launch {
+                                                    val res = snackbar.showSnackbar(
+                                                        message = quoteReplyLabel,
+                                                        actionLabel = undoLabel,
+                                                    )
+                                                    if (res == androidx.compose.material3.SnackbarResult.ActionPerformed) {
+                                                        vm.cancelQuoteReply()
+                                                    }
+                                                }
                                             } else {
                                                 // Non-text message: give a longer haptic so the user
                                                 // feels the gesture was received but can't quote it,
@@ -1723,7 +1746,16 @@ fun ChatScreen(
                                     newContentCount,
                                     newContentCount,
                                 )
-                                Badge(modifier = Modifier.semantics { contentDescription = newContentLabel }) {
+                                Badge(
+                                    modifier = Modifier.semantics {
+                                        contentDescription = newContentLabel
+                                        // Announce new-content counts as they change so a
+                                        // TalkBack user hears "5 new messages" without having
+                                        // to focus the FAB. Polite so it doesn't interrupt an
+                                        // in-progress utterance (e.g. streaming token reads).
+                                        liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite
+                                    },
+                                ) {
                                     Text(
                                         if (newContentCount > 99) "99+" else newContentCount.toString(),
                                         modifier = Modifier.semantics { invisibleToUser() },
@@ -2043,6 +2075,19 @@ fun ChatScreen(
             position = permissionProgress.position,
             total = permissionProgress.total,
             onRespond = { response -> vm.respondPermission(permission, response) },
+            // On auto-reject timeout, post a notification so a returning user finds a
+            // persistent record of why the run stopped (the dialog itself is gone).
+            // Gated by the user's notification setting (notifPermission).
+            onAutoReject = {
+                val conn = activeConnection
+                val ctx = appContext
+                val title = sessionTitle ?: sessionId
+                if (notifPermission) {
+                    soy.iko.opencode.notification.SessionNotifications.postPermissionAutoRejected(
+                        ctx, sessionId, title, conn?.profile?.id,
+                    )
+                }
+            },
         )
     }
 

@@ -249,6 +249,33 @@ object SessionNotifications {
             .onFailure { Log.w(TAG, "Failed to post permission summary notification", it) }
     }
 
+    /** Post a notification when a permission prompt auto-rejected on timeout. A user who
+     *  walked away from an in-app prompt returns to find the run stopped with no on-screen
+     *  record of why; this leaves a persistent trace in the shade explaining the stop and
+     *  offering to re-open the session. Uses the permission channel (heads-up) so it's seen. */
+    @SuppressLint("MissingPermission")
+    fun postPermissionAutoRejected(context: Context, sessionId: String, sessionTitle: String, profileId: String?) {
+        if (!canPost(context)) return
+        val notifId = notifId(NS_PERMISSION, sessionId) + 1 // distinct from the live prompt
+        val detail = context.getString(R.string.notif_permission_auto_rejected_text)
+        val builder = NotificationCompat.Builder(context, NotificationChannels.PERMISSION)
+            .setSmallIcon(R.drawable.ic_stat_notify)
+            .setContentTitle(context.getString(R.string.notif_permission_auto_rejected_title, sessionTitle))
+            .setContentText(detail)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(detail))
+            .setAutoCancel(true)
+            .setOnlyAlertOnce(true)
+            .setContentIntent(openSessionIntent(context, sessionId, notifId, profileId))
+            .setCategory(NotificationCompat.CATEGORY_STATUS)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setGroup(GROUP_PERMISSION)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+        runCatching { NotificationManagerCompat.from(context).notify(notifId, builder.build()) }
+            .onFailure { Log.w(TAG, "Failed to post permission auto-reject notification", it) }
+        runCatching { postGroupSummary(context, NotificationChannels.PERMISSION, GROUP_PERMISSION, SUMMARY_PERMISSION_ID) }
+            .onFailure { Log.w(TAG, "Failed to post permission summary notification", it) }
+    }
+
     /** Post a notification when a background run fails. */
     @SuppressLint("MissingPermission")
     fun postError(context: Context, sessionId: String, title: String, profileId: String? = null) {

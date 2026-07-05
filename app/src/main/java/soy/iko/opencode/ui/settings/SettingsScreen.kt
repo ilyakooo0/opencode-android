@@ -126,6 +126,7 @@ fun SettingsScreen(
     onOpenDiagnostics: () -> Unit,
     onOpenUsage: () -> Unit = {},
     onOpenMcp: () -> Unit = {},
+    onEditProfile: ((String) -> Unit)? = null,
 ) {
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
@@ -308,6 +309,11 @@ fun SettingsScreen(
                 state = connectionState,
                 isOnline = isOnline,
                 onRetry = { container.activeConnection.value?.events?.triggerReconnect() },
+                // Offer "Edit credentials" on an auth failure so a user landing in Settings
+                // during a 401/403 can fix the offending profile directly instead of only
+                // seeing "Retry now" (which would re-fail with the same bad credentials).
+                // Mirrors the recovery affordance ChatScreen and SessionListScreen surface.
+                onEditCredentials = onEditProfile?.let { cb -> activeProfile?.id?.let { id -> { cb(id) } } },
                 reconnectAttempts = reconnectAttempts,
             )
             val s = settings

@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -15,16 +16,21 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.launch
 import soy.iko.opencode.R
 import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.ui.components.EmptyState
+import soy.iko.opencode.ui.vmFactory
+import soy.iko.opencode.util.runCatchingCancellable
 
 /**
  * Master–detail layout for the file browser on wide screens (≥ 840dp): the directory listing
@@ -77,10 +83,20 @@ fun TwoPaneFileBrowser(
         Box(modifier = Modifier.weight(NetworkConfig.twoPaneRightWeight).fillMaxSize()) {
             val path = selected
             if (path == null) {
+                // Share the FileBrowserScreen's VM (same ViewModelStoreOwner) so the empty
+                // detail's "Refresh" action re-fetches the same tree the master pane shows,
+                // rather than leaving the pane inert with no recovery affordance.
+                val browserVm: FileBrowserViewModel = viewModel(
+                    factory = vmFactory { FileBrowserViewModel(container) }
+                )
+                val scope = rememberCoroutineScope()
                 EmptyState(
                     icon = Icons.Filled.Description,
                     title = stringResource(R.string.empty_file_detail_title),
                     description = stringResource(R.string.empty_file_detail_desc),
+                    actionIcon = Icons.Filled.Refresh,
+                    actionLabel = stringResource(R.string.refresh),
+                    onAction = { scope.launch { runCatchingCancellable { browserVm.refresh() } } },
                     modifier = Modifier.fillMaxSize(),
                 )
             } else {

@@ -59,6 +59,7 @@ fun PermissionDialog(
     onRespond: (PermissionResponse) -> Unit,
     position: Int = 0,
     total: Int = 0,
+    onAutoReject: () -> Unit = {},
 ) {
     val haptics = LocalHapticFeedback.current
     // Guard against double-respond: back press + button tap, or rapid double-tap,
@@ -96,6 +97,9 @@ fun PermissionDialog(
         }
         // Haptic on auto-reject so a walked-away user is signaled that the decision was made.
         haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+        // Leave a persistent trace (notification) so a returning user who missed the dialog
+        // closing understands why the run stopped — the in-app dialog is gone by then.
+        onAutoReject()
         respond(PermissionResponse.REJECT)
     }
     val showReminder = elapsedMs >= NetworkConfig.permissionReminderThresholdMs

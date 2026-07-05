@@ -111,8 +111,11 @@ fun ServerListScreen(
     // The active server's real SSE state, so its card reflects a dropped/failed stream instead of
     // always reading "Connected" (which is misleading while reconnecting or after an auth failure).
     val activeSseState by (activeConnection?.events?.state
-        ?: kotlinx.coroutines.flow.flowOf(soy.iko.opencode.data.network.EventStreamClient.ConnectionState.Connected))
-        .collectAsStateWithLifecycle(initialValue = soy.iko.opencode.data.network.EventStreamClient.ConnectionState.Connected)
+        ?: kotlinx.coroutines.flow.flowOf(soy.iko.opencode.data.network.EventStreamClient.ConnectionState.Disconnected))
+        // Initial value Disconnected (not Connected) so the active card doesn't briefly show
+        // "Connected" before the real SSE state emits on cold start — a neutral label is less
+        // misleading than a falsely-healthy one while the first emission is still pending.
+        .collectAsStateWithLifecycle(initialValue = soy.iko.opencode.data.network.EventStreamClient.ConnectionState.Disconnected)
     val haptics = LocalHapticFeedback.current
     val snackbar = remember { SnackbarHostState() }
     // Separate host for transient error messages (connect/probe failures, QR import results)

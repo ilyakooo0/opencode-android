@@ -57,6 +57,11 @@ object NetworkConfig {
     /** How long cached catalog responses (providers/agents/commands) are considered fresh. */
     const val catalogCacheTtlMs = 60_000L
 
+    /** TTL for files written to the cache dir to hand to external apps via FileProvider
+     *  (open-externally). Stale files past this age are pruned on the next open so repeated
+     *  opens of large files don't accumulate unbounded. 24h covers a typical session. */
+    const val externalCacheTtlMs = 24L * 60 * 60 * 1000
+
     // --- Session list (SessionListViewModel) ---
 
     /** Max sessions to fetch previews for in one batch. */

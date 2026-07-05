@@ -106,6 +106,7 @@
     <string name="discover_on_network">Descubrir en la red</string>
     <string name="searching_network">Buscando en la red local…</string>
     <string name="no_servers_found">No se encontraron servidores de opencode en la red local.</string>
+    <string name="scan_again">Buscar de nuevo</string>
     <string name="testing_credentials">Probando…</string>
     <string name="credentials_ok">Credenciales aceptadas.</string>
     <string name="credentials_rejected">Credenciales rechazadas.</string>
@@ -305,6 +306,8 @@
     </plurals>
     <string name="notif_permission_title">Se necesita aprobación en «%1$s»</string>
     <string name="notif_permission_fallback">Una herramienta quiere ejecutarse.</string>
+    <string name="notif_permission_auto_rejected_title">Ejecución detenida en «%1$s»</string>
+    <string name="notif_permission_auto_rejected_text">Un aviso de permiso expiró y se rechazó automáticamente.</string>
     <string name="notif_error_title">La ejecución falló</string>
     <string name="notif_error_text">opencode encontró un error en «%1$s».</string>
     <string name="notif_action_allow_once">Permitir una vez</string>
@@ -601,6 +604,7 @@
     <string name="session_running_badge">Agente en ejecución</string>
     <string name="bulk_archived">%1$d sesiones archivadas</string>
     <string name="bulk_unarchived">%1$d sesiones desarchivadas</string>
+    <string name="bulk_deleted">%1$d sesiones eliminadas</string>
     <string name="bulk_marked_read">%1$d sesiones marcadas como leídas</string>
     <string name="sort_active">Orden activo</string>
     <string name="sort_descending">Descendente</string>
@@ -612,6 +616,7 @@
     <string name="go_to_line">Ir a la línea</string>
     <string name="go_to_line_hint">Número de línea (1–%1$d)</string>
     <string name="match_case">Coincidir mayúsculas</string>
+    <string name="regex_search">Buscar con expresión regular</string>
     <string name="share_full_file">Compartir archivo completo</string>
 
     <!-- Settings backup/restore -->

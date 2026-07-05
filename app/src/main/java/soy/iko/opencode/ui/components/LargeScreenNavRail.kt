@@ -19,6 +19,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import soy.iko.opencode.R
 import soy.iko.opencode.ui.Routes
@@ -63,6 +65,7 @@ fun LargeScreenNavRail(
     runActive: Boolean = false,
 ) {
     NavigationRail(modifier = modifier.fillMaxHeight()) {
+        val haptics = LocalHapticFeedback.current
         RAIL_DESTINATIONS.forEach { dest ->
             // Match exact top-level routes, and also highlight the rail item when a detail
             // route pushed on top of it is active: chat/{id} is a detail of `sessions`, and
@@ -79,7 +82,10 @@ fun LargeScreenNavRail(
             NavigationRailItem(
                 selected = selected,
                 enabled = !dest.requiresConnection || connected,
-                onClick = { onNavigate(dest.route) },
+                onClick = {
+                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    onNavigate(dest.route)
+                },
                 icon = {
                     if (showUnreadBadge || showRunBadge) {
                         BadgedBox(

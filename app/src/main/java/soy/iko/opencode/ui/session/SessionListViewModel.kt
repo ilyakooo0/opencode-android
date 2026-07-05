@@ -48,7 +48,7 @@ enum class SessionSortMode { RECENT, TITLE }
 
 /** A pin/archive action the user just took, surfaced so the UI can confirm it with an
  *  Undo snackbar. [undoable] via [SessionListViewModel.undoSessionAction]. */
-enum class SessionActionKind { PINNED, UNPINNED, ARCHIVED, UNARCHIVED }
+enum class SessionActionKind { PINNED, UNPINNED, ARCHIVED, UNARCHIVED, DELETED }
 
 data class SessionActionEvent(val sessionId: String, val kind: SessionActionKind)
 
@@ -379,6 +379,10 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
             SessionActionKind.UNPINNED -> applyPin(event.sessionId, true)
             SessionActionKind.ARCHIVED -> applyArchive(event.sessionId, false)
             SessionActionKind.UNARCHIVED -> applyArchive(event.sessionId, true)
+            // Single deletes use the dedicated [undoDelete] path (they carry a deferred
+            // REST timer, not a reversible flag); this branch is unreachable but kept for
+            // exhaustiveness so a future emit can't crash.
+            SessionActionKind.DELETED -> {}
         }
     }
 
@@ -874,6 +878,9 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
             SessionActionKind.UNARCHIVED -> event.ids.forEach { applyArchive(it, true) }
             SessionActionKind.PINNED -> event.ids.forEach { applyPin(it, false) }
             SessionActionKind.UNPINNED -> event.ids.forEach { applyPin(it, true) }
+            // Bulk delete undo: each id has its own deferred REST timer held in
+            // [pendingDeletes]; cancelling them via [undoDelete] restores the rows.
+            SessionActionKind.DELETED -> event.ids.forEach { undoDelete(it) }
         }
     }
 
@@ -927,6 +934,9 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
                 },
             )
         }
+        // Surface a single Undo snackbar for the batch (mirroring bulk archive/pin), so a
+        // bulk delete is reversible within the undo window instead of being final on tap.
+        _bulkSessionActionEvents.tryEmit(BulkSessionActionEvent(ids, SessionActionKind.DELETED))
     }
 
     fun setSortMode(mode: SessionSortMode, persist: Boolean = true) {
