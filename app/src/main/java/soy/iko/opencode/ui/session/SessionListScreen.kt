@@ -235,7 +235,7 @@ fun SessionListScreen(
     // session list — the best source of session titles. Cheap, idempotent, and off the main
     // thread (the store write dispatches to IO); the widget refresh no-ops when none is placed.
     val platformContext = LocalContext.current.applicationContext
-    SyncShortcutsAndWidget(platformContext, state)
+    SyncShortcutsAndWidget(platformContext, state, connectedId)
 
     // Reflect total unread sessions as a launcher-icon badge (silent notification on a
     // badge-enabled channel). Skips itself when the session list isn't loading a server yet.
@@ -1240,6 +1240,7 @@ private fun DateGroupHeader(label: String) {
 private fun SyncShortcutsAndWidget(
     platformContext: android.content.Context,
     state: SessionListState,
+    profileId: String?,
 ) {
     val serverIsEmpty = state.sessions.isEmpty() && state.error == null && !state.loading
     LaunchedEffect(serverIsEmpty) {
@@ -1252,7 +1253,11 @@ private fun SyncShortcutsAndWidget(
         // involve binder IPC and file I/O; run them off the main thread so a debounced
         // session-update burst (e.g. during multi-session streaming) doesn't jank the list.
         withContext(Dispatchers.IO) {
-            val recents = sessions.take(RecentSessionsStore.MAX).map { RecentSession(it.id, it.displayTitle) }
+            // Embed the active profile id so a widget tap routes back to THIS server even
+            // after the user switches connections — without it, the session would open on
+            // whichever server is active when the user taps, 404ing or showing the wrong chat.
+            val pid = profileId.orEmpty()
+            val recents = sessions.take(RecentSessionsStore.MAX).map { RecentSession(it.id, it.displayTitle, pid) }
             RecentSessionsStore.write(platformContext, recents)
             AppShortcuts.update(platformContext, recents.firstOrNull())
             SessionsWidgetProvider.refresh(platformContext)

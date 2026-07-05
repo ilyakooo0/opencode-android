@@ -210,6 +210,18 @@ private fun ServerEditForm(
                 onImeDone = { if (canSave && !state.saving) vm.connect(onDone) },
             )
         }
+        // Warn when credentials will travel over cleartext HTTP: an http:// URL with a
+        // username sends Basic auth unencrypted on every request. Surface this prominently
+        // so the user switches to https:// (or enables Require HTTPS) rather than silently
+        // leaking the password on a hostile LAN.
+        if (state.baseUrl.lowercase().startsWith("http://") && state.username.isNotBlank()) {
+            Text(
+                stringResource(R.string.cleartext_credentials_warning),
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            )
+        }
         // Single primary action: probe-then-save-and-connect. The probe IS the connection
         // test — a failed probe keeps the user on this screen with the error shown below.
         Button(

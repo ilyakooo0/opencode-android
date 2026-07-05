@@ -330,15 +330,19 @@ open class AppContainer private constructor(
     }
 
     /** Toggle a session's mute state. A muted session suppresses the unread badge and the
-     *  completion notification so a noisy conversation doesn't keep interrupting. Persisted
+     *  completion notification so a noisy conversation doesn't interrupt. Persisted
      *  via SessionPrefsStore so it survives process death. */
     fun toggleSessionMute(id: String) {
-        val muted = id in _mutedSessions.value
-        val next = if (muted) _mutedSessions.value - id else _mutedSessions.value + id
-        _mutedSessions.value = next
+        // Use atomic update so a concurrent prefs reload (_mutedSessions.value = ids from
+        // sessionPrefsStore.muted.collect) can't clobber this toggle mid read-modify-write.
+        var nowMuted = false
+        _mutedSessions.update { current ->
+            nowMuted = id !in current
+            if (nowMuted) current + id else current - id
+        }
         appContext?.let {
             appScope.launch {
-                runCatchingCancellable { sessionPrefsStore.setMuted(id, !muted) }
+                runCatchingCancellable { sessionPrefsStore.setMuted(id, nowMuted) }
             }
         }
     }
@@ -1509,9 +1513,12 @@ open class AppContainer private constructor(
             // on activeConnection/isOnline/_outboxFlushTrigger — NOT on outboxStore.messages — so
             // if connect() sets activeConnection before load() finishes reading a (possibly
             // multi-MB) outbox.json, the connect-triggered flush sees an empty queue and nothing
-            // re-triggers it. Nudging the flush here guarantees a loaded queue is sent.
+            // re-triggers it. Nudging the flush here guarantees a loaded queue is sent. Log a
+            // load failure so a corrupt outbox.json / IO error is debuggable rather than silently
+            // dropping every queued offline message until a future restart happens to succeed.
             appScope.launch {
                 runCatchingCancellable { outboxStore.load() }
+                    .onFailure { Log.w("AppContainer", "Outbox load failed; queued messages may be lost: ${safeExceptionSummary(it)}") }
                 flushOutbox()
             }
             observeOutbox()

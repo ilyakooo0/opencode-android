@@ -9,6 +9,7 @@ import androidx.core.graphics.drawable.IconCompat
 import soy.iko.opencode.MainActivity
 import soy.iko.opencode.R
 import soy.iko.opencode.data.repo.RecentSession
+import soy.iko.opencode.notification.NotificationActionReceiver
 
 /**
  * Maintains the app's dynamic launcher shortcuts (long-press the icon): "New session" and
@@ -47,6 +48,12 @@ object AppShortcuts {
                         Intent(ctx, MainActivity::class.java).apply {
                             action = Intent.ACTION_VIEW
                             data = Uri.parse("opencode://session/$safeId")
+                            // Embed the profile id so the session opens under the server that
+                            // ran it, not whichever is active when the user taps — mirrors the
+                            // widget and notification action paths.
+                            if (lastSession.profileId.isNotBlank()) {
+                                putExtra(NotificationActionReceiver.EXTRA_PROFILE_ID, lastSession.profileId)
+                            }
                         },
                     )
                     .build()

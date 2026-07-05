@@ -99,7 +99,7 @@ fun aggregateUsage(
     var totalCost = 0.0
     var totalTokens = Tokens()
     var messageCount = 0
-    val byModel = LinkedHashMap<String, MutableAgg>()
+    val byModel = LinkedHashMap<Pair<String, String>, MutableAgg>()
     val bySession = ArrayList<SessionUsage>()
 
     for (entry in sessions) {
@@ -125,9 +125,10 @@ fun aggregateUsage(
             sessionTokens += tokens
             val model = info.modelID?.takeIf { it.isNotBlank() } ?: "unknown"
             val provider = info.providerID?.takeIf { it.isNotBlank() } ?: "unknown"
-            // Key by provider+model so the same model id served by different providers
-            // stays two rows instead of collapsing into one ambiguous total.
-            val key = "$provider/$model"
+            // Key by (provider, model) pair so a model id containing '/' (e.g. "org/model")
+            // can't collide with a different provider/model split that would produce the same
+            // concatenated "$provider/$model" string.
+            val key = provider to model
             val agg = byModel.getOrPut(key) { MutableAgg(provider, model) }
             agg.messages++
             agg.cost += cost

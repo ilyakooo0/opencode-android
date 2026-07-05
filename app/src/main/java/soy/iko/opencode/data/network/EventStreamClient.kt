@@ -78,7 +78,10 @@ open class EventStreamClient(
 
     /** Classifies a non-retryable SSE failure so the UI can show the right recovery hint:
      *  an auth failure (401/403) reads "check credentials", while other 4xx (400/404/405…)
-     *  reads "check the server URL and version". Returns null for transient/retryable errors. */
+     *  reads "check the server URL and version". Returns null for transient/retryable errors.
+     *  SSL/TLS and certificate-pinning failures are permanent (a changed/rotated cert won't
+     *  heal on retry) and are classified as Other so the user sees "check the server URL and
+     *  version / cert pin" instead of an infinite "Reconnecting…" spinner. */
     private enum class SseFailureKind { Auth, Other }
 
     private fun classifyNonRetryableSseFailure(e: Throwable): SseFailureKind? =
@@ -88,11 +91,21 @@ open class EventStreamClient(
                 when (t) {
                     is io.ktor.client.plugins.sse.SSEClientException -> t.response?.status?.value
                     is io.ktor.client.plugins.ClientRequestException -> t.response.status.value
+                    // A TLS handshake / cert-pinning / SSL peer unverified failure happens
+                    // before any HTTP response, so it carries no status code. It is never
+                    // transient (the server's cert must change), so classify it directly
+                    // instead of falling through to the null (retryable) default — otherwise
+                    // the client retries forever with backoff against an unreachable pinned
+                    // server, showing "Reconnecting…" with no hint that the failure is fixed.
+                    is javax.net.ssl.SSLException -> -1
+                    is java.security.cert.CertificateException -> -1
                     else -> null
                 }
             }
             // Non-408/429 4xx = permanent; 408 and 429 stay in the transient retry path.
+            // The -1 sentinel (SSL/cert) is also permanent → Other.
             .map { code -> when {
+                code == -1 -> SseFailureKind.Other
                 code in 400..499 && code != 408 && code != 429 ->
                     if (code == 401 || code == 403) SseFailureKind.Auth else SseFailureKind.Other
                 else -> null
@@ -326,9 +339,14 @@ open class EventStreamClient(
         if (reconnectConsumedDuringRead) return true
         var signaled = false
         val jitter = ((backoffMs * NetworkConfig.retryJitterFactor) * (Random.nextDouble() * 2 - 1)).toLong()
+        // Floor the wait at half the initial backoff: symmetric jitter can otherwise pull a
+        // small backoff down to 0ms, producing a sub-second reconnect storm right after a
+        // triggerReconnect reset on a connect-RST loop. A non-zero floor preserves the
+        // purpose of backoff (spacing retries) while still allowing jitter to shorten it.
+        val minWait = (initialBackoffMs / 2).coerceAtLeast(1L)
         select {
             reconnectSignal.onReceive { signaled = true }
-            onTimeout((backoffMs + jitter).coerceAtLeast(0)) { /* normal backoff elapsed */ }
+            onTimeout((backoffMs + jitter).coerceAtLeast(minWait)) { /* normal backoff elapsed */ }
         }
         return signaled
     }

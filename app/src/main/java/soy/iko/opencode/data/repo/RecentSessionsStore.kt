@@ -11,9 +11,18 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
 
-/** A minimal session summary persisted for the home-screen widget and launcher shortcuts. */
+/** A minimal session summary persisted for the home-screen widget and launcher shortcuts.
+ *  Carries the originating [profileId] so a widget tap routes back to the server that ran
+ *  the session even after the user has switched to a different connection — without it,
+ *  the session would open on whichever server is currently active and 404 or show empty. */
 @Serializable
-data class RecentSession(val id: String, val title: String)
+data class RecentSession(
+    val id: String,
+    val title: String,
+    // Defaulted so a pre-profileId persisted file (from an older app version) still decodes:
+    // the field is absent → default "" → the widget falls back to the active connection.
+    val profileId: String = "",
+)
 
 /**
  * Persists a short list of recent sessions to a small JSON file under filesDir so app-external

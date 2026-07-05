@@ -805,7 +805,7 @@ private fun BoxScope.FileViewStateContent(
         // display. Falls back to the binary-file label if decoding fails.
         state.content != null && state.content.isBinary && run {
             val ext = path.substringAfterLast('.', "").lowercase()
-            ext in setOf("png", "jpg", "jpeg", "gif", "webp", "bmp", "svg")
+            ext in setOf("png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "ico", "heic")
         } -> {
             ImageFilePreview(
                 content = state.content,

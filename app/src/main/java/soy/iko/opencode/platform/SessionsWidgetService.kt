@@ -8,6 +8,7 @@ import soy.iko.opencode.MainActivity
 import soy.iko.opencode.R
 import soy.iko.opencode.data.repo.RecentSession
 import soy.iko.opencode.data.repo.RecentSessionsStore
+import soy.iko.opencode.notification.NotificationActionReceiver
 import java.security.MessageDigest
 
 /** Serves the list rows for [SessionsWidgetProvider] from [RecentSessionsStore]. */
@@ -33,11 +34,14 @@ private class SessionsWidgetFactory(private val context: Context) : RemoteViewsS
         val row = RemoteViews(context.packageName, R.layout.widget_session_item)
         val session = items.getOrNull(position) ?: return row
         row.setTextViewText(R.id.widget_item_title, session.title.ifBlank { context.getString(R.string.session) })
-        // Fill-in intent merged into the list's template: carries the session id the app opens.
-        row.setOnClickFillInIntent(
-            R.id.widget_item_root,
-            Intent().putExtra(MainActivity.EXTRA_SESSION_ID, session.id),
-        )
+        // Fill-in intent merged into the list's template: carries the session id the app opens,
+        // plus the profile id of the server that ran the session so it opens under THAT server
+        // even after the user has switched connections — mirrors the notification action path.
+        val fillIn = Intent().putExtra(MainActivity.EXTRA_SESSION_ID, session.id)
+        if (session.profileId.isNotBlank()) {
+            fillIn.putExtra(NotificationActionReceiver.EXTRA_PROFILE_ID, session.profileId)
+        }
+        row.setOnClickFillInIntent(R.id.widget_item_root, fillIn)
         return row
     }
 

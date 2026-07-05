@@ -588,6 +588,7 @@
     <string name="server_security">Security</string>
     <string name="require_https">Require HTTPS</string>
     <string name="require_https_desc">Refuse to connect over cleartext HTTP</string>
+    <string name="cleartext_credentials_warning">This server uses cleartext HTTP with a username/password — your credentials will be sent unencrypted over the network. Use HTTPS if the server supports it.</string>
     <string name="cert_pin">Certificate pin</string>
     <string name="cert_pin_hint">sha256/AAAA… (optional)</string>
     <string name="cert_pin_desc">Pin the server\'s TLS certificate (SHA-256)</string>

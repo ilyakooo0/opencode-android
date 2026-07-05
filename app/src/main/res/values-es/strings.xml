@@ -572,6 +572,7 @@
     <string name="server_security">Seguridad</string>
     <string name="require_https">Requerir HTTPS</string>
     <string name="require_https_desc">Rechazar conexiones por HTTP sin cifrar</string>
+    <string name="cleartext_credentials_warning">Este servidor usa HTTP sin cifrar con usuario/contraseña: tus credenciales se enviarán sin cifrar por la red. Usa HTTPS si el servidor lo admite.</string>
     <string name="cert_pin">Fijación de certificado</string>
     <string name="cert_pin_hint">sha256/AAAA… (opcional)</string>
     <string name="cert_pin_desc">Fija el certificado TLS del servidor (SHA-256)</string>

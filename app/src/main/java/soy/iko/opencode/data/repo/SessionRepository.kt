@@ -410,9 +410,13 @@ internal class MessageStore {
         // accumulating stale messages forever. Skipped on the initial seed to avoid
         // racing with just-arrived SSE events whose messages may not yet be in REST.
         if (prune) {
-            val incomingIds = initial.mapTo(mutableSetOf()) { it.info.id }
+            // Build the retain-set from the synthetic key (matching the map's keying for
+            // UnknownMessages with empty ids) so an entry stored under "unknown-c<created>"
+            // isn't wrongly evicted and re-inserted under "" — which would lose its
+            // insertion-order position and force a spurious snapshot emission.
+            val incomingKeys = initial.mapTo(mutableSetOf()) { syntheticKeyFor(it) }
             val before = messages.size
-            messages.keys.retainAll(incomingIds)
+            messages.keys.retainAll(incomingKeys)
             if (messages.size != before) changed = true
         }
 
@@ -447,8 +451,11 @@ internal class MessageStore {
                 }
                 // Adopt the authoritative REST info unless the in-memory info was itself
                 // updated live since the pivot (i.e. during this fetch), in which case it's
-                // newer than the snapshot. Otherwise the REST snapshot wins.
-                val info = if (existing.info is UnknownMessage || m.info.id !in messageInfoUpdatedSincePivot) m.info else existing.info
+                // newer than the snapshot. Otherwise the REST snapshot wins. The pivot set is
+                // keyed by the same synthetic key used in the map (see handleMessageUpdated),
+                // so test that here instead of m.info.id — which is "" for an UnknownMessage
+                // and would never match, leaving the pivot protection inert for that case.
+                val info = if (existing.info is UnknownMessage || key !in messageInfoUpdatedSincePivot) m.info else existing.info
                 val merged = MessageWithParts(info = info, parts = ordered)
                 if (merged != existing.view()) {
                     // Store under `key` (the synthetic key for an empty-id UnknownMessage),

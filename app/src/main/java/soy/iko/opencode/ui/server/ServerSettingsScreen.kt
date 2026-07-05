@@ -224,6 +224,15 @@ private fun ServerSettingsForm(
                 onImeDone = { if (canSave && !state.saving) vm.save(onDone) },
             )
         }
+        // Warn when credentials will travel over cleartext HTTP (mirrors ServerEditScreen).
+        if (state.baseUrl.lowercase().startsWith("http://") && state.username.isNotBlank()) {
+            Text(
+                stringResource(R.string.cleartext_credentials_warning),
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            )
+        }
         Button(
             onClick = {
                 haptics.performHapticFeedback(HapticFeedbackType.LongPress)

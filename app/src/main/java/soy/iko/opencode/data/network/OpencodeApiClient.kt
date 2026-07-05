@@ -186,8 +186,13 @@ open class OpencodeApiClient private constructor(
         }
     }
 
+    /** Abort the active run in a session. NOT retried: a lost response followed by a
+     *  retry would POST abort again, and if a new run started in the gap the retry
+     *  would kill that *new* run. Unlike sendPrompt/runCommand/summarize there's no
+     *  Idempotency-Key the server could use to dedupe, so a single attempt is the
+     *  safe choice — the SSE stream reflects the actual run state regardless. */
     open suspend fun abort(sessionId: String) {
-        withRetry { client!!.post("session/${encode(sessionId)}/abort").body<String>() }
+        withRetry(maxAttempts = 1) { client!!.post("session/${encode(sessionId)}/abort").body<String>() }
     }
 
     /** Invoke a slash-command by name via `POST /session/:id/command`. */
@@ -414,9 +419,13 @@ open class OpencodeApiClient private constructor(
     } catch (t: ClientRequestException) {
         // A response that reached the server but whose reply was lost gets retried; the
         // retry finds the permission already resolved (404 gone / 409 conflict). Both mean
-        // the answer landed, so treat them as success instead of a spurious failure.
+        // the answer landed (or the session/permission no longer exists, in which case the
+        // response is moot anyway), so treat them as success instead of a spurious failure
+        // that would re-queue the dialog against a gone session. Log the swallowed status
+        // so a 404 caused by a deleted session is debuggable rather than fully silent.
         val code = t.response.status.value
         if (code != 404 && code != 409) throw t
+        android.util.Log.d("OpencodeApi", "respondPermission swallowed $code for session=$sessionId permission=$permissionId")
         ""
     }
 
