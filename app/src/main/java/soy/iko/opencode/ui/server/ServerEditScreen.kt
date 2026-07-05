@@ -221,8 +221,8 @@ private fun ServerEditForm(
     }
     Column(
         modifier = Modifier
-            .padding(padding)
             .imePadding()
+            .padding(padding)
             .fillMaxWidth()
             .wrapContentWidth(Alignment.CenterHorizontally)
             .widthIn(max = 600.dp)
