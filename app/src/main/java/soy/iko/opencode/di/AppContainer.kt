@@ -305,8 +305,18 @@ open class AppContainer private constructor(
         unreadMessageIds.remove(id)
     }
 
-    /** Mark a session as read (clear its unread badge) — the "Mark read" notification action. */
-    open fun markSessionRead(id: String) = clearUnread(id)
+    /** Mark a session as read (clear its unread badge) — the "Mark read" notification action.
+     *  Updates the launcher-icon badge directly (not just the in-memory [StateFlow]) so a
+     *  "Mark read" tap while the app is backgrounded — when [SessionListScreen]'s
+     *  `LaunchedEffect(totalUnread)` collector isn't running — still decrements the badge.
+     *  Without this, the notification dismisses but the launcher badge shows a stale count
+     *  until the app is next foregrounded. */
+    open fun markSessionRead(id: String) {
+        clearUnread(id)
+        appContext?.let { ctx ->
+            SessionNotifications.updateUnreadBadge(ctx, _unread.value.values.sum())
+        }
+    }
 
     /** Mark a session as unread with a count of 1 (or restore a prior count). Used by the
      *  session list's "Mark as unread" overflow action so a user can re-flag a conversation
@@ -431,7 +441,8 @@ open class AppContainer private constructor(
                                     ?.firstOrNull { it.id == sid }?.displayTitle
                             }.getOrNull()
                         }
-                        RunForegroundService.start(ctx, title, activeId, _runProgressText.value)
+                        val profileId = activeConnection.value?.profile?.id
+                        RunForegroundService.start(ctx, title, activeId, profileId, _runProgressText.value)
                     } else {
                         RunForegroundService.stop(ctx)
                     }
@@ -453,7 +464,8 @@ open class AppContainer private constructor(
                                     ?.firstOrNull { it.id == sid }?.displayTitle
                             }.getOrNull()
                         }
-                        RunForegroundService.start(ctx, title, activeId, progress)
+                        val profileId = activeConnection.value?.profile?.id
+                        RunForegroundService.start(ctx, title, activeId, profileId, progress)
                     }
                 }
         }
@@ -786,28 +798,29 @@ open class AppContainer private constructor(
                     // A stale earlier check would race a badge — and a dedup entry — back
                     // in for the session that's actually on screen.
                     if (sid != _currentSession.value) {
-                        // Skip the unread badge for muted sessions — the count is still tracked
-                        // in unreadMessageIds (so unmuting can't re-count the same messages),
-                        // but the visible badge is suppressed so a muted conversation doesn't
-                        // interrupt. The completion notification is also gated on isSessionMuted
-                        // (see notifySessionCompleted).
-                        if (sid !in _mutedSessions.value) {
-                            // Increment the unread count once per distinct *message*, not per
-                            // event: a single reply emits many message.updated / message.part.
-                            // updated events (one per streamed token, plus cost/token refreshes),
-                            // which would otherwise inflate the badge into the dozens/hundreds.
-                            val messageId = messageIdOfEvent(event)
-                            val counted = unreadMessageIds.getOrPut(sid) {
-                                java.util.Collections.synchronizedSet(mutableSetOf())
-                            }
-                            if (messageId == null || counted.add(messageId)) {
-                                _unread.update { current ->
-                                    // Guard again inside the atomic update lambda so a retry
-                                    // (or an open that landed just now) can't reintroduce the
-                                    // badge for the session on screen.
-                                    if (sid == _currentSession.value) current
-                                    else current + (sid to (current[sid] ?: 0) + 1)
-                                }
+                        // Track the message id in the dedup set for *every* session (muted or
+                        // not), so unmuting can't re-count messages that arrived while muted.
+                        // The visible badge increment below is gated on !muted so a muted
+                        // conversation doesn't interrupt, but the dedup tracking must not be
+                        // — otherwise the first event after unmute for an already-seen message
+                        // id would pass the counted.add() check (empty set) and re-increment.
+                        val messageId = messageIdOfEvent(event)
+                        val counted = unreadMessageIds.getOrPut(sid) {
+                            java.util.Collections.synchronizedSet(mutableSetOf())
+                        }
+                        val isNewMessage = messageId == null || counted.add(messageId)
+                        if (isNewMessage && sid !in _mutedSessions.value) {
+                            // Skip the unread badge for muted sessions — the count is still
+                            // tracked in unreadMessageIds (so unmuting can't re-count the
+                            // same messages), but the visible badge is suppressed so a muted
+                            // conversation doesn't interrupt. The completion notification is
+                            // also gated on isSessionMuted (see notifySessionCompleted).
+                            _unread.update { current ->
+                                // Guard again inside the atomic update lambda so a retry
+                                // (or an open that landed just now) can't reintroduce the
+                                // badge for the session on screen.
+                                if (sid == _currentSession.value) current
+                                else current + (sid to (current[sid] ?: 0) + 1)
                             }
                         }
                     }

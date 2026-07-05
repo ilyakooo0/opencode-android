@@ -405,9 +405,7 @@ fun ChatScreen(
     }
 
     // --- Attachments, voice, and share-link plumbing ---
-    val attachTooLargeMsg = stringResource(R.string.attachment_too_large)
     val attachFailedMsg = stringResource(R.string.attachment_failed)
-    val attachLimitMsg = stringResource(R.string.attachment_limit)
     val noCameraMsg = stringResource(R.string.no_camera_app)
     val noVoiceMsg = stringResource(R.string.no_voice_app)
     val voicePrompt = stringResource(R.string.voice_prompt)
@@ -416,45 +414,17 @@ fun ChatScreen(
 
     // Count of picks currently being read + base64-encoded off the main thread, so the
     // composer can show a staging placeholder immediately (chips only materialize once done).
-    var stagingCount by remember { mutableStateOf(0) }
-    // Total number of files still being staged across all in-flight batches, so the
-    // staging chip can show "Staging N files…" rather than a bare indeterminate spinner.
-    // A separate counter from [stagingCount] (which tracks batches, not files) so a
-    // multi-file pick reads as more work than a single-file pick.
-    var stagingFileTotal by remember { mutableStateOf(0) }
+    // Backed by the ViewModel (vm.stagingCount / vm.stagingFileTotal) so the staging state
+    // survives a configuration change: the encode work runs on viewModelScope (which
+    // survives rotation), so the counters must live on the VM too — remember { mutableStateOf
+    // } in the composable would reset to 0 on rotation and lose the staging chip mid-encode.
+    val stagingCount by vm.stagingCount.collectAsStateWithLifecycle()
+    val stagingFileTotal by vm.stagingFileTotal.collectAsStateWithLifecycle()
 
-    // Convert each picked Uri to a base64 attachment off the main thread, honoring the
-    // per-prompt count cap and surfacing per-file errors without aborting the batch.
+    // Convert each picked Uri to a base64 attachment on the VM's scope (survives rotation),
+    // honoring the per-prompt count cap and surfacing per-file errors via the VM's errorEvents.
     fun stageUris(uris: List<Uri>) {
-        if (uris.isEmpty()) return
-        scope.launch {
-            stagingCount++
-            stagingFileTotal += uris.size
-            try {
-                uris.forEachIndexed { index, uri ->
-                    if (vm.attachments.value.size >= NetworkConfig.maxAttachments) {
-                        snackbar.showSnackbar(attachLimitMsg)
-                        // The cap dropped the rest of this batch; account for the files we
-                        // won't process so stagingFileTotal doesn't linger over-counted,
-                        // then abandon the batch. return@launch (not return@forEachIndexed)
-                        // so the remaining uris aren't re-checked against a never-relieved
-                        // cap (which would over-decrement the counter and re-fire the snackbar
-                        // once per leftover uri). The `finally` below still decrements
-                        // stagingCount.
-                        stagingFileTotal -= uris.size - index
-                        return@launch
-                    }
-                    when (val result = uri.toAttachmentResult(appContext)) {
-                        is AttachmentResult.Ok -> vm.addAttachment(result.attachment)
-                        AttachmentResult.TooLarge -> snackbar.showSnackbar(attachTooLargeMsg)
-                        AttachmentResult.Failed -> snackbar.showSnackbar(attachFailedMsg)
-                    }
-                    stagingFileTotal--
-                }
-            } finally {
-                stagingCount--
-            }
-        }
+        vm.stageUris(uris, appContext)
     }
 
     val photoPicker = rememberLauncherForActivityResult(
@@ -1035,8 +1005,15 @@ fun ChatScreen(
             filtered
         }
         // Keep the focused-match index in range as the query (and thus the match set) changes.
-        // A new query resets to the first match; a shrunk set clamps to the last valid index.
-        LaunchedEffect(searchQuery, searchMessages.size) {
+        // A new query resets to the first match (keyed on searchQuery alone so any change —
+        // even one that still yields enough matches — jumps to index 0 rather than carrying
+        // the old index over to a semantically unrelated message). A shrunk set clamps to
+        // the last valid index (keyed on size so a content refresh that shrinks the matches
+        // without a query change doesn't leave searchPos out of range).
+        LaunchedEffect(searchQuery) {
+            searchPos = 0
+        }
+        LaunchedEffect(searchMessages.size) {
             if (searchPos >= searchMessages.size) searchPos = 0
         }
         val listItems = remember(searchMessages, todayLabel, yesterdayLabel) {

@@ -334,6 +334,10 @@ class MainActivity : FragmentActivity() {
                         // attempt). Surface a toast so the user knows the link was rejected,
                         // rather than silently no-op'ing (which reads as "the app did nothing").
                         if (!seg.isNullOrBlank()) showInvalidLinkToast = true
+                        // Mark the link handled even on rejection, so a process-death-and-restore
+                        // (which re-delivers the same intent) doesn't re-fire the toast on every
+                        // restore — the rejection is final, not a transient state to retry.
+                        openSessionHandled = true
                     }
                 }
             }
@@ -345,6 +349,9 @@ class MainActivity : FragmentActivity() {
                     rawPath?.takeIf { isValidFilePath(it) }
                         ?.let { container.requestOpenFile(it); openFileHandled = true } ?: run {
                             if (!rawPath.isNullOrBlank()) showInvalidLinkToast = true
+                            // Mark handled on rejection too, mirroring the session branch —
+                            // otherwise a process-death restore re-fires the invalid-link toast.
+                            openFileHandled = true
                         }
                 }
             }

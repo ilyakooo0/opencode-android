@@ -101,7 +101,7 @@ class NotificationActionReceiver : BroadcastReceiver() {
                     // that can't be resubmitted, so "leave it up to retry" doesn't actually let
                     // the user retry.
                     if (enqueued) {
-                        SessionNotifications.postReplySent(context, sessionId)
+                        SessionNotifications.postReplySent(context, sessionId, profileId)
                     } else {
                         SessionNotifications.postReplyFailed(context, sessionId, profileId)
                     }

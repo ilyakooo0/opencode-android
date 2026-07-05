@@ -605,6 +605,19 @@ class ChatViewModel(
     private val _attachments = MutableStateFlow<List<PendingAttachment>>(emptyList())
     val attachments: StateFlow<List<PendingAttachment>> = _attachments.asStateFlow()
 
+    // Count of picks currently being read + base64-encoded off the main thread, so the
+    // composer can show a staging placeholder immediately (chips only materialize once done).
+    // Exposed as StateFlows (not Compose state) so they survive a config change: the staging
+    // work runs on viewModelScope (which survives rotation), so the counters must live on the
+    // VM too — remember { mutableStateOf(0) } in the composable would reset to 0 on rotation
+    // and lose the staging chip mid-encode.
+    private val _stagingCount = MutableStateFlow(0)
+    val stagingCount: StateFlow<Int> = _stagingCount.asStateFlow()
+    // Total number of files still being staged across all in-flight batches, so the
+    // staging chip can show "Staging N files…" rather than a bare indeterminate spinner.
+    private val _stagingFileTotal = MutableStateFlow(0)
+    val stagingFileTotal: StateFlow<Int> = _stagingFileTotal.asStateFlow()
+
     /** True while a revert checkpoint is active for this session (messages after it are hidden
      *  server-side). Drives the "reverted" banner with its Undo. */
     private val _reverted = MutableStateFlow(false)
@@ -871,10 +884,15 @@ class ChatViewModel(
                                     runEndedByIdle = true
                                     // Auto-send a queued follow-up once the previous run finishes,
                                     // so the user's drafted-while-running message isn't lost.
+                                    // The follow-up is cleared *inside* send()'s launched
+                                    // coroutine (via queuedFollowUpToClear), so a scope
+                                    // cancellation between this point and the coroutine
+                                    // starting drops the launch without wiping the persisted
+                                    // follow-up — recovery on next session open instead of
+                                    // silent data loss.
                                     val queued = _queuedFollowUp.value
                                     if (queued != null) {
-                                        setQueuedFollowUp(null)
-                                        send(queued, includeAttachments = false)
+                                        send(queued, includeAttachments = false, queuedFollowUpToClear = queued)
                                     }
                                 }
                                 if (SessionRepository.isError(event, sessionId)) {
@@ -1046,8 +1064,23 @@ class ChatViewModel(
     /**
      * Core send. [includeAttachments] is false for the internal auto-send paths (a queued
      * follow-up, a retry) so staged attachments aren't silently re-sent with unrelated text.
+     *
+     * [queuedFollowUpToClear] is the text of a queued follow-up being auto-sent (from
+     * SessionIdle). When non-null, the follow-up is cleared from persistence *inside* the
+     * launched coroutine — so if [viewModelScope] is cancelled before the coroutine runs
+     * (e.g. the user navigates away at the exact moment SessionIdle arrives), the clear
+     * never executes and the follow-up remains persisted, recovered on the next open of
+     * this session. Clearing it before the launch (the prior approach) could lose the
+     * follow-up entirely: the launch would be dropped by cancellation but the persisted
+     *  copy was already wiped.
      */
-    private fun send(text: String, includeAttachments: Boolean, idempotencyKey: String? = null): Boolean {
+    @Suppress("CyclomaticComplexMethod")
+    private fun send(
+        text: String,
+        includeAttachments: Boolean,
+        idempotencyKey: String? = null,
+        queuedFollowUpToClear: String? = null,
+    ): Boolean {
         val trimmed = text.trim()
         val attachments = if (includeAttachments) _attachments.value else emptyList()
         // An image-only prompt (attachments, no text) is valid; a blank prompt with nothing
@@ -1113,6 +1146,11 @@ class ChatViewModel(
         // would make Stop-Undo silently re-send that unrelated earlier message.
         lastSentPrompt = trimmed.takeIf { it.isNotEmpty() }
         viewModelScope.launch {
+            // Clear a queued follow-up being auto-sent *inside* the launched coroutine, so a
+            // scope cancellation between send() being called and the coroutine starting drops
+            // the launch without wiping the persisted follow-up — the follow-up is then
+            // recovered on the next session open instead of being silently lost.
+            if (queuedFollowUpToClear != null) setQueuedFollowUp(null)
             runCatchingCancellable {
                 conn.repository.sendPrompt(
                     sessionId,
@@ -1430,6 +1468,46 @@ class ChatViewModel(
     fun clearAttachments() {
         _attachments.value = emptyList()
         persistAttachments()
+    }
+
+    /** Convert each picked Uri to a base64 attachment off the main thread, honoring the
+     *  per-prompt count cap and surfacing per-file errors via [errorEvents] without aborting
+     *  the batch. Runs on [viewModelScope] (which survives configuration changes) so an
+     *  in-flight encode isn't cancelled and its progress counters ([stagingCount] /
+     *  [stagingFileTotal]) aren't reset to 0 on rotation — the prior UI-side
+     *  `rememberCoroutineScope` implementation lost both the work and the counters on
+     *  every config change. */
+    fun stageUris(uris: List<android.net.Uri>, context: android.content.Context) {
+        if (uris.isEmpty()) return
+        val appContext = context.applicationContext
+        viewModelScope.launch {
+            _stagingCount.value++
+            _stagingFileTotal.value += uris.size
+            try {
+                uris.forEachIndexed { index, uri ->
+                    if (_attachments.value.size >= NetworkConfig.maxAttachments) {
+                        _errorEvents.trySend(ChatError(container.string(R.string.attachment_limit)))
+                        // The cap dropped the rest of this batch; account for the files we
+                        // won't process so stagingFileTotal doesn't linger over-counted,
+                        // then abandon the batch. return@launch (not return@forEachIndexed)
+                        // so the remaining uris aren't re-checked against a never-relieved
+                        // cap (which would over-decrement the counter and re-fire the
+                        // snackbar once per leftover uri). The `finally` below still
+                        // decrements stagingCount.
+                        _stagingFileTotal.value -= uris.size - index
+                        return@launch
+                    }
+                    when (val result = uri.toAttachmentResult(appContext)) {
+                        is AttachmentResult.Ok -> addAttachment(result.attachment)
+                        AttachmentResult.TooLarge -> _errorEvents.trySend(ChatError(container.string(R.string.attachment_too_large)))
+                        AttachmentResult.Failed -> _errorEvents.trySend(ChatError(container.string(R.string.attachment_failed)))
+                    }
+                    _stagingFileTotal.value--
+                }
+            } finally {
+                _stagingCount.value--
+            }
+        }
     }
 
     /** Persist the current staged attachments so an interrupted compose survives process

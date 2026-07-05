@@ -1299,11 +1299,25 @@ private fun RenameSessionDialog(
     onDismiss: () -> Unit,
 ) {
     val focusRequester = remember { FocusRequester() }
+    // Track the last text we pushed out via onTitleChange, so we can distinguish an external
+    // title change (e.g. an SSE SessionUpdated rename arriving while the dialog is open) from
+    // our own echo. Without this, the field stays seeded with the old title while the hoisted
+    // title advances, showing stale text until the dialog is reopened.
+    var lastPushed by remember { mutableStateOf(title) }
     // Drive the field with a TextFieldValue seeded with the whole title selected so the
     // dialog opens with the text highlighted for immediate overtyping; edits sync back to
     // the hoisted title (capped) that gates the confirm button and the Done action.
     var fieldValue by remember {
         mutableStateOf(TextFieldValue(title, selection = TextRange(0, title.length)))
+    }
+    // Re-sync the field when the hoisted title changes externally (not from our own onValueChange
+    // echo). An SSE rename while the dialog is open updates `title` but `lastPushed` still matches
+    // the old value, so the divergence is detected and the field is re-seeded.
+    LaunchedEffect(title) {
+        if (title != lastPushed && title != fieldValue.text) {
+            lastPushed = title
+            fieldValue = TextFieldValue(title, selection = TextRange(0, title.length))
+        }
     }
     LaunchedEffect(Unit) { focusRequester.requestFocus() }
     AlertDialog(
@@ -1320,6 +1334,7 @@ private fun RenameSessionDialog(
                         v
                     }
                     fieldValue = capped
+                    lastPushed = capped.text
                     onTitleChange(capped.text)
                 },
                 modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),

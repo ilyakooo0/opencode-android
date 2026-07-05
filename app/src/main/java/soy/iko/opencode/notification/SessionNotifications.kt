@@ -338,9 +338,9 @@ object SessionNotifications {
 
     /** Update the completion notification to show a brief "Sent" confirmation after a
      *  successful inline reply, replacing the completion notification's content. Auto-cancels
-     *  on tap so it doesn't linger. */
+     *  on tap (via a [setContentIntent]) so it doesn't linger. */
     @SuppressLint("MissingPermission")
-    fun postReplySent(context: Context, sessionId: String) {
+    fun postReplySent(context: Context, sessionId: String, profileId: String? = null) {
         if (!canPost(context)) {
             cancel(context, sessionId)
             return
@@ -349,6 +349,10 @@ object SessionNotifications {
         val notification = NotificationCompat.Builder(context, NotificationChannels.COMPLETED)
             .setSmallIcon(R.drawable.ic_stat_notify)
             .setContentTitle(context.getString(R.string.notif_reply_sent))
+            // setAutoCancel(true) only fires when the user taps a contentIntent; without one
+            // the "Sent" notification lingers indefinitely (the prior behavior). Wire the
+            // open-session intent so a tap dismisses the notification and opens the session.
+            .setContentIntent(openSessionIntent(context, sessionId, notifId, profileId))
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setGroup(GROUP_COMPLETED)

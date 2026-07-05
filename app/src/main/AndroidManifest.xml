@@ -97,11 +97,16 @@
                 android:resource="@xml/sessions_widget_info" />
         </receiver>
 
-        <!-- Serves the widget's session list rows. Bound by the system with BIND_REMOTEVIEWS. -->
+        <!-- Serves the widget's session list rows. Bound by the system with BIND_REMOTEVIEWS.
+             exported="true" is required: the AppWidget host runs in the launcher/system process
+             (a different process from the app), so it can only bindService to a service that's
+             visible outside the app. The BIND_REMOTEVIEWS permission restricts *who* can bind to
+             the system; exported="false" would make the service invisible to the host and the
+             widget's RemoteViewsService adapter would never populate. -->
         <service
             android:name=".platform.SessionsWidgetService"
             android:permission="android.permission.BIND_REMOTEVIEWS"
-            android:exported="false" />
+            android:exported="true" />
 
         <!-- Quick-settings tile: start a new session. Bound by the system. -->
         <service

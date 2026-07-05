@@ -93,10 +93,16 @@ class TtsController(context: Context) : RememberObserver {
         })
     }
 
-    /** Clear the speaking state when the utterance that finished is the one we're tracking. */
+    /** Clear the speaking state when the utterance that finished is the one we're tracking.
+     *  Accepts both the final chunk's id (the bare [id]) and an intermediate chunk's id
+     *  (`"$id#$index"`) — a [onError]/[onDone] on an intermediate chunk means the engine
+     *  stopped or errored mid-playback, so the speaking state must clear or the Stop button
+     *  stays stuck (the prior behavior only matched the bare id, leaving a runtime error on
+     *  an intermediate chunk with no way to clear the UI). */
     private fun clearIfCurrent(utteranceId: String?) {
         mainHandler.post {
-            if (_speakingId.value == utteranceId) {
+            val speaking = _speakingId.value
+            if (speaking != null && (utteranceId == speaking || utteranceId?.startsWith("$speaking#") == true)) {
                 _speakingId.value = null
                 _state.value = TtsState.IDLE
                 chunks = emptyList()

@@ -134,7 +134,12 @@ fun FileViewScreen(
     onBack: () -> Unit,
     initialLine: Int? = null,
 ) {
-    val vm: FileViewModel = viewModel(factory = vmFactory { FileViewModel(container, path) })
+    // Key the ViewModel by path so navigating from file A to file B (which, with
+    // launchSingleTop = true on the FILE_VIEW route, reuses the same back-stack entry
+    // and ViewModelStoreOwner) yields a distinct ViewModel per file. Without a key,
+    // viewModel() would return file A's VM — its init fetches A's path only once, so
+    // file B's content would never load. Mirrors ChatScreen's viewModel(key = sessionId).
+    val vm: FileViewModel = viewModel(key = path, factory = vmFactory { FileViewModel(container, path) })
     val state by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()

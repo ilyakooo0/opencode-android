@@ -7,7 +7,6 @@
     <ID>ComplexCondition:SessionListViewModel.kt$SessionListState$q.isEmpty() &amp;&amp; pinnedIds.isEmpty() &amp;&amp; noArchivedHidden &amp;&amp; directoryFilter == null</ID>
     <ID>CyclomaticComplexMethod:AppContainer.kt$AppContainer$@OptIn(ExperimentalCoroutinesApi::class) private fun observeMessageActivity()</ID>
     <ID>CyclomaticComplexMethod:ChatScreen.kt$@OptIn(ExperimentalMaterial3Api::class) @Composable fun ChatScreen( container: AppContainer, sessionId: String, onBack: () -&gt; Unit, onOpenFile: ((String) -&gt; Unit)? = null, onOpenSession: ((String) -&gt; Unit)? = null, focusMessageId: String? = null, onEditProfile: ((String) -&gt; Unit)? = null, )</ID>
-    <ID>CyclomaticComplexMethod:ChatViewModel.kt$ChatViewModel$private fun send(text: String, includeAttachments: Boolean, idempotencyKey: String? = null): Boolean</ID>
     <ID>CyclomaticComplexMethod:CodeHighlighter.kt$fun highlightLine(line: String, syntax: FileSyntax, palette: HighlightPalette, state: BlockCommentState): AnnotatedString</ID>
     <ID>CyclomaticComplexMethod:CodeHighlighter.kt$private fun findNumberEnd(line: String, start: Int): Int</ID>
     <ID>CyclomaticComplexMethod:ConversationExport.kt$fun buildConversationMarkdown(messages: List&lt;MessageWithParts&gt;, title: String?): String</ID>

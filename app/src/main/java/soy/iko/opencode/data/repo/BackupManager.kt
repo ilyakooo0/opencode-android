@@ -159,7 +159,11 @@ class BackupManager(
             settingsStore.setAppLockReLockSeconds(settings.appLockReLockSeconds)
             settingsStore.setChatTextScale(settings.chatTextScale)
             settingsStore.setCodeWrap(settings.codeWrap)
-            settingsStore.setSessionSortMode(settings.sessionSortMode)
+            // sessionSortMode is written below, AFTER validation against the known enum
+            // entries — do NOT write it unconditionally here, or a garbage string from a
+            // hand-edited/malicious backup would persist with no in-app reset path (the
+            // validated write below only fires when the enum is found, so an earlier
+            // unconditional write would leave the corrupt value in place when it's not).
             settingsStore.setSessionSortDescending(settings.sessionSortDescending)
             settingsStore.setSessionShowArchived(settings.sessionShowArchived)
             settingsStore.setPreferredModelId(settings.preferredModelId)
