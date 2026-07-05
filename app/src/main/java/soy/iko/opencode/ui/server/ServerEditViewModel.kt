@@ -269,11 +269,18 @@ class ServerEditViewModel(
         val qr = soy.iko.opencode.ui.components.parseQrPayload(text.trim()) ?: return false
         _state.update {
             it.copy(
+                // Carry the label from the QR payload (the image-scan import path does this too;
+                // omitting it here left the Label field blank when pasting a shared config).
+                label = qr.label.takeIf { it.isNotBlank() } ?: it.label,
                 baseUrl = qr.baseUrl,
                 username = qr.username.orEmpty(),
                 password = qr.password.orEmpty(),
                 requireHttps = qr.requireHttps,
                 certPin = qr.certPin.orEmpty(),
+                // Reveal the auth fields when the payload carries credentials so the user can
+                // see/verify them — otherwise they're populated in state but hidden behind
+                // AnimatedVisibility(authFieldsVisible), with no visual confirmation.
+                authFieldsVisible = !qr.username.isNullOrBlank() || !qr.password.isNullOrEmpty(),
                 credentialsResult = null,
                 error = null,
             )

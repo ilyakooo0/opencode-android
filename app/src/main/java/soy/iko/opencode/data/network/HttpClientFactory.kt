@@ -41,6 +41,17 @@ object HttpClientFactory {
                 "Certificate pinning is configured but the server host could not be parsed from $normalizedUrl",
             )
         }
+        // Fail closed for HTTP+auth with an unparseable host too: otherwise neither the HTTPS Auth
+        // plugin nor the HTTP host-scoped header plugin is installed (the HTTP branch below is
+        // gated on pinHost != null), so credentials would be configured but never transmitted —
+        // hasAuth reads true in the UI while every request goes out unauthenticated. An unparseable
+        // host generally can't connect anyway, but failing here surfaces a clear error instead of a
+        // silent auth bypass.
+        if (profile.hasAuth && !isHttps && pinHost == null) {
+            throw IllegalStateException(
+                "Auth is configured but the server host could not be parsed from $normalizedUrl",
+            )
+        }
 
         return HttpClient(OkHttp) {
             expectSuccess = true

@@ -289,7 +289,20 @@ fun FileViewScreen(
                         putExtra(Intent.EXTRA_TEXT, rawText)
                     }
                     runCatchingCancellable { context.startActivity(Intent.createChooser(send, shareLabel)) }
-                        .onFailure { scope.launch { snackbar.showSnackbar(context.getString(R.string.no_share_app)) } }
+                        .onFailure {
+                            // rawText is the full (untruncated) file content, so a file with very
+                            // long lines can blow past the Binder transaction limit (~1MB) while
+                            // staying under the render-line cap. Distinguish that from a missing
+                            // share target so the message is honest — mirrors onShareFull below.
+                            val msg = if (it is android.os.DeadObjectException ||
+                                it is android.os.TransactionTooLargeException
+                            ) {
+                                context.getString(R.string.file_share_too_large)
+                            } else {
+                                context.getString(R.string.no_share_app)
+                            }
+                            scope.launch { snackbar.showSnackbar(msg) }
+                        }
                 },
                 onOpenExternally = {
                     // Write the viewed content to a cache file and hand a content:// URI to an

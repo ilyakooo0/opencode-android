@@ -1829,11 +1829,14 @@ class ChatViewModel(
                     // spamming the dead server and the error snackbar without ever re-prompting the
                     // user. Removing it makes enqueuePermission fall through to re-queueing the
                     // request for the dialog so the user can retry.
-                    if (response == PermissionResponse.SESSION) {
-                        val type = permission.type.orEmpty()
-                        val pattern = permission.patternText.orEmpty()
-                        if (type.isNotEmpty()) sessionAllowed.remove(type to pattern)
-                    }
+                    //
+                    // This must cover BOTH the SESSION and ONCE response paths: enqueuePermission's
+                    // auto-respond sends ONCE, not SESSION, so guarding only the SESSION branch (as
+                    // the original code did) leaves the entry in and still loops when the auto-reply
+                    // fails. Revoke unconditionally on any failure.
+                    val type = permission.type.orEmpty()
+                    val pattern = permission.patternText.orEmpty()
+                    if (type.isNotEmpty()) sessionAllowed.remove(type to pattern)
                     enqueuePermission(permission)
                 }
         }
