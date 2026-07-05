@@ -435,9 +435,14 @@ fun ChatScreen(
                     if (vm.attachments.value.size >= NetworkConfig.maxAttachments) {
                         snackbar.showSnackbar(attachLimitMsg)
                         // The cap dropped the rest of this batch; account for the files we
-                        // won't process so stagingFileTotal doesn't linger over-counted.
+                        // won't process so stagingFileTotal doesn't linger over-counted,
+                        // then abandon the batch. return@launch (not return@forEachIndexed)
+                        // so the remaining uris aren't re-checked against a never-relieved
+                        // cap (which would over-decrement the counter and re-fire the snackbar
+                        // once per leftover uri). The `finally` below still decrements
+                        // stagingCount.
                         stagingFileTotal -= uris.size - index
-                        return@forEachIndexed
+                        return@launch
                     }
                     when (val result = uri.toAttachmentResult(appContext)) {
                         is AttachmentResult.Ok -> vm.addAttachment(result.attachment)

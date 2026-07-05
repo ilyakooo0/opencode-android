@@ -68,9 +68,20 @@ data class SymbolResult(
         val character: Int = 0,
     )
 
-    /** The file path portion of [Location.uri], stripping a `file://` scheme when present. */
+    /** The file path portion of [Location.uri], stripping a `file://` scheme when present.
+     *  Handles both empty-authority (`file:///abs/path`) and non-empty-authority
+     *  (`file://host/abs/path`) URIs by parsing the URI and taking its path component,
+     *  rather than a prefix strip that would leave the authority glued to the path. */
     val filePath: String
-        get() = location.uri.removePrefix("file://").ifBlank { location.uri }
+        get() {
+            val uri = location.uri
+            // Only parse file: URIs; for anything else, return as-is.
+            if (!uri.startsWith("file:")) return uri
+            return runCatching { java.net.URI(uri).path }
+                .getOrNull()
+                ?.takeIf { it.isNotBlank() }
+                ?: uri.removePrefix("file://").ifBlank { uri }
+        }
 
     /** 1-based line for display; the wire range is 0-based. */
     val displayLine: Int get() = location.range.start.line + 1

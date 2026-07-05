@@ -327,7 +327,7 @@ open class AppContainer private constructor(
         val next = if (muted) _mutedSessions.value - id else _mutedSessions.value + id
         _mutedSessions.value = next
         appContext?.let {
-            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            appScope.launch {
                 runCatchingCancellable { sessionPrefsStore.setMuted(id, !muted) }
             }
         }

@@ -326,7 +326,7 @@ class MainActivity : FragmentActivity() {
                 // slashes. Decoded + validated against traversal/control characters.
                 val rawPath = data.path?.removePrefix("/file/")?.let { android.net.Uri.decode(it) }
                 if (!openFileHandled) {
-                    rawPath?.takeIf { it.isNotBlank() && VALID_FILE_PATH.containsMatchIn(it) && !it.contains("..") }
+                    rawPath?.takeIf { it.isNotBlank() && VALID_FILE_PATH.matches(it) && !it.contains("..") }
                         ?.let { container.requestOpenFile(it); openFileHandled = true } ?: run {
                             if (!rawPath.isNullOrBlank()) showInvalidLinkToast = true
                         }

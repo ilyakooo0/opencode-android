@@ -198,9 +198,11 @@ fun AgentPickerSheet(
                 val listState = rememberLazyListState()
                 // Flat index of the selected agent, offset by the leading "Default" row when
                 // it's shown. selected == null targets that Default row (index 0). -1 when the
-                // selection isn't in the current list.
-                val selectedIndex = remember(distinctAgents, selected, defaultMatches) {
-                    selectedAgentIndex(distinctAgents, selected, defaultMatches)
+                // selection isn't in the current list. Computed against `filtered` (not the
+                // unfiltered distinctAgents) so a query that hides agents before the selection
+                // still maps to the right visible row.
+                val selectedIndex = remember(filtered, selected, defaultMatches) {
+                    selectedAgentIndex(filtered, selected, defaultMatches)
                 }
                 // Re-scroll to the selected item whenever the filter changes (not just once on
                 // open), so clearing a filter that had hidden the selection brings it back into

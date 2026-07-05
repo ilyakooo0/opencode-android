@@ -34,6 +34,12 @@ class RunForegroundService : Service() {
         val sessionTitle = intent?.getStringExtra(EXTRA_SESSION_TITLE)?.takeIf { it.isNotBlank() }
         val sessionId = intent?.getStringExtra(EXTRA_SESSION_ID)?.takeIf { it.isNotBlank() }
         val progress = intent?.getStringExtra(EXTRA_PROGRESS)?.takeIf { it.isNotBlank() }
+        // The service is re-started per progress update (AppContainer re-sends the intent on
+        // each _runProgressText change). Capture the wall-clock start of the *first* intent
+        // of this run and reuse it across rebuilds so the chronometer's base doesn't jump
+        // back to 0:00 every time the agent advances a step. Reset to 0 in onDestroy once
+        // the run ends (stop() → onDestroy) so the next run starts fresh.
+        if (runStartMillis == 0L) runStartMillis = System.currentTimeMillis()
         val notification = buildNotification(sessionTitle, sessionId, progress)
         // startForeground can throw ForegroundServiceStartNotAllowedException on
         // Android 12+ if the app is in the background when the service starts. Wrap
@@ -81,7 +87,9 @@ class RunForegroundService : Service() {
             .setOngoing(true)
             // Show a live elapsed timer so the user can see how long the current run has
             // been going — no per-tick plumbing needed; the system renders the chronometer.
-            .setWhen(System.currentTimeMillis())
+            // runStartMillis is captured once at the start of the run (see onStartCommand)
+            // and reused across progress-driven rebuilds so the chronometer base is stable.
+            .setWhen(runStartMillis)
             .setUsesChronometer(true)
             .setShowWhen(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
@@ -150,6 +158,9 @@ class RunForegroundService : Service() {
         // Safety net: if the process is being killed while a run is in progress,
         // ensure the notification is removed rather than lingering.
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+        // Reset the run start so the next run's chronometer begins fresh instead of
+        // inheriting the previous run's elapsed base.
+        runStartMillis = 0L
         super.onDestroy()
     }
 
@@ -159,6 +170,10 @@ class RunForegroundService : Service() {
         private const val TAG = "RunForegroundService"
         private const val NOTIF_ID = 1
         private const val NOTIF_TIMEOUT_ID = 2
+        // Wall-clock time the current run started, captured on the first onStartCommand of
+        // the run and reused across progress-driven notification rebuilds so the chronometer
+        // base is stable. Reset to 0 in onDestroy when the run ends.
+        @Volatile private var runStartMillis: Long = 0L
         // Brand accent for the foreground notifications' small-icon tint circle. Resolved
         // from resources (R.color.notif_brand) so it follows the app theme (light/dark)
         // instead of a hardcoded constant. Lazily computed on first use from the app context.
