@@ -112,10 +112,6 @@
     <string name="testing_connection">Testing…</string>
     <string name="delete_server">Delete server</string>
     <string name="delete_server_confirm">Delete this server profile?</string>
-    <string name="discover_on_network">Discover on network</string>
-    <string name="searching_network">Searching the local network…</string>
-    <string name="no_servers_found">No opencode servers found on the local network.</string>
-    <string name="scan_again">Scan again</string>
     <string name="testing_credentials">Testing…</string>
     <string name="credentials_ok">Credentials accepted.</string>
     <string name="credentials_rejected">Credentials rejected.</string>

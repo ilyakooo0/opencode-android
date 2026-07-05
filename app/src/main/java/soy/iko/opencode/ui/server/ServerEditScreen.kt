@@ -2,14 +2,12 @@ package soy.iko.opencode.ui.server
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -20,14 +18,12 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
-import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -55,7 +51,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
@@ -71,8 +66,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import soy.iko.opencode.data.network.NsdDiscovery
-import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.di.AppContainer
 import soy.iko.opencode.R
 import soy.iko.opencode.ui.components.autofillModifier
@@ -113,7 +106,7 @@ fun ServerEditScreen(
     }
 
     // Collapsing/lifting top bar so the long form scrolls under it, matching Settings and
-    // Diagnostics (the form can be tall: Base URL + Discovery + Auth + Test + Connect + Save +
+    // Diagnostics (the form can be tall: Base URL + Auth + Test + Connect + Save +
     // Label + Security).
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     Scaffold(
@@ -290,13 +283,6 @@ private fun ServerEditForm(
                 .fillMaxWidth()
                 .focusRequester(baseUrlFocus)
                 .testTag("server_url"),
-        )
-        // Auto-expand LAN discovery only on a fresh form (no URL yet) so tapping a found
-        // server is the primary path; on edit the populated URL keeps it (and its multicast)
-        // collapsed.
-        DiscoverySection(
-            initiallyExpanded = state.baseUrl.isBlank(),
-            onPick = { url -> vm.update { it.copy(baseUrl = url) } },
         )
         // Auth fields appear only once a connect attempt learns the server requires them
         // (or an authed profile is loaded) — the common no-auth server never sees them.
@@ -588,98 +574,5 @@ private fun SecurityFields(
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
             modifier = Modifier.fillMaxWidth().testTag("server_cert_pin"),
         )
-    }
-}
-
-/**
- * Optional LAN discovery: browses for opencode servers advertised via mDNS (`--mdns`) and
- * offers each as a one-tap fill for the base URL. Discovery (and its multicast traffic) only
- * runs while the section is expanded — the collection stops when the section is collapsed or
- * the screen leaves composition. [initiallyExpanded] starts it open on a fresh add form so the
- * discovered list is the primary path; an edit form (populated URL) leaves it collapsed.
- */
-@Composable
-private fun DiscoverySection(onPick: (String) -> Unit, initiallyExpanded: Boolean = false) {
-    val context = LocalContext.current
-    var expanded by rememberSaveable { mutableStateOf(initiallyExpanded) }
-    val stateLabel = stringResource(if (expanded) R.string.state_expanded else R.string.state_collapsed)
-    Column(modifier = Modifier.fillMaxWidth()) {
-        TextButton(
-            onClick = { expanded = !expanded },
-            modifier = Modifier.semantics { stateDescription = stateLabel },
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp),
-        ) {
-            Icon(Icons.Filled.Wifi, contentDescription = null, modifier = Modifier.size(18.dp))
-            Text(stringResource(R.string.discover_on_network), modifier = Modifier.padding(start = 8.dp))
-        }
-        if (expanded) {
-            val discovery = remember { NsdDiscovery(context) }
-            // scanNonce drives a manual re-scan: bumping it recreates the discovery flow
-            // (cancelling the prior collection / Nsd listener) and restarts the no-result
-            // timeout, so a user on a flaky multicast network can retry without collapsing
-            // and re-expanding the section.
-            var scanNonce by remember { mutableStateOf(0) }
-            val servers by remember(discovery, scanNonce) { discovery.discover() }
-                .collectAsStateWithLifecycle(initialValue = emptyList())
-            // mDNS discovery is a continuous flow that never emits a terminal "no results"
-            // state — on a network with no opencode servers the spinner would spin forever.
-            // After the timeout, swap the spinner for a "no servers found" message. Discovery
-            // keeps running, so a late server can still replace the message when it arrives.
-            var searchTimedOut by remember { mutableStateOf(false) }
-            LaunchedEffect(scanNonce) {
-                searchTimedOut = false
-                kotlinx.coroutines.delay(NetworkConfig.nsdDiscoveryNoResultTimeoutMs)
-                searchTimedOut = true
-            }
-            if (servers.isNotEmpty()) {
-                servers.forEach { server ->
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 48.dp)
-                            .clickable(role = Role.Button) { onPick(server.baseUrl) }
-                            .padding(vertical = 8.dp),
-                        verticalArrangement = Arrangement.Center,
-                    ) {
-                        Text(server.name, style = MaterialTheme.typography.bodyMedium)
-                        Text(
-                            server.baseUrl,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-            } else if (searchTimedOut) {
-                Text(
-                    stringResource(R.string.no_servers_found),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(vertical = 8.dp),
-                )
-            } else {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(vertical = 8.dp),
-                ) {
-                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                    Text(
-                        stringResource(R.string.searching_network),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(start = 8.dp),
-                    )
-                }
-            }
-            // Manual re-scan affordance: shown after a timeout (or while results are present)
-            // so a user on flaky multicast can retry discovery without leaving the section.
-            TextButton(
-                onClick = { scanNonce++ },
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp),
-                modifier = Modifier.padding(top = 4.dp),
-            ) {
-                Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
-                Text(stringResource(R.string.scan_again), modifier = Modifier.padding(start = 8.dp))
-            }
-        }
     }
 }

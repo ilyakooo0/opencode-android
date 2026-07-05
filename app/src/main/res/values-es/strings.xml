@@ -103,10 +103,6 @@
     <string name="testing_connection">Probando…</string>
     <string name="delete_server">Eliminar servidor</string>
     <string name="delete_server_confirm">¿Eliminar este perfil de servidor?</string>
-    <string name="discover_on_network">Descubrir en la red</string>
-    <string name="searching_network">Buscando en la red local…</string>
-    <string name="no_servers_found">No se encontraron servidores de opencode en la red local.</string>
-    <string name="scan_again">Buscar de nuevo</string>
     <string name="testing_credentials">Probando…</string>
     <string name="credentials_ok">Credenciales aceptadas.</string>
     <string name="credentials_rejected">Credenciales rechazadas.</string>

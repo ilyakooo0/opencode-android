@@ -200,12 +200,6 @@ object NetworkConfig {
     /** Timeout for loading a profile from DataStore before giving up. */
     const val profileLoadTimeoutMs = 5_000L
 
-    /** How long mDNS discovery searches before showing a "no servers found" terminal state.
-     *  Discovery continues running in the background (a late server can still appear), but the
-     *  spinner is replaced with the no-results message so the user isn't left looking at an
-     *  infinite spinner on a network with no opencode servers. */
-    const val nsdDiscoveryNoResultTimeoutMs = 8_000L
-
     /** Timeout for a credential test (probe) before giving up, so a hung/unresponsive server
      *  doesn't leave the "Testing…" spinner spinning indefinitely. */
     const val testCredentialsTimeoutMs = 15_000L
