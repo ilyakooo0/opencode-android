@@ -66,9 +66,15 @@ class TtsController(context: Context) : RememberObserver {
     // The chunked text for the currently-speaking utterance, plus the index of the chunk
     // currently (or about to be) playing. Tracked so pause()/resume() can re-enqueue the
     // tail without re-splitting the text. Cleared when playback ends or is stopped.
+    // currentChunk is written from onStart (a binder thread) and read from pause()/resume()
+    // on the main thread; without @Volatile the main thread could read a stale value and
+    // resume from the wrong chunk, replaying audio the user already heard. pausedFromChunk
+    // is derived from currentChunk in pause() and read in resume(), so it carries the same
+    // visibility requirement. chunks is only mutated on the main thread (start/stop/clear),
+    // so it doesn't need @Volatile.
     private var chunks: List<String> = emptyList()
-    private var currentChunk = 0
-    private var pausedFromChunk = 0
+    @Volatile private var currentChunk = 0
+    @Volatile private var pausedFromChunk = 0
 
     private val tts: TextToSpeech = TextToSpeech(context) { status ->
         ready = status == TextToSpeech.SUCCESS

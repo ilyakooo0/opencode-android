@@ -219,13 +219,23 @@ open class SessionRepository(
                         var seedChanged = false
                         lock.withLock {
                             if (generation == seedGeneration) {
+                                // Prune cache-seeded ghosts here too, not only in the initial
+                                // REST seed. If the SSE stream connected→dropped→reconnected
+                                // before the initial listMessages returned, seedGeneration was
+                                // already >0 by the time the initial seed ran, so its prune was
+                                // skipped (the `seedGeneration == 0` guard below). Without this
+                                // prune, messages deleted server-side while the app was closed
+                                // would survive as ghosts until a future app restart where the
+                                // timing happened not to recur.
+                                val pruned = store.pruneStaleCacheSeeded(cacheSeededIds, fresh)
                                 // Merge without pruning: SSE events arriving during the
                                 // REST fetch may have added messages not yet indexed by
                                 // the REST endpoint. Pruning would silently delete them.
                                 // Stale messages from deletions during the disconnect
                                 // gap are eventually removed via MessageRemoved events
                                 // or on the next app restart.
-                                seedChanged = store.seed(fresh, prune = false)
+                                val seeded = store.seed(fresh, prune = false)
+                                seedChanged = pruned || seeded
                             }
                         }
                         if (seedChanged) publish()
@@ -407,9 +417,10 @@ internal class MessageStore {
         }
 
         for (m in initial) {
-            val existing = messages[m.info.id]
+            val key = syntheticKeyFor(m)
+            val existing = messages[key]
             if (existing == null) {
-                messages[m.info.id] = holderOf(m)
+                messages[key] = holderOf(m)
                 changed = true
             } else {
                 // A part streamed in between subscribe and this initial load may already
@@ -417,7 +428,6 @@ internal class MessageStore {
                 // overwriting so that newer streamed part isn't discarded: take the
                 // snapshot's part order, swap in the streamed version where ids overlap,
                 // append any streamed-only parts, and adopt the authoritative REST info.
-                // existing.parts is already keyed by part id (insertion-ordered).
                 val streamedById = existing.parts
                 val snapshotIds = m.parts.mapTo(mutableSetOf()) { it.id }
                 // Prefer the in-memory version of an overlapping part ONLY if it streamed
@@ -429,25 +439,21 @@ internal class MessageStore {
                 }.toMutableList()
                 // Append only parts that streamed in *since the pivot* and are absent from the
                 // snapshot — i.e. genuinely newer than this REST fetch. A part in memory from
-                // before the pivot that the snapshot omits was removed server-side (its
-                // MessagePartRemoved missed during a disconnect gap, or it was deleted while the
-                // app was closed and only survives from the cache seed); the authoritative REST
-                // snapshot must be allowed to drop it, else it reappears as a ghost — and, once
-                // the drain loop persists this merge, gets baked into the on-disk cache forever
-                // (the message still exists, so pruneStaleCacheSeeded never removes it). This
-                // mirrors the overlapping-part branch above and the info branch below, which both
-                // already gate on the pivot.
+                // before the pivot that the snapshot omits was removed server-side; the
+                // authoritative REST snapshot must be allowed to drop it, else it reappears as
+                // a ghost and gets baked into the on-disk cache forever.
                 for (p in existing.parts.values) {
                     if (p.id !in snapshotIds && p.id in streamedSincePivot) ordered.add(p)
                 }
                 // Adopt the authoritative REST info unless the in-memory info was itself
                 // updated live since the pivot (i.e. during this fetch), in which case it's
-                // newer than the snapshot. Otherwise the REST snapshot wins, discarding
-                // in-memory info that went stale during a disconnect.
+                // newer than the snapshot. Otherwise the REST snapshot wins.
                 val info = if (existing.info is UnknownMessage || m.info.id !in messageInfoUpdatedSincePivot) m.info else existing.info
                 val merged = MessageWithParts(info = info, parts = ordered)
                 if (merged != existing.view()) {
-                    messages[m.info.id] = holderOf(merged)
+                    // Store under `key` (the synthetic key for an empty-id UnknownMessage),
+                    // not `m.info.id` (which is "" for such a message and would collide).
+                    messages[key] = holderOf(merged)
                     changed = true
                 }
             }
@@ -488,6 +494,18 @@ internal class MessageStore {
         }
         return changed
     }
+
+    /** Resolve the map key for a seed entry. An UnknownMessage with an empty id (from an
+     *  unrecognized server role with no id field) was stored by handleMessageUpdated under a
+     *  synthetic key ("unknown-c<created>" or "unknown-h<hash>"); derive the same key here so
+     *  a REST seed merges onto the existing holder instead of missing it and inserting a
+     *  duplicate under key "". */
+    private fun syntheticKeyFor(m: MessageWithParts): String =
+        if (m.info.id.isEmpty() && m.info is UnknownMessage) {
+            m.info.time?.created?.let { "unknown-c$it" } ?: "unknown-h${m.info.hashCode()}"
+        } else {
+            m.info.id
+        }
 
     /** Reorder the message map by message creation time (stable). Ties and entries with no
      *  server time yet (e.g. a brand-new message still streaming and not in REST) keep their

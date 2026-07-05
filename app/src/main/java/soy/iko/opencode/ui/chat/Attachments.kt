@@ -104,12 +104,14 @@ private fun defaultName(mime: String): String {
 }
 
 /**
- * Create a temp file in the cache and a shareable content [Uri] for it (via the app's
- * [FileProvider]) to hand to the camera as the capture target. Returns null if it can't be
- * created. The file is overwritten on each capture; the OS cleans the cache dir.
+ *  Create a temp file in the cache and a shareable content [Uri] for it (via the app's
+ *  [FileProvider]) to hand to the camera as the capture target. Returns null if it can't be
+ *  created. Uses a fixed filename so each capture overwrites the prior (the OS also evicts
+ *  cache under storage pressure); a unique-per-capture timestamped name would leak a .jpg
+ *  per canceled capture in cacheDir/captures/ with no cleanup path.
  */
 fun newCameraCaptureUri(context: Context): Uri? = runCatching {
     val dir = File(context.cacheDir, "captures").apply { mkdirs() }
-    val file = File(dir, "capture_${System.currentTimeMillis()}.jpg")
+    val file = File(dir, "capture.jpg")
     FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
 }.getOrNull()

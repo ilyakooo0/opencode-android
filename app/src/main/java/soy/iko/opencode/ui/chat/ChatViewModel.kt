@@ -1108,9 +1108,10 @@ class ChatViewModel(
             _optimisticMessages.update { entries -> entries.filterNot { it.failed && it.text.trim() == trimmed } }
             _optimisticMessages.update { it + OptimisticEntry(optimisticId, trimmed, System.currentTimeMillis(), failed = false) }
         }
-        // Remember the sent text so an undoable Stop can re-send it. Only text-bearing prompts
-        // are tracked (an image-only prompt has nothing to re-send).
-        if (trimmed.isNotEmpty()) lastSentPrompt = trimmed
+        // Remember the sent text so an undoable Stop can re-send it. Overwrite unconditionally:
+        // an image-only prompt has nothing to re-send, and leaving a prior text prompt tracked
+        // would make Stop-Undo silently re-send that unrelated earlier message.
+        lastSentPrompt = trimmed.takeIf { it.isNotEmpty() }
         viewModelScope.launch {
             runCatchingCancellable {
                 conn.repository.sendPrompt(
@@ -1252,9 +1253,13 @@ class ChatViewModel(
         // already true, send() returns false and the draft would be lost forever.
         // Attachments aren't re-sent on retry (they were optimistically restored to the
         // composer on the original failure, so they'll ride the next manual send).
+        // send() accepts the text synchronously, but its onSuccess/onFailure callbacks run
+        // asynchronously. Clearing failedIdempotencyKey here would open a window between this
+        // synchronous clear and the async onFailure (which re-stashes the key) during which a
+        // manual re-send of the same text gets a fresh UUID — defeating server-side deduplication.
+        // Let send()'s own callbacks own the key's lifecycle, as they do for non-retry paths.
         if (send(draft, includeAttachments = false, idempotencyKey = key)) {
             _failedDraft.value = null
-            failedIdempotencyKey = null
         }
     }
 
@@ -1372,6 +1377,12 @@ class ChatViewModel(
                 runCatchingCancellable { withContext(NonCancellable) { conn.repository.abort(sessionId) } }
                     .onSuccess {
                         _running.value = false
+                        // Close the re-light gate so trailing SSE events in flight between the
+                        // abort POST's ack and the server's SessionIdle don't re-light the run
+                        // indicator (and re-arm the FGS / keepScreenOn) after the user hit Stop.
+                        // send()/runCommand()/continueRun() all open this gate on beginRun();
+                        // abort() is the one run-ending path that previously missed it.
+                        runEndedByIdle = true
                         // Surface an undo opportunity so an accidental Stop is recoverable.
                         // The UI shows a "Stopped — Undo" snackbar; tapping Undo re-sends the
                         // last prompt. Only when there's a tracked prompt to undo back to.
@@ -1543,17 +1554,45 @@ class ChatViewModel(
     }
 
     /** Remove the pending quote-reply preview and strip the `>`-prefixed blockquote lines from
-     *  the draft so canceling the quote card actually removes the quoted text, not just the chip. */
+     *  the draft so canceling the quote card actually removes the quoted text, not just the chip.
+     *  Strips by leading `> ` prefix (structural match) rather than by exact full-text replace,
+     *  so a user who edited any quoted line is still cleaned up — the exact-text replaces would
+     *  silently no-op on an edit, leaving orphan `>` lines in the draft after the chip vanished. */
     fun cancelQuoteReply() {
         val removed = _pendingQuote.value ?: return
         _pendingQuote.value = null
-        val quotedBlock = removed.trim().lineSequence().joinToString("\n") { "> $it" }
-        _draft.value = _draft.value
-            .replace("\n\n$quotedBlock\n\n", "\n\n", ignoreCase = false)
-            .replace("$quotedBlock\n\n", "", ignoreCase = false)
-            .replace("\n\n$quotedBlock", "", ignoreCase = false)
-            .replace(quotedBlock, "", ignoreCase = false)
-            .trimStart()
+        val quoteLineCount = removed.trim().lineSequence().count()
+        // Walk the draft and drop the first contiguous run of `> `-prefixed lines that matches
+        // the stashed quote's line count (the block quoteReply inserted). Lines the user edited
+        // still begin with `> ` (quoteReply prefixed every line), so a prefix match finds them
+        // even when their trailing content diverges from the stashed original.
+        val lines = _draft.value.split("\n").toMutableList()
+        var runStart = -1
+        var runLen = 0
+        var i = 0
+        while (i < lines.size) {
+            if (lines[i].startsWith("> ") || lines[i] == ">") {
+                if (runStart < 0) runStart = i
+                runLen++
+                if (runLen == quoteLineCount) {
+                    // Strip the run plus a single trailing blank line that separated the quote
+                    // from the reply (quoteReply appends "\n\n" after the block).
+                    val stripUntil = i + 1
+                    if (stripUntil < lines.size && lines[stripUntil].isEmpty()) {
+                        lines.subList(runStart, stripUntil + 1).clear()
+                    } else {
+                        lines.subList(runStart, stripUntil).clear()
+                    }
+                    break
+                }
+                i++
+            } else {
+                runStart = -1
+                runLen = 0
+                i++
+            }
+        }
+        _draft.value = lines.joinToString("\n").trimStart()
     }
 
     /** Fork the conversation by creating a brand-new session seeded with [text] as its first
@@ -1565,8 +1604,10 @@ class ChatViewModel(
         val prompt = text.trim()
         if (prompt.isEmpty()) return
         viewModelScope.launch {
+            var createdId: String? = null
             runCatchingCancellable {
                 val session = conn.repository.createSession(title = null)
+                createdId = session.id
                 conn.repository.sendPrompt(
                     session.id,
                     prompt,
@@ -1576,7 +1617,15 @@ class ChatViewModel(
                 session.id
             }
                 .onSuccess { newId -> _branchEvents.trySend(newId) }
-                .onFailure { _errorEvents.trySend(ChatError(container.string(R.string.branch_failed))) }
+                .onFailure {
+                    // If the session was created but the prompt failed, delete the orphaned
+                    // empty session so failed branches don't accumulate on the server.
+                    val id = createdId
+                    if (id != null) {
+                        runCatchingCancellable { conn.repository.deleteSession(id) }
+                    }
+                    _errorEvents.trySend(ChatError(container.string(R.string.branch_failed)))
+                }
         }
     }
 

@@ -162,7 +162,16 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
     // collector withdraws the previously-pending report's scheduled delete when a newer one
     // supersedes its snackbar, keeping every delete undoable for its whole window.
     val reportDeleteEvents = remember {
-        MutableSharedFlow<String>(extraBufferCapacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+        // Buffer capacity matches the snackbar event buffer (NetworkConfig.snackbarEventBufferCapacity).
+        // With extraBufferCapacity = 1 + DROP_OLDEST, a rapid 3x delete can drop the MIDDLE
+        // event's snackbar while its scheduleDelete has already fired — silently deleting a
+        // report with no Undo. A larger buffer lets all pending deletes queue behind the
+        // collectLatest collector (which cancels the prior snackbar and withdraws its pending
+        // delete), so every delete stays undoable for its whole window.
+        MutableSharedFlow<String>(
+            extraBufferCapacity = NetworkConfig.snackbarEventBufferCapacity,
+            onBufferOverflow = BufferOverflow.DROP_OLDEST,
+        )
     }
     LaunchedEffect(Unit) {
         var pending: String? = null

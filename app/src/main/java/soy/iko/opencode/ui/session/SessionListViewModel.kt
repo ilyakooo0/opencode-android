@@ -928,7 +928,17 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
                 },
                 onError = { err ->
                     viewModelScope.launch {
+                        // Restore the session since the delete failed (or there was no connection
+                        // to delete on), matching deleteSession's onError. Without this the row
+                        // stays optimistically hidden forever — a manual refresh is the only way
+                        // to see it again, and with no connection a refresh won't happen. Guard
+                        // against a concurrent refresh having already re-added it so we never
+                        // produce two rows with the same id.
                         pendingDeletes.remove(session.id)
+                        _state.update { s ->
+                            s.copy(sessions = (s.sessions.filterNot { it.id == session.id } + session)
+                                .sortedByMode(s.sortMode, s.sortDescending))
+                        }
                         _transientErrors.tryEmit(container.friendlyError(err))
                     }
                 },

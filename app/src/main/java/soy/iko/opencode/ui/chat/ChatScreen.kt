@@ -989,9 +989,16 @@ fun ChatScreen(
         val searchMessages: List<MessageWithParts> = if (searchQuery.isEmpty()) {
             messages
         } else {
+            // Capture the messages list via rememberUpdatedState so the latest list is read
+            // when the debounce completes, WITHOUT re-launching the produceState coroutine on
+            // every messages emission. Keying produceState on `messages` restarts the debounce
+            // delay from zero on every streamed token (~20×/sec); if tokens arrive faster than
+            // the debounce interval the filter never runs and search shows "no matches" for the
+            // entire run. Keying only on `searchQuery` lets the debounce settle once per query
+            // while still filtering against the most recent list.
+            val currentMessages by rememberUpdatedState(messages)
             val filtered by produceState(
                 initialValue = emptyList(),
-                messages,
                 searchQuery,
             ) {
                 // Debounce: wait for the user to stop typing before running the filter,
@@ -1001,7 +1008,7 @@ fun ChatScreen(
                 // and scans every part of every message, which is non-trivial work for a
                 // long conversation.
                 value = withContext(Dispatchers.Default) {
-                    messages.filter { m ->
+                    currentMessages.filter { m ->
                         m.parts.any { p ->
                             when (p) {
                                 is TextPart -> p.text.contains(searchQuery, ignoreCase = true)
