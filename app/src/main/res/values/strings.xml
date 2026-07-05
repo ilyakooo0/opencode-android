@@ -87,8 +87,8 @@
     <!-- Server edit -->
     <string name="label_optional">Label (optional)</string>
     <string name="base_url">Base URL</string>
-    <string name="base_url_hint">http://192.168.1.10:4096</string>
-    <string name="invalid_url">Enter a valid http:// or https:// URL.</string>
+    <string name="base_url_hint">192.168.1.10:4096</string>
+    <string name="invalid_url">Enter a valid URL.</string>
     <string name="auth_required">This server requires authentication.</string>
     <string name="username_optional">Username (optional)</string>
     <string name="password_optional">Password (optional)</string>
@@ -332,8 +332,6 @@
     <string name="unknown_message">Unknown message type</string>
     <string name="unknown_part">Unsupported content</string>
     <string name="tool_preview">🔧 %1$s</string>
-    <string name="suggest_scheme">Add http:// prefix</string>
-    <string name="suggest_scheme_https">Add https:// prefix</string>
     <string name="sort">Sort</string>
     <string name="sort_recent">Recent activity</string>
     <string name="sort_title">Title</string>

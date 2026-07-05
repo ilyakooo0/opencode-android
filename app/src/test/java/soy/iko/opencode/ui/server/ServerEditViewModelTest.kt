@@ -139,6 +139,28 @@ class ServerEditViewModelTest {
         assertFalse(vm.state.value.canSave)
     }
 
+    @Test
+    fun canSave_trueForBareHostWithoutScheme() = testScope.runTest {
+        val container = FakeAppContainer()
+        val vm = makeVm(container)
+        // A bare host:port is schemed by normalizeForSave at save time, so canSave must
+        // accept it — the user shouldn't have to type a protocol to enable Save/Connect.
+        vm.update { it.copy(baseUrl = "localhost:3000") }
+        assertTrue(vm.state.value.canSave)
+        vm.update { it.copy(baseUrl = "192.168.1.10:4096") }
+        assertTrue(vm.state.value.canSave)
+    }
+
+    @Test
+    fun canSave_trueForBarePublicDomain() = testScope.runTest {
+        val container = FakeAppContainer()
+        val vm = makeVm(container)
+        // A public-looking domain with no port is schemed to https:// by normalizeForSave,
+        // which OkHttp accepts, so canSave must be true.
+        vm.update { it.copy(baseUrl = "example.com") }
+        assertTrue(vm.state.value.canSave)
+    }
+
     // --- save() ---
 
     @Test
@@ -159,7 +181,7 @@ class ServerEditViewModelTest {
     fun save_invalidUrlDoesNotSave() = testScope.runTest {
         val container = FakeAppContainer()
         val vm = makeVm(container)
-        vm.update { it.copy(baseUrl = "invalid") }
+        vm.update { it.copy(baseUrl = "not a url") }
         var doneCalled = false
         vm.save { doneCalled = true }
         testScheduler.advanceUntilIdle()
@@ -215,6 +237,48 @@ class ServerEditViewModelTest {
         assertEquals("http://localhost:3000", saved.baseUrl)
         assertEquals("Test", saved.label)
         assertEquals("admin", saved.username)
+    }
+
+    @Test
+    fun save_appliesHttpsSchemeToBareLanHost() = testScope.runTest {
+        val container = FakeAppContainer()
+        val vm = makeVm(container)
+        vm.update { it.copy(baseUrl = "localhost:3000", label = "LAN") }
+        vm.save { }
+        testScheduler.advanceUntilIdle()
+        val saved = container.fakeProfileStore.savedProfile!!
+        // A bare host is always schemed to https:// (the safe default). The user can still
+        // opt into cleartext by typing http:// explicitly.
+        assertEquals("https://localhost:3000", saved.baseUrl)
+        assertEquals("LAN", saved.label)
+        // The editor's own field is refreshed to the schemed form so a just-saved bare-host
+        // entry doesn't read as dirty against its own stored value on re-open.
+        assertEquals("https://localhost:3000", vm.state.value.baseUrl)
+        assertFalse(vm.state.value.isDirty)
+    }
+
+    @Test
+    fun save_appliesHttpsSchemeToBarePublicDomain() = testScope.runTest {
+        val container = FakeAppContainer()
+        val vm = makeVm(container)
+        vm.update { it.copy(baseUrl = "example.com") }
+        vm.save { }
+        testScheduler.advanceUntilIdle()
+        val saved = container.fakeProfileStore.savedProfile!!
+        assertEquals("https://example.com", saved.baseUrl)
+    }
+
+    @Test
+    fun save_preservesExplicitHttpSchemeForPublicDomain() = testScope.runTest {
+        val container = FakeAppContainer()
+        val vm = makeVm(container)
+        // The user typed the scheme explicitly — don't upgrade a public domain to https://
+        // behind their back; preserve their explicit http:// choice.
+        vm.update { it.copy(baseUrl = "http://example.com") }
+        vm.save { }
+        testScheduler.advanceUntilIdle()
+        val saved = container.fakeProfileStore.savedProfile!!
+        assertEquals("http://example.com", saved.baseUrl)
     }
 
     @Test
@@ -346,7 +410,7 @@ class ServerEditViewModelTest {
         val container = FakeAppContainer()
         container.probeResult = ProbeResult.Reachable
         val vm = makeVm(container)
-        vm.update { it.copy(baseUrl = "invalid") }
+        vm.update { it.copy(baseUrl = "not a url") }
         var doneCalled = false
         vm.connect { doneCalled = true }
         testScheduler.advanceUntilIdle()
@@ -415,24 +479,6 @@ class ServerEditViewModelTest {
         val container = FakeAppContainer()
         val vm = makeVm(container)
         assertFalse(vm.state.value.authFieldsVisible)
-    }
-
-    @Test
-    fun suggestUrlScheme_addsHttpForBareHost() {
-        assertEquals("http://192.168.1.10:4096", suggestUrlScheme("192.168.1.10:4096"))
-        assertEquals("http://localhost:3000", suggestUrlScheme("localhost:3000"))
-    }
-
-    @Test
-    fun suggestUrlScheme_returnsNullForAlreadySchemed() {
-        assertNull(suggestUrlScheme("http://localhost:3000"))
-        assertNull(suggestUrlScheme("https://example.com"))
-    }
-
-    @Test
-    fun suggestUrlScheme_returnsNullForUnparseable() {
-        assertNull(suggestUrlScheme("not a url"))
-        assertNull(suggestUrlScheme(""))
     }
 
     @Test

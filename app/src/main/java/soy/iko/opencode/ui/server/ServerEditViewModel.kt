@@ -95,62 +95,35 @@ fun isValidCertPin(raw: String): Boolean {
     return entries.all { it.matches(pinRegex) }
 }
 
+/**
+ * Return [input] with an `https://` scheme prepended when it has no scheme, mirroring
+ * [HttpClientFactory.normalizeBaseUrl]. Lets the user type a bare host ("example.com",
+ * "192.168.1.10:4096") without manually prefixing a protocol; we always assume HTTPS.
+ * Pass through unchanged when [input] already has a scheme.
+ */
+fun normalizeForSave(input: String): String {
+    val trimmed = input.trim()
+    val lower = trimmed.lowercase()
+    return if (lower.startsWith("http://") || lower.startsWith("https://")) {
+        trimmed
+    } else {
+        "https://$trimmed"
+    }
+}
+
 fun isValidUrl(url: String): Boolean {
     val trimmed = url.trim()
     if (trimmed.isBlank()) return false
-    // Parse with OkHttp's own parser (like HttpClientFactory) — java.net.URI rejects hosts
-    // OkHttp accepts (e.g. underscores in "my_server.local") and demands an exact-lowercase
-    // scheme ("HTTP://" fails). toHttpUrlOrNull only accepts http/https, so a successful parse
-    // already implies a valid scheme; a bare host without a scheme returns null, keeping the
-    // "suggest http:// prefix" flow in suggestUrlScheme() intact.
-    return trimmed.toHttpUrlOrNull() != null
-}
-
-/**
- * If [input] looks like a bare host (optionally with a port/path) and lacks a scheme,
- * return a scheme-prefixed form (only when it parses to a valid URL). Lets the UI offer a
- * one-tap fix instead of a generic "invalid URL" error.
- *
- * Picks `https://` for shapes that imply TLS by convention (explicit :443 port, or a
- * public-looking domain with no port) so the quick-fix doesn't nudge users onto cleartext.
- * Local/LAN hosts (localhost, private IP ranges, `*.local`) stay `http://` — the common
- * `opencode serve` case over the LAN.
- */
-fun suggestUrlScheme(input: String): String? {
-    val trimmed = input.trim()
-    if (trimmed.isEmpty() || "://" in trimmed) return null
-    val scheme = if (looksLikeTls(trimmed)) "https" else "http"
-    val candidate = "$scheme://$trimmed"
-    return if (isValidUrl(candidate)) candidate else null
-}
-
-private fun looksLikeTls(input: String): Boolean {
-    val host = input.substringBefore('/').lowercase()
-    val hostNoPort = host.substringBefore(':')
-    val port = host.substringAfter(':', missingDelimiterValue = "")
-    if (port == "443") return true
-    if (port.isNotEmpty()) return false
-    if (hostNoPort == "localhost") return false
-    if (isPrivateHost(hostNoPort)) return false
-    // A dotless single-label host (e.g. an mDNS/Bonjour name on some setups) is ambiguous;
-    // keep cleartext as the LAN-friendly default rather than suggesting TLS.
-    if ('.' !in hostNoPort) return false
-    return true
-}
-
-private fun isPrivateHost(host: String): Boolean {
-    if (host.endsWith(".local")) return true
-    val octets = host.split('.')
-    if (octets.size == 4 && octets.all { it.toIntOrNull() in 0..255 }) {
-        val a = octets[0].toInt()
-        val b = octets[1].toInt()
-        if (a == 10) return true
-        if (a == 192 && b == 168) return true
-        if (a == 172 && b in 16..31) return true
-        if (a == 127) return true
-        if (a == 169 && b == 254) return true
-    }
-    return false
+    // Accept any URL OkHttp can parse, *or* a schemeless bare host that we can prefix with
+    // https:// ourselves. This lets the user type "example.com" or "192.168.1.10:4096"
+    // without a protocol: canSave flips true and Save/Connect prepend https:// via
+    // [normalizeForSave]. A non-http scheme like "ftp://…" is rejected explicitly so we
+    // don't accidentally accept "ftp://example.com" by prepending https:// (which would
+    // parse as host="ftp", path="//example.com"). Truly invalid input ("not a url") still
+    // fails here so canSave stays false.
+    if (trimmed.toHttpUrlOrNull() != null) return true
+    if ("://" in trimmed) return false
+    return "https://$trimmed".toHttpUrlOrNull() != null
 }
 
 class ServerEditViewModel(
@@ -278,7 +251,9 @@ class ServerEditViewModel(
         _state.update { it.copy(saving = true, error = null, credentialsResult = null) }
         // FIX 21(b)/FIX 11: probe the trimmed URL save() would store, and remember it so a stale
         // result is dropped if the user edited the base URL away while the probe was in flight.
-        val probedUrl = s.baseUrl.trim()
+        // normalizeForSave applies the same scheme prefix save() would persist, so a bare host
+        // typed without http:// is probed at the URL it'll actually be saved as.
+        val probedUrl = normalizeForSave(s.baseUrl)
         val probedRequireHttps = s.requireHttps
         val probedCertPin = s.certPin.trim().takeIf { it.isNotBlank() }
         viewModelScope.launch {
@@ -286,7 +261,7 @@ class ServerEditViewModel(
             result.onSuccess { pr ->
                 // Stale result (URL edited away mid-probe): clear the spinner and stop, else
                 // `saving` latches true and blocks re-connecting.
-                if (_state.value.baseUrl.trim() != probedUrl) {
+                if (normalizeForSave(_state.value.baseUrl) != probedUrl) {
                     _state.update { it.copy(saving = false) }
                     return@onSuccess
                 }
@@ -304,7 +279,7 @@ class ServerEditViewModel(
                 }
             }.onFailure { e ->
                 _state.update {
-                    if (it.baseUrl.trim() != probedUrl) it.copy(saving = false)
+                    if (normalizeForSave(it.baseUrl) != probedUrl) it.copy(saving = false)
                     else it.copy(saving = false, error = container.friendlyError(e))
                 }
             }
@@ -325,7 +300,7 @@ class ServerEditViewModel(
         // FIX 21(b): test the trimmed URL/credentials that save() would actually store.
         // FIX 11: remember the probed URL so a stale result is dropped if the user
         // edited the base URL away while the test was in flight.
-        val probedUrl = s.baseUrl.trim()
+        val probedUrl = normalizeForSave(s.baseUrl)
         val probedUser = s.username.trim()
         val probedPass = s.password.trim()
         val probedRequireHttps = s.requireHttps
@@ -342,7 +317,7 @@ class ServerEditViewModel(
             result.onSuccess { ok ->
                 _state.update {
                     // Stale result: clear the spinner but drop the verdict (see probe()).
-                    if (it.baseUrl.trim() != probedUrl) return@update it.copy(testingCredentials = false)
+                    if (normalizeForSave(it.baseUrl) != probedUrl) return@update it.copy(testingCredentials = false)
                     it.copy(
                         testingCredentials = false,
                         credentialsResult = ok,
@@ -351,7 +326,7 @@ class ServerEditViewModel(
                 }
             }.onFailure { e ->
                 _state.update {
-                    if (it.baseUrl.trim() != probedUrl) return@update it.copy(testingCredentials = false)
+                    if (normalizeForSave(it.baseUrl) != probedUrl) return@update it.copy(testingCredentials = false)
                     it.copy(
                         testingCredentials = false,
                         credentialsResult = false,
@@ -377,7 +352,7 @@ class ServerEditViewModel(
         val s = _state.value
         if (!s.canSave || s.testingConnection) return
         _state.update { it.copy(testingConnection = true, connectionResult = null, error = null) }
-        val probedUrl = s.baseUrl.trim()
+        val probedUrl = normalizeForSave(s.baseUrl)
         val probedRequireHttps = s.requireHttps
         val probedCertPin = s.certPin.trim().takeIf { it.isNotBlank() }
         viewModelScope.launch {
@@ -389,7 +364,7 @@ class ServerEditViewModel(
             }
             val latency = System.currentTimeMillis() - start
             _state.update {
-                if (it.baseUrl.trim() != probedUrl) return@update it.copy(testingConnection = false)
+                if (normalizeForSave(it.baseUrl) != probedUrl) return@update it.copy(testingConnection = false)
                 val verdict = result.fold(
                     onSuccess = { probe ->
                         when (probe) {
@@ -436,6 +411,10 @@ class ServerEditViewModel(
         val s = _state.value
         if (!s.canSave || s.saving) return
         _state.update { it.copy(saving = true) }
+        // Prepend https:// to a bare host so the saved profile is immediately connectable
+        // and re-opening the editor doesn't re-show an "add scheme" hint. The user can still
+        // opt into cleartext by typing http:// explicitly.
+        val savedBaseUrl = normalizeForSave(s.baseUrl)
         viewModelScope.launch {
             val result = runCatchingCancellable {
                 // Duplicate detection: warn when a different profile with the same URL
@@ -445,7 +424,7 @@ class ServerEditViewModel(
                 val existing = withTimeoutOrNull(NetworkConfig.profileLoadTimeoutMs) {
                     container.profileStore.profiles.first()
                 } ?: emptyList()
-                val duplicate = existing.any { it.id != s.id && it.baseUrl == s.baseUrl.trim() && it.label == s.label.trim() }
+                val duplicate = existing.any { it.id != s.id && it.baseUrl == savedBaseUrl && it.label == s.label.trim() }
                 if (duplicate) {
                     throw java.io.IOException(container.string(R.string.duplicate_server_warning))
                 }
@@ -462,7 +441,7 @@ class ServerEditViewModel(
                 val saved = ServerProfile(
                     id = s.id ?: UUID.randomUUID().toString(),
                     label = s.label.trim(),
-                    baseUrl = s.baseUrl.trim(),
+                    baseUrl = savedBaseUrl,
                     username = s.username.trim().takeIf { it.isNotBlank() },
                     password = s.password.trim().takeIf { it.isNotEmpty() },
                     lastUsed = existingLastUsed,
@@ -476,9 +455,12 @@ class ServerEditViewModel(
                 // would see id == null again, mint a new UUID and create a DUPLICATE
                 // profile instead of upserting the same row. Also refresh the dirty
                 // snapshot so the just-saved values no longer read as unsaved changes.
+                // The base URL is updated to the schemed form too, so a freshly-saved
+                // bare-host entry doesn't read as dirty against its own saved value.
                 _state.update {
                     it.copy(
                         id = saved.id,
+                        baseUrl = saved.baseUrl,
                         initial = InitialProfile(
                             label = saved.label,
                             baseUrl = saved.baseUrl,

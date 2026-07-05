@@ -53,9 +53,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.input.ImeAction
@@ -242,30 +240,7 @@ private fun ServerEditForm(
             isError = state.baseUrl.isNotBlank() && !urlValid,
             supportingText = {
                 if (state.baseUrl.isNotBlank() && !urlValid) {
-                    // Offer a one-tap scheme fix for bare host:port input instead of a
-                    // generic error, so the user doesn't have to know the URL needs a scheme.
-                    // suggestUrlScheme() picks https:// for TLS-shaped hosts (port 443, public
-                    // domains) so the quick-fix doesn't nudge users onto cleartext.
-                    val suggestion = suggestUrlScheme(state.baseUrl)
-                    if (suggestion != null) {
-                        val labelRes = if (suggestion.startsWith("https://")) R.string.suggest_scheme_https else R.string.suggest_scheme
-                        // Mark the supporting-text fix as a Button so TalkBack announces it as an
-                        // actionable control. Without an explicit role, a TextButton inside
-                        // supportingText can be missed by screen-reader users who don't scan
-                        // the error slot visually.
-                        TextButton(
-                            onClick = { vm.update { it.copy(baseUrl = suggestion) } },
-                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp),
-                            modifier = Modifier.semantics {
-                                role = Role.Button
-                                contentDescription = state.baseUrl
-                            },
-                        ) {
-                            Text(stringResource(labelRes))
-                        }
-                    } else {
-                        Text(stringResource(R.string.invalid_url))
-                    }
+                    Text(stringResource(R.string.invalid_url))
                 }
             },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done),

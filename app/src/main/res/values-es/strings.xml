@@ -86,8 +86,8 @@
     <!-- Server edit -->
     <string name="label_optional">Etiqueta (opcional)</string>
     <string name="base_url">URL base</string>
-    <string name="base_url_hint">http://192.168.1.10:4096</string>
-    <string name="invalid_url">Introduce una URL http:// o https:// válida.</string>
+    <string name="base_url_hint">192.168.1.10:4096</string>
+    <string name="invalid_url">Introduce una URL válida.</string>
     <string name="auth_required">Este servidor requiere autenticación.</string>
     <string name="username_optional">Usuario (opcional)</string>
     <string name="password_optional">Contraseña (opcional)</string>
@@ -331,8 +331,6 @@
     <string name="unknown_message">Tipo de mensaje desconocido</string>
     <string name="unknown_part">Contenido no compatible</string>
     <string name="tool_preview">🔧 %1$s</string>
-    <string name="suggest_scheme">Añadir prefijo http://</string>
-    <string name="suggest_scheme_https">Añadir prefijo https://</string>
     <string name="sort">Ordenar</string>
     <string name="sort_recent">Actividad reciente</string>
     <string name="sort_title">Título</string>
