@@ -45,7 +45,15 @@ class DraftStoreTest {
 
     @Test
     fun getReturnsEmptyForUnknownSession() {
-        val store = DraftStore(context, CoroutineScope(SupervisorJob()))
-        assertEquals("", store.get("never-set-${System.nanoTime()}"))
+        // Create the scope in a local val so it can be cancelled — DraftStore launches a
+        // debounced-persistence collector into the supplied scope that keeps running until
+        // cancelled, and an uncanceled scope leaks across test invocations on device.
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        try {
+            val store = DraftStore(context, scope)
+            assertEquals("", store.get("never-set-${System.nanoTime()}"))
+        } finally {
+            scope.cancel()
+        }
     }
 }

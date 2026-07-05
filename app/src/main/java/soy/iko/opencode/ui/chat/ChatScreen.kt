@@ -2518,7 +2518,14 @@ private fun ChatInputBar(
                     ),
                     keyboardActions = KeyboardActions(
                         onSend = {
-                            if (enabled && hasContent) onSend()
+                            // Mirror the hardware-Enter handler: during a run the soft-keyboard
+                            // send key must queue the follow-up, not silently drop it. vm.send()
+                            // returns false while a run is active (beginRun() rejects), so calling
+                            // onSend() directly here would lose the typed message with no feedback
+                            // for touch-only users (no hardware Enter path available).
+                            if (enabled && hasContent) {
+                                if (running) onQueueFollowUp(value) else onSend()
+                            }
                         },
                     ),
                 )

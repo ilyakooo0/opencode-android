@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
@@ -96,11 +97,18 @@ fun PermissionDialog(
             elapsedMs = (elapsedMs + tickMs).coerceAtMost(autoRejectMs)
         }
         // Haptic on auto-reject so a walked-away user is signaled that the decision was made.
-        haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-        // Leave a persistent trace (notification) so a returning user who missed the dialog
-        // closing understands why the run stopped — the in-app dialog is gone by then.
-        onAutoReject()
-        respond(PermissionResponse.REJECT)
+        // Guard on `responded`: if the user answered within the final tick before the timeout,
+        // the delay() resumed before recomposition cancelled this effect. respond(REJECT) is
+        // itself guarded by `responded` (no-op), but onAutoReject() posts a real "permission
+        // auto-rejected" notification — without this guard a user who explicitly answered would
+        // get a false "you didn't respond" notification for a permission they did respond to.
+        if (!responded) {
+            haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+            // Leave a persistent trace (notification) so a returning user who missed the dialog
+            // closing understands why the run stopped — the in-app dialog is gone by then.
+            onAutoReject()
+            respond(PermissionResponse.REJECT)
+        }
     }
     val showReminder = elapsedMs >= NetworkConfig.permissionReminderThresholdMs
     // In the final 60 seconds, switch to a per-second countdown so the imminent auto-reject
@@ -283,6 +291,7 @@ private fun PermissionMetadataBlock(metadata: kotlinx.serialization.json.JsonEle
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .clickable(role = Role.Button) { expanded = !expanded }
                 .semantics { stateDescription = if (expanded) expandedState else collapsedState }
                 .padding(vertical = 2.dp),
             verticalAlignment = Alignment.CenterVertically,

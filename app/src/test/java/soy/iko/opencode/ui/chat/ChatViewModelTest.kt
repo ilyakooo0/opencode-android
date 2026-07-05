@@ -208,9 +208,20 @@ class ChatViewModelTest {
         val vm = makeVm(container)
         assertTrue(vm.send("hello"))
         assertFalse(vm.running.value.not()) // running is true
+        // Collect error events so we can assert the rejection actually fired. A plain
+        // assertTrue(vm.running.value) afterwards can't distinguish rejection from
+        // acceptance (both leave running true), so without this the test would pass
+        // even if the beginRun() guard were removed.
+        val errors = mutableListOf<ChatError>()
+        val collectJob = launch { vm.errorEvents.toList(errors) }
         vm.runCommand(Command(name = "compact"))
-        // Still running from the first send; runCommand should not override
+        testScheduler.advanceUntilIdle()
+        collectJob.cancel()
+        // Still running from the first send; runCommand should not override.
         assertTrue(vm.running.value)
+        // The rejection emits a command_busy error — the distinguishing signal that the
+        // guard fired. Without it, runCommand would have proceeded and no error would fire.
+        assertTrue("expected a command_busy error on rejection", errors.isNotEmpty())
     }
 
     // --- abort() ---

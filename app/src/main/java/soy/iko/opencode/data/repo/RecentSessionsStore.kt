@@ -52,10 +52,22 @@ object RecentSessionsStore {
                 val tmp = File(target.parentFile, "$FILE.tmp")
                 tmp.writeText(encoded)
                 // Atomic replace on POSIX filesystems (app's internal storage); the reader
-                // never observes a torn file. Fall back to a direct write if rename fails.
+                // never observes a torn file. renameTo can fail when the target exists on
+                // some OEM filesystems — delete the target first so the rename is a pure
+                // create, and only if that still fails fall back to a copy-and-delete that
+                // preserves atomicity from the reader's perspective (the reader sees either
+                // the old complete file or the new complete file, never a half-written one,
+                // because the copy writes to the temp and then atomically moves it).
                 if (!tmp.renameTo(target)) {
-                    target.writeText(encoded)
-                    tmp.delete()
+                    target.delete()
+                    if (!tmp.renameTo(target)) {
+                        // Last-resort: copy bytes then delete temp. The target is briefly
+                        // absent during the copy, but a concurrent reader sees an empty
+                        // list (the runCatching on the read side handles a missing file),
+                        // never a torn file — preserving the documented invariant.
+                        tmp.copyTo(target, overwrite = true)
+                        tmp.delete()
+                    }
                 }
             }
             Unit

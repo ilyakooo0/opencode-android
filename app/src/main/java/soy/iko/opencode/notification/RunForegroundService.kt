@@ -28,6 +28,7 @@ import soy.iko.opencode.R
  */
 class RunForegroundService : Service() {
 
+    @android.annotation.SuppressLint("MissingPermission")
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         // The session title (when a single run is active) is passed via the intent extra so
         // the notification can identify which session is running, instead of a generic
@@ -42,25 +43,37 @@ class RunForegroundService : Service() {
         // the run ends (stop() → onDestroy) so the next run starts fresh.
         if (runStartMillis == 0L) runStartMillis = System.currentTimeMillis()
         val notification = buildNotification(sessionTitle, sessionId, progress)
-        // startForeground can throw ForegroundServiceStartNotAllowedException on
-        // Android 12+ if the app is in the background when the service starts. Wrap
-        // it so a backgrounded start (e.g. the user navigates away at the wrong
-        // moment) doesn't crash the app — the SSE stream will just continue without
-        // foreground priority and may be killed by the system sooner.
-        runCatching {
-            ServiceCompat.startForeground(
-                this,
-                NOTIF_ID,
-                notification,
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-                } else {
-                    0
-                },
-            )
-        }.onFailure {
-            Log.w(TAG, "startForeground failed; running without foreground priority", it)
-            stopSelf()
+        // Only call startForeground once per service lifetime — re-calling it on every
+        // progress-driven re-start re-binds the "must call startForeground within 5s"
+        // obligation each time, and if the app is backgrounded between two progress
+        // updates the new call can throw ForegroundServiceStartNotAllowedException even
+        // though the service is already in the foreground. That would drop foreground
+        // priority mid-run (the catch below stopSelf()s, killing the FGS while
+        // anyRunActive is still true). After the first successful startForeground,
+        // progress updates refresh the notification via NotificationManager.notify
+        // directly, which never throws the background-start exception.
+        if (!isInForeground) {
+            runCatching {
+                ServiceCompat.startForeground(
+                    this,
+                    NOTIF_ID,
+                    notification,
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                    } else {
+                        0
+                    },
+                )
+            }.onFailure {
+                Log.w(TAG, "startForeground failed; running without foreground priority", it)
+                stopSelf()
+            }.also { isInForeground = it.isSuccess }
+        } else {
+            // Already in the foreground: refresh the notification in place. NotificationManager
+            // updates an ongoing notification without re-asserting foreground priority.
+            runCatching {
+                NotificationManagerCompat.from(this).notify(NOTIF_ID, notification)
+            }.onFailure { Log.w(TAG, "Failed to update foreground notification", it) }
         }
         return START_NOT_STICKY
     }
@@ -159,9 +172,10 @@ class RunForegroundService : Service() {
         // Safety net: if the process is being killed while a run is in progress,
         // ensure the notification is removed rather than lingering.
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
-        // Reset the run start so the next run's chronometer begins fresh instead of
-        // inheriting the previous run's elapsed base.
+        // Reset the run start and foreground state so the next run's chronometer begins
+        // fresh and startForeground is re-asserted on the first intent of the next run.
         runStartMillis = 0L
+        isInForeground = false
         super.onDestroy()
     }
 
@@ -184,6 +198,11 @@ class RunForegroundService : Service() {
         // the run and reused across progress-driven notification rebuilds so the chronometer
         // base is stable. Reset to 0 in onDestroy when the run ends.
         @Volatile private var runStartMillis: Long = 0L
+        // Whether the service has successfully called startForeground and is currently in
+        // the foreground. Tracked so progress-driven re-starts (which re-enter
+        // onStartCommand) don't re-call startForeground and re-bind the 5s obligation each
+        // time — that would let a backgrounded re-start throw and stopSelf() the FGS mid-run.
+        @Volatile private var isInForeground: Boolean = false
         // Brand accent for the foreground notifications' small-icon tint circle. Resolved
         // from resources (R.color.notif_brand) so it follows the app theme (light/dark)
         // instead of a hardcoded constant. Lazily computed on first use from the app context

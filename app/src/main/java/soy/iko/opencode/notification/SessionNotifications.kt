@@ -180,11 +180,22 @@ object SessionNotifications {
      *  completions collapse into one stackable entry instead of filling the shade. */
     @SuppressLint("MissingPermission")
     private fun postCompletedSummary(context: Context) {
+        // The summary needs a content intent so tapping it opens the app (and so
+        // setAutoCancel can fire on tap — without a PendingIntent the tap does nothing
+        // and the summary can only be dismissed by swiping). A plain open-app intent is
+        // right for a group summary: there's no single session to route to.
+        val openIntent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val contentIntent = PendingIntent.getActivity(
+            context, 0, openIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
         val summary = NotificationCompat.Builder(context, NotificationChannels.COMPLETED)
             .setSmallIcon(R.drawable.ic_stat_notify)
             .setContentTitle(context.getString(R.string.notif_completed_title))
             .setContentText(context.getString(R.string.app_name))
-            .setSmallIcon(R.drawable.ic_stat_notify)
+            .setContentIntent(contentIntent)
             .setAutoCancel(true)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setGroup(GROUP_COMPLETED)

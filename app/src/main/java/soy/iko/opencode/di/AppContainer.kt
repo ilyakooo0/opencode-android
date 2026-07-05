@@ -637,6 +637,12 @@ open class AppContainer private constructor(
         // mutex. Otherwise the runBlocking below would deadlock waiting for a coroutine
         // that can't be cancelled until after the runBlocking completes.
         appScope.cancel()
+        // Capture the active connection BEFORE the bounded close attempt so a timeout
+        // can still close it outside the mutex. Without this, the timeout path would
+        // null the StateFlow reference without closing the connection — leaking the SSE
+        // socket, OkHttp pool, and the connection's coroutine scope.
+        val stuck = _activeConnection.value
+        var closed = false
         // Bounded runBlocking so a stuck mutex or a slow close() can't ANR the app.
         // 2 seconds is generous: appScope.cancel() already triggered cancellation of
         // any coroutine holding the mutex; we're just waiting for it to unwind.
@@ -645,10 +651,25 @@ open class AppContainer private constructor(
                 connectionMutex.withLock {
                     runCatching { _activeConnection.value?.close() }
                     _activeConnection.value = null
+                    closed = true
                 }
             }
-            // If the timeout fired, force-clear the connection so it isn't left dangling.
+            // If the timeout fired, force-clear the StateFlow so observers see no
+            // connection. The stuck connection (if any) is closed below, outside the
+            // mutex, so a slow close() can't ANR — its scope is cancelled and the JVM
+            // exit reaps any remaining sockets.
             _activeConnection.value = null
+        }
+        if (!closed && stuck != null) {
+            // The timeout path fired (the locked close didn't complete). Cancel the
+            // stuck connection's scope directly. close() suspends (scopeJob.join), so
+            // wrap in a bounded runBlocking that can't ANR — at this point the app is
+            // shutting down, so reaping is best-effort.
+            runCatching {
+                kotlinx.coroutines.runBlocking {
+                    kotlinx.coroutines.withTimeoutOrNull(1_000) { stuck.close() }
+                }
+            }
         }
         val cm = appContext?.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
         networkCallback?.let { runCatching { cm?.unregisterNetworkCallback(it) } }

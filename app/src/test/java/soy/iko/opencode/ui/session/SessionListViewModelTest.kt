@@ -261,11 +261,26 @@ class SessionListViewModelTest {
         val container = makeContainer(repo = repo)
         val vm = makeVm(container)
 
+        // Collect the undo events so we can assert the ViewModel emitted one — the
+        // synchronous signal that deleteSession fired (the actual REST delete is
+        // deferred via container.scheduleSessionDelete on the app's IO scope with a
+        // 5s undo delay, which the test scheduler doesn't flush; the undo event is
+        // the VM's direct, synchronous side effect). The collector must be subscribed
+        // BEFORE deleteSession fires: SharedFlow only delivers to current subscribers,
+        // and _undoEvents.tryEmit runs synchronously inside deleteSession.
+        val undoEvents = mutableListOf<String>()
+        val collectJob = launch { vm.undoEvents.toList(undoEvents) }
+        // Let the collector coroutine run and subscribe before we emit.
+        testScheduler.advanceUntilIdle()
+
         vm.deleteSession(Session(id = "s1", title = "Chat 1"))
         testScheduler.advanceUntilIdle()
-        // The deleteSession in FakeSessionRepository is a no-op, but refresh() is called
-        // which re-fetches sessions. The session should still be in the list since the
-        // fake delete doesn't actually remove it.
+        collectJob.cancel()
+
+        // The session should be optimistically removed from the visible list.
+        assertFalse(vm.state.value.sessions.any { it.id == "s1" })
+        // The undo event for this session should have fired so the UI can offer Undo.
+        assertTrue("expected an undo event for s1", undoEvents.contains("s1"))
     }
 
     // --- switchServer ---

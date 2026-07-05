@@ -4,11 +4,13 @@ package soy.iko.opencode.ui.file
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.launch
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -17,6 +19,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.io.IOException
 import soy.iko.opencode.data.model.FileNode
 import soy.iko.opencode.data.model.FileStatusEntry
 import soy.iko.opencode.data.model.ServerProfile
@@ -185,11 +188,20 @@ class FileBrowserViewModelTest {
     @Test
     fun loadStatus_failureSetsTransientError() = testScope.runTest {
         val api = FakeOpencodeApiClient()
-        // Make fileStatus throw by not providing entries and having the fake return empty
-        // (the fake doesn't throw, so we just verify the happy path doesn't set error)
+        api.fileStatusThrows = IOException("network error")
         val container = makeContainer(api)
-        val vm = makeVm(container)
-        // With empty status, no transient error event is emitted.
+        // Collect transient errors BEFORE constructing the VM: loadStatus() runs from the
+        // VM's init (via collectLatest on activeConnection), so the failure + emit happens
+        // during makeVm's advanceUntilIdle. Starting the collector first captures it.
+        val errors = mutableListOf<String>()
+        // A placeholder VM is needed to access transientErrors, but the VM must be created
+        // with the collector already running. Create the VM without advancing, start the
+        // collector, then advance.
+        val vm = FileBrowserViewModel(container)
+        val collectJob = launch { vm.transientErrors.toList(errors) }
+        testScheduler.advanceUntilIdle()
+        collectJob.cancel()
+        assertTrue("expected a transient error on fileStatus failure", errors.isNotEmpty())
     }
 
     // --- connection availability ---

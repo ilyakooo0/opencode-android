@@ -124,6 +124,7 @@ class FakeOpencodeApiClient : OpencodeApiClient() {
     var directoryListing: List<FileNode> = emptyList()
     var fileSearchResults: List<String> = emptyList()
     var fileStatusEntries: List<FileStatusEntry> = emptyList()
+    var fileStatusThrows: Throwable? = null
     var fileContent: FileContent = FileContent(content = "")
     var projectsList: List<Project> = emptyList()
     var pathInfo: PathInfo = PathInfo()
@@ -235,7 +236,10 @@ class FakeOpencodeApiClient : OpencodeApiClient() {
     override suspend fun findFiles(query: String): List<String> = fileSearchResults
     override suspend fun listDirectory(path: String): List<FileNode> = directoryListing
     override suspend fun readFile(path: String): FileContent = fileContent
-    override suspend fun fileStatus(): List<FileStatusEntry> = fileStatusEntries
+    override suspend fun fileStatus(): List<FileStatusEntry> {
+        fileStatusThrows?.let { throw it }
+        return fileStatusEntries
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -269,6 +273,8 @@ class FakeSessionRepository(
     var listSessionsGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
     var abortCalls: List<String> = emptyList()
         private set
+    var deleteCalls: List<String> = emptyList()
+        private set
     var lastCreatedDirectory: String? = null
         private set
 
@@ -284,7 +290,7 @@ class FakeSessionRepository(
         lastCreatedDirectory = directory
         return createdSession
     }
-    override suspend fun deleteSession(id: String) { /* no-op */ }
+    override suspend fun deleteSession(id: String) { deleteCalls = deleteCalls + id }
     override suspend fun abort(sessionId: String) { abortCalls = abortCalls + sessionId }
 
     override suspend fun sendPrompt(

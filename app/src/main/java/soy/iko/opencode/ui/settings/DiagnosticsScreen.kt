@@ -146,6 +146,7 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                         "### ${report.fileName}\n\n" + logger.readReport(report.fileName).orEmpty()
                     }
                     context.contentResolver.openOutputStream(uri)?.use { it.write(all.toByteArray()) }
+                        ?: error("no output stream")
                 }
             }.isSuccess
             if (ok) snackbar.showSnackbar(context.getString(R.string.export_all))

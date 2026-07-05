@@ -163,12 +163,21 @@ class CrashLogger private constructor(private val appContext: Context) {
     /** Deferred whole-directory clear, cancellable via [cancelScheduledClearAll] so the bulk
      *  action gets the same undo window as a single-report delete. Runs on the logger's own
      *  scope so it commits even if the user leaves the Diagnostics screen. */
+    // @Volatile: the flag is read/written from both the UI thread (schedule/cancel calls
+    // from the Diagnostics screen) and the IO coroutine (which nulls it when the timer
+    // fires). Without @Volatile the IO write isn't guaranteed visible to the UI thread's
+    // cancel read — a data race that could let a cancel falsely report "already fired".
+    // The sibling pendingDeletes map uses ConcurrentHashMap for the same reason.
+    @Volatile
     private var pendingClearAll: Job? = null
 
     fun scheduleClearAll(delayMs: Long) {
         pendingClearAll?.cancel()
         pendingClearAll = scope.launch {
             delay(delayMs)
+            // Claim the clear by nulling our entry BEFORE deleting, mirroring
+            // scheduleDelete's claim pattern: whichever nulls first wins. A concurrent
+            // cancelScheduledClearAll that nulls first makes this a no-op.
             pendingClearAll = null
             crashDir.listFiles { f -> f.isFile && f.name.endsWith(".txt") }?.forEach { it.delete() }
             refresh()
@@ -177,6 +186,11 @@ class CrashLogger private constructor(private val appContext: Context) {
 
     /** Cancel a pending clear-all (the Undo action). Returns true if it was still pending. */
     fun cancelScheduledClearAll(): Boolean {
+        // Read and null under the volatile read; cancel the captured job after. A
+        // compareAndSet loop would be ideal but Job identity is enough here: if we read
+        // non-null, null it, and cancel it, the launched coroutine's pendingClearAll =
+        // null is a no-op on an already-nulled field. If the coroutine already nulled it
+        // (timer fired) we read null and return false — the authoritative answer.
         val job = pendingClearAll ?: return false
         pendingClearAll = null
         job.cancel()

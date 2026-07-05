@@ -471,8 +471,15 @@ class ServerEditViewModel(
                 if (duplicate) {
                     throw java.io.IOException(container.string(R.string.duplicate_server_warning))
                 }
+                // Preserve the existing profile's lastUsed so re-saving doesn't reset its
+                // sort order. When the timeout fired (existing is empty) and this is an
+                // edit of an existing profile (s.id != null), we can't know the prior
+                // lastUsed — fall back to the current wall-clock time rather than 0 (which
+                // would silently drop the user's most-recently-used server to the bottom of
+                // the server list). A fresh save bumping lastUsed to "now" is the same
+                // behavior connectLocked applies on a real connect, so this is consistent.
                 val existingLastUsed = if (s.id != null) {
-                    existing.firstOrNull { it.id == s.id }?.lastUsed ?: 0L
+                    existing.firstOrNull { it.id == s.id }?.lastUsed ?: System.currentTimeMillis()
                 } else 0L
                 val saved = ServerProfile(
                     id = s.id ?: UUID.randomUUID().toString(),

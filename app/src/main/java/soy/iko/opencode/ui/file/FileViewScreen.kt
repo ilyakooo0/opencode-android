@@ -307,17 +307,38 @@ fun FileViewScreen(
                                 dir.listFiles()?.forEach { f ->
                                     runCatching { if (f.lastModified() < cutoff) f.delete() }
                                 }
-                                val file = java.io.File(dir, filename.ifBlank { "file.txt" })
-                                file.writeText(rawText)
-                                val authority = context.packageName + ".fileprovider"
-                                val uri = androidx.core.content.FileProvider.getUriForFile(context, authority, file)
-                                val view = Intent(Intent.ACTION_VIEW).apply {
-                                    setDataAndType(uri, android.webkit.MimeTypeMap.getSingleton()
-                                        .getMimeTypeFromExtension(filename.substringAfterLast('.', ""))
-                                        ?: "text/plain")
-                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+                                // Sanitize the filename: replace characters that are invalid in
+                                // a filesystem filename or that FileProvider.getUriForFile
+                                // rejects (path separators, NUL, and Windows-illegal chars that
+                                // also trip the provider), and reject `..` traversal. Without
+                                // this, a path ending in an unusual character (e.g. `:`, `?`)
+                                // would throw at getUriForFile AFTER writeText succeeded, orphaning
+                                // the cache file. Sanitize up front so the write and the URI use
+                                // the same safe name.
+                                val safeName = filename.ifBlank { "file.txt" }
+                                    .substringAfterLast('/')
+                                    .replace(Regex("[\\\\/:*?\"<>|\\u0000]"), "_")
+                                    .takeIf { it.isNotBlank() && it != "." && it != ".." }
+                                    ?: "file.txt"
+                                val file = java.io.File(dir, safeName)
+                                try {
+                                    file.writeText(rawText)
+                                    val authority = context.packageName + ".fileprovider"
+                                    val uri = androidx.core.content.FileProvider.getUriForFile(context, authority, file)
+                                    val view = Intent(Intent.ACTION_VIEW).apply {
+                                        setDataAndType(uri, android.webkit.MimeTypeMap.getSingleton()
+                                            .getMimeTypeFromExtension(safeName.substringAfterLast('.', ""))
+                                            ?: "text/plain")
+                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    }
+                                    context.startActivity(view)
+                                } catch (e: Throwable) {
+                                    // getUriForFile or startActivity can throw after the cache
+                                    // file was written; delete it so a failure doesn't orphan
+                                    // cache files that the TTL prune won't reap for a while.
+                                    runCatching { file.delete() }
+                                    throw e
                                 }
-                                context.startActivity(view)
                             }
                         }.isSuccess
                         if (!ok) scope.launch { snackbar.showSnackbar(context.getString(R.string.open_externally_failed)) }

@@ -26,6 +26,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -136,7 +137,14 @@ fun AppLockGate(enabled: Boolean, reLockDelaySeconds: Int = 0, content: @Composa
     // app-switch (e.g. glancing at another app for a few seconds) doesn't re-prompt — the most
     // common reason users disable biometric locks. A killed process resets unlocked anyway, so the
     // grace period only governs the in-memory re-lock decision across a surviving background stint.
-    val lastStopTimeMs = remember { longArrayOf(0L) }
+    //
+    // rememberSaveable (not plain remember): a config change NOT in the manifest's configChanges
+    // (e.g. a locale change, which recreates the Activity) would otherwise reset this to 0L, and
+    // the new DisposableEffect observer gets ON_START delivered synchronously — the grace check
+    // sees lastStopTimeMs == 0 and re-locks even though the user unlocked 2s ago and only changed
+    // the system language. The stop timestamp is not security-sensitive (it's a wall-clock value),
+    // so persisting it through the Bundle is safe and preserves the grace period across recreation.
+    val lastStopTimeMs = rememberSaveable { longArrayOf(0L) }
     val reLockDelayMs = reLockDelaySeconds * 1000L
 
     val title = stringResource(R.string.app_lock_prompt_title)

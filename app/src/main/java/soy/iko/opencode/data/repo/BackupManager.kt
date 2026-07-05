@@ -167,7 +167,22 @@ class BackupManager(
             settingsStore.setCompactMessageSpacing(settings.compactMessageSpacing)
             settingsStore.setHapticsEnabled(settings.hapticsEnabled)
             settingsStore.setReducedMotion(settings.reducedMotion)
-            settingsStore.setLanguageOverride(settings.languageOverride)
+            // Validate the sort mode against the known enum entries before persisting, so a
+            // garbage string from a hand-edited/malicious backup can't produce a broken sort
+            // with no in-app reset path (the picker writes known values, but a corrupt one
+            // would persist and leave the list in an undefined order). Mirrors the defensive
+            // enum parsing used for themeMode and swipe actions above.
+            soy.iko.opencode.ui.session.SessionSortMode.entries
+                .find { it.name == settings.sessionSortMode }
+                ?.let { settingsStore.setSessionSortMode(it.name) }
+            // Validate the language override is a plausible ISO 639-1 code (2–3 lowercase
+            // letters, optionally with a region/script subtag) before persisting, so a bad
+            // string doesn't reach AppCompat's per-app language API. Empty (system default)
+            // is always allowed.
+            val lang = settings.languageOverride
+            if (lang.isEmpty() || lang.matches(Regex("^[a-z]{2,3}(-[A-Za-z0-9]+)*$"))) {
+                settingsStore.setLanguageOverride(lang)
+            }
             settingsStore.setNotifRunComplete(settings.notifRunComplete)
             settingsStore.setNotifPermission(settings.notifPermission)
             settingsStore.setNotifError(settings.notifError)

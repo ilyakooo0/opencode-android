@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import android.util.Log
 import kotlinx.coroutines.launch
+import soy.iko.opencode.util.runCatchingCancellable
 import java.util.concurrent.Executors
 
 /**
@@ -79,7 +80,12 @@ open class DraftStore private constructor(
         // so callers can observe readiness without blocking.
         if (scope != null && appContext != null) {
             scope.launch(Dispatchers.IO) {
-                val all = runCatching {
+                // runCatchingCancellable (not plain runCatching): this block runs in a
+                // coroutine, and plain runCatching swallows CancellationException — if a
+                // future suspend point is added here, cancellation would leave _ready
+                // forever false and drafts stuck loading. Matches the convention used by
+                // the sibling stores (MessageCacheStore, OutboxStore, AttachmentDraftStore).
+                val all = runCatchingCancellable {
                     prefs.all.mapValues { it.value as? String ?: "" }
                 }.getOrDefault(emptyMap())
                 // Partition persisted keys: follow-up keys carry a prefix, everything else

@@ -342,7 +342,7 @@ class MainActivity : FragmentActivity() {
                 // slashes. Decoded + validated against traversal/control characters.
                 val rawPath = data.path?.removePrefix("/file/")?.let { android.net.Uri.decode(it) }
                 if (!openFileHandled) {
-                    rawPath?.takeIf { it.isNotBlank() && VALID_FILE_PATH.matches(it) && !it.contains("..") }
+                    rawPath?.takeIf { isValidFilePath(it) }
                         ?.let { container.requestOpenFile(it); openFileHandled = true } ?: run {
                             if (!rawPath.isNullOrBlank()) showInvalidLinkToast = true
                         }
@@ -355,8 +355,13 @@ class MainActivity : FragmentActivity() {
                 }
             }
         }
-        // Fall back to the EXTRA_SESSION_ID extra (notifications / widget) when no deep link matched.
-        if (!openSessionHandled) {
+        // Fall back to the EXTRA_SESSION_ID extra (notifications / widget) when no deep link
+        // was present at all. A deep link that matched a host but failed validation (e.g. a
+        // malformed session id) does NOT fall through to the extra: the intent's primary
+        // routing signal was the URI, and the extra may carry a different (valid) id that
+        // would silently open the wrong session. Only when data?.host is null (a pure widget
+        // / notification intent with no URI) does the extra carry the routing intent.
+        if (data?.host == null && !openSessionHandled) {
             intent?.getStringExtra(EXTRA_SESSION_ID)?.takeIf { it.isNotBlank() && it.matches(VALID_SESSION_ID) }?.let {
                 val profileId = intent.getStringExtra(NotificationActionReceiver.EXTRA_PROFILE_ID)
                     ?.takeIf { it.isNotBlank() }
@@ -376,9 +381,17 @@ class MainActivity : FragmentActivity() {
         /** Session ids are alphanumeric with dashes/underscores. Reject path traversal. */
         private val VALID_SESSION_ID = Regex("[A-Za-z0-9_-]+")
 
-        /** A file path must be made of path-ish characters and not carry traversal. Used to
-         *  sanity-check the file deep link before handing it to the viewer. */
-        private val VALID_FILE_PATH = Regex("[A-Za-z0-9_\\-./ ]+")
+        /** A file path must not carry traversal segments or control characters. Looser than a
+         *  positive allowlist: real workspace paths commonly contain `~`, `:`, `+`, `=`, `,`,
+         *  parentheses, and non-ASCII unicode, all of which a tight `[A-Za-z0-9_\\-./ ]+`
+         *  regex would reject. The server validates the path against the workspace root, so
+         *  here we only reject what's unambiguously hostile (traversal) or non-printable. */
+        private fun isValidFilePath(path: String): Boolean {
+            if (path.isBlank()) return false
+            if (path.contains("..")) return false
+            if (path.any { it.isISOControl() }) return false
+            return true
+        }
 
         private const val KEY_SHARE_HANDLED = "shareIntentHandled"
         private const val KEY_OPEN_SESSION_HANDLED = "openSessionHandled"
