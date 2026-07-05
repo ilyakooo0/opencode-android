@@ -83,14 +83,6 @@
     <string name="server_auth_short">  •  auth</string>
     <string name="server_auth_basic">  •  Basic auth</string>
     <string name="server_removed">Server removed</string>
-    <string name="share_qr">Share as QR code</string>
-    <string name="import_from_image">Import from image</string>
-    <string name="qr_import_failed">No opencode server QR found in that image.</string>
-    <string name="qr_import_title">Add this server?</string>
-    <string name="qr_added">Server added</string>
-    <string name="ok">OK</string>
-    <string name="qr_includes_password">Includes password</string>
-    <string name="qr_includes_password_warning">Includes password — share carefully</string>
 
     <!-- Server edit -->
     <string name="label_optional">Label (optional)</string>
@@ -798,7 +790,6 @@
     <string name="usage_open_session">Open session</string>
     <string name="usage_cost_fraction">%1$d%% of total</string>
     <string name="app_lock_disabled_warning">App lock is on but no biometric or device credential is available — the app isn\'t locked.</string>
-    <string name="qr_paste_hint">Tip: paste a shared server config here to import it.</string>
     <string name="server_url_clear">Clear URL</string>
     <string name="long_press_for_timestamp">Long-press for the full timestamp</string>
     <string name="search_always_available">Search</string>
@@ -812,7 +803,6 @@
 
     <!-- UI/UX batch 7: shared components, navigation, files, mcp, usage -->
     <string name="markdown_image_placeholder">[image]</string>
-    <string name="qr_image_for">QR code for %1$s</string>
     <string name="reconnecting_to">Reconnecting to %1$s…</string>
     <string name="run_stopped">Run stopped</string>
     <string name="preview_attachment">Preview attachment</string>

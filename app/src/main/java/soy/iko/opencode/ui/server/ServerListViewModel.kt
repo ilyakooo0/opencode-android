@@ -253,20 +253,4 @@ class ServerListViewModel(private val container: AppContainer) : ViewModel() {
         if (!container.cancelProfileDelete(profileId)) return
         _hiddenIds.update { it - profileId }
     }
-
-    /** Save a new profile decoded from a scanned/imported QR payload, returning the created
-     *  profile so the caller can connect or route to the editor. Does not connect. */
-    suspend fun importFromQr(qr: soy.iko.opencode.ui.components.ServerProfileQr): ServerProfile {
-        val profile = ServerProfile(
-            id = java.util.UUID.randomUUID().toString(),
-            label = qr.label,
-            baseUrl = qr.baseUrl,
-            username = qr.username,
-            password = qr.password,
-            requireHttps = qr.requireHttps,
-            certPin = qr.certPin,
-        )
-        container.profileStore.save(profile)
-        return profile
-    }
 }

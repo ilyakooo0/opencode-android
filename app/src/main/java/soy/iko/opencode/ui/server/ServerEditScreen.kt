@@ -235,12 +235,7 @@ private fun ServerEditForm(
         // fresh add form (via baseUrlFocus above).
         OutlinedTextField(
             value = state.baseUrl,
-            onValueChange = { v ->
-                // A paste of a full QR/JSON config into the URL field populates the whole form
-                // (so a user can paste a shared server config instead of scanning an image).
-                // Falls through to a normal URL edit when it isn't a recognized payload.
-                if (!vm.applyQrPayload(v)) vm.update { it.copy(baseUrl = v) }
-            },
+            onValueChange = { v -> vm.update { it.copy(baseUrl = v) } },
             label = { Text(stringResource(R.string.base_url)) },
             placeholder = { Text(stringResource(R.string.base_url_hint)) },
             singleLine = true,
@@ -271,10 +266,6 @@ private fun ServerEditForm(
                     } else {
                         Text(stringResource(R.string.invalid_url))
                     }
-                } else if (state.baseUrl.isBlank()) {
-                    // Surface the QR-paste shortcut so a user with a shared server config knows
-                    // they can paste it here instead of scanning an image.
-                    Text(stringResource(R.string.qr_paste_hint))
                 }
             },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done),

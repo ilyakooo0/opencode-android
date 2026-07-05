@@ -23,7 +23,6 @@ import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -65,13 +64,11 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
 import androidx.activity.compose.BackHandler
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -118,10 +115,10 @@ fun ServerListScreen(
         .collectAsStateWithLifecycle(initialValue = soy.iko.opencode.data.network.EventStreamClient.ConnectionState.Disconnected)
     val haptics = LocalHapticFeedback.current
     val snackbar = remember { SnackbarHostState() }
-    // Separate host for transient error messages (connect/probe failures, QR import results)
-    // so a transient error can't preempt an undo snackbar's full window — the undo and error
-    // channels don't share a queue, so a connect error can't cancel an in-flight undo and
-    // strand a pending server delete.
+    // Separate host for transient error messages (connect/probe failures) so a transient
+    // error can't preempt an undo snackbar's full window — the undo and error channels
+    // don't share a queue, so a connect error can't cancel an in-flight undo and strand a
+    // pending server delete.
     val errorSnackbar = remember { SnackbarHostState() }
     val retryLabel = stringResource(R.string.retry)
     val undoLabel = stringResource(R.string.undo)
@@ -132,19 +129,6 @@ fun ServerListScreen(
     // threshold logic the file/session pickers use for their search fields.
     var serverQuery by rememberSaveable { mutableStateOf("") }
     val connectedId = activeConnection?.profile?.id
-    // Profile being shown as a scannable QR (Share as QR overflow action), and a decoded QR
-    // payload awaiting the user's confirm before it's saved (Import from image action).
-    var pendingQrProfile by remember { mutableStateOf<ServerProfile?>(null) }
-    val context = androidx.compose.ui.platform.LocalContext.current
-    val scope = androidx.compose.runtime.rememberCoroutineScope()
-    // QR import (image pick → decode → confirm → save) is encapsulated in its own composable so the
-    // branches don't inflate ServerListScreen's complexity. It renders the confirm dialog inline.
-    val qrImportLauncher = ServerQrImportHandler(
-        vm = vm,
-        scope = scope,
-        snackbar = errorSnackbar,
-        context = context,
-    )
 
     LaunchedEffect(Unit) {
         vm.errorEvents.collect { event ->
@@ -259,13 +243,6 @@ fun ServerListScreen(
                             )
                         }
                     }
-                    // Import a server by decoding a QR code from a saved image (e.g. a screenshot
-                    // of another device's Share-as-QR dialog). Camera scanning would need extra
-                    // permissions; an image picker reuses the system gallery and covers the
-                    // cross-device transfer use case.
-                    IconButton(onClick = { qrImportLauncher.launch(arrayOf("image/*")) }) {
-                        Icon(Icons.Filled.PhotoLibrary, contentDescription = stringResource(R.string.import_from_image))
-                    }
                 },
             )
         },
@@ -345,7 +322,6 @@ fun ServerListScreen(
                 }
                 "empty" -> EmptyServers(
                     onAdd = onAddProfile,
-                    onQrImport = { qrImportLauncher.launch(arrayOf("image/*")) },
                     modifier = Modifier.fillMaxSize(),
                 )
                 else -> {
@@ -416,7 +392,6 @@ fun ServerListScreen(
                                         onEdit = { onEditProfile(profile.id) },
                                         onDuplicate = { onDuplicateProfile(profile.id) },
                                         onPendingDelete = { pendingDeleteId = profile.id },
-                                        onShareQr = { pendingQrProfile = profile },
                                         onTestConnection = { vm.testConnection(profile) },
                                         isProbing = probingId == profile.id,
                                     )
@@ -470,7 +445,6 @@ fun ServerListScreen(
                                         onEdit = { onEditProfile(profile.id) },
                                         onDuplicate = { onDuplicateProfile(profile.id) },
                                         onPendingDelete = { pendingDeleteId = profile.id },
-                                        onShareQr = { pendingQrProfile = profile },
                                         onTestConnection = { vm.testConnection(profile) },
                                         isProbing = probingId == profile.id,
                                     )
@@ -510,12 +484,6 @@ fun ServerListScreen(
             },
         )
     }
-
-    // Share-as-QR dialog for the selected profile. (The import confirm dialog is rendered by
-    // ServerQrImportHandler above.)
-    pendingQrProfile?.let { profile ->
-        soy.iko.opencode.ui.components.QrShareDialog(profile = profile, onDismiss = { pendingQrProfile = null })
-    }
 }
 
 /** Shared content for a server profile card — used by both the active-row (plain Card)
@@ -530,7 +498,6 @@ private fun ServerCardContent(
     onEdit: () -> Unit,
     onDuplicate: () -> Unit,
     onPendingDelete: () -> Unit,
-    onShareQr: () -> Unit = {},
     onTestConnection: () -> Unit = {},
     isProbing: Boolean = false,
     activeState: soy.iko.opencode.data.network.EventStreamClient.ConnectionState? = null,
@@ -666,10 +633,6 @@ private fun ServerCardContent(
                             onClick = { showRowMenu = false; onTestConnection() },
                         )
                         DropdownMenuItem(
-                            text = { Text(stringResource(R.string.share_qr)) },
-                            onClick = { showRowMenu = false; onShareQr() },
-                        )
-                        DropdownMenuItem(
                             text = { Text(removeLabel, color = MaterialTheme.colorScheme.error) },
                             onClick = { showRowMenu = false; onPendingDelete() },
                         )
@@ -703,7 +666,7 @@ private fun LastUsedText(lastUsed: Long) {
 }
 
 @Composable
-private fun EmptyServers(onAdd: () -> Unit, onQrImport: () -> Unit, modifier: Modifier = Modifier) {
+private fun EmptyServers(onAdd: () -> Unit, modifier: Modifier = Modifier) {
     Box(modifier = modifier, contentAlignment = Alignment.Center) {
         EmptyState(
             icon = Icons.Filled.Dns,
@@ -712,74 +675,8 @@ private fun EmptyServers(onAdd: () -> Unit, onQrImport: () -> Unit, modifier: Mo
             actionIcon = Icons.Filled.Add,
             actionLabel = stringResource(R.string.add_server),
             onAction = onAdd,
-            secondaryActionIcon = Icons.Filled.PhotoLibrary,
-            secondaryActionLabel = stringResource(R.string.import_from_image),
-            onSecondaryAction = onQrImport,
         )
     }
-}
-
-/** Owns the QR-import flow: an image-picker launcher plus the confirm dialog for a decoded
- *  server payload. Extracted from [ServerListScreen] so its branches (null checks, decode
- *  result, confirm) don't push the parent composable over the cyclomatic-complexity threshold.
- *  Renders the confirm dialog inline. */
-@Composable
-private fun ServerQrImportHandler(
-    vm: ServerListViewModel,
-    scope: kotlinx.coroutines.CoroutineScope,
-    snackbar: SnackbarHostState,
-    context: android.content.Context,
-): androidx.activity.result.ActivityResultLauncher<Array<String>> {
-    var pendingImport by remember { mutableStateOf<soy.iko.opencode.ui.components.ServerProfileQr?>(null) }
-    val qrAddedMsg = stringResource(R.string.qr_added)
-    val qrImportFailedMsg = stringResource(R.string.qr_import_failed)
-    val launcher = rememberLauncherForActivityResult(
-        androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
-    ) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
-        scope.launch {
-            val qr = soy.iko.opencode.ui.components.decodeServerQr(context, uri)
-            if (qr != null) pendingImport = qr else snackbar.showSnackbar(qrImportFailedMsg)
-        }
-    }
-    pendingImport?.let { qr ->
-        AlertDialog(
-            onDismissRequest = { pendingImport = null },
-            title = { Text(stringResource(R.string.qr_import_title)) },
-            text = {
-                Column {
-                    Text(qr.baseUrl, style = MaterialTheme.typography.bodyLarge)
-                    if (qr.label.isNotBlank()) {
-                        Text(
-                            qr.label,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    if (qr.password != null) {
-                        Text(
-                            stringResource(R.string.qr_includes_password),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.error,
-                        )
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    pendingImport = null
-                    scope.launch {
-                        vm.importFromQr(qr)
-                        snackbar.showSnackbar(qrAddedMsg)
-                    }
-                }) { Text(stringResource(R.string.add_server)) }
-            },
-            dismissButton = {
-                TextButton(onClick = { pendingImport = null }) { Text(stringResource(R.string.cancel)) }
-            },
-        )
-    }
-    return launcher
 }
 
 /** Filter server profiles by label/base URL. Extracted from [ServerListScreen] to keep its

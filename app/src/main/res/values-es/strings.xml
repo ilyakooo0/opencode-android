@@ -669,17 +669,9 @@
     <string name="connecting_to">Conectando a %1$s…</string>
     <string name="scroll_to_top">Ir arriba</string>
 
-    <!-- UI/UX improvements: QR sharing, app-lock re-lock, sort, server state -->
+    <!-- UI/UX improvements: app-lock re-lock, sort, server state -->
     <string name="connection_failed_short">Conexión fallida</string>
     <string name="sort_name">Nombre</string>
-    <string name="share_qr">Compartir como código QR</string>
-    <string name="import_from_image">Importar desde imagen</string>
-    <string name="qr_import_failed">No se encontró un código QR de servidor opencode en esa imagen.</string>
-    <string name="qr_import_title">¿Añadir este servidor?</string>
-    <string name="qr_added">Servidor añadido</string>
-    <string name="ok">OK</string>
-    <string name="qr_includes_password">Incluye la contraseña</string>
-    <string name="qr_includes_password_warning">Incluye la contraseña — comparte con cuidado</string>
     <string name="app_lock_relock">Bloquear de nuevo tras</string>
     <string name="app_lock_relock_immediately">Inmediatamente</string>
     <plurals name="app_lock_relock_seconds">
@@ -797,7 +789,6 @@
     <string name="usage_open_session">Abrir sesión</string>
     <string name="usage_cost_fraction">%1$d%% del total</string>
     <string name="app_lock_disabled_warning">El bloqueo de la app está activado pero no hay biometría o credencial del dispositivo disponible; la app no está bloqueada.</string>
-    <string name="qr_paste_hint">Consejo: pega una configuración de servidor compartida aquí para importarla.</string>
     <string name="server_url_clear">Borrar URL</string>
     <string name="long_press_for_timestamp">Mantén pulsado para la marca de tiempo completa</string>
     <string name="search_always_available">Buscar</string>
@@ -812,7 +803,6 @@
 
     <!-- UI/UX batch 7 -->
     <string name="markdown_image_placeholder">[imagen]</string>
-    <string name="qr_image_for">Código QR de %1$s</string>
     <string name="reconnecting_to">Reconectando a %1$s…</string>
     <string name="run_stopped">Ejecución detenida</string>
     <string name="preview_attachment">Vista previa del adjunto</string>

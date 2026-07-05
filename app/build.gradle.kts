@@ -153,7 +153,6 @@ dependencies {
     implementation(libs.coil.network.okhttp)
     implementation(libs.markdown.renderer)
     implementation(libs.markdown.renderer.m3)
-    implementation(libs.zxing.core)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
