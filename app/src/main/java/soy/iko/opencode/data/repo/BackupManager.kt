@@ -28,7 +28,7 @@ data class BackupSettings(
     // loop, aborting the ENTIRE restore (servers/pins/archives included) despite the best-effort
     // contract. ignoreUnknownKeys only tolerates EXTRA keys, not missing required ones.
     val themeMode: String = ThemeMode.SYSTEM.name,
-    val dynamicColor: Boolean = true,
+    val dynamicColor: Boolean = false,
     val sendOnEnter: Boolean = true,
     val appLock: Boolean = false,
     val appLockReLockSeconds: Int = SettingsStore.DEFAULT_APP_LOCK_RELOCK_SECONDS,

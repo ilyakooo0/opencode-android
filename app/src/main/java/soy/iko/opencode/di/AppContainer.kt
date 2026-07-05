@@ -610,10 +610,11 @@ open class AppContainer private constructor(
                     // implies). Tap routes back to the originating profile's session.
                     val ctx = appContext
                     if (ctx != null) {
+                        val title = resolveSessionTitle(msg.sessionId, conn.repository)
                         runCatchingCancellable {
                             SessionNotifications.postOutboxDropped(
                                 ctx, msg.sessionId,
-                                msg.sessionId,
+                                title,
                                 conn.profile.id,
                             )
                         }.onFailure {
