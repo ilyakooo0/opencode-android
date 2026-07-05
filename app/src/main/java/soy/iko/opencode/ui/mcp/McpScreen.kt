@@ -84,6 +84,8 @@ fun McpScreen(container: AppContainer, onBack: () -> Unit) {
     val addFailedMsg = stringResource(R.string.mcp_add_failed)
     val notConnectedMsg = stringResource(R.string.not_connected)
 
+    var showAddDialog by rememberSaveable { mutableStateOf(false) }
+
     LaunchedEffect(Unit) {
         vm.messages.collect { msg ->
             val text = when (msg) {
@@ -91,11 +93,15 @@ fun McpScreen(container: AppContainer, onBack: () -> Unit) {
                 McpMessage.ADD_FAILED -> addFailedMsg
                 McpMessage.NOT_CONNECTED -> notConnectedMsg
             }
+            // Dismiss the Add dialog only on success (the reload makes the new server appear).
+            // On failure keep it open with adding=false so the user can adjust and retry without
+            // re-typing their input — the dialog's own spinner/disabled-state machinery was
+            // designed for this; dismissing synchronously after the (async) POST would lose the
+            // entered name/command/URL/env on every transient failure.
+            if (msg == McpMessage.ADDED) showAddDialog = false
             snackbar.showSnackbar(text)
         }
     }
-
-    var showAddDialog by rememberSaveable { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -199,9 +205,10 @@ fun McpScreen(container: AppContainer, onBack: () -> Unit) {
             onDismiss = { if (!adding) showAddDialog = false },
             onAdd = { name, kind, target, env ->
                 vm.addServer(name, kind, target, env)
-                // Close immediately; the snackbar reports the outcome and a successful add
-                // triggers a reload so the new server appears in the list.
-                showAddDialog = false
+                // Don't dismiss synchronously: addServer launches a coroutine, so the POST is
+                // still in flight. The dialog stays open showing the spinner (adding=true);
+                // the messages collector above dismisses on ADDED, or re-enables the fields
+                // on ADD_FAILED so the user can retry without re-typing.
             },
         )
     }

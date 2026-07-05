@@ -6,6 +6,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.content.res.Configuration
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
@@ -166,6 +167,15 @@ class RunForegroundService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    // Reset the brand-color cache when the configuration (notably uiMode/night mode) changes
+    // so the notification icon tint follows the app theme instead of staying pinned to whatever
+    // the first build resolved. The service isn't recreated on a config change (it's a service,
+    // not an Activity), so without this the cached color is stale until onDestroy.
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        brandColorCache = 0
+    }
+
     companion object {
         private const val TAG = "RunForegroundService"
         private const val NOTIF_ID = 1
@@ -176,7 +186,9 @@ class RunForegroundService : Service() {
         @Volatile private var runStartMillis: Long = 0L
         // Brand accent for the foreground notifications' small-icon tint circle. Resolved
         // from resources (R.color.notif_brand) so it follows the app theme (light/dark)
-        // instead of a hardcoded constant. Lazily computed on first use from the app context.
+        // instead of a hardcoded constant. Lazily computed on first use from the app context
+        // and reset in onConfigurationChanged so a theme toggle mid-run doesn't pin the tint
+        // to the old theme for the rest of the run.
         private var brandColorCache: Int = 0
         private fun brandColor(context: Context): Int {
             if (brandColorCache == 0) {

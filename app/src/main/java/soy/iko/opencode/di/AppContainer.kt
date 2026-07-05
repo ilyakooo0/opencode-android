@@ -1012,15 +1012,18 @@ open class AppContainer private constructor(
     }
 
     /** Abort the active run for [sessionId] from a notification Stop action. Routes to the
-     *  originating profile (or the active connection) so the abort reaches the server that
-     *  owns the session. Runs on the app scope so it survives the BroadcastReceiver's lifetime. */
+     *  originating profile only — sending the abort to a different server would 404 (silently
+     *  swallowed) and leave the original run stranded. A profile mismatch reports failure so the
+     *  notification stays up and the user can switch back, mirroring
+     *  [respondToPermissionFromNotification]'s routing guard. Runs on the app scope so it
+     *  survives the BroadcastReceiver's lifetime. */
     open fun abortRunFromNotification(sessionId: String, originProfileId: String?, onDone: (Boolean) -> Unit) {
         appScope.launch {
             var success = false
             try {
                 val conn = activeConnection.value?.takeIf {
                     originProfileId == null || it.profile.id == originProfileId
-                } ?: activeConnection.value
+                }
                 if (conn != null) {
                     success = runCatchingCancellable { conn.repository.abort(sessionId) }.isSuccess
                 }
@@ -1034,8 +1037,10 @@ open class AppContainer private constructor(
      * Retry the last user prompt for [sessionId] from an error notification's "Retry last"
      * action. Fetches the session's messages, re-sends the most recent user prompt, and
      * cancels the error notification on success. Routes to the originating profile's
-     * connection (falling back to the active one) so the send reaches the server that owns
-     * the session. A no-op (reported as false) when there's no connection or no prior prompt.
+     * connection only — sending the retry to a different server would 404 or start a fresh
+     * run on an unrelated session id. A profile mismatch reports failure so the notification
+     * stays up and the user can switch back, mirroring [respondToPermissionFromNotification]'s
+     * routing guard. A no-op (reported as false) when there's no connection or no prior prompt.
      */
     open fun retryLastFromNotification(sessionId: String, originProfileId: String?, onDone: (Boolean) -> Unit) {
         appScope.launch {
@@ -1043,7 +1048,7 @@ open class AppContainer private constructor(
             try {
                 val conn = activeConnection.value?.takeIf {
                     originProfileId == null || it.profile.id == originProfileId
-                } ?: activeConnection.value
+                }
                 if (conn != null) {
                     success = runCatchingCancellable {
                         val messages = conn.api.listMessages(sessionId)

@@ -445,7 +445,11 @@ private fun GoToLineLauncher(
 
 @Composable
 private fun GoToLineDialog(maxLine: Int, onConfirm: (Int) -> Unit, onDismiss: () -> Unit) {
-    var text by rememberSaveable { mutableStateOf("") }
+    // Use plain remember (not rememberSaveable) so each open starts with an empty field.
+    // The dialog is conditionally composed (gated by `visible` in GoToLineLauncher); with
+    // rememberSaveable the typed text would be restored from the saved-state registry on
+    // re-open, pre-filling whatever the user typed — and dismissed without — last time.
+    var text by remember { mutableStateOf("") }
     val parsed = text.trim().toIntOrNull()
     val valid = parsed != null && parsed in 1..maxLine
     AlertDialog(

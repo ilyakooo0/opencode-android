@@ -14,7 +14,11 @@
     *** Companion;
 }
 # Keep the serializable model classes (reflection-free serializer lookup needs the class).
--keep @kotlinx.serialization.Serializable class soy.iko.opencode.data.model.** { *; }
+# Covers ALL @Serializable classes in the app — not just data.model — because several
+# classes used for persistent storage live elsewhere (OutboxMessage/PersistedAttachment in
+# data/repo, StoredProfile in ProfileStore, Backup* in BackupManager, RecentSession, …)
+# and R8 stripping/renaming their fields would break on-disk deserialization in release.
+-keep @kotlinx.serialization.Serializable class soy.iko.opencode.** { *; }
 
 # --- Ktor / OkHttp (HTTP client + SSE) ---
 # Don't warn about missing optional dependencies; keep only the classes that are

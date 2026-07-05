@@ -35,7 +35,14 @@ object SessionNotifications {
 
     private const val NOTIF_ID_PREFIX = 4000
     private const val TAG = "SessionNotifications"
-    private const val UNREAD_BADGE_ID = NOTIF_ID_PREFIX + 9999
+    // Fixed notification IDs use NEGATIVE space (mirroring the SUMMARY_*_ID constants below)
+    // so they can never collide with the hash-derived per-session IDs returned by notifId(),
+    // which are always positive (NOTIF_ID_PREFIX + (hash % (0x7FFFFFFF - NOTIF_ID_PREFIX)),
+    // range [4000, 2147483646]). A collision would let a session-specific notification
+    // overwrite or be canceled by the fixed one (~1 in 2 billion per session, but a real
+    // ID-space flaw). Negative IDs are valid for NotificationManager.cancel/notify.
+    private const val UNREAD_BADGE_ID = -10
+    private const val CONNECTION_LOST_ID = -11
 
     // Distinct namespaces so a session can have a completion, a permission, and an error
     // notification outstanding at once without their ids colliding.
@@ -395,7 +402,7 @@ object SessionNotifications {
     @SuppressLint("MissingPermission")
     fun postConnectionLost(context: Context, profileLabel: String, profileId: String?) {
         if (!canPost(context)) return
-        val notifId = NOTIF_ID_PREFIX + 7000
+        val notifId = CONNECTION_LOST_ID
         // Tap reopens the app at the server list so the user can reconnect / fix credentials.
         val openIntent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -421,7 +428,7 @@ object SessionNotifications {
 
     /** Cancel a previously-posted [postConnectionLost] notification (e.g. on reconnect). */
     fun cancelConnectionLost(context: Context) {
-        NotificationManagerCompat.from(context).cancel(NOTIF_ID_PREFIX + 7000)
+        NotificationManagerCompat.from(context).cancel(CONNECTION_LOST_ID)
     }
 
     /** FLAG_MUTABLE where required (Android 12+) so RemoteInput results can be injected. */
@@ -463,9 +470,16 @@ object SessionNotifications {
             .onFailure { Log.w(TAG, "Failed to post unread badge notification", it) }
     }
 
-    /** Cancel a session's permission notification (on reply, or when the user opens it). */
+    /** Cancel a session's permission notification (on reply, or when the user opens it). Also
+     *  cancels the auto-rejected-permission notification (posted under notifId + 1) so opening
+     *  the session by any route other than tapping that notification clears it too — without
+     *  this a stale "auto-rejected" heads-up lingers in the shade (setAutoCancel only dismisses
+     *  on a direct tap). */
     fun cancelPermission(context: Context, sessionId: String) {
-        NotificationManagerCompat.from(context).cancel(notifId(NS_PERMISSION, sessionId))
+        val nm = NotificationManagerCompat.from(context)
+        val baseId = notifId(NS_PERMISSION, sessionId)
+        nm.cancel(baseId)
+        nm.cancel(baseId + 1) // postPermissionAutoRejected uses baseId + 1
         maybeCancelSummary(context, GROUP_PERMISSION, SUMMARY_PERMISSION_ID)
     }
 
