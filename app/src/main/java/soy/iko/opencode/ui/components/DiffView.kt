@@ -188,11 +188,6 @@ fun DiffView(diff: String, modifier: Modifier = Modifier, saveKey: String? = nul
     // `@@` range text (rare but possible) are still distinct toggles. The KDoc promised this
     // affordance; it's now implemented.
     val collapsedHunks = remember { mutableStateOf(emptySet<Int>()) }
-    // Resolve a syntax for highlighting from the first file header (if any). Memoized so a
-    // streaming re-parse doesn't re-resolve per token.
-    val syntax = remember(lines) {
-        lines.firstOrNull { it is DiffLine.FileHeader }?.let { syntaxForHeader(it.text) }
-    }
     val palette = rememberHighlightPalette()
 
     Column(
@@ -229,7 +224,7 @@ fun DiffView(diff: String, modifier: Modifier = Modifier, saveKey: String? = nul
             )
         }
         Column(modifier = Modifier.horizontalScroll(hScrollState)) {
-            rows.forEach { row -> RenderDiffRow(row, syntax, palette, collapsedHunks) }
+            rows.forEach { row -> RenderDiffRow(row, palette, collapsedHunks) }
         }
         DiffExpandFooter(lines = lines, expanded = expanded, onToggle = { expanded = !expanded })
     }
@@ -255,9 +250,6 @@ fun LazyDiffView(diff: String, modifier: Modifier = Modifier, saveKey: String? =
     val hScrollState = rememberScrollState()
     var expanded by rememberSaveable(saveKey ?: diff) { mutableStateOf(false) }
     val collapsedHunks = remember { mutableStateOf(emptySet<Int>()) }
-    val syntax = remember(lines) {
-        lines.firstOrNull { it is DiffLine.FileHeader }?.let { syntaxForHeader(it.text) }
-    }
     val palette = rememberHighlightPalette()
     val lazyListState = androidx.compose.foundation.lazy.rememberLazyListState()
 
@@ -298,7 +290,7 @@ fun LazyDiffView(diff: String, modifier: Modifier = Modifier, saveKey: String? =
                 rows,
                 key = { i, row -> "${row.kind::class.simpleName}:$i:${row.text.hashCode()}" },
             ) { _, row ->
-                RenderDiffRow(row, syntax, palette, collapsedHunks)
+                RenderDiffRow(row, palette, collapsedHunks)
             }
         }
         DiffExpandFooter(lines = lines, expanded = expanded, onToggle = { expanded = !expanded })
@@ -406,6 +398,10 @@ private data class DiffRowItem(
     val oldLine: Int?,
     val newLine: Int?,
     val hunkIndex: Int?,
+    // The syntax resolved from the file header this row belongs to. A multi-file diff switches
+    // language at each FileHeader; carrying syntax per row (instead of one for the whole diff)
+    // ensures a later file's hunk is highlighted with its own language, not the first file's.
+    val syntax: FileSyntax?,
 )
 
 /** Walk [visibleLines] advancing the old/new line counters per hunk, producing a list of
@@ -426,6 +422,9 @@ private fun buildDiffRows(
     var oldLine = 0
     var newLine = 0
     var hunkIndex = -1
+    // Track the current file's syntax as we walk the list, re-resolving at each FileHeader so
+    // a multi-file diff highlights each hunk with its own language instead of the first file's.
+    var currentSyntax: FileSyntax? = null
     val hunkRegex = Regex("""@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@""")
     return visibleLines.map { line ->
         when (line) {
@@ -436,21 +435,24 @@ private fun buildDiffRows(
                     oldLine = m.groupValues[1].toInt()
                     newLine = m.groupValues[2].toInt()
                 }
-                DiffRowItem(line, line.text, Color.Transparent, tertiary, null, null, hunkIndex)
+                DiffRowItem(line, line.text, Color.Transparent, tertiary, null, null, hunkIndex, currentSyntax)
             }
-            is DiffLine.FileHeader -> DiffRowItem(line, line.text, Color.Transparent, onSurface, null, null, null)
-            is DiffLine.Meta -> DiffRowItem(line, line.text, Color.Transparent, onSurfaceVariant, null, null, null)
+            is DiffLine.FileHeader -> {
+                currentSyntax = syntaxForHeader(line.text)
+                DiffRowItem(line, line.text, Color.Transparent, onSurface, null, null, null, currentSyntax)
+            }
+            is DiffLine.Meta -> DiffRowItem(line, line.text, Color.Transparent, onSurfaceVariant, null, null, null, currentSyntax)
             is DiffLine.Add -> {
                 val n = newLine++
-                DiffRowItem(line, line.text, addColor, addText, null, n, hunkIndex)
+                DiffRowItem(line, line.text, addColor, addText, null, n, hunkIndex, currentSyntax)
             }
             is DiffLine.Remove -> {
                 val o = oldLine++
-                DiffRowItem(line, line.text, removeColor, removeText, o, null, hunkIndex)
+                DiffRowItem(line, line.text, removeColor, removeText, o, null, hunkIndex, currentSyntax)
             }
             is DiffLine.Context -> {
                 val o = oldLine++; val n = newLine++
-                DiffRowItem(line, line.text, Color.Transparent, onSurface, o, n, hunkIndex)
+                DiffRowItem(line, line.text, Color.Transparent, onSurface, o, n, hunkIndex, currentSyntax)
             }
         }
     }
@@ -462,7 +464,6 @@ private fun buildDiffRows(
 @Composable
 private fun RenderDiffRow(
     row: DiffRowItem,
-    syntax: FileSyntax?,
     palette: HighlightPalette,
     collapsedHunks: androidx.compose.runtime.MutableState<Set<Int>>,
 ) {
@@ -528,9 +529,9 @@ private fun RenderDiffRow(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(vertical = 1.dp),
         )
-        is DiffLine.Add -> DiffRow(row.text, "+", row.bg, row.textColor, oldLine = row.oldLine, newLine = row.newLine, syntax = syntax, palette = palette)
-        is DiffLine.Remove -> DiffRow(row.text, "-", row.bg, row.textColor, oldLine = row.oldLine, newLine = row.newLine, syntax = syntax, palette = palette)
-        is DiffLine.Context -> DiffRow(row.text, " ", row.bg, row.textColor, oldLine = row.oldLine, newLine = row.newLine, syntax = syntax, palette = palette)
+        is DiffLine.Add -> DiffRow(row.text, "+", row.bg, row.textColor, oldLine = row.oldLine, newLine = row.newLine, syntax = row.syntax, palette = palette)
+        is DiffLine.Remove -> DiffRow(row.text, "-", row.bg, row.textColor, oldLine = row.oldLine, newLine = row.newLine, syntax = row.syntax, palette = palette)
+        is DiffLine.Context -> DiffRow(row.text, " ", row.bg, row.textColor, oldLine = row.oldLine, newLine = row.newLine, syntax = row.syntax, palette = palette)
     }
 }
 

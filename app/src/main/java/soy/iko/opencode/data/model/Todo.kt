@@ -35,7 +35,7 @@ fun TodoItem.priorityEnum(): TodoPriority = when ((priority ?: "").trim().lowerc
     "high", "h", "1", "urgent", "critical" -> TodoPriority.HIGH
     "medium", "med", "m", "normal", "2" -> TodoPriority.MEDIUM
     "low", "l", "3", "minor", "backlog" -> TodoPriority.LOW
-    else -> if (priority.isNullOrBlank()) TodoPriority.NONE else TodoPriority.NONE
+    else -> TodoPriority.NONE
 }
 
 fun TodoItem.statusEnum(): TodoStatus = when (status.trim().lowercase()) {

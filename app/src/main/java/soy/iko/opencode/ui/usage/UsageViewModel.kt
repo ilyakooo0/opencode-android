@@ -80,6 +80,12 @@ class UsageViewModel(private val container: AppContainer) : ViewModel() {
     /** Re-aggregate the cached fetch under the current time range, if a Ready report exists. */
     private suspend fun reaggregate() {
         val inputs = cachedInputs ?: return
+        // Only re-aggregate into Ready when we're already Ready: a failed doLoad leaves the
+        // state as Error (with cachedInputs still populated from the prior successful fetch),
+        // and reaggregating that stale cache would flip Error back to Ready — hiding the
+        // failure and showing old totals as if the load succeeded. The user must retry (which
+        // clears cachedInputs on its own success) to see fresh data again.
+        if (_state.value !is State.Ready) return
         val cutoff = _timeRange.value.cutoffMs()
         withContext(Dispatchers.Default) {
             val report = aggregateUsage(inputs, cutoff)
@@ -95,38 +101,44 @@ class UsageViewModel(private val container: AppContainer) : ViewModel() {
         // Keep the current report visible during a manual reload; only blank to the full-screen
         // spinner on the first load.
         if (_state.value is State.Ready) _refreshing.value = true else _state.value = State.Loading
-        runCatchingCancellable {
-            val sessions = conn.repository.listSessions()
-            // Cap concurrent message fetches so a large history doesn't open dozens of
-            // sockets at once; a per-session fetch failure yields an empty list rather
-            // than aborting the whole report.
-            val limiter = Semaphore(MAX_CONCURRENT_FETCHES)
-            // coroutineScope so the per-session fetches are children of THIS load: when
-            // collectLatest cancels a stale load (connection changed / manual reload), the
-            // in-flight fetches are cancelled with it instead of leaking.
-            val perSession = coroutineScope {
-                sessions.map { session ->
-                    async {
-                        limiter.withPermit {
-                            val messages = runCatchingCancellable { conn.api.listMessages(session.id) }
-                                .getOrDefault(emptyList())
-                            UsageSessionInput(
-                                sessionId = session.id,
-                                title = session.displayTitle,
-                                modifiedAt = session.time?.updated ?: session.time?.created,
-                                messages = messages,
-                            )
+        try {
+            runCatchingCancellable {
+                val sessions = conn.repository.listSessions()
+                // Cap concurrent message fetches so a large history doesn't open dozens of
+                // sockets at once; a per-session fetch failure yields an empty list rather
+                // than aborting the whole report.
+                val limiter = Semaphore(MAX_CONCURRENT_FETCHES)
+                // coroutineScope so the per-session fetches are children of THIS load: when
+                // collectLatest cancels a stale load (connection changed / manual reload), the
+                // in-flight fetches are cancelled with it instead of leaking.
+                val perSession = coroutineScope {
+                    sessions.map { session ->
+                        async {
+                            limiter.withPermit {
+                                val messages = runCatchingCancellable { conn.api.listMessages(session.id) }
+                                    .getOrDefault(emptyList())
+                                UsageSessionInput(
+                                    sessionId = session.id,
+                                    title = session.displayTitle,
+                                    modifiedAt = session.time?.updated ?: session.time?.created,
+                                    messages = messages,
+                                )
+                            }
                         }
-                    }
-                }.awaitAll()
+                    }.awaitAll()
+                }
+                cachedInputs = perSession
+                val cutoff = _timeRange.value.cutoffMs()
+                withContext(Dispatchers.Default) { aggregateUsage(perSession, cutoff) }
             }
-            cachedInputs = perSession
-            val cutoff = _timeRange.value.cutoffMs()
-            withContext(Dispatchers.Default) { aggregateUsage(perSession, cutoff) }
+                .onSuccess { _state.value = State.Ready(it) }
+                .onFailure { _state.value = State.Error(safeExceptionSummary(it)) }
+        } finally {
+            // Reset in finally so a collectLatest cancellation (which rethrows
+            // CancellationException out of runCatchingCancellable, skipping the lines above)
+            // can't leave the pull-to-refresh spinner latched true.
+            _refreshing.value = false
         }
-            .onSuccess { _state.value = State.Ready(it) }
-            .onFailure { _state.value = State.Error(safeExceptionSummary(it)) }
-        _refreshing.value = false
     }
 
     private companion object {

@@ -65,6 +65,7 @@ import soy.iko.opencode.R
 import soy.iko.opencode.data.model.AssistantMessage
 import soy.iko.opencode.data.model.MessageWithParts
 import soy.iko.opencode.data.model.ModelOption
+import soy.iko.opencode.data.model.Part
 import soy.iko.opencode.data.model.FilePart
 import soy.iko.opencode.data.model.TextPart
 import soy.iko.opencode.data.model.UnknownMessage
@@ -527,8 +528,20 @@ private fun UnknownMessageBlock(
                 PartView(part, imageContext = imageContext, onOpenFile = onOpenFile)
             }
         }
-        MessageTimestampText(message.info)
-    }
+         MessageTimestampText(message.info)
+     }
+ }
+
+/** Build the a11y contentDescription for the user bubble: the role label prefixed to the
+ *  message's text parts (or just the role when there's no text). Setting contentDescription on
+ *  a mergeDescendants node overrides child text, so the text must be included here — otherwise
+ *  TalkBack would read only "You" and lose the message body. */
+private fun userBubbleA11yLabel(parts: List<Part>, roleLabel: String): String {
+    val text = parts
+        .filterIsInstance<TextPart>()
+        .joinToString("\n\n") { it.text }
+        .takeIf { it.isNotBlank() }
+    return if (text != null) "$roleLabel, $text" else roleLabel
 }
 
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
@@ -556,9 +569,12 @@ private fun UserBubble(
     val dropsAttachmentsMsg = stringResource(R.string.edit_drops_attachments)
     val hasAttachments = message.parts.any { it is FilePart }
     // A11y: announce the speaker role so a screen-reader user can tell user from
-    // assistant bubbles without inferring from bubble position. Prefixed onto the
-    // bubble's merged semantics so TalkBack reads "You, <message text>".
+    // assistant bubbles without inferring from bubble position. Setting contentDescription
+    // on a mergeDescendants node overrides child text (TalkBack reads only contentDescription,
+    // not the merged text), so include the message text IN the contentDescription — otherwise
+    // TalkBack would read only "You" and lose the message body.
     val roleLabel = stringResource(R.string.role_user_message)
+    val a11yLabel = remember(message.parts, roleLabel) { userBubbleA11yLabel(message.parts, roleLabel) }
     // Long-press context menu state: consolidates copy/quote/branch/revert into a standard
     // Android long-press menu so the actions are discoverable without spotting the 18dp icons.
     // The menu anchors at the actual touch point rather than a fixed corner.
@@ -589,8 +605,10 @@ private fun UserBubble(
                 .background(MaterialTheme.colorScheme.primaryContainer)
                 // Merge descendants and prefix the role so TalkBack reads "You, <text>"
                 // instead of just the message text — letting a screen-reader user tell
-                // user from assistant bubbles without inferring from position.
-                .semantics(mergeDescendants = true) { contentDescription = roleLabel }
+                // user from assistant bubbles without inferring from position. The composite
+                // contentDescription includes the text (see a11yLabel) since setting
+                // contentDescription on a merge node overrides child text semantics.
+                .semantics(mergeDescendants = true) { contentDescription = a11yLabel }
                 // Long-press anywhere on the bubble (body or footer) opens the context menu —
                 // the conventional Android pattern — so the actions are discoverable without
                 // spotting the 18dp inline icons. detectTapGestures with only onLongPress does
@@ -842,10 +860,6 @@ private fun AssistantBlock(
     // View-source dialog state: shown from the long-press menu's "View source" entry to display
     // the raw markdown of the message's TextParts.
     var showSource by remember { mutableStateOf(false) }
-    // A11y: announce the speaker role so TalkBack reads "Assistant, <text>" instead of
-    // only the model/agent label — giving a screen-reader user an explicit role signal
-    // matching the user bubble's "You" prefix.
-    val assistantRoleLabel = stringResource(R.string.role_assistant_message)
     // Transient highlight background (from global-search deep link). Animated so the highlight
     // fades in/out rather than flashing, and so the background clears smoothly when the focus
     // is cleared after the delay.
@@ -865,7 +879,11 @@ private fun AssistantBlock(
                     Modifier
                 },
             )
-            .semantics(mergeDescendants = true) { contentDescription = assistantRoleLabel }
+            // Merge descendants so TalkBack reads the message parts' own text semantics, but
+            // don't set contentDescription — that would override the child text and leave
+            // TalkBack announcing only "Assistant" while the actual reply is never spoken.
+            // The AssistantHeader above provides the role context as a heading.
+            .semantics(mergeDescendants = true) {}
             .pointerInput(Unit) {
                 detectTapGestures(onLongPress = { offset ->
                     assistantHaptics.performHapticFeedback(HapticFeedbackType.LongPress)

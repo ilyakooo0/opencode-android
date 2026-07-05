@@ -87,6 +87,14 @@ import soy.iko.opencode.R
 
 private val COLLAPSED_LIMIT get() = NetworkConfig.toolOutputCollapsedLimitChars
 
+/** Build the collapsed preview of [detail]: the first [COLLAPSED_LIMIT] chars, trimmed back to
+ *  the last complete line when [isDiff] AND a real char truncation occurred. Trimming on a
+ *  diff that was collapsed by the line cap (not the char cap) would drop its final line. */
+private fun collapseDiffPreview(detail: String, isDiff: Boolean): String {
+    val head = detail.take(COLLAPSED_LIMIT)
+    return if (isDiff && detail.length > COLLAPSED_LIMIT) head.substringBeforeLast('\n') else head
+}
+
 // Pretty-printer for tool inputs. Separate from OpencodeJson (which is tuned for
 // resilient decoding) so this stays human-readable; constructed lazily and memoized.
 private val prettyJson: Json = Json { prettyPrint = true }
@@ -456,10 +464,7 @@ private fun ToolCallView(part: ToolPart, modifier: Modifier) {
             val exceedsLimit = detail.length > COLLAPSED_LIMIT ||
                 lineCount > NetworkConfig.toolOutputCollapsedLimitLines
             val collapsed = remember(detail, isDiff) {
-                val head = detail.take(COLLAPSED_LIMIT)
-                // Truncating a diff mid-line makes DiffView render a malformed final line, so
-                // trim back to the last complete line when the content is a diff.
-                if (isDiff) head.substringBeforeLast('\n') else head
+                collapseDiffPreview(detail, isDiff)
             }
             var expanded by rememberSaveable(part.id) { mutableStateOf(false) }
             val expandedState = stringResource(R.string.state_expanded)

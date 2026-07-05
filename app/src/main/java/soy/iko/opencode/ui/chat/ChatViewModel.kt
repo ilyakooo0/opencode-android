@@ -1479,10 +1479,20 @@ class ChatViewModel(
     fun continueRun(@Suppress("UNUSED_PARAMETER") assistantMessageId: String) {
         val conn = connection ?: return
         if (running.value || aborting.value) return
+        if (!beginRun()) return
+        // Reopen the relight gate so this run's streamed parts keep the indicator lit (and a
+        // later SessionIdle re-closes it). Without this, runEndedByIdle stays true from the
+        // previous run's SessionIdle and the relight guard at the event collector would suppress
+        // every streamed part of the continuation, leaving the working indicator / Stop button /
+        // foreground service off for the whole run.
+        runEndedByIdle = false
         viewModelScope.launch {
             runCatchingCancellable {
                 conn.api.sendPrompt(sessionId, text = "continue")
-            }.onFailure { _errorEvents.trySend(ChatError(container.friendlyError(it))) }
+            }.onFailure {
+                _running.value = false
+                _errorEvents.trySend(ChatError(container.friendlyError(it)))
+            }
         }
     }
 
@@ -1492,10 +1502,23 @@ class ChatViewModel(
      *  effectively replacing the edited message; the reverted banner's Undo restores it.
      *  Overwrites the current draft — this is an explicit edit action on that message. */
     fun editMessage(messageId: String, text: String) {
-        revertTo(messageId)
+        val conn = connection ?: return
         _draft.value = text.take(NetworkConfig.maxDraftLengthChars)
         _pendingQuote.value = null
-        _editing.value = true
+        // Do NOT delegate to revertTo(): revertTo's onSuccess sets _editing = false, which races
+        // this synchronous _editing = true (the async revert completes after editMessage returns
+        // and clobbers the banner). Inline the revert so editMessage owns the _editing lifecycle:
+        // set it true on success, matching the documented contract ("Cleared on unrevert and on
+        // send"). revertTo() (the manual revert button) still clears _editing itself.
+        viewModelScope.launch {
+            runCatchingCancellable { conn.api.revert(sessionId, messageId) }
+                .onSuccess {
+                    _reverted.value = it.isReverted
+                    _revertDiff.value = it.revert?.diff?.takeIf { diff -> diff.isNotBlank() }
+                    _editing.value = true
+                }
+                .onFailure { _errorEvents.trySend(ChatError(container.friendlyError(it))) }
+        }
     }
 
     /** Prefill the composer with [text] as a Markdown blockquote so the user can respond to a
@@ -1745,6 +1768,17 @@ class ChatViewModel(
             runCatchingCancellable { conn.api.respondPermission(sessionId, permission.id, response) }
                 .onFailure {
                     _errorEvents.trySend(ChatError(container.friendlyError(it)))
+                    // Revoke the session-scoped grant on failure: enqueuePermission() auto-responds
+                    // when (type, pattern) is in sessionAllowed, so leaving the entry in would loop
+                    // respondPermission -> fail -> enqueuePermission -> respondPermission ... forever,
+                    // spamming the dead server and the error snackbar without ever re-prompting the
+                    // user. Removing it makes enqueuePermission fall through to re-queueing the
+                    // request for the dialog so the user can retry.
+                    if (response == PermissionResponse.SESSION) {
+                        val type = permission.type.orEmpty()
+                        val pattern = permission.patternText.orEmpty()
+                        if (type.isNotEmpty()) sessionAllowed.remove(type to pattern)
+                    }
                     enqueuePermission(permission)
                 }
         }

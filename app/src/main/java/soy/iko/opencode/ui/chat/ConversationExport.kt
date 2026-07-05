@@ -157,7 +157,7 @@ private fun appendMetadataHeader(sb: StringBuilder, messages: List<MessageWithPa
     sb.append(" · $assistantCount assistant message")
     if (assistantCount != 1) sb.append("s")
     if (firstTime != null && lastTime != null) {
-        sb.append(" · $firstTime → $lastTime")
+        sb.append(" · ${formatExportTimestamp(firstTime)} → ${formatExportTimestamp(lastTime)}")
     }
     sb.append("\n\n---\n\n")
 }

@@ -89,19 +89,25 @@ class McpViewModel(private val container: AppContainer) : ViewModel() {
         // Keep already-loaded servers on screen during a reload; only show the full-screen
         // spinner on the very first load.
         if (_state.value is State.Ready) _refreshing.value = true else _state.value = State.Loading
-        runCatchingCancellable {
-            val config = conn.api.config()
-            // Fetch live status separately so a missing/unstable /mcp endpoint (older server
-            // builds, transient error) never blocks the config-driven view — it just omits the
-            // connected/error indicators for that load.
-            val status = runCatchingCancellable { conn.api.mcpStatus() }.getOrNull()
-            withContext(Dispatchers.Default) {
-                mergeMcpStatus(parseMcpServers(config), status)
+        try {
+            runCatchingCancellable {
+                val config = conn.api.config()
+                // Fetch live status separately so a missing/unstable /mcp endpoint (older server
+                // builds, transient error) never blocks the config-driven view — it just omits the
+                // connected/error indicators for that load.
+                val status = runCatchingCancellable { conn.api.mcpStatus() }.getOrNull()
+                withContext(Dispatchers.Default) {
+                    mergeMcpStatus(parseMcpServers(config), status)
+                }
             }
+                .onSuccess { _state.value = State.Ready(it) }
+                .onFailure { _state.value = State.Error(container.friendlyError(it)) }
+        } finally {
+            // Reset in finally so a collectLatest cancellation (which rethrows
+            // CancellationException out of runCatchingCancellable, skipping the lines above)
+            // can't leave the pull-to-refresh spinner latched true.
+            _refreshing.value = false
         }
-            .onSuccess { _state.value = State.Ready(it) }
-            .onFailure { _state.value = State.Error(container.friendlyError(it)) }
-        _refreshing.value = false
     }
 
     /** Register a new MCP server via `POST /mcp`. Builds the server config object from the
