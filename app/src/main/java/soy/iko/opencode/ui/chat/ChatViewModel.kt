@@ -16,6 +16,7 @@ import soy.iko.opencode.data.model.SessionDeleted
 import soy.iko.opencode.data.model.SessionUpdated
 import soy.iko.opencode.data.model.TextPart
 import soy.iko.opencode.data.model.TodoItem
+import soy.iko.opencode.data.model.TodoPlanCache
 import soy.iko.opencode.data.model.currentTodoPlan
 import soy.iko.opencode.data.model.defaultOption
 import soy.iko.opencode.data.model.toOptions
@@ -324,10 +325,15 @@ class ChatViewModel(
 
     /** The agent's current task plan (the latest `todowrite`), surfaced so the chat can pin a
      *  live progress checklist above the composer. distinctUntilChanged so a per-token messages
-     *  emission that doesn't change the plan doesn't recompose the bar. */
+     *  emission that doesn't change the plan doesn't recompose the bar.
+     *
+     *  A [TodoPlanCache] memoizes the scan against the input list's identity, so a `combine`
+     *  re-evaluation that re-emits the same list instance (e.g. when the optimistic-messages
+     *  StateFlow updates without an SSE change) skips the O(messages×parts) re-scan. */
+    private val todoPlanCache = TodoPlanCache()
     val todoPlan: StateFlow<List<TodoItem>> = messages
-        .map { currentTodoPlan(it) }
-        // Run currentTodoPlan off the main thread: it's an O(messages×parts) scan (worst case
+        .map { todoPlanCache.plan(it) }
+        // Run the scan off the main thread: it's an O(messages×parts) scan (worst case
         // when the conversation has no todowrite) and runs on every conflated messages emission.
         // distinctUntilChanged is downstream so it dedupes the result but doesn't prevent the
         // scan — without flowOn this scans on Main.immediate per streamed token → jank.

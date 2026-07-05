@@ -87,6 +87,10 @@ import soy.iko.opencode.R
 
 private val COLLAPSED_LIMIT get() = NetworkConfig.toolOutputCollapsedLimitChars
 
+// Hoisted to module level so it's compiled once, not re-compiled on every ReasoningBlock
+// cache miss (which happens on every token during a streaming reasoning block).
+private val whitespaceRegex = Regex("\\s+")
+
 /** Build the collapsed preview of [detail]: the first [COLLAPSED_LIMIT] chars, trimmed back to
  *  the last complete line when [isDiff] AND a real char truncation occurred. Trimming on a
  *  diff that was collapsed by the line cap (not the char cap) would drop its final line. */
@@ -261,7 +265,7 @@ private fun ReasoningBlock(text: String, streaming: Boolean, keyId: String, modi
     // TalkBack read as "12" with no context; folding it into the stateDescription makes the
     // hidden-content size reachable to screen-reader users.
     val collapsedWordCount = remember(text) {
-        text.trim().split(Regex("\\s+")).count { it.isNotEmpty() }
+        text.trim().split(whitespaceRegex).count { it.isNotEmpty() }
     }
     // Resolve the readable "N words hidden" form once (in the composable body — the semantics
     // lambda below is not a composable scope, so it can't call pluralStringResource itself).

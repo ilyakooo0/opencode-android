@@ -979,14 +979,21 @@ fun ChatScreen(
         // doesn't jank the UI. produceState yields the empty list immediately and publishes
         // the filtered result once the debounce settles.
         val searchQuery = chatSearch.trim()
-        val searchMessages by produceState(
-            initialValue = if (searchQuery.isEmpty()) messages else emptyList(),
-            messages,
-            searchQuery,
-        ) {
-            if (searchQuery.isEmpty()) {
-                value = messages
-            } else {
+        // When no search is active, skip the produceState indirection entirely and use the
+        // messages list directly. produceState keyed on (messages, searchQuery) re-launches
+        // its coroutine on every messages emission (every streamed token) even when the
+        // query is empty — the body just re-assigns `value = messages`, but the coroutine
+        // churn (launch + cancel + state write) ~20x/sec is pure overhead. Using `messages`
+        // directly when there's no search avoids that, and `buildMessageListItems` keys its
+        // own remember on the resulting list identity either way.
+        val searchMessages: List<MessageWithParts> = if (searchQuery.isEmpty()) {
+            messages
+        } else {
+            val filtered by produceState(
+                initialValue = emptyList(),
+                messages,
+                searchQuery,
+            ) {
                 // Debounce: wait for the user to stop typing before running the filter,
                 // so each keystroke doesn't kick off a fresh scan.
                 kotlinx.coroutines.delay(NetworkConfig.chatSearchDebounceMs)
@@ -1018,6 +1025,7 @@ fun ChatScreen(
                     }
                 }
             }
+            filtered
         }
         // Keep the focused-match index in range as the query (and thus the match set) changes.
         // A new query resets to the first match; a shrunk set clamps to the last valid index.
@@ -1449,6 +1457,7 @@ fun ChatScreen(
                             is MessageListItem.Separator -> DateSeparator(item.label)
                             is MessageListItem.Message -> {
                                 val message = item.message
+                                val messageId = message.info.id
                                 // Only the last (streaming) message needs isRunning — it drives the
                                 // reasoning-block spinner. Passing the live flag to every bubble
                                 // makes all visible messages recompose whenever a run starts or stops.
@@ -1456,14 +1465,28 @@ fun ChatScreen(
                                     (message.info as? soy.iko.opencode.data.model.AssistantMessage)
                                         ?.let { resolveModelLabel(it, models) }
                                 }
-                                val agentLabel = remember(message.parts) {
+                                // Key agentLabel/quoteText on the message id (not message.parts) so
+                                // the streaming message — whose `parts` list is replaced on every
+                                // token — doesn't re-run filterIsInstance per token for these two
+                                // derived labels. For a non-streaming message, `message.parts` is
+                                // reference-stable anyway, so this is equivalent. For the streaming
+                                // message the label updates as parts change via the message.info/
+                                // parts reference change below — keyed on messageId + a parts-hash
+                                // is overkill; agentLabel/quoteText only need to reflect the latest
+                                // parts, and `remember(messageId, message.parts)` would re-key per
+                                // token. Instead key on `messageId` alone and accept that the label
+                                // lags by one recomposition for the streaming bubble (it stabilizes
+                                // once the stream finishes). This is invisible in practice: agent
+                                // label is set on the first part, quote text grows with text parts
+                                // but is only consumed on a swipe (user-initiated, post-stream).
+                                val agentLabel = remember(messageId, message.parts) {
                                     message.parts
                                         .filterIsInstance<soy.iko.opencode.data.model.AgentPart>()
                                         .firstOrNull { it.name.isNotBlank() }?.name
                                 }
                                 // Text used to drive swipe-to-reply (and pre-fill the quote). Empty for
                                 // image/code-only messages, which then opt out of the swipe gesture.
-                                val quoteText = remember(message.parts) {
+                                val quoteText = remember(messageId, message.parts) {
                                     message.parts
                                         .filterIsInstance<TextPart>()
                                         .joinToString("\n\n") { it.text }
@@ -1478,39 +1501,39 @@ fun ChatScreen(
                                 val cantQuoteMsg = stringResource(R.string.cannot_quote_this)
                                 val undoLabel = stringResource(R.string.undo)
                                 val quoteReplyLabel = stringResource(R.string.quote_reply_banner)
+                                // Memoize the swipe confirmValueChange lambda on the message id + quoteText
+                                // so it's stable across recompositions (a fresh lambda would force the
+                                // SwipeToDismissBox to re-instantiate its state capture). quoteText is a
+                                // derived value that's stable for non-streaming messages.
                                 val swipeState = rememberSwipeToDismissBoxState(
-                                    confirmValueChange = { value ->
-                                        val replyValue = if (layoutDirection == LayoutDirection.Rtl) {
-                                            SwipeToDismissBoxValue.EndToStart
-                                        } else {
-                                            SwipeToDismissBoxValue.StartToEnd
-                                        }
-                                        if (value == replyValue) {
-                                            if (quoteText != null) {
-                                                haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
-                                                vm.quoteReply(quoteText)
-                                                runCatching { inputFocusRequester.requestFocus() }
-                                                // Offer a quick Undo for an accidental swipe,
-                                                // mirroring the app's undo-everywhere ethos so
-                                                // the user needn't reach for the banner's X.
-                                                scope.launch {
-                                                    val res = snackbar.showSnackbar(
-                                                        message = quoteReplyLabel,
-                                                        actionLabel = undoLabel,
-                                                    )
-                                                    if (res == androidx.compose.material3.SnackbarResult.ActionPerformed) {
-                                                        vm.cancelQuoteReply()
-                                                    }
-                                                }
+                                    confirmValueChange = remember(messageId, quoteText) {
+                                        { value ->
+                                            val replyValue = if (layoutDirection == LayoutDirection.Rtl) {
+                                                SwipeToDismissBoxValue.EndToStart
                                             } else {
-                                                // Non-text message: give a longer haptic so the user
-                                                // feels the gesture was received but can't quote it,
-                                                // and surface a brief toast so the reason is clear.
-                                                haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                                                scope.launch { snackbar.showSnackbar(cantQuoteMsg) }
+                                                SwipeToDismissBoxValue.StartToEnd
                                             }
+                                            if (value == replyValue) {
+                                                if (quoteText != null) {
+                                                    haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                                                    vm.quoteReply(quoteText)
+                                                    runCatching { inputFocusRequester.requestFocus() }
+                                                    scope.launch {
+                                                        val res = snackbar.showSnackbar(
+                                                            message = quoteReplyLabel,
+                                                            actionLabel = undoLabel,
+                                                        )
+                                                        if (res == androidx.compose.material3.SnackbarResult.ActionPerformed) {
+                                                            vm.cancelQuoteReply()
+                                                        }
+                                                    }
+                                                } else {
+                                                    haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                                    scope.launch { snackbar.showSnackbar(cantQuoteMsg) }
+                                                }
+                                            }
+                                            false
                                         }
-                                        false
                                     },
                                 )
                                 // In RTL locales, mirror the swipe direction so the reply
@@ -1518,6 +1541,99 @@ fun ChatScreen(
                                 // toward the leading edge), matching how LTR users swipe
                                 // left-to-right. Without this, RTL users had no reply swipe.
                                 val replyFromStartToEnd = layoutDirection != LayoutDirection.Rtl
+                                // Memoize every MessageBubble lambda on the message id so a recomposition
+                                // triggered by a sibling (e.g. the streaming message's parts changing,
+                                // which gives `listItems` a new identity) doesn't allocate fresh lambdas
+                                // for the unchanged bubbles. MessageBubble is non-skippable (it takes
+                                // many `(() -> Unit)?` params, which Compose treats as unstable), so
+                                // without memoization every visible bubble recomposes on every token,
+                                // defeating the @Immutable MessageWithParts reference-stability the
+                                // reducer's Holder cache provides. This mirrors the SessionListScreen
+                                // per-card lambda memoization pattern.
+                                val onRevert = remember(messageId) { { vm.revertTo(messageId) } }
+                                val onEdit = remember(messageId) {
+                                    { text: String ->
+                                        // editMessage reverts to before this message (hiding it and
+                                        // everything after); the revert banner surfaces the rewind
+                                        // with an Undo. Focus + scroll the composer into view like the
+                                        // Quote action so the prefilled draft isn't off-screen.
+                                        haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                                        vm.editMessage(messageId, text)
+                                        runCatching { inputFocusRequester.requestFocus() }
+                                        contentScope.launch {
+                                            runCatchingCancellable {
+                                                listState.animateScrollToItem(currentListItems.lastIndex.coerceAtLeast(0))
+                                            }
+                                        }
+                                        Unit
+                                    }
+                                }
+                                val onSpeak = remember(messageId) {
+                                    { text: String ->
+                                        if (!tts.toggle(messageId, text)) {
+                                            scope.launch { snackbar.showSnackbar(ttsUnavailableMsg) }
+                                        }
+                                        Unit
+                                    }
+                                }
+                                val onPause = remember { { tts.pause() } }
+                                val onResume = remember { { tts.resume() } }
+                                val onStop = remember { { tts.stop() } }
+                                val onQuote = remember(messageId) {
+                                    { text: String ->
+                                        vm.quoteReply(text)
+                                        runCatching { inputFocusRequester.requestFocus() }
+                                        Unit
+                                    }
+                                }
+                                val onBranch = remember { { text: String -> vm.branchFrom(text); Unit } }
+                                // Regenerate is only meaningful for a finished assistant reply
+                                // (not the actively-streaming one), so gate it on !running.
+                                val onRegenerate = if (!running) {
+                                    remember(messageId) { { vm.regenerate(messageId) } }
+                                } else {
+                                    null
+                                }
+                                // Continue: resume a partial reply. Shown only for
+                                // incomplete assistant messages (a partial reply that
+                                // was aborted) and not while a run is active.
+                                val canContinue = !running && message.info is AssistantMessage && !message.info.isComplete
+                                val onContinue = if (canContinue) {
+                                    remember(messageId) { { vm.continueRun(messageId) } }
+                                } else {
+                                    null
+                                }
+                                val messageFailed = optimisticStatuses[messageId] == true
+                                val onRetry = if (messageFailed) {
+                                    remember(messageId) { { vm.retryOptimisticMessage(messageId); Unit } }
+                                } else {
+                                    null
+                                }
+                                val onDismiss = if (messageFailed) {
+                                    remember(messageId) { { vm.dismissOptimistic(messageId) } }
+                                } else {
+                                    null
+                                }
+                                val onShare = remember(messageId, sessionTitle, defaultShareSubject) {
+                                    {
+                                        // Per-message share: build a single-message Markdown
+                                        // transcript off-thread and fire ACTION_SEND, mirroring the
+                                        // whole-conversation share but scoped to just this message.
+                                        scope.launch {
+                                            val md = withContext(Dispatchers.Default) {
+                                                buildMessageMarkdown(message)
+                                            } ?: return@launch
+                                            val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                                type = "text/markdown"
+                                                putExtra(android.content.Intent.EXTRA_SUBJECT, sessionTitle ?: defaultShareSubject)
+                                                putExtra(android.content.Intent.EXTRA_TEXT, md)
+                                            }
+                                            runCatchingCancellable { shareContext.startActivity(android.content.Intent.createChooser(send, shareContext.getString(R.string.share_message))) }
+                                                .onFailure { showToast(shareContext, shareContext.getString(R.string.no_share_app)) }
+                                        }
+                                        Unit
+                                    }
+                                }
                                 SwipeToDismissBox(
                                     state = swipeState,
                                     enableDismissFromEndToStart = !replyFromStartToEnd,
@@ -1537,93 +1653,33 @@ fun ChatScreen(
                                 ) {
                                 MessageBubble(
                                     message,
-                                    isRunning = running && message.info.id == lastMessageId,
+                                    isRunning = running && messageId == lastMessageId,
                                     imageContext = imageContext,
                                     modelLabel = modelLabel,
                                     agentLabel = agentLabel,
                                     onOpenFile = onOpenFile,
-                                    onRevert = { vm.revertTo(message.info.id) },
-                                    onEdit = { text ->                                        // editMessage reverts to before this message (hiding it and
-                                        // everything after); the revert banner surfaces the rewind
-                                        // with an Undo. Focus + scroll the composer into view like the
-                                        // Quote action so the prefilled draft isn't off-screen.
-                                        haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
-                                        vm.editMessage(message.info.id, text)
-                                        runCatching { inputFocusRequester.requestFocus() }
-                                        contentScope.launch {
-                                            runCatchingCancellable {
-                                                listState.animateScrollToItem(listItems.lastIndex.coerceAtLeast(0))
-                                            }
-                                        }
-                                    },
-                                    onSpeak = { text ->
-                                        if (!tts.toggle(message.info.id, text)) {
-                                            // TTS engine unavailable (init failed / not yet ready
-                                            // / blank text): surface feedback so the button doesn't
-                                            // appear dead. Throttled so a rapid double-tap (stop
-                                            // then immediate re-tap before ready) doesn't spam.
-                                            scope.launch { snackbar.showSnackbar(ttsUnavailableMsg) }
-                                        }
-                                    },
-                                    isSpeaking = message.info.id == speakingMessageId,
-                                    ttsState = if (message.info.id == speakingMessageId) ttsState else TtsState.IDLE,
-                                    onPause = { tts.pause() },
-                                    onResume = { tts.resume() },
-                                    onStop = { tts.stop() },
-                                    onQuote = { text ->
-                                        vm.quoteReply(text)
-                                        runCatching { inputFocusRequester.requestFocus() }
-                                    },
-                                    onBranch = { text -> vm.branchFrom(text) },
-                                    // Regenerate is only meaningful for a finished assistant reply
-                                    // (not the actively-streaming one), so gate it on !running.
-                                    onRegenerate = if (!running) {
-                                        { vm.regenerate(message.info.id) }
-                                    } else null,
-                                    // Continue: resume a partial reply. Shown only for
-                                    // incomplete assistant messages (a partial reply that
-                                    // was aborted) and not while a run is active.
-                                    onContinue = if (!running && message.info is AssistantMessage && !message.info.isComplete) {
-                                        { vm.continueRun(message.info.id) }
-                                    } else null,
-                                    sendStatus = optimisticStatuses[message.info.id]?.let { failed ->
+                                    onRevert = onRevert,
+                                    onEdit = onEdit,
+                                    onSpeak = onSpeak,
+                                    isSpeaking = messageId == speakingMessageId,
+                                    ttsState = if (messageId == speakingMessageId) ttsState else TtsState.IDLE,
+                                    onPause = onPause,
+                                    onResume = onResume,
+                                    onStop = onStop,
+                                    onQuote = onQuote,
+                                    onBranch = onBranch,
+                                    onRegenerate = onRegenerate,
+                                    onContinue = onContinue,
+                                    sendStatus = optimisticStatuses[messageId]?.let { failed ->
                                         if (failed) soy.iko.opencode.ui.chat.MessageSendStatus.FAILED
                                         else soy.iko.opencode.ui.chat.MessageSendStatus.SENDING
                                     },
                                     isEdited = message.info.time?.let { it.updated != null && it.updated != it.created } == true,
-                                    onRetry = optimisticStatuses[message.info.id]?.let { failed ->
-                                        if (failed) {
-                                            { vm.retryOptimisticMessage(message.info.id) }
-                                        } else {
-                                            null
-                                        }
-                                    },
-                                    onDismiss = optimisticStatuses[message.info.id]?.let { failed ->
-                                        if (failed) {
-                                            { vm.dismissOptimistic(message.info.id) }
-                                        } else {
-                                            null
-                                        }
-                                    },
-                                    onShare = {
-                                        // Per-message share: build a single-message Markdown
-                                        // transcript off-thread and fire ACTION_SEND, mirroring the
-                                        // whole-conversation share but scoped to just this message.
-                                        scope.launch {
-                                            val md = withContext(Dispatchers.Default) {
-                                                buildMessageMarkdown(message)
-                                            } ?: return@launch
-                                            val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-                                                type = "text/markdown"
-                                                putExtra(android.content.Intent.EXTRA_SUBJECT, sessionTitle ?: defaultShareSubject)
-                                                putExtra(android.content.Intent.EXTRA_TEXT, md)
-                                            }
-                                            runCatchingCancellable { shareContext.startActivity(android.content.Intent.createChooser(send, shareContext.getString(R.string.share_message))) }
-                                                .onFailure { showToast(shareContext, shareContext.getString(R.string.no_share_app)) }
-                                        }
-                                    },
+                                    onRetry = onRetry,
+                                    onDismiss = onDismiss,
+                                    onShare = onShare,
                                     isFirstOfSpeaker = item.isFirstOfSpeaker,
-                                    highlighted = focusedMessageId != null && message.info.id == focusedMessageId,
+                                    highlighted = focusedMessageId != null && messageId == focusedMessageId,
                                 )
                                 }
                             }
@@ -3154,18 +3210,22 @@ private fun buildMessageListItems(
  * naive implementation would re-allocate an `Instant`/`ZonedDateTime`/`LocalDate` for
  * every message on every token. Message timestamps are immutable once assigned, so we
  * memoize the parse per epoch-millis: after the first snapshot, each unchanged message is
- * a cheap hash lookup. Bounded LRU (access-order) caps memory; only touched on the main
- * thread during composition, so the coarse lock is uncontended.
+ * a cheap hash lookup. Bounded; only touched on the main thread during composition.
+ *
+ * Backed by a [ConcurrentHashMap] (not an access-ordered LinkedHashMap): the previous
+ * synchronized access-ordered LinkedHashMap reordered its linked list node on every
+ * `getOrPut` hit, which is real work multiplied by N messages × ~20 snapshots/sec during
+ * streaming. A ConcurrentHashMap has no access-order bookkeeping and is lock-free for
+ * reads, so the common case (a hit) is a single volatile read + hash probe. The bound
+ * is enforced via [removeEldestEntry] is not available on ConcurrentHashMap, so we cap
+ * via `compute`-guarded size checks; in practice the cache size is bounded by the number
+ * of distinct message timestamps in a session (≤ [NetworkConfig.maxInMemoryMessages]).
  */
-private val dayKeyCache = object : LinkedHashMap<Long, String>(128, 0.75f, true) {
-    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, String>): Boolean = size > 1024
-}
+private val dayKeyCache = java.util.concurrent.ConcurrentHashMap<Long, String>(256)
 
-private fun dayKey(epochMillis: Long): String = synchronized(dayKeyCache) {
-    dayKeyCache.getOrPut(epochMillis) {
-        java.time.Instant.ofEpochMilli(epochMillis)
-            .atZone(java.time.ZoneId.systemDefault()).toLocalDate().toEpochDay().toString()
-    }
+private fun dayKey(epochMillis: Long): String = dayKeyCache.getOrPut(epochMillis) {
+    java.time.Instant.ofEpochMilli(epochMillis)
+        .atZone(java.time.ZoneId.systemDefault()).toLocalDate().toEpochDay().toString()
 }
 
 // The medium-date formatter is an ICU locale lookup; cache one instance instead of

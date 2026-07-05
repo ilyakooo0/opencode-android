@@ -28,8 +28,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -48,9 +50,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import soy.iko.opencode.R
 import soy.iko.opencode.data.network.NetworkConfig
 import soy.iko.opencode.ui.theme.diffColors
+import soy.iko.opencode.util.runCatchingCancellable
 
 /** A single line of a parsed unified diff. */
 sealed interface DiffLine {
@@ -164,13 +169,14 @@ private fun syntaxForHeader(headerText: String): FileSyntax? {
  * diffs), only the first [NetworkConfig.collapsedDiffLineThreshold] lines are rendered
  * unless the user expands the view. Each hunk can also be collapsed individually via
  * its `@@` header.
+ *
+ * The [parseDiff] + [buildDiffRows] work runs off the main thread (via [rememberDiffRows])
+ * so a streaming diff that grows on every throttle commit doesn't tokenize + walk the
+ * whole string on the main thread ~20x/sec. The first frame uses an empty (or cached)
+ * row list so the header renders immediately; rows swap in once the off-main pass lands.
  */
 @Composable
 fun DiffView(diff: String, modifier: Modifier = Modifier, saveKey: String? = null) {
-    val lines = remember(diff) { parseDiff(diff) }
-    // Use dedicated diff add/remove colors (a fixed green/red pair tuned to the theme) so the
-    // diff semantics stay consistent under Material You — where the primary role may not be
-    // green-tinted, an "added" line would otherwise read as a primary-tinted highlight.
     val scheme = MaterialTheme.colorScheme
     val diffColors = diffColors()
     val addColor = remember(scheme) { diffColors.addBg }
@@ -190,6 +196,24 @@ fun DiffView(diff: String, modifier: Modifier = Modifier, saveKey: String? = nul
     val collapsedHunks = remember { mutableStateOf(emptySet<Int>()) }
     val palette = rememberHighlightPalette()
 
+    // Parse + build rows off-main. The row list is recomputed when `diff` grows (streaming)
+    // or expand/collapse changes, but the heavy walk runs on Dispatchers.Default so the
+    // main thread stays free for layout/draw. First frame: empty rows (header renders, body
+    // fills in a frame later). For a static diff (file viewer, revert banner) the off-main
+    // pass lands within a frame or two and is then stable.
+    val rows = rememberDiffRows(
+        diff = diff,
+        expanded = expanded,
+        collapsedHunks = collapsedHunks.value,
+        addColor = addColor,
+        removeColor = removeColor,
+        addText = addText,
+        removeText = removeText,
+        tertiary = scheme.tertiary,
+        onSurface = scheme.onSurface,
+        onSurfaceVariant = scheme.onSurfaceVariant,
+    )
+
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -197,36 +221,15 @@ fun DiffView(diff: String, modifier: Modifier = Modifier, saveKey: String? = nul
             .background(MaterialTheme.colorScheme.surfaceVariant),
     ) {
         DiffHeader(
-            lineCount = lines.size,
+            lineCount = rows.lineCount,
             expanded = expanded,
             onToggle = { expanded = !expanded },
             onCopy = { copyToClipboard(context, context.getString(R.string.clip_label_diff), diff) },
         )
-        // Apply the global collapse threshold first, then drop lines inside any per-hunk
-        // collapse. A collapsed hunk's `@@` header is always kept (so the user has a handle
-        // to re-expand it); its content lines (context/add/remove) are skipped until the
-        // next hunk or end-of-list.
-        val thresholdCollapsed = lines.size > NetworkConfig.collapsedDiffLineThreshold && !expanded
-        val baseLines = if (thresholdCollapsed) lines.subList(0, NetworkConfig.collapsedDiffLineThreshold) else lines
-        val hunkIndices = remember(lines) { hunkStartIndices(lines) }
-        val visibleLines = remember(baseLines, collapsedHunks.value) {
-            if (collapsedHunks.value.isEmpty()) baseLines
-            else filterCollapsedHunks(baseLines, hunkIndices, collapsedHunks.value)
-        }
-        // One horizontalScroll on the container instead of one per row: each modifier
-        // adds a layout node + clip + offset pass, so a 200-line collapsed diff was
-        // paying for 200 of them. The shared scroll state still synchronizes all rows.
-        val rows = remember(visibleLines, addColor, removeColor, addText, removeText, scheme) {
-            buildDiffRows(
-                visibleLines,
-                addColor, removeColor, addText, removeText,
-                scheme.tertiary, scheme.onSurface, scheme.onSurfaceVariant,
-            )
-        }
         Column(modifier = Modifier.horizontalScroll(hScrollState)) {
-            rows.forEach { row -> RenderDiffRow(row, palette, collapsedHunks) }
+            rows.rows.forEach { row -> RenderDiffRow(row, palette, collapsedHunks) }
         }
-        DiffExpandFooter(lines = lines, expanded = expanded, onToggle = { expanded = !expanded })
+        DiffExpandFooter(lineCount = rows.lineCount, expanded = expanded, onToggle = { expanded = !expanded })
     }
 }
 
@@ -239,7 +242,6 @@ fun DiffView(diff: String, modifier: Modifier = Modifier, saveKey: String? = nul
  */
 @Composable
 fun LazyDiffView(diff: String, modifier: Modifier = Modifier, saveKey: String? = null) {
-    val lines = remember(diff) { parseDiff(diff) }
     val scheme = MaterialTheme.colorScheme
     val diffColors = diffColors()
     val addColor = remember(scheme) { diffColors.addBg }
@@ -253,6 +255,19 @@ fun LazyDiffView(diff: String, modifier: Modifier = Modifier, saveKey: String? =
     val palette = rememberHighlightPalette()
     val lazyListState = androidx.compose.foundation.lazy.rememberLazyListState()
 
+    val rows = rememberDiffRows(
+        diff = diff,
+        expanded = expanded,
+        collapsedHunks = collapsedHunks.value,
+        addColor = addColor,
+        removeColor = removeColor,
+        addText = addText,
+        removeText = removeText,
+        tertiary = scheme.tertiary,
+        onSurface = scheme.onSurface,
+        onSurfaceVariant = scheme.onSurfaceVariant,
+    )
+
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -260,25 +275,11 @@ fun LazyDiffView(diff: String, modifier: Modifier = Modifier, saveKey: String? =
             .background(MaterialTheme.colorScheme.surfaceVariant),
     ) {
         DiffHeader(
-            lineCount = lines.size,
+            lineCount = rows.lineCount,
             expanded = expanded,
             onToggle = { expanded = !expanded },
             onCopy = { copyToClipboard(context, context.getString(R.string.clip_label_diff), diff) },
         )
-        val thresholdCollapsed = lines.size > NetworkConfig.collapsedDiffLineThreshold && !expanded
-        val baseLines = if (thresholdCollapsed) lines.subList(0, NetworkConfig.collapsedDiffLineThreshold) else lines
-        val hunkIndices = remember(lines) { hunkStartIndices(lines) }
-        val visibleLines = remember(baseLines, collapsedHunks.value) {
-            if (collapsedHunks.value.isEmpty()) baseLines
-            else filterCollapsedHunks(baseLines, hunkIndices, collapsedHunks.value)
-        }
-        val rows = remember(visibleLines, addColor, removeColor, addText, removeText, scheme) {
-            buildDiffRows(
-                visibleLines,
-                addColor, removeColor, addText, removeText,
-                scheme.tertiary, scheme.onSurface, scheme.onSurfaceVariant,
-            )
-        }
         // One horizontalScroll wrapping the LazyColumn synchronizes horizontal panning across
         // visible rows (the same trick DiffView uses on its Column). LazyColumn handles the
         // vertical scrolling.
@@ -287,15 +288,79 @@ fun LazyDiffView(diff: String, modifier: Modifier = Modifier, saveKey: String? =
             modifier = Modifier.horizontalScroll(hScrollState),
         ) {
             itemsIndexed(
-                rows,
+                rows.rows,
                 key = { i, row -> "${row.kind::class.simpleName}:$i:${row.text.hashCode()}" },
             ) { _, row ->
                 RenderDiffRow(row, palette, collapsedHunks)
             }
         }
-        DiffExpandFooter(lines = lines, expanded = expanded, onToggle = { expanded = !expanded })
+        DiffExpandFooter(lineCount = rows.lineCount, expanded = expanded, onToggle = { expanded = !expanded })
     }
 }
+
+/**
+ * The parsed + pre-resolved rows for a diff, plus the total line count (for the
+ * expand/collapse footer, which reports "N more lines" against the full parsed size,
+ * not just the visible row count).
+ */
+private data class DiffRows(val rows: List<DiffRowItem>, val lineCount: Int)
+
+/**
+ * Parse [diff] and build the pre-resolved [DiffRowItem] list off the main thread.
+ *
+ * The parse ([parseDiff]) walks the whole diff string, and [buildDiffRows] walks every
+ * visible line advancing line counters + resolving per-file syntax — together they're
+ * O(lines). During a streaming diff, `diff` grows on every ~50ms throttle commit, so
+ * running these on the main thread re-walks the whole growing string ~20x/sec. Moving
+ * them to `Dispatchers.Default` keeps the main thread free for layout/draw.
+ *
+ * First frame: an empty row list + a line count of 0 (the header renders, the body fills
+ * in a frame or two later once the off-main pass lands). For a static diff the off-main
+ * pass is fast and the result is then stable across recompositions (the underlying
+ * `produceState` is keyed on the inputs, so a recompute only happens when `diff`/expand/
+ * collapse/colors actually change).
+ *
+ * The per-row syntax highlighting ([DiffRow]'s `rememberHighlightedCode`) is separately
+ * off-main and cross-message cached, so the per-row cost on the main thread is a cache
+ * lookup.
+ */
+@Composable
+private fun rememberDiffRows(
+    diff: String,
+    expanded: Boolean,
+    collapsedHunks: Set<Int>,
+    addColor: Color,
+    removeColor: Color,
+    addText: Color,
+    removeText: Color,
+    tertiary: Color,
+    onSurface: Color,
+    onSurfaceVariant: Color,
+): DiffRows = produceState<DiffRows>(DiffRows(emptyList(), 0), diff, expanded, collapsedHunks) {
+    val result = withContext(Dispatchers.Default) {
+        runCatchingCancellable {
+            val lines = parseDiff(diff)
+            val thresholdCollapsed = lines.size > NetworkConfig.collapsedDiffLineThreshold && !expanded
+            val baseLines = if (thresholdCollapsed) {
+                lines.subList(0, NetworkConfig.collapsedDiffLineThreshold)
+            } else {
+                lines
+            }
+            val hunkIndices = hunkStartIndices(lines)
+            val visibleLines = if (collapsedHunks.isEmpty()) baseLines
+            else filterCollapsedHunks(baseLines, hunkIndices, collapsedHunks)
+            DiffRows(
+                rows = buildDiffRows(
+                    visibleLines,
+                    addColor, removeColor, addText, removeText,
+                    tertiary, onSurface, onSurfaceVariant,
+                ),
+                lineCount = lines.size,
+            )
+        }.getOrDefault(DiffRows(emptyList(), 0))
+    }
+    value = result
+}.value
 
 /** Header row with the expand/collapse toggle (when applicable) and a copy action. */
 @Composable
@@ -327,9 +392,9 @@ private fun DiffHeader(lineCount: Int, expanded: Boolean, onToggle: () -> Unit, 
 
 /** Footer "show more/less" button when the diff was collapsed. */
 @Composable
-private fun DiffExpandFooter(lines: List<DiffLine>, expanded: Boolean, onToggle: () -> Unit) {
-    if (lines.size > NetworkConfig.collapsedDiffLineThreshold) {
-        val hidden = lines.size - NetworkConfig.collapsedDiffLineThreshold
+private fun DiffExpandFooter(lineCount: Int, expanded: Boolean, onToggle: () -> Unit) {
+    if (lineCount > NetworkConfig.collapsedDiffLineThreshold) {
+        val hidden = lineCount - NetworkConfig.collapsedDiffLineThreshold
         TextButton(
             onClick = onToggle,
             contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp),
@@ -550,10 +615,9 @@ private fun DiffRow(
     // Highlight the line's content (minus the leading +/-/space prefix, which DiffView
     // already stripped) when a syntax was resolved from a file header. Falls back to plain
     // monospace text when no syntax is known (e.g. an untagged patch), preserving the prior
-    // rendering for diffs that can't be classified.
-    val highlighted: AnnotatedString = remember(text, syntax, palette) {
-        if (syntax != null) highlightLine(text, syntax, palette) else AnnotatedString(text)
-    }
+    // rendering for diffs that can't be classified. Off-main + cross-message cached so a
+    // re-displayed row (scroll recycle, theme switch) is a hash hit instead of a re-tokenize.
+    val highlighted: AnnotatedString = rememberHighlightedCode(text, syntax, palette)
     val a11yLabel = when (prefix) {
         "+" -> stringResource(R.string.diff_added_line, newLine ?: 0, text)
         "-" -> stringResource(R.string.diff_removed_line, oldLine ?: 0, text)

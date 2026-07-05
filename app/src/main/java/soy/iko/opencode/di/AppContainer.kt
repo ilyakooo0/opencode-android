@@ -793,16 +793,18 @@ open class AppContainer private constructor(
                     // Track sessions actively streaming so we know which idle events
                     // represent a finished run worth notifying about.
                     if (isLiveRunActivity(event)) {
-                        // The add-under-lock is required both for thread-safety and for the
-                        // access-order refresh (keeps a continuously-streaming session from
-                        // being evicted), so it runs per event.
+                        // add() returns true only when the id is genuinely new. Only republish
+                        // the run-state snapshot in that case: a continuously-streaming session
+                        // re-adds its id on every token (hundreds/sec), and republishing each
+                        // time allocates a fresh Set via toSet() + writes two StateFlows under
+                        // the monitor — pure overhead since the set membership didn't change.
+                        // The access-order refresh from LinkedHashSet.add still happens (keeping
+                        // the session from being evicted by a reconnect sweep); we just skip the
+                        // O(set size) snapshot + StateFlow writes when nothing changed.
                         synchronized(activeRuns) {
-                            activeRuns.add(sid)
-                            // Derive the flag from the set state *inside* the same lock that
-                            // guards the set, so a concurrent reconnect sweep (which clears
-                            // both under this lock) can't interleave and leave the flag pinned
-                            // true with an empty set — a stuck foreground service + "working…".
-                            publishRunState()
+                            if (activeRuns.add(sid)) {
+                                publishRunState()
+                            }
                         }
                     }
                 } }.onFailure { Log.w("AppContainer", "Message activity observer failed, will retry: ${safeExceptionSummary(it)}") }

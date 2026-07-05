@@ -79,6 +79,12 @@ fun parseTodos(input: JsonElement?): List<TodoItem> {
  * on every write, so a single call is a complete snapshot; scanning newest-first and
  * skipping empties avoids a mid-stream write (input not yet arrived) briefly blanking a
  * plan that's still valid.
+ *
+ * A caller-side cache ([TodoPlanCache]) memoizes the result against the input list's
+ * identity so a back-to-back emission of the same list instance (e.g. a `combine` that
+ * re-evaluates without a real upstream change) skips the O(messages×parts) scan. The
+ * scan still runs whenever the list instance changes (every streamed snapshot), but
+ * `distinctUntilChanged` downstream dedupes the *result* so the UI doesn't recompose.
  */
 fun currentTodoPlan(messages: List<MessageWithParts>): List<TodoItem> {
     for (mi in messages.indices.reversed()) {
@@ -92,4 +98,28 @@ fun currentTodoPlan(messages: List<MessageWithParts>): List<TodoItem> {
         }
     }
     return emptyList()
+}
+
+/**
+ * A tiny memoization layer for [currentTodoPlan]: if the same list instance is passed
+ * twice in a row, the cached result is returned without re-scanning. The [ChatViewModel]
+ * `todoPlan` flow's `combine` can re-emit the same list instance when an unrelated input
+ * (e.g. the optimistic-messages StateFlow) updates without the SSE stream having changed;
+ * without this cache, every such re-emit re-scans every part of every message off-main.
+ *
+ * Not thread-safe by design — it's only read from the `flowOn(Dispatchers.Default)`
+ * operator's coroutine, which is single-threaded per emission. The cache holds a single
+ * `(ref, result)` pair; a different list instance replaces it.
+ */
+class TodoPlanCache {
+    private var lastRef: List<MessageWithParts>? = null
+    private var lastResult: List<TodoItem> = emptyList()
+
+    fun plan(messages: List<MessageWithParts>): List<TodoItem> {
+        if (messages === lastRef) return lastResult
+        val result = currentTodoPlan(messages)
+        lastRef = messages
+        lastResult = result
+        return result
+    }
 }

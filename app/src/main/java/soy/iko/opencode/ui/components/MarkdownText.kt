@@ -84,6 +84,8 @@ import com.mikepenz.markdown.compose.elements.MarkdownText as LibraryMarkdownTex
 import com.mikepenz.markdown.m3.Markdown
 import com.mikepenz.markdown.model.DefaultMarkdownAnnotator
 import com.mikepenz.markdown.model.DefaultMarkdownAnnotatorConfig
+import com.mikepenz.markdown.model.MarkdownState
+import com.mikepenz.markdown.model.rememberMarkdownState
 import org.intellij.markdown.MarkdownElementTypes
 import org.intellij.markdown.ast.ASTNode
 import org.intellij.markdown.ast.getTextInNode
@@ -166,12 +168,20 @@ private fun MarkdownBody(
     // on a single-backtick inline code span copies its text — matching the copy affordance the
     // fenced/indented code blocks already have via [CodeWithCopy].
     val components = if (imageContext != null) {
-        markdownComponents(
-            codeFence = { CodeWithCopy(it) },
-            codeBlock = { CodeWithCopy(it) },
-            paragraph = { ParagraphWithInlineCodeCopy(it) },
-            image = { MarkdownImage(it, imageContext) },
-        )
+        // Remember on imageContext so a recomposition that doesn't change the context (the
+        // common case during streaming/scroll) doesn't rebuild the 21-field components
+        // container + 4 lambdas. The lambdas capture `imageContext` (for the image component)
+        // and the CodeWithCopy/ParagraphWithInlineCodeCopy factories (which only capture the
+        // stable MarkdownComponentModel passed by the library at invoke time), so keying on
+        // imageContext is sufficient for stability.
+        remember(imageContext) {
+            markdownComponents(
+                codeFence = { CodeWithCopy(it) },
+                codeBlock = { CodeWithCopy(it) },
+                paragraph = { ParagraphWithInlineCodeCopy(it) },
+                image = { MarkdownImage(it, imageContext) },
+            )
+        }
     } else {
         remember {
             markdownComponents(
@@ -320,11 +330,26 @@ private fun MarkdownBody(
         // A polite live region announces streaming content to TalkBack users. The throttle
         // (50ms) plus TalkBack's own polite-queue coalescing keeps announcements from
         // interrupting on every token; the reader hears the reply grow in measured chunks.
+        //
+        // retainState = true is critical: without it the library flips the internal state
+        // to Loading (an empty Box) on every content change, then back to Success once the
+        // off-main parse completes. During streaming the throttle commits ~20x/sec, so the
+        // whole rendered subtree would blink out and be rebuilt on every commit — visible
+        // flicker, full recomposition of every paragraph/code block, and layout thrash as
+        // the bubble height collapses then re-measures. retainState keeps the previous
+        // Success visible while the new content parses, so the swap is Success→Success
+        // (no empty-box frame). The library's own rememberMarkdownState already uses a
+        // single LaunchedEffect(Unit) + snapshotFlow + conflate to feed updates without
+        // re-launching, so this composes cleanly with the throttle above.
         CompositionLocalProvider(
             LocalUriHandler provides safeUriHandler,
         ) {
-            Markdown(
+            val markdownState: MarkdownState = rememberMarkdownState(
                 content = renderedContent,
+                retainState = true,
+            )
+            Markdown(
+                markdownState = markdownState,
                 modifier = modifier.semantics { liveRegion = LiveRegionMode.Polite },
                 components = components,
                 annotator = effectiveAnnotator,
@@ -335,10 +360,19 @@ private fun MarkdownBody(
         // element so the markdown AST isn't re-parsed to toggle it.
         if (!LocalReducedMotion.current) StreamingCaret()
     } else {
+        // retainState = true avoids a one-frame Loading flash when the content changes
+        // (e.g. an edit re-render, or a theme switch re-resolving colors). For static
+        // content the first parse is fast and the Success is shown directly; retainState
+        // only matters on subsequent content changes, where it keeps the old Success
+        // visible until the new one is ready instead of flashing an empty Box.
         val content: @Composable () -> Unit = {
             SelectionContainer {
-                Markdown(
+                val markdownState: MarkdownState = rememberMarkdownState(
                     content = markdown,
+                    retainState = true,
+                )
+                Markdown(
+                    markdownState = markdownState,
                     modifier = modifier.semantics { liveRegion = LiveRegionMode.Polite },
                     components = components,
                     annotator = effectiveAnnotator,
@@ -481,10 +515,18 @@ private fun ParagraphWithInlineCodeCopy(model: MarkdownComponentModel) {
         codeSpanStyle = typography.inlineCode.toSpanStyle(),
         annotator = annotator,
     )
-    val styledText = buildAnnotatedString {
-        pushStyle(style.toSpanStyle())
-        buildMarkdownAnnotatedString(model.content, model.node, settings)
-        pop()
+    // Memoize the annotated string on its inputs so a recomposition that doesn't change
+    // the paragraph's content/AST/style (the common case — e.g. a sibling paragraph
+    // recomposing, a theme color resolving to the same values) doesn't re-run the
+    // library's inline-markdown annotator pass (regex/string scanning + span allocation).
+    // During streaming, the parent's retainState=true means only the changed paragraphs
+    // recompose, so this caps re-annotation to genuinely-changed paragraphs.
+    val styledText = remember(model.content, model.node, settings, style) {
+        buildAnnotatedString {
+            pushStyle(style.toSpanStyle())
+            buildMarkdownAnnotatedString(model.content, model.node, settings)
+            pop()
+        }
     }
     // Capture the layout result so a long-press position can be mapped to a character offset,
     // then to a tagged range — the same hit-testing pattern the library uses for link taps.
@@ -560,9 +602,11 @@ private fun CodeWithCopy(model: MarkdownComponentModel) {
     // collapsed head and the full expanded block are both highlighted correctly.
     val palette = rememberHighlightPalette()
     val syntax = remember(language) { language?.let { syntaxForLanguageTag(it) } }
-    val highlighted = remember(displayCode, syntax, palette) {
-        if (syntax != null) highlightCode(displayCode, syntax, palette) else AnnotatedString(displayCode)
-    }
+    // Off-main highlighting with a cross-message LRU cache. During streaming the throttle
+    // coalesces re-highlights to ~20/sec, and the cache means a re-displayed block (scroll
+    // recycle, theme switch) is a hash hit instead of a full re-tokenize. The first frame
+    // uses a synchronous (cached or computed) result so the block doesn't flash plain-text.
+    val highlighted = rememberHighlightedCode(displayCode, syntax, palette)
     // Default per-block wrap from the global preference; re-seed if the preference changes
     // while this block is composed (rememberSaveable would over-persist across blocks).
     val defaultWrap = LocalCodeWrap.current

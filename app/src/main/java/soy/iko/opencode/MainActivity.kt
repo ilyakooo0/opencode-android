@@ -23,11 +23,15 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.res.stringResource
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
 import soy.iko.opencode.data.repo.SettingsStore
 import soy.iko.opencode.data.repo.ThemeMode
 import soy.iko.opencode.ui.AppLockGate
@@ -196,10 +200,22 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun maybeShowCrashPrompt() {
+        // The check does a directory scan + per-file stat (listFiles + lastModified), which
+        // is synchronous filesystem I/O. Run it off the main thread so the cold-start
+        // critical path (before setContent's first frame) isn't blocked by up to ~20 stat
+        // syscalls on slow storage. The prompt state flips on once the result arrives; the
+        // splash screen has already been dismissed by then, so the dialog appears a frame
+        // or two later than it would have synchronously — invisible to the user.
         val crashLogger = soy.iko.opencode.data.repo.CrashLogger.get(this)
-        if (!crashLogger.hasUnacknowledgedCrash()) return
-        crashLogger.acknowledgeCrashes()
-        showCrashPrompt = true
+        lifecycleScope.launch {
+            val hasUnacknowledged = withContext(Dispatchers.IO) {
+                crashLogger.hasUnacknowledgedCrash()
+            }
+            if (hasUnacknowledged) {
+                crashLogger.acknowledgeCrashes()
+                showCrashPrompt = true
+            }
+        }
     }
 
     override fun onNewIntent(intent: Intent) {

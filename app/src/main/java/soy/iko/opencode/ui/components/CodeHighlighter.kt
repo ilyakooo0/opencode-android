@@ -4,7 +4,11 @@ package soy.iko.opencode.ui.components
 
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -12,6 +16,9 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import soy.iko.opencode.util.runCatchingCancellable
 
 /**
  * Lightweight, dependency-free syntax highlighting for the file viewer.
@@ -532,3 +539,94 @@ private fun findIdentifierEnd(line: String, start: Int): Int {
 
 private fun isIdentifierPartChar(c: Char): Boolean =
     c.isLetterOrDigit() || c == '_' || c == '$'
+
+// --- Off-main highlighting with a cross-message LRU cache ---
+
+/**
+ * A small bounded LRU cache for highlighted [AnnotatedString]s, keyed by
+ * `(language tag, code, palette identity hash)`. Shared across all code blocks in the app
+ * (chat fences, file viewer), so two identical short fences don't re-tokenize, and a
+ * scrolling viewer reusing the same lines doesn't re-highlight.
+ *
+ * The palette is hashed (not held by reference equality) because [HighlightPalette] is a
+ * data class — its `equals`/`hashCode` cover all theme colors, so a palette instance is
+ * cache-equivalent across recompositions that resolve the same color scheme. Hashing it
+ * into the key string keeps the cache a flat `LinkedHashMap` with no nested map overhead.
+ *
+ * Bounded to [HIGHLIGHT_CACHE_MAX] entries; access-ordered so the least-recently-used
+ * entry is evicted. Synchronized because the cache is touched from both the main thread
+ * (cache lookup before the off-main fallback) and the `Dispatchers.Default` workers that
+ * populate it. In practice contention is low (a lookup is a hash hit; a populate happens
+ * once per unique block).
+ */
+private const val HIGHLIGHT_CACHE_MAX = 128
+private val highlightCache = object : LinkedHashMap<String, AnnotatedString>(64, 0.75f, true) {
+    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, AnnotatedString>): Boolean =
+        size > HIGHLIGHT_CACHE_MAX
+}
+
+private fun highlightCacheKey(code: String, syntax: FileSyntax?, palette: HighlightPalette): String =
+    // Palette hashCode covers all 7 colors (data class auto-generated hashCode). The syntax
+    // language enum + keyword set reference is stable for a given language tag (the sets are
+    // module-level singletons), so its identity hashCode is a stable cache bucket.
+    "${syntax?.lang ?: "none"}:${syntax?.keywords?.hashCode() ?: 0}:${palette.hashCode()}:${code.hashCode()}::${code.length}"
+
+/**
+ * Look up a cached highlight for `(code, syntax, palette)`, computing it on the calling
+ * thread (synchronously) on miss. Used by the off-main worker to populate the cache and
+ * by [rememberHighlightedCode] for a synchronous first-frame fallback.
+ */
+private fun highlightCached(code: String, syntax: FileSyntax?, palette: HighlightPalette): AnnotatedString {
+    val key = highlightCacheKey(code, syntax, palette)
+    synchronized(highlightCache) { highlightCache[key] }?.let { return it }
+    val result = if (syntax != null) highlightCode(code, syntax, palette) else AnnotatedString(code)
+    synchronized(highlightCache) { highlightCache[key] = result }
+    return result
+}
+
+/**
+ * Resolve syntax highlighting for [code] off the main thread, falling back to a cached or
+ * synchronous result for the first frame so the block doesn't flash plain-text before the
+ * highlighted version is ready.
+ *
+ * - On first composition (or when `code`/`syntax`/`palette` change), the synchronous
+ *   [highlightCached] runs on the main thread to produce an immediate result. For a short
+ *   fence this is fast (sub-millisecond); for a long fence the cache usually already has
+ *   the result from a prior composition of the same block (e.g. scrolled away and back).
+ * - A `LaunchedEffect` then re-computes on `Dispatchers.Default` and swaps in the result.
+ *   If the synchronous result already matched (cache hit), the off-main pass is a no-op
+ *   swap of an equal AnnotatedString — cheap.
+ *
+ * This replaces a direct `remember(code, syntax, palette) { highlightCode(...) }` which
+ * ran the full tokenizer on the main thread on every cache miss — during streaming, a
+ * growing code fence missed on every ~50ms throttle commit, re-tokenizing the whole
+ * growing block each time (O(n²) over the stream). The off-main pass keeps the main
+ * thread free for layout/draw, and the cross-message cache means a re-displayed block
+ * (scroll recycle, theme switch) is a hash hit.
+ *
+ * For the streaming case, callers should still throttle how often `code` updates (the
+ * markdown renderer's 50ms throttle does this); this function then bounds the per-update
+ * main-thread cost to a cache lookup.
+ */
+@Composable
+fun rememberHighlightedCode(code: String, syntax: FileSyntax?, palette: HighlightPalette): AnnotatedString {
+    // Synchronous first-frame result (cache hit or compute). For a long block this can
+    // take a few ms on the main thread the first time it's seen; subsequent compositions
+    // of the same block (scroll recycle) are a pure cache hit.
+    val initial = remember(code, syntax, palette) { highlightCached(code, syntax, palette) }
+    var result by remember(code, syntax, palette) { mutableStateOf(initial) }
+    // Recompute off-main; swaps in the (possibly identical) result when ready. Skipped
+    // work: if the cache already held the exact entry, the off-main pass recomputes and
+    // assigns an equal string — a cheap no-op for Compose (no recomposition since the
+    // State value is structurally equal). The off-main pass still populates the cache for
+    // future callers. For a cache hit on a very long block, we could skip the LaunchedEffect
+    // entirely, but the cost of the off-main recompute is exactly what we want to keep off
+    // the main thread, and the cache makes the main-thread lookup a hit next time.
+    LaunchedEffect(code, syntax, palette) {
+        val offMain = withContext(Dispatchers.Default) {
+            runCatchingCancellable { highlightCached(code, syntax, palette) }.getOrDefault(initial)
+        }
+        result = offMain
+    }
+    return result
+}

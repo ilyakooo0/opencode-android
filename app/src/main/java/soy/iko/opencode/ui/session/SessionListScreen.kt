@@ -109,11 +109,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import soy.iko.opencode.data.model.ServerProfile
 import soy.iko.opencode.data.model.Session
 import soy.iko.opencode.data.network.NetworkConfig
@@ -1246,10 +1248,15 @@ private fun SyncShortcutsAndWidget(
     LaunchedEffect(state.sessions) {
         val sessions = state.sessions
         if (sessions.isEmpty()) return@LaunchedEffect
-        val recents = sessions.take(RecentSessionsStore.MAX).map { RecentSession(it.id, it.displayTitle) }
-        RecentSessionsStore.write(platformContext, recents)
-        AppShortcuts.update(platformContext, recents.firstOrNull())
-        SessionsWidgetProvider.refresh(platformContext)
+        // Disk writes (RecentSessionsStore) + AppShortcuts + AppWidgetManager refreshes
+        // involve binder IPC and file I/O; run them off the main thread so a debounced
+        // session-update burst (e.g. during multi-session streaming) doesn't jank the list.
+        withContext(Dispatchers.IO) {
+            val recents = sessions.take(RecentSessionsStore.MAX).map { RecentSession(it.id, it.displayTitle) }
+            RecentSessionsStore.write(platformContext, recents)
+            AppShortcuts.update(platformContext, recents.firstOrNull())
+            SessionsWidgetProvider.refresh(platformContext)
+        }
     }
 }
 
