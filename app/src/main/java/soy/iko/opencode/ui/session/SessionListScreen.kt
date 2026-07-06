@@ -544,6 +544,7 @@ fun SessionListScreen(
                     onPin = { vm.togglePin(it) },
                     onArchive = { vm.toggleArchive(it) },
                     onMarkUnread = { vm.markUnread(it) },
+                    onMarkRead = { vm.markRead(it) },
                     onToggleMute = { container.toggleSessionMute(it) },
                     onFilterByDirectory = vm::setDirectoryFilter,
                     onClearDirectoryFilter = { vm.setDirectoryFilter(null) },
@@ -666,6 +667,7 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
     onPin: (Session) -> Unit,
     onArchive: (Session) -> Unit,
     onMarkUnread: (String) -> Unit,
+    onMarkRead: (String) -> Unit,
     onToggleMute: (String) -> Unit,
     onFilterByDirectory: (String) -> Unit,
     onClearDirectoryFilter: () -> Unit,
@@ -981,11 +983,18 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
                                 runCatching { SwipeAction.valueOf(swipeRightAction) }.getOrDefault(SwipeAction.ARCHIVE)
                             }
                             // Apply a swipe action to the session. NONE is a no-op.
+                            // MARK_READ toggles the unread badge: a read session becomes unread
+                            // (re-badged for revisit) and an already-unread session is cleared,
+                            // mirroring the "Mark read / unread" label exposed in Settings.
+                            val currentUnreadCount = unread[session.id] ?: 0
                             val applySwipe: (SwipeAction) -> Unit = { action ->
                                 when (action) {
                                     SwipeAction.DELETE -> onDelete(session.id)
                                     SwipeAction.ARCHIVE -> onArchive(session)
-                                    SwipeAction.MARK_READ -> onMarkUnread(session.id)
+                                    SwipeAction.MARK_READ -> {
+                                        if (currentUnreadCount > 0) onMarkRead(session.id)
+                                        else onMarkUnread(session.id)
+                                    }
                                     SwipeAction.NONE -> {}
                                 }
                             }

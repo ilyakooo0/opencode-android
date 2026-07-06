@@ -10,6 +10,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import soy.iko.opencode.util.runCatchingCancellable
 
 /**
  * An active connection to one opencode server. Bundles the Ktor client, REST API,
@@ -42,6 +43,10 @@ open class OpencodeConnection(
     open suspend fun close() {
         scope.cancel()
         scopeJob.join()
-        runCatching { client.close() }
+        // runCatchingCancellable (not plain runCatching) per the repo convention: close() is a
+        // suspend function, and plain runCatching swallows CancellationException — if the
+        // caller's scope is cancelled mid-close, the cancellation must propagate rather than
+        // be eaten as a Result.failure (which would leave the client half-closed).
+        runCatchingCancellable { client.close() }
     }
 }

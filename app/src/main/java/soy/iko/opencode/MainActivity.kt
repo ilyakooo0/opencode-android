@@ -53,7 +53,15 @@ class MainActivity : FragmentActivity() {
     private var openFileHandled = false
     // Set when a deep link was present but failed validation (malformed id/path). Surfaced
     // as a toast from onResume so the user knows the link was rejected, not silently ignored.
+    // On a warm start (onNewIntent while already resumed) the toast is shown immediately from
+    // handleIntent, since onResume is NOT re-called on an already-resumed activity — without
+    // that the toast would stay pending until the next pause/resume cycle (e.g. user
+    // backgrounds and returns), making the rejected link look silently ignored.
     private var showInvalidLinkToast = false
+    // True between onResume and onPause. Used by handleIntent to decide whether to fire the
+    // invalid-link toast immediately (warm start) or defer it to onResume (cold start, where
+    // a toast from onCreate could flash before the first frame is drawn).
+    private var isResumed = false
     // Cold-start prompts (crash report, notification rationale) rendered as Compose M3
     // dialogs. Hoisted as Activity-level mutableState so the non-composable trigger logic
     // (onCreate/onResume) can flip them and the Compose tree (inside OpencodeTheme) reads
@@ -244,17 +252,32 @@ class MainActivity : FragmentActivity() {
 
     override fun onResume() {
         super.onResume()
+        isResumed = true
         // Re-check on resume: an Activity recreated by a config change not in configChanges
         // (e.g. locale) has savedInstanceState != null, so onCreate skipped the request. This
         // ensures the user is prompted once per Activity instance when still ungranted rather
         // than silently losing all notifications.
         maybeRequestNotificationPermission()
         // Surface a rejected deep link once, so a malformed opencode:// link doesn't appear
-        // to be silently ignored. Cleared after firing so a rotation doesn't re-toast.
+        // to be silently ignored. Cleared after firing so a rotation doesn't re-toast. This
+        // covers the cold-start path (handleIntent ran from onCreate, before the activity was
+        // resumed, so it deferred the toast here). Warm-start rejections fire immediately from
+        // handleIntent and never set this flag.
         if (showInvalidLinkToast) {
             showInvalidLinkToast = false
-            android.widget.Toast.makeText(this, R.string.deep_link_invalid, android.widget.Toast.LENGTH_SHORT).show()
+            showInvalidLinkToastNow()
         }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        isResumed = false
+    }
+
+    /** Fire the invalid-deep-link toast. Extracted so the cold-start (onResume) and warm-start
+     *  (handleIntent) paths share a single implementation. */
+    private fun showInvalidLinkToastNow() {
+        android.widget.Toast.makeText(this, R.string.deep_link_invalid, android.widget.Toast.LENGTH_SHORT).show()
     }
 
     /** Capture text shared from another app so it can be prefilled into a session draft,
@@ -333,7 +356,11 @@ class MainActivity : FragmentActivity() {
                         // The link carried a session host but no valid id (or a blank/traversal
                         // attempt). Surface a toast so the user knows the link was rejected,
                         // rather than silently no-op'ing (which reads as "the app did nothing").
-                        if (!seg.isNullOrBlank()) showInvalidLinkToast = true
+                        // On a warm start (already resumed) fire immediately; on a cold start
+                        // defer to onResume so the toast doesn't race the first frame.
+                        if (!seg.isNullOrBlank()) {
+                            if (isResumed) showInvalidLinkToastNow() else showInvalidLinkToast = true
+                        }
                         // Mark the link handled even on rejection, so a process-death-and-restore
                         // (which re-delivers the same intent) doesn't re-fire the toast on every
                         // restore — the rejection is final, not a transient state to retry.
@@ -348,7 +375,10 @@ class MainActivity : FragmentActivity() {
                 if (!openFileHandled) {
                     rawPath?.takeIf { isValidFilePath(it) }
                         ?.let { container.requestOpenFile(it); openFileHandled = true } ?: run {
-                            if (!rawPath.isNullOrBlank()) showInvalidLinkToast = true
+                            if (!rawPath.isNullOrBlank()) {
+                                // Same warm-vs-cold logic as the session branch above.
+                                if (isResumed) showInvalidLinkToastNow() else showInvalidLinkToast = true
+                            }
                             // Mark handled on rejection too, mirroring the session branch —
                             // otherwise a process-death restore re-fires the invalid-link toast.
                             openFileHandled = true

@@ -909,6 +909,13 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         container.markSessionUnread(id)
     }
 
+    /** Mark a single session as read (clears its unread badge). The read-direction half of the
+     *  swipe "MARK_READ" toggle; the overflow menu only offers "Mark as unread" (gated on
+     *  unreadCount == 0), so this is only reachable via the swipe gesture today. */
+    fun markRead(id: String) {
+        container.markSessionRead(id)
+    }
+
     /**
      * Permanently delete the given sessions. Unlike a single swipe-delete this is NOT undoable
      * (the batch undo would need to cancel N deferred deletes); the caller confirms via a dialog

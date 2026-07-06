@@ -245,13 +245,23 @@ open class OpencodeApiClient private constructor(
     /** Revoke the session's public share link. Returns the session with share cleared.
      *  Like [deleteSession], a retried DELETE (first reached the server but the response was
      *  lost) hits an already-unshared session and gets 404 — revoking a non-shared session is
-     *  effectively success, so swallow 404 rather than surfacing a spurious failure. */
+     *  effectively success, so swallow 404 rather than surfacing a spurious failure.
+     *  The fallback `GET` re-reads the current session state so the caller sees the cleared
+     *  share. If the session itself was deleted in the window between the DELETE-404 and the
+     *  GET (race with another client / a concurrent deleteSession), the GET also 404s —
+     *  swallow that too and surface a synthesized gone-session rather than an unexpected
+     *  ClientRequestException, mirroring deleteSession's contract. */
     open suspend fun unshareSession(sessionId: String): Session {
         return try {
             withRetry { client!!.delete("session/${encode(sessionId)}/share").body() }
         } catch (t: ClientRequestException) {
             if (t.response.status.value != 404) throw t
-            withRetry { client!!.get("session/${encode(sessionId)}").body() }
+            try {
+                withRetry { client!!.get("session/${encode(sessionId)}").body<Session>() }
+            } catch (t2: ClientRequestException) {
+                if (t2.response.status.value != 404) throw t2
+                Session(id = sessionId, title = null, share = null)
+            }
         }
     }
 

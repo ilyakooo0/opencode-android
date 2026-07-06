@@ -634,7 +634,19 @@ internal class MessageStore {
             eventSession == null && !messages.containsKey(id) -> return false
         }
         val removed = messages.remove(id) ?: return false
-        messageInfoUpdatedSincePivot.remove(id)
+        // Derive the same key handleMessageUpdated would have stored this holder under. For an
+        // UnknownMessage with an empty id, that's the synthetic "unknown-c<created>" /
+        // "unknown-h<hash>" key (not the raw empty id) — removing the raw id here would leave
+        // the synthetic entry stranded in messageInfoUpdatedSincePivot forever (no correctness
+        // impact today — seed() only consults it when the holder exists — but unbounded growth
+        // across many add/remove cycles in a long-lived session). Mirrors evictOldMessages,
+        // which already uses the map key (oldestKey) for its pivot cleanup.
+        val pivotKey = if (id.isEmpty() && removed.info is UnknownMessage) {
+            removed.info.time?.created?.let { "unknown-c$it" } ?: "unknown-h${removed.info.hashCode()}"
+        } else {
+            id
+        }
+        messageInfoUpdatedSincePivot.remove(pivotKey)
         removed.parts.keys.forEach { streamedSincePivot.remove(it) }
         return true
     }
