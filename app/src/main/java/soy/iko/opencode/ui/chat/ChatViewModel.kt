@@ -1597,7 +1597,16 @@ class ChatViewModel(
             ?: return
         viewModelScope.launch {
             runCatchingCancellable { conn.api.revert(sessionId, assistantMessageId) }
-                .onSuccess { send(precedingUserText, includeAttachments = false) }
+                .onSuccess {
+                    // send() can return false if the beginRun() CAS lost to a concurrent run
+                    // or the message had to be enqueued offline and that failed. The revert has
+                    // already hidden the messages, so a silent false would leave the user with a
+                    // reverted conversation and no reply and no error — surface it instead.
+                    val sent = send(precedingUserText, includeAttachments = false)
+                    if (!sent) {
+                        _errorEvents.trySend(ChatError(container.string(R.string.error_generic)))
+                    }
+                }
                 .onFailure { _errorEvents.trySend(ChatError(container.friendlyError(it))) }
         }
     }
@@ -1618,8 +1627,17 @@ class ChatViewModel(
         // foreground service off for the whole run.
         runEndedByIdle = false
         viewModelScope.launch {
+            // Route through the repository (not conn.api directly) so the prompt inherits
+            // withRetry (transient-failure backoff) and the user's selected model/agent — a
+            // direct api.sendPrompt would neither retry nor carry the picker selection, and
+            // would mint a fresh idempotency key on every retry attempt instead of sharing one.
             runCatchingCancellable {
-                conn.api.sendPrompt(sessionId, text = "continue")
+                conn.repository.sendPrompt(
+                    sessionId,
+                    text = "continue",
+                    model = _selectedModel.value?.ref,
+                    agent = _selectedAgent.value,
+                )
             }.onFailure {
                 _running.value = false
                 _errorEvents.trySend(ChatError(container.friendlyError(it)))

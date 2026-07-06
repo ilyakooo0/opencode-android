@@ -100,8 +100,13 @@ open class MessageCacheStore private constructor(
                     val tmp = File(file.parentFile, file.name + ".tmp")
                     tmp.writeText(encoded)
                     if (!tmp.renameTo(file)) {
-                        file.writeText(encoded)
-                        tmp.delete()
+                        // try/finally so a throw from file.writeText (disk full, permission) still
+                        // cleans up tmp — otherwise *.tmp files accumulate across failed writes.
+                        try {
+                            file.writeText(encoded)
+                        } finally {
+                            tmp.delete()
+                        }
                     }
                 }
             }.onFailure { Log.w("MessageCacheStore", "Failed to cache messages for $sessionId", it) }

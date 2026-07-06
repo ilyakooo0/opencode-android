@@ -185,7 +185,12 @@ class ServerSettingsViewModel(
                 // takes effect immediately. A non-active profile just persists.
                 if (container.activeConnection.value?.profile?.id == saved.id) {
                     container.connect(saved)
-                    val pingOk = runCatchingCancellable { container.activeConnection.value?.api?.ping() }.isSuccess
+                    // A null activeConnection must NOT count as a successful ping — see
+                    // ServerEditViewModel for the reasoning (null?.api?.ping() yields null, which
+                    // runCatchingCancellable wraps as success and masks a dropped connection).
+                    val pingOk = container.activeConnection.value?.let {
+                        runCatchingCancellable { it.api.ping() }.isSuccess
+                    } ?: false
                     if (!pingOk) {
                         throw java.io.IOException(container.string(R.string.error_ping_failed))
                     }

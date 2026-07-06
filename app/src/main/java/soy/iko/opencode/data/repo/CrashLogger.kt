@@ -48,7 +48,15 @@ class CrashLogger private constructor(private val appContext: Context) {
     private val _reports = MutableStateFlow<List<CrashReport>>(emptyList())
     val reports: StateFlow<List<CrashReport>> = _reports.asStateFlow()
 
+    @Volatile private var installed = false
+
     fun install() {
+        // Guard against double-install: a second call would capture this handler as `previous`
+        // and chain it to itself, double-writing crash reports and double-invoking the original
+        // handler on every crash. The singleton get() mitigates this in production, but install()
+        // itself must be idempotent (tests, a misconfigured init) so the chain can't form.
+        if (installed) return
+        installed = true
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             runCatching { writeReport(thread, throwable) }

@@ -102,7 +102,10 @@ open class SessionRepository(
 
         fun schedule(snapshot: List<MessageWithParts>) {
             val cache = messageCache ?: return
-            if (snapshot.isEmpty()) return
+            // Don't early-return on an empty snapshot: MessageCacheStore.save deletes the file
+            // for an empty list, which is exactly what we want when a conversation becomes empty
+            // via MessageRemoved events. Skipping here would leave stale messages cached on disk
+            // until an explicit remove() on session deletion.
             latest = snapshot
             val now = System.currentTimeMillis()
             pending?.cancel()
@@ -179,7 +182,11 @@ open class SessionRepository(
             if (cached.isNotEmpty()) {
                 val changed = lock.withLock {
                     if (seedGeneration == 0) {
-                        cacheSeededIds = cached.mapTo(mutableSetOf()) { it.info.id }
+                        // Store the synthetic key for UnknownMessages (which have empty ids) so
+                        // pruneStaleCacheSeeded's messages.remove(id) hits the actual map key
+                        // the store used ("unknown-c<created>" / "unknown-h<hash>") instead of
+                        // the empty id that never matches and leaves ghost entries un-pruned.
+                        cacheSeededIds = cached.mapTo(mutableSetOf()) { store.syntheticKeyFor(it) }
                         store.seed(cached, clearPivot = false)
                     } else false
                 }
@@ -522,7 +529,7 @@ internal class MessageStore {
      *  synthetic key ("unknown-c<created>" or "unknown-h<hash>"); derive the same key here so
      *  a REST seed merges onto the existing holder instead of missing it and inserting a
      *  duplicate under key "". */
-    private fun syntheticKeyFor(m: MessageWithParts): String =
+    internal fun syntheticKeyFor(m: MessageWithParts): String =
         if (m.info.id.isEmpty() && m.info is UnknownMessage) {
             m.info.time?.created?.let { "unknown-c$it" } ?: "unknown-h${m.info.hashCode()}"
         } else {

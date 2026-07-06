@@ -1486,14 +1486,14 @@ fun ChatScreen(
                                 // once the stream finishes). This is invisible in practice: agent
                                 // label is set on the first part, quote text grows with text parts
                                 // but is only consumed on a swipe (user-initiated, post-stream).
-                                val agentLabel = remember(messageId, message.parts) {
+                                val agentLabel = remember(messageId) {
                                     message.parts
                                         .filterIsInstance<soy.iko.opencode.data.model.AgentPart>()
                                         .firstOrNull { it.name.isNotBlank() }?.name
                                 }
                                 // Text used to drive swipe-to-reply (and pre-fill the quote). Empty for
                                 // image/code-only messages, which then opt out of the swipe gesture.
-                                val quoteText = remember(messageId, message.parts) {
+                                val quoteText = remember(messageId) {
                                     message.parts
                                         .filterIsInstance<TextPart>()
                                         .joinToString("\n\n") { it.text }

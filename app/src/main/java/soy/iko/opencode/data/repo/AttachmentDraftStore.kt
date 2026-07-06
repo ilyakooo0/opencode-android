@@ -87,8 +87,11 @@ open class AttachmentDraftStore private constructor(
                     val tmp = File(file.parentFile, file.name + ".tmp")
                     tmp.writeText(encoded)
                     if (!tmp.renameTo(file)) {
-                        file.writeText(encoded)
-                        tmp.delete()
+                        try {
+                            file.writeText(encoded)
+                        } finally {
+                            tmp.delete()
+                        }
                     }
                 }
             }.onFailure { Log.w("AttachmentDraftStore", "Failed to persist attachments for $sessionId", it) }

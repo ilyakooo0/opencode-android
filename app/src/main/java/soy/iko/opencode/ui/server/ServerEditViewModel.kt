@@ -335,7 +335,14 @@ class ServerEditViewModel(
                     // that accepts the connect but is half-up (wrong path, unresponsive /info) would
                     // navigate to the session list as if everything succeeded, leaving the user
                     // stranded on an empty screen with no error.
-                    val pingOk = runCatchingCancellable { container.activeConnection.value?.api?.ping() }.isSuccess
+                    // A null activeConnection must NOT count as a successful ping: `null?.api?.ping()`
+                    // evaluates to null without throwing, so runCatchingCancellable would wrap it as
+                    // Result.success(null) and .isSuccess would be true — masking a connection that
+                    // dropped between connect() and the ping and navigating the user to an empty
+                    // session list with no error.
+                    val pingOk = container.activeConnection.value?.let {
+                        runCatchingCancellable { it.api.ping() }.isSuccess
+                    } ?: false
                     if (!pingOk) {
                         throw java.io.IOException(container.string(R.string.error_ping_failed))
                     }

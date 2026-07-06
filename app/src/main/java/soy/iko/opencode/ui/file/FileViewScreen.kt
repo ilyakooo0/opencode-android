@@ -265,7 +265,12 @@ fun FileViewScreen(
         if (clamped - 1 >= lines.size) {
             renderLimit = (clamped + MAX_RENDERED_LINES - 1).coerceAtMost(allLines.size)
         }
-        val target = (clamped - 1).coerceIn(0, lines.size - 1)
+        // When the render limit was just expanded, `lines` still reflects the OLD take()
+        // (the remember(rawText, renderLimit) hasn't recomputed yet), so clamping against
+        // lines.size here would scroll to the last currently-rendered line instead of the
+        // requested one. Compute the target against allLines (the true line count) so the
+        // scroll lands on the right item once recomposition expands the LazyColumn.
+        val target = (clamped - 1).coerceIn(0, allLines.size - 1)
         highlightLine.value = null
         scope.launch { runCatchingCancellable { listState.animateScrollToItem(target) } }
     }

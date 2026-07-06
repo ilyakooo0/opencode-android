@@ -68,18 +68,22 @@ object RecentSessionsStore {
                 // Atomic replace on POSIX filesystems (app's internal storage); the reader
                 // never observes a torn file. renameTo can fail when the target exists on
                 // some OEM filesystems — delete the target first so the rename is a pure
-                // create, and only if that still fails fall back to a copy-and-delete that
-                // preserves atomicity from the reader's perspective (the reader sees either
-                // the old complete file or the new complete file, never a half-written one,
-                // because the copy writes to the temp and then atomically moves it).
+                // create. If that still fails, copy to a SECOND temp file and atomically
+                // rename THAT to target — writing tmp.copyTo(target) directly would expose a
+                // half-written target to a concurrent reader (read takes no mutex), breaking
+                // the documented invariant. The second-rename leaves target either old or new,
+                // never torn.
                 if (!tmp.renameTo(target)) {
                     target.delete()
                     if (!tmp.renameTo(target)) {
-                        // Last-resort: copy bytes then delete temp. The target is briefly
-                        // absent during the copy, but a concurrent reader sees an empty
-                        // list (the runCatching on the read side handles a missing file),
-                        // never a torn file — preserving the documented invariant.
-                        tmp.copyTo(target, overwrite = true)
+                        val tmp2 = File(target.parentFile, "$FILE.tmp2")
+                        tmp2.writeText(encoded)
+                        if (!tmp2.renameTo(target)) {
+                            // Truly last resort: some OEM filesystems reject even a create-rename.
+                            // Only here do we accept a non-atomic overwrite, with a final cleanup.
+                            target.delete()
+                            tmp2.renameTo(target)
+                        }
                         tmp.delete()
                     }
                 }

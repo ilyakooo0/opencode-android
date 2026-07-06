@@ -158,8 +158,11 @@ open class OutboxStore private constructor(
                     val tmp = File(f.parentFile, f.name + ".tmp")
                     tmp.writeText(encoded)
                     if (!tmp.renameTo(f)) {
-                        f.writeText(encoded)
-                        tmp.delete()
+                        try {
+                            f.writeText(encoded)
+                        } finally {
+                            tmp.delete()
+                        }
                     }
                 }
             }.onFailure { Log.w("OutboxStore", "Failed to persist outbox", it) }
