@@ -81,9 +81,13 @@ open class ProfileStore private constructor(
         securePrefs ?: fallbackPrefs
 
     /** Migrate any plaintext passwords from the fallback prefs to secure prefs,
-     *  then clear the fallback. Runs at most once per process — subsequent calls
-     *  are no-ops — so DataStore re-emissions don't repeatedly scan SharedPreferences. */
-    private suspend fun migrateFallbackPasswords() {
+     *  then clear the fallback. Also reaps orphaned password keys from BOTH stores whose
+     *  `pw_<id>` matches no profile in [knownProfileIds] — a prior [delete] that raced a
+     *  process death (DataStore write landed, password removal didn't) would otherwise leave
+     *  the encrypted password stranded in `server_secrets` forever, since nothing else cleans
+     *  it up. Runs at most once per process — subsequent calls are no-ops — so DataStore
+     *  re-emissions don't repeatedly scan SharedPreferences. */
+    private suspend fun migrateFallbackPasswords(knownProfileIds: Set<String>) {
         if (migrationDone) return
         migrationMutex.withLock {
             // Re-check inside the lock: a concurrent caller may have completed the migration
@@ -92,14 +96,9 @@ open class ProfileStore private constructor(
             // secure store before the first caller's write has populated it.
             if (migrationDone) return
             val secure = securePrefs
-            if (secure == null) {
-                // No secure store to migrate into; nothing to do, and no point retrying.
-                migrationDone = true
-                return
-            }
             withContext(Dispatchers.IO) {
                 val fallbackKeys = fallbackPrefs.all.keys.filter { it.startsWith("pw_") }
-                if (fallbackKeys.isNotEmpty()) {
+                if (secure != null && fallbackKeys.isNotEmpty()) {
                     // Write passwords to the secure store FIRST, then remove them from the
                     // plaintext fallback. SharedPreferences.apply() persists to disk
                     // asynchronously, so removing from fallback before the secure batch lands
@@ -116,10 +115,39 @@ open class ProfileStore private constructor(
                         for (key in fallbackKeys) remove(key)
                     }.apply()
                 }
+                // Reap orphaned password keys: a prior delete whose password removal raced a
+                // process death leaves the encrypted entry stranded forever (nothing else
+                // cleans it up, and the id may never be reused). Keyed by pw_<id>, so an orphan
+                // is any key whose id isn't in the current profile set. Reap from both stores
+                // since the fallback is written alongside secure in save().
+                reapOrphanPasswords(secure, fallbackPrefs, knownProfileIds)
             }
             // Only mark done once the writes are in the secure store's in-memory cache (apply()
             // updates it synchronously), so the next collector past the mutex reads real values.
             migrationDone = true
+        }
+    }
+
+    /** Remove `pw_<id>` keys from [secure] and [fallback] whose id matches no profile in
+     *  [knownProfileIds]. A prior [delete] whose password removal raced a process death leaves
+     *  the encrypted password stranded forever; this sweep (called once per process from
+     *  [migrateFallbackPasswords]) reaps them so the secure/fallback stores don't accumulate
+     *  orphaned credentials for deleted profiles. No-op when a store is null or has no orphans. */
+    private fun reapOrphanPasswords(
+        secure: SharedPreferences?,
+        fallback: SharedPreferences,
+        knownProfileIds: Set<String>,
+    ) {
+        val secureOrphans = secure?.all?.keys
+            ?.filter { it.startsWith("pw_") && it.removePrefix("pw_") !in knownProfileIds }
+            ?: emptyList()
+        if (secureOrphans.isNotEmpty()) {
+            secure!!.edit().apply { secureOrphans.forEach { remove(it) } }.apply()
+        }
+        val fallbackOrphans = fallback.all.keys
+            .filter { it.startsWith("pw_") && it.removePrefix("pw_") !in knownProfileIds }
+        if (fallbackOrphans.isNotEmpty()) {
+            fallback.edit().apply { fallbackOrphans.forEach { remove(it) } }.apply()
         }
     }
 
@@ -138,20 +166,26 @@ open class ProfileStore private constructor(
     )
 
     open val profiles: Flow<List<ServerProfile>> = appContext?.dataStore?.data?.map { prefs ->
-        // Migrate any orphaned plaintext passwords to secure prefs on first load.
-        migrateFallbackPasswords()
-        val json = prefs[profilesKey] ?: return@map emptyList()
-        val stored = runCatching {
-            OpencodeJson.decodeFromString(ListSerializer(StoredProfile.serializer()), json)
-        }.onFailure { Log.w("ProfileStore", "Failed to decode stored profiles, ignoring", it) }
-            .getOrDefault(emptyList())
-            .sortedByDescending { it.lastUsed }
+        // Decode the stored profiles first so the migration sweep can reap orphaned password
+        // keys (whose pw_<id> matches no stored profile) in the same once-per-process pass.
+        val json = prefs[profilesKey]
+        val stored = json?.let {
+            runCatching {
+                OpencodeJson.decodeFromString(ListSerializer(StoredProfile.serializer()), it)
+            }.onFailure { Log.w("ProfileStore", "Failed to decode stored profiles, ignoring", it) }
+                .getOrDefault(emptyList())
+        } ?: emptyList()
+        // Migrate any orphaned plaintext passwords to secure prefs, and reap any secure-pref
+        // password keys whose profile was deleted while the process was gone (see
+        // [migrateFallbackPasswords] for the sweep rationale).
+        migrateFallbackPasswords(stored.mapTo(mutableSetOf()) { it.id })
+        val sorted = stored.sortedByDescending { it.lastUsed }
         // Batch all password lookups into a single IO dispatch instead of one
         // withContext round-trip per profile (N dispatches → 1). DataStore already
         // runs this map block on IO, but each passwordFor() call still pays the
         // suspend + redispatch overhead.
         val pwPrefs = prefsForPasswords()
-        stored.map { it.toProfile(pwPrefs) }
+        sorted.map { it.toProfile(pwPrefs) }
     }
         // The .map above runs in the *collector's* context, and every consumer collects on
         // viewModelScope (Main). Without this, kotlinx JSON decode + EncryptedSharedPreferences

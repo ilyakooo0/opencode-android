@@ -429,12 +429,15 @@ class ChatViewModel(
 
     /** One-shot events signaling a user-initiated delete was scheduled and is undoable in-place.
      *  The ChatScreen collects these to show an Undo snackbar over the conversation the user is
-     *  already viewing, instead of navigating away first and surfacing Undo on the session list. */
-    private val _deleteUndoEvents = MutableSharedFlow<Unit>(
+     *  already viewing, instead of navigating away first and surfacing Undo on the session list.
+     *  Carries the session id so a collector using `collectLatest` can withdraw a superseded
+     *  delete (see [cancelSessionDelete]) — a `Unit` event would leave the prior session's
+     *  deferred REST delete firing with no reachable Undo. */
+    private val _deleteUndoEvents = MutableSharedFlow<String>(
         extraBufferCapacity = 1,
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
-    val deleteUndoEvents: SharedFlow<Unit> = _deleteUndoEvents.asSharedFlow()
+    val deleteUndoEvents: SharedFlow<String> = _deleteUndoEvents.asSharedFlow()
 
     private val _models = MutableStateFlow<List<ModelOption>>(emptyList())
     val models: StateFlow<List<ModelOption>> = _models.asStateFlow()
@@ -1846,12 +1849,23 @@ class ChatViewModel(
             onDeleted = { _sessionDeleted.value = true },
             onError = { _errorEvents.trySend(ChatError(container.friendlyError(it))) },
         )
-        _deleteUndoEvents.tryEmit(Unit)
+        _deleteUndoEvents.tryEmit(sessionId)
     }
 
     /** Cancel a delete scheduled by [deleteSession] (the in-chat Undo action). Returns true if the
      *  delete was still pending (Undo succeeded). */
     fun cancelSessionDelete(): Boolean = container.cancelSessionDelete(sessionId)
+
+    /** Cancel a delete scheduled for [id] — the `collectLatest` undo path in ChatScreen calls
+     *  this with the tracked `pending` id when a newer delete supersedes an in-flight one, so
+     *  the prior session's deferred REST delete is withdrawn (no-op if it already fired)
+     *  instead of being left to fire with no reachable Undo button. Mirrors
+     *  [soy.iko.opencode.ui.session.SessionListViewModel.undoDelete]. Returns false when [id]
+     *  isn't this VM's session (defensive — a ChatScreen only ever deletes its own session). */
+    fun cancelSessionDelete(id: String): Boolean {
+        if (id != sessionId) return false
+        return container.cancelSessionDelete(id)
+    }
 
     /** Reconnect to the most recently used server profile (used when the connection is gone). */
     fun reconnect() {

@@ -50,7 +50,9 @@ data class BackupSettings(
     val swipeRightAction: String = SwipeAction.ARCHIVE.name,
 )
 
-/** The full backup document. [version] guards against future format changes. */
+/** The full backup document. [version] guards against future format changes: [import] rejects
+ *  an unknown major version before any writes so a newer-schema backup can't silently
+ *  mis-import or leave a partial restore. */
 @Serializable
 data class BackupData(
     val version: Int = 1,
@@ -72,6 +74,13 @@ class BackupManager(
     private val sessionPrefsStore: SessionPrefsStore,
 ) {
     private val json = Json { prettyPrint = true; ignoreUnknownKeys = true; encodeDefaults = true }
+
+    /** Backup format versions [import] knows how to restore. Bump when the schema changes
+     *  incompatibly, and add the new value here once the import path handles it. An unknown
+     *  version is rejected before any writes so a newer-schema backup can't silently
+     *  mis-import or leave a partial restore (servers upserted, then a missing required field
+     *  throws mid-settings). */
+    private val supportedVersions = setOf(1)
 
     /** Build the backup JSON. Reads the current profiles/settings/flags. */
     suspend fun export(includePasswords: Boolean): String {
@@ -119,9 +128,15 @@ class BackupManager(
     }
 
     /** Apply a backup document. Throws on malformed JSON so the caller can report it. Servers
-     *  are upserted (existing ids overwritten); settings and flags are restored best-effort. */
+     *  are upserted (existing ids overwritten); settings and flags are restored best-effort.
+     *  An unknown [BackupData.version] is rejected BEFORE any writes so a newer-schema backup
+     *  can't silently mis-import or leave a partial restore (servers upserted, then a missing
+     *  required field throws mid-settings). */
     suspend fun import(text: String) {
         val data = json.decodeFromString<BackupData>(text)
+        require(data.version in supportedVersions) {
+            "Unsupported backup version ${data.version}; supported: $supportedVersions"
+        }
         for (s in data.servers) {
             val username = s.username?.takeIf { it.isNotBlank() }
             val incomingPassword = s.password?.takeIf { it.isNotEmpty() }

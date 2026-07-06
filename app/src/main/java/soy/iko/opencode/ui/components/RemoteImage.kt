@@ -531,17 +531,29 @@ private suspend fun saveImageToGallery(
     }
     val uri = resolver.insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
         ?: return false
-    return runCatching {
+    // Write the bitmap, then finalize the pending row on success or DELETE it on failure. A null
+    // stream or a compress throw previously left the row stranded with IS_PENDING=1 — invisible to
+    // other apps and never cleaned up by this code, accumulating one orphaned entry per failed save.
+    var wrote = false
+    runCatching {
         resolver.openOutputStream(uri)?.use { out ->
             bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
-        } ?: error("no output stream")
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+        } ?: return@runCatching
+        wrote = true
+    }
+    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+        if (wrote) {
             values.clear()
             values.put(android.provider.MediaStore.Images.Media.IS_PENDING, 0)
-            resolver.update(uri, values, null, null)
+            runCatching { resolver.update(uri, values, null, null) }
+        } else {
+            // Delete the orphaned pending row so a failed save doesn't leak an invisible
+            // MediaStore entry. Best-effort — a delete failure leaves a stray row, but the OS
+            // may eventually garbage-collect it.
+            runCatching { resolver.delete(uri, null, null) }
         }
-        true
-    }.getOrDefault(false)
+    }
+    return wrote
 }
 
 /** Decode the image behind [request] to a Bitmap via Coil's ImageLoader. Returns null on

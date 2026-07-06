@@ -155,6 +155,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -384,10 +385,24 @@ fun ChatScreen(
     // window on the container; show the snackbar over the conversation the user is viewing so
     // they can cancel without being navigated to the session list first. If the window expires
     // the scheduled delete sets `sessionDeleted` and the effect below navigates away.
+    //
+    // collectLatest (not collect): a serialized collect queues each snackbar behind the
+    // previous one's full window, so under a rapid re-delete (delete A, then delete the same
+    // session again, or a delete timed just after the first) the VM delete timer (started at
+    // emit time) fires before the second snackbar is ever shown — a dead Undo button.
+    // collectLatest cancels the current snackbar and shows the newest immediately, keeping its
+    // Undo window aligned with its timer. Tracking `pending` mirrors SessionListScreen: when a
+    // newer delete supersedes the prior snackbar mid-window, the prior session's deferred REST
+    // delete (still scheduled on the container's scope) would fire with no reachable Undo.
+    // Withdrawing it via cancelSessionDelete cancels the timer (no-op if it already fired), so
+    // no session is silently deleted without a chance to undo.
     val undoLabel = stringResource(R.string.undo)
     val sessionDeletedLabel = stringResource(R.string.session_deleted_chat)
     LaunchedEffect(Unit) {
-        vm.deleteUndoEvents.collect {
+        var pending: String? = null
+        vm.deleteUndoEvents.collectLatest { id ->
+            pending?.let { vm.cancelSessionDelete(it) }
+            pending = id
             coroutineScope {
                 val dismisser = launch {
                     delay(NetworkConfig.undoDeleteDelayMs)
@@ -399,7 +414,10 @@ fun ChatScreen(
                     duration = SnackbarDuration.Indefinite,
                 )
                 dismisser.cancel()
-                if (result == SnackbarResult.ActionPerformed) vm.cancelSessionDelete()
+                if (result == SnackbarResult.ActionPerformed) {
+                    vm.cancelSessionDelete(id)
+                    pending = null
+                }
             }
         }
     }
@@ -494,12 +512,17 @@ fun ChatScreen(
     // Navigate to a session freshly branched from a message (branchFrom), once it's created.
     // Keyed on Unit (like the sibling one-shot collectors above): keying on the onOpenSession
     // lambda would cancel/restart this collector whenever the lambda's identity changes, risking
-    // a dropped branch-navigation event in the gap.
+    // a dropped branch-navigation event in the gap. The lambda is wrapped in rememberUpdatedState
+    // so the Unit-keyed collector invokes the LATEST lambda instead of the one captured at first
+    // composition — a latent footgun if a future change makes onOpenSession depend on current
+    // Compose state (e.g. pane-aware routing). The collector itself is never cancelled, so no
+    // event is dropped.
     val branchedMsg = stringResource(R.string.branch_created)
+    val currentOnOpenSession by rememberUpdatedState(onOpenSession)
     LaunchedEffect(Unit) {
         vm.branchEvents.collect { newId ->
             showToast(shareContext, branchedMsg)
-            onOpenSession?.invoke(newId)
+            currentOnOpenSession?.invoke(newId)
         }
     }
 
