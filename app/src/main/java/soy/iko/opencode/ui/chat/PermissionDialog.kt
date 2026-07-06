@@ -27,6 +27,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -78,7 +79,16 @@ fun PermissionDialog(
     var responded by remember(permission.id) { mutableStateOf(false) }
     // Elapsed ms since the dialog opened for this permission, used to surface a "still
     // waiting" reminder after the threshold. Caps at the auto-reject deadline.
-    var elapsedMs by remember(permission.id) { mutableStateOf(0L) }
+    //
+    // rememberSaveable (not plain remember): the countdown progress must survive an
+    // Activity recreation (a config change NOT in the manifest's configChanges, e.g. a
+    // system locale change) so the auto-reject deadline doesn't reset to 0 — otherwise a
+    // permission the user walked away from would never auto-reject after a locale change,
+    // leaving the run hanging open indefinitely and skipping the "auto-rejected"
+    // notification. Long is Bundle-savable. Keyed on permission.id so a fresh prompt
+    // resets the timer. (Unlike `responded`, restoring elapsed progress is safe: it only
+    // advances the countdown, it doesn't lock out the buttons.)
+    var elapsedMs by rememberSaveable(permission.id) { mutableStateOf(0L) }
     val respond: (PermissionResponse) -> Unit = { response ->
         if (!responded) {
             responded = true

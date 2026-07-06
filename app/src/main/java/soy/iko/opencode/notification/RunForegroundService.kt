@@ -118,6 +118,12 @@ class RunForegroundService : Service() {
      *  service isn't alive yet, so the first progress update still lands. */
     @SuppressLint("MissingPermission")
     private fun updateProgress(progress: String?) {
+        // Guard against the companion start() → instance race: start() reads @Volatile instance
+        // on a background dispatcher and calls updateProgress, but onDestroy (on the main thread)
+        // can null instance and call stopForeground between the read and this notify(). isInForeground
+        // is cleared in onDestroy, so checking it here covers the stopForeground-already-called case
+        // and avoids touching NotificationManager during teardown.
+        if (!isInForeground) return
         lastProgress = progress
         val notification = buildNotification(lastTitle, lastSessionId, lastProfileId, progress)
         runCatching {

@@ -150,12 +150,13 @@ open class DraftStore private constructor(
                     if (text.isBlank()) remove(key) else putString(key, text)
                 }.apply()
             }.onFailure { Log.w("DraftStore", "Failed to persist $key", it) }
+            Unit
         }
         // FIX: always submit to the single-thread flushExecutor (never apply directly) so
         // writes persist in submission order. Previously the post-init fast path applied
         // synchronously on the caller's thread, which could land BEFORE an earlier still-queued
         // write, persisting stale text. The task resolves the prefs lazy and calls apply().
-        runCatching { flushExecutor.execute { write() } }
+        submitFlush(write, key)
     }
 
     /** Update the in-memory draft immediately without persisting to disk.
@@ -202,13 +203,14 @@ open class DraftStore private constructor(
         // Submit the (combined draft + follow-up) removal to the same single-thread
         // flushExecutor the other writers use, so it can't race ahead of an earlier queued
         // write and resurrect stale text. Mirrors flushDraft's submission pattern.
-        runCatching {
-            flushExecutor.execute {
+        submitFlush(
+            {
                 runCatching {
                     prefs.edit().remove(sessionId).remove(FOLLOWUP_PREFIX + sessionId).apply()
                 }.onFailure { Log.w("DraftStore", "Failed to remove draft for $sessionId", it) }
-            }
-        }
+            },
+            "remove($sessionId)",
+        )
     }
 
     /**
@@ -238,15 +240,31 @@ open class DraftStore private constructor(
         // still-queued write completed, clobbering the draft with stale text. The executor task
         // resolves the prefs lazy and uses apply() (async) exactly as before; the write may be
         // lost only if the process exits before the queued task runs (as previously).
-        runCatching {
-            flushExecutor.execute {
+        submitFlush(
+            {
                 runCatching {
                     prefs.edit().apply {
                         if (text.isBlank()) remove(sessionId) else putString(sessionId, text)
                     }.apply()
                 }.onFailure { Log.w("DraftStore", "Failed to flush draft for $sessionId", it) }
-            }
+            },
+            "flushDraft($sessionId)",
+        )
+    }
+
+    /** Submit a flush task to the single-thread executor, surfacing a post-shutdown submit as a
+     *  logged warning instead of silently swallowing the RejectedExecutionException. Previously
+     *  the bare `runCatching { flushExecutor.execute { ... } }` swallowed RejectedExecutionException
+     *  after [shutdown], so the in-memory _drafts was already updated but the disk write never
+     *  landed with no signal — a draft silently lost. Logging makes the failure observable so
+     *  ordering bugs (shutdown before all VM onCleared flushes) are diagnosable. */
+    private fun submitFlush(task: () -> Unit, label: String) {
+        if (flushExecutor.isShutdown) {
+            Log.w("DraftStore", "Dropping flush '$label': executor is shut down")
+            return
         }
+        runCatching { flushExecutor.execute { task() } }
+            .onFailure { Log.w("DraftStore", "Failed to submit flush '$label'", it) }
     }
 
     private companion object {

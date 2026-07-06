@@ -1907,7 +1907,16 @@ private fun ServerSwitcherMenu(
     // Switching servers kills the SSE stream and any in-flight run (same hazard as disconnecting),
     // so confirm first when a run is active. Kept inside the switcher so the call site stays a
     // plain onSelect and SessionListScreen's complexity doesn't grow.
-    var pendingSwitch by rememberSaveable { mutableStateOf<ServerProfile?>(null) }
+    //
+    // Persist only the profile id (a String) instead of the whole ServerProfile: ServerProfile is
+    // @Immutable but neither Parcelable nor java.io.Serializable (only kotlinx.serialization's
+    // @Serializable, which Compose's Bundle autoSaver can't use). rememberSaveable on a non-savable
+    // type throws IllegalStateException on a config change NOT in the manifest's configChanges
+    // (e.g. a system locale change) — a hard crash mid-confirm. The id survives in the Bundle and
+    // is re-resolved against the current profiles list; if the profile vanished mid-switch the
+    // confirm dialog simply doesn't re-show, which is the safe fallback.
+    var pendingSwitchId by rememberSaveable { mutableStateOf<String?>(null) }
+    val pendingSwitch = pendingSwitchId?.let { id -> profiles.firstOrNull { it.id == id } }
     Column {
         Box {
             Row(
@@ -1966,7 +1975,7 @@ private fun ServerSwitcherMenu(
                         onClick = {
                             when {
                                 isActiveProfile -> onDismiss()
-                                anyRunActive -> pendingSwitch = profile
+                                anyRunActive -> pendingSwitchId = profile.id
                                 // Don't dismiss here: keep the switcher open so its per-row spinner
                                 // (driven by switchingId) stays visible during the switch. The
                                 // LaunchedEffect in SessionListScreen dismisses it once it resolves.
@@ -1991,8 +2000,8 @@ private fun ServerSwitcherMenu(
     }
     SwitchServerConfirmDialog(
         target = pendingSwitch,
-        onSwitch = { profile -> pendingSwitch = null; onSelect(profile) },
-        onDismiss = { pendingSwitch = null },
+        onSwitch = { profile -> pendingSwitchId = null; onSelect(profile) },
+        onDismiss = { pendingSwitchId = null },
     )
 }
 

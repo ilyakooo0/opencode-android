@@ -847,9 +847,18 @@ internal fun showCopyToast(context: Context, message: String) {
     showToast(context, message)
 }
 
+// Self-suppressing toast: canceling the previous toast before showing the next so two rapid
+// copy/share actions don't stack two toasts. Synchronized on a dedicated lock (lastToast is
+// nullable, so it can't be the monitor itself) to close the TOCTOU window between cancel and
+// assign — showToast is called from main-thread coroutine resumes and the unconfined save/share
+// flows, so without the lock a second caller could read lastToast between the cancel and the
+// assignment, leaving a toast uncancelled.
+private val toastLock = Any()
 private var lastToast: Toast? = null
 
 internal fun showToast(context: Context, message: String) {
-    lastToast?.cancel()
-    lastToast = Toast.makeText(context.applicationContext, message, Toast.LENGTH_SHORT).also { it.show() }
+    synchronized(toastLock) {
+        lastToast?.cancel()
+        lastToast = Toast.makeText(context.applicationContext, message, Toast.LENGTH_SHORT).also { it.show() }
+    }
 }

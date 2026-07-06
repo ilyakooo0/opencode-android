@@ -9,6 +9,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import soy.iko.opencode.util.runCatchingCancellable
 import java.io.File
 
 /** A minimal session summary persisted for the home-screen widget and launcher shortcuts.
@@ -55,7 +56,11 @@ object RecentSessionsStore {
     /** Persist [sessions] (capped to [MAX]); a no-op empty list writes an empty file. */
     suspend fun write(context: Context, sessions: List<RecentSession>) = withContext(Dispatchers.IO) {
         writeMutex.withLock {
-            runCatching {
+            // runCatchingCancellable (not plain runCatching): this runs inside a coroutine, and
+            // plain runCatching swallows CancellationException — if the caller is cancelled
+            // mid-write, cancellation wouldn't propagate and the write could complete (or
+            // partially complete) on a dying scope. Matches the AGENTS.md convention.
+            runCatchingCancellable {
                 val target = file(context)
                 val encoded = json.encodeToString(sessions.take(MAX))
                 val tmp = File(target.parentFile, "$FILE.tmp")

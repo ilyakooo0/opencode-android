@@ -253,10 +253,19 @@ fun FileViewScreen(
         matchIndices.getOrNull(matchPos)?.let { idx -> runCatchingCancellable { listState.animateScrollToItem(idx) } }
     }
     // "Go to line" dialog state. Clears the jump highlight and scrolls the LazyColumn to the
-    // requested line (clamped to the rendered range) when the user confirms.
+    // requested line (clamped to the file's true line count) when the user confirms.
     var showGoToLine by rememberSaveable(path) { mutableStateOf(false) }
     fun goToLine(n: Int) {
-        val target = (n - 1).coerceIn(0, (lines.size - 1).coerceAtLeast(0))
+        // Clamp to the true file line count (allLines), not the rendered subset (lines), so a
+        // number beyond the current render cap is still accepted. If the target is beyond the
+        // rendered range, expand renderLimit first so the LazyColumn actually has that item to
+        // scroll to — otherwise animateScrollToItem would clamp to the last rendered line and
+        // the user would land nowhere near their requested line.
+        val clamped = n.coerceIn(1, allLines.size)
+        if (clamped - 1 >= lines.size) {
+            renderLimit = (clamped + MAX_RENDERED_LINES - 1).coerceAtMost(allLines.size)
+        }
+        val target = (clamped - 1).coerceIn(0, lines.size - 1)
         highlightLine.value = null
         scope.launch { runCatchingCancellable { listState.animateScrollToItem(target) } }
     }
@@ -462,7 +471,7 @@ fun FileViewScreen(
 
     GoToLineLauncher(
         visible = showGoToLine,
-        maxLine = lines.size,
+        maxLine = allLines.size,
         onConfirm = { n -> showGoToLine = false; goToLine(n) },
         onDismiss = { showGoToLine = false },
     )
@@ -488,7 +497,9 @@ private fun GoToLineDialog(maxLine: Int, onConfirm: (Int) -> Unit, onDismiss: ()
     // The dialog is conditionally composed (gated by `visible` in GoToLineLauncher); with
     // rememberSaveable the typed text would be restored from the saved-state registry on
     // re-open, pre-filling whatever the user typed — and dismissed without — last time.
-    var text by remember { mutableStateOf("") }
+    // Keyed on maxLine so a reload that shrinks the file (e.g. the user edited it externally)
+    // resets the field instead of keeping a now-out-of-range number that would show as invalid.
+    var text by remember(maxLine) { mutableStateOf("") }
     val parsed = text.trim().toIntOrNull()
     val valid = parsed != null && parsed in 1..maxLine
     AlertDialog(

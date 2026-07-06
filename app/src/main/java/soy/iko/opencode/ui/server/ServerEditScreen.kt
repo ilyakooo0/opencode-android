@@ -74,7 +74,11 @@ fun ServerEditScreen(
         viewModel(factory = vmFactory { ServerEditViewModel(container) })
     val state by vm.state.collectAsStateWithLifecycle()
     var showDiscardConfirm by rememberSaveable { mutableStateOf(false) }
-    var passwordVisible by rememberSaveable { mutableStateOf(false) }
+    // Keyed on state.id so the password-reveal flag resets when a different profile is loaded
+    // into the same back-stack entry. Without the key, revealing server A's password and then
+    // editing server B (which reuses this entry via nav back-and-forth) would show B's password
+    // in cleartext without the user tapping the eye icon — a minor credential info-leak.
+    var passwordVisible by rememberSaveable(state.id) { mutableStateOf(false) }
 
     fun safeExit() {
         when {

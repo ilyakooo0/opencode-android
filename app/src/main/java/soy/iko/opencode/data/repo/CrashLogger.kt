@@ -68,6 +68,11 @@ class CrashLogger private constructor(private val appContext: Context) {
 
     fun refresh() {
         val generation = refreshGeneration.incrementAndGet()
+        // Trim over-capacity reports here (off the crashing thread, on the IO dispatcher) so
+        // the UncaughtExceptionHandler path does only the single writeText it must to land the
+        // report before the OS kills the process. Trimming on refresh keeps the cap enforced
+        // across normal app launches (install calls refresh, and every delete/clear calls it).
+        trimOldReports()
         val scanned = crashDir.listFiles { f -> f.isFile && f.name.endsWith(".txt") }
             ?.sortedByDescending { it.lastModified() }
             ?.map { f ->
@@ -231,8 +236,14 @@ class CrashLogger private constructor(private val appContext: Context) {
         // top-level message above is futile — Ktor/OkHttp embed the full request URL
         // in those messages, which may contain auth or internal paths. Scrubbing the
         // assembled text guarantees no URL survives anywhere in the stored report.
+        //
+        // NOTE: trimOldReports() is intentionally NOT called here. writeReport runs on the
+        // crashing thread inside the UncaughtExceptionHandler, where the OS gives ~5s before
+        // SIGKILL; trimOldReports does listFiles + sortedByDescending + N deletes that could
+        // exceed that window on a slow device with many old reports, losing THIS report. The
+        // trim is driven by refresh() instead (IO dispatcher, off the crashing thread), so the
+        // crash path does only the single writeText it must to preserve the report.
         file.writeText(scrubUrls(sw.toString()))
-        trimOldReports()
     }
 
     /** Keep only the [MAX_REPORTS] most recent crash reports, deleting older ones. Runs inside

@@ -236,7 +236,12 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                     if (reports.isNotEmpty()) {
                         IconButton(onClick = {
                             runCatching {
-                                exportAllLauncher.launch("opencode-crash-reports.txt")
+                                // Timestamped export name so successive exports don't overwrite
+                                // one another when the user exports more than once (e.g. after new
+                                // crashes accumulate). Mirrors SettingsScreen.backupFilename().
+                                val now = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US)
+                                    .format(java.util.Date())
+                                exportAllLauncher.launch("opencode-crash-reports-$now.txt")
                             }
                         }) {
                             Icon(Icons.Filled.IosShare, contentDescription = stringResource(R.string.export_all))

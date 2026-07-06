@@ -173,17 +173,23 @@ fun RemoteImage(part: FilePart, ctx: ImageLoadContext, modifier: Modifier = Modi
     // leak off-origin), a malformed data URI, or a source with no path — we show the broken-image
     // fallback instead of an empty gap (PartView already committed to RemoteImage, so there's no
     // FileChip to fall through to).
-    val model = produceState<Any?>(initialValue = ImageResolving, part.source, part.url, ctx.baseUrl) {
+    //
+    // Bumping retryKey re-runs resolveModel (and re-builds the ImageRequest below) so a failed
+    // load can be re-issued by tapping the error state. Without retryKey in these keys, a null
+    // model (e.g. a cross-origin URL blocked at resolve time) would stay null forever and the
+    // retry button would be a no-op that re-renders the broken-image icon — see the ImageRetry
+    // callback at the SubcomposeAsyncImage error slot.
+    var retryKey by remember(part.source, part.url, ctx.baseUrl) { mutableIntStateOf(0) }
+    val model = produceState<Any?>(initialValue = ImageResolving, part.source, part.url, ctx.baseUrl, retryKey) {
         value = withContext(Dispatchers.Default) { part.resolveModel(ctx) }
     }.value
     if (model === ImageResolving) return
     if (model == null) {
-        ImageStatusBox { BrokenImageIcon() }
+        ImageStatusBox {
+            BrokenImageIcon(onRetry = { retryKey++ })
+        }
         return
     }
-    // Bumping retryKey re-builds the ImageRequest, so a failed load can be re-issued by tapping
-    // the error state instead of being a permanent broken-image icon.
-    var retryKey by remember(part.source, part.url, ctx.baseUrl) { mutableIntStateOf(0) }
     // Fullscreen zoomable viewer state: opened by tapping the inline image.
     var showFullscreen by remember { mutableStateOf(false) }
     val request = remember(part.source, part.url, ctx.baseUrl, ctx.basicAuthHeader, model, retryKey) {
@@ -501,12 +507,19 @@ private fun ImageStatusBox(content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun BrokenImageIcon() {
-    Icon(
-        Icons.Filled.BrokenImage,
-        contentDescription = stringResource(R.string.image_failed),
-        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
+private fun BrokenImageIcon(onRetry: (() -> Unit)? = null) {
+    if (onRetry == null) {
+        Icon(
+            Icons.Filled.BrokenImage,
+            contentDescription = stringResource(R.string.image_failed),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    } else {
+        // Reuse the retry affordance so a null-model (e.g. a cross-origin URL blocked at resolve
+        // time) is retryable just like a failed network fetch — tapping re-runs resolveModel
+        // (retryKey is a produceState key) which may succeed if the block was transient.
+        ImageRetry(onRetry = onRetry)
+    }
 }
 
 /** Decode the image behind [request] via Coil and write it to the system MediaStore
