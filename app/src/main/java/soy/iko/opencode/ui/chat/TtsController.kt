@@ -83,7 +83,12 @@ class TtsController(context: Context) : RememberObserver {
             override fun onStart(utteranceId: String?) {
                 // Advance the current-chunk pointer so pause() can capture the right resume
                 // index. The tracked id is the final chunk; intermediate ids are "$id#$index".
-                val idx = utteranceId?.substringAfter('#')?.toIntOrNull()
+                // Use substringAfterLast (not substringAfter) so a message id that itself
+                // contains '#' is handled: the chunk index is always the part after the LAST
+                // '#', and substringAfter would wrongly slice at the first one (returning a
+                // non-integer and never advancing the pointer — pause/resume would replay
+                // already-heard audio).
+                val idx = utteranceId?.substringAfterLast('#')?.toIntOrNull()
                 if (idx != null) currentChunk = idx
             }
             override fun onDone(utteranceId: String?) {

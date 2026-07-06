@@ -738,14 +738,20 @@ open class AppContainer private constructor(
                     }
                     // A run failed. Clear its active-run tracking (an error isn't always
                     // followed by a SessionIdle) and notify unless it's being viewed.
+                    // The notification is NOT gated on wasRunning: activeRuns is populated
+                    // only by SSE streaming events (MessagePartUpdated/MessageUpdated), so a
+                    // run that errors before any streaming started (e.g. the model is
+                    // unavailable, the server fails to create the assistant message) never
+                    // entered the set and wasRunning would be false — silently dropping the
+                    // error notification for a backgrounded user. SessionError itself is the
+                    // server's signal that a run failed, so notify on any error for a session
+                    // the user isn't actively viewing.
                     if (event is SessionError) {
                         val esid = event.properties.sessionID ?: return@collect
-                        val wasRunning = synchronized(activeRuns) {
-                            activeRuns.remove(esid).also { removed ->
-                                if (removed) publishRunState()
-                            }
+                        synchronized(activeRuns) {
+                            if (activeRuns.remove(esid)) publishRunState()
                         }
-                        if (wasRunning && !isActivelyViewing(esid)) {
+                        if (!isActivelyViewing(esid)) {
                             appScope.launch { notifySessionError(esid, conn.repository, conn.profile.id) }
                         }
                         return@collect

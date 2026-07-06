@@ -234,9 +234,16 @@ class ChatViewModel(
                 // Exponential backoff capped at retryMaxDelayMs so a persistently failing
                 // server is retried with growing delays (retryInitialDelayMs, then doubling)
                 // instead of hammered at a fixed interval forever. Clamp the shift so a long
-                // failure streak can't overflow the Long delay.
-                val backoffMs = (NetworkConfig.retryInitialDelayMs shl attempt.coerceAtMost(16L).toInt())
+                // failure streak can't overflow the Long delay. Apply symmetric jitter
+                // (matching withRetry's jitteredBackoff) so concurrent retrying flows (e.g.
+                // messages + catalogs after a server blip) don't retry in lockstep and
+                // thundering-herd the recovering server.
+                val shift = attempt.coerceAtMost(16L).toInt()
+                val baseDelay = (NetworkConfig.retryInitialDelayMs shl shift)
                     .coerceAtMost(NetworkConfig.retryMaxDelayMs)
+                val jitter = ((baseDelay * NetworkConfig.retryJitterFactor) *
+                    (kotlin.random.Random.nextDouble() * 2 - 1)).toLong()
+                val backoffMs = (baseDelay + jitter).coerceAtLeast(0)
                 delay(backoffMs)
                 true
             }
@@ -275,7 +282,11 @@ class ChatViewModel(
     /** Merge SSE-driven messages with optimistic entries. An optimistic entry whose trimmed
      *  text matches a real [UserMessage] in [sse] is dropped (the server echoed it back).
      *  Remaining entries are appended as synthetic [UserMessage]s at the end. Failed entries
-     *  are kept so the user sees the failed indicator until they retry or dismiss. */
+     *  are kept so the user sees the failed indicator until they retry or dismiss.
+     *
+     *  Only the OLDEST matching entry per real text is dropped, so duplicate prompts (the same
+     *  text sent twice) each match their own server-echoed UserMessage instead of both
+     *  vanishing on the first echo. */
     private fun mergeOptimistic(
         sse: List<MessageWithParts>,
         optimistic: List<OptimisticEntry>,
@@ -290,13 +301,16 @@ class ChatViewModel(
                 .trim()
             if (text.isNotEmpty()) realUserTexts.add(text)
         }
-        val surviving = optimistic.filter { it.text.trim() !in realUserTexts }
+        val surviving = dropOldestMatches(optimistic, realUserTexts)
         if (surviving.isEmpty()) return sse
         return sse + surviving.map { it.toMessageWithParts() }
     }
 
     /** Remove optimistic entries whose text now matches a real user message delivered by SSE.
-     *  Called from the SSE flow's onEach so stale optimistic entries are cleaned up promptly. */
+     *  Called from the SSE flow's onEach so stale optimistic entries are cleaned up promptly.
+     *  Only the OLDEST matching entry per real text is removed, so duplicate prompts (the same
+     *  text sent twice) each match their own server-echoed UserMessage instead of both
+     *  vanishing on the first echo. */
     private fun reconcileOptimistic(sse: List<MessageWithParts>) {
         if (_optimisticMessages.value.isEmpty()) return
         val realUserTexts = mutableSetOf<String>()
@@ -308,9 +322,28 @@ class ChatViewModel(
             if (text.isNotEmpty()) realUserTexts.add(text)
         }
         if (realUserTexts.isEmpty()) return
-        _optimisticMessages.update { entries ->
-            entries.filterNot { it.text.trim() in realUserTexts }
+        _optimisticMessages.update { entries -> dropOldestMatches(entries, realUserTexts) }
+    }
+
+    /** Drop the first (oldest) entry whose trimmed text matches each real user text, once per
+     *  text. A second optimistic entry with the same text survives until a second matching
+     *  UserMessage arrives, so duplicate prompts aren't both cleared by the first echo. */
+    private fun dropOldestMatches(
+        entries: List<OptimisticEntry>,
+        realUserTexts: Set<String>,
+    ): List<OptimisticEntry> {
+        if (entries.isEmpty() || realUserTexts.isEmpty()) return entries
+        val remaining = realUserTexts.toMutableSet()
+        val result = ArrayList<OptimisticEntry>(entries.size)
+        for (entry in entries) {
+            val text = entry.text.trim()
+            if (text in remaining) {
+                remaining.remove(text)
+            } else {
+                result.add(entry)
+            }
         }
+        return result
     }
 
     /** Convert an optimistic entry to a [MessageWithParts] for display. */
