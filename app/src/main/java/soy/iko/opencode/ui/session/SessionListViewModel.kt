@@ -33,6 +33,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
@@ -312,20 +313,21 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
         // skips persistence — the in-memory defaults still drive the list.
         viewModelScope.launch {
             val store = runCatching { container.settingsStore }.getOrNull() ?: return@launch
-            store.sessionSortMode.collect { name ->
-                val mode = runCatching { SessionSortMode.valueOf(name) }.getOrDefault(SessionSortMode.RECENT)
-                if (_state.value.sortMode != mode) setSortMode(mode, persist = false)
-            }
-        }
-        viewModelScope.launch {
-            val store = runCatching { container.settingsStore }.getOrNull() ?: return@launch
-            store.sessionSortDescending.collect { desc ->
-                if (_state.value.sortDescending != desc) {
-                    _state.update {
-                        it.copy(sortDescending = desc, sessions = it.sessions.sortedByMode(it.sortMode, desc))
+            // Apply persisted sort mode + direction TOGETHER so a nondeterministic DataStore
+            // emission order can't let setSortMode()'s natural-direction reset (called from a
+            // separate mode collector) overwrite a persisted non-natural direction. With two
+            // collectors, if direction fired first it no-ops (matches the default), then the mode
+            // collector resets direction to the mode's natural — losing a reversed TITLE sort
+            // until the user manually re-toggles. combine emits both values atomically.
+            store.sessionSortMode.combine(store.sessionSortDescending) { name, desc -> name to desc }
+                .collect { (name, desc) ->
+                    val mode = runCatching { SessionSortMode.valueOf(name) }.getOrDefault(SessionSortMode.RECENT)
+                    if (_state.value.sortMode != mode || _state.value.sortDescending != desc) {
+                        _state.update {
+                            it.copy(sortMode = mode, sortDescending = desc, sessions = it.sessions.sortedByMode(mode, desc))
+                        }
                     }
                 }
-            }
         }
         viewModelScope.launch {
             val store = runCatching { container.settingsStore }.getOrNull() ?: return@launch

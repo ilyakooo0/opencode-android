@@ -165,6 +165,7 @@ class FileBrowserViewModel(private val container: AppContainer) : ViewModel() {
         ) }
         openJob?.cancel()
         searchJob?.cancel()
+        searchJob = null
         openJob = viewModelScope.launch {
             runCatchingCancellable { client.listDirectory(path) }
                 .onSuccess { entries ->
@@ -207,6 +208,7 @@ class FileBrowserViewModel(private val container: AppContainer) : ViewModel() {
         _state.update { it.copy(query = query, error = null) }
         searchJob?.cancel()
         openJob?.cancel()
+        openJob = null
         when (_state.value.mode) {
             SearchMode.FILES -> searchFiles(query)
             SearchMode.TEXT -> searchContent(query) { it.findText(query) }

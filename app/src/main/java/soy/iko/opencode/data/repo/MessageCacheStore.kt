@@ -109,13 +109,15 @@ open class MessageCacheStore private constructor(
         }
     }
 
-    /** Remove a session's cached messages (call on deletion). Clears the entry in every profile
-     *  namespace: session ids are unique per server and deletion is terminal, so the caller
-     *  needn't know which profile owned it. The per-session lock is intentionally NOT evicted —
-     *  a concurrent teardown save() for this id must serialize against the same [Mutex] instance,
-     *  and the map is bounded by the number of distinct sessions touched.
+    /** Remove a session's cached messages (call on deletion). Deletes only the calling
+     *  profile's cache file — iterating every profile namespace would nuke a *different*
+     *  server's cache for a colliding (but distinct) session id, the very case per-profile
+     *  namespacing exists to defend against. The per-session lock is intentionally NOT
+     *  evicted — a concurrent teardown save() for this id must serialize against the same
+     *  [Mutex] instance, and the map is bounded by the number of distinct sessions touched.
      *  [profileId] namespaces the tombstone so a delete on one server doesn't suppress another
-     *  server's saves for a colliding session id. */
+     *  server's saves for a colliding session id. The back-compat flat file (pre-namespacing)
+     *  is also cleared since it carries no profile namespace. */
     open suspend fun remove(profileId: String, sessionId: String) {
         lockFor(sessionId).withLock {
             // Set the tombstone before deleting so a concurrent/loser save sees it and skips,
@@ -124,9 +126,7 @@ open class MessageCacheStore private constructor(
             withContext(Dispatchers.IO) {
                 runCatchingCancellable {
                     val name = idRegex.replace(sessionId, "_") + ".json"
-                    dir?.listFiles()?.forEach { entry ->
-                        if (entry.isDirectory) File(entry, name).delete()
-                    }
+                    profileDir(profileId)?.let { File(it, name).delete() }
                     // Back-compat: pre-namespacing caches were written flat under [dir].
                     dir?.let { File(it, name).delete() }
                 }

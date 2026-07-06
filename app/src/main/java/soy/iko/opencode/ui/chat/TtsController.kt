@@ -86,19 +86,35 @@ class TtsController(context: Context) : RememberObserver {
                 val idx = utteranceId?.substringAfter('#')?.toIntOrNull()
                 if (idx != null) currentChunk = idx
             }
-            override fun onDone(utteranceId: String?) = clearIfCurrent(utteranceId)
+            override fun onDone(utteranceId: String?) {
+                // Only the final chunk's onDone (bare id) clears the speaking state.
+                // Intermediate chunks' onDone ("$id#$index") means that chunk finished
+                // playing and the next will start — clearing here would wipe the Stop
+                // button while queued chunks keep playing audio with no way to stop them.
+                mainHandler.post {
+                    val speaking = _speakingId.value
+                    if (speaking != null && utteranceId == speaking) {
+                        _speakingId.value = null
+                        _state.value = TtsState.IDLE
+                        chunks = emptyList()
+                        currentChunk = 0
+                        pausedFromChunk = 0
+                    }
+                }
+            }
             @Deprecated("Deprecated in Java", ReplaceWith(""))
             override fun onError(utteranceId: String?) = clearIfCurrent(utteranceId)
             override fun onError(utteranceId: String?, errorCode: Int) = clearIfCurrent(utteranceId)
         })
     }
 
-    /** Clear the speaking state when the utterance that finished is the one we're tracking.
+    /** Clear the speaking state when the utterance that errored is the one we're tracking.
      *  Accepts both the final chunk's id (the bare [id]) and an intermediate chunk's id
-     *  (`"$id#$index"`) — a [onError]/[onDone] on an intermediate chunk means the engine
-     *  stopped or errored mid-playback, so the speaking state must clear or the Stop button
-     *  stays stuck (the prior behavior only matched the bare id, leaving a runtime error on
-     *  an intermediate chunk with no way to clear the UI). */
+     *  (`"$id#$index"`) — an [onError] on any chunk means the engine stopped or errored
+     *  mid-playback, so the speaking state must clear or the Stop button stays stuck (the
+     *  prior behavior only matched the bare id, leaving a runtime error on an intermediate
+     *  chunk with no way to clear the UI). [onDone] handles only the final chunk — see its
+     *  own comment. */
     private fun clearIfCurrent(utteranceId: String?) {
         mainHandler.post {
             val speaking = _speakingId.value

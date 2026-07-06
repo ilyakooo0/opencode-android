@@ -467,8 +467,17 @@ private fun ToolCallView(part: ToolPart, modifier: Modifier) {
             val lineCount = remember(detail) { detail.lines().size }
             val exceedsLimit = detail.length > COLLAPSED_LIMIT ||
                 lineCount > NetworkConfig.toolOutputCollapsedLimitLines
-            val collapsed = remember(detail, isDiff) {
-                collapseDiffPreview(detail, isDiff)
+            val collapsed = remember(detail, isDiff, lineCount) {
+                val byChars = collapseDiffPreview(detail, isDiff)
+                // Truncate by lines too when the line cap is the trigger: a short-but-tall
+                // output (e.g. 60 short lines under the char cap) must still collapse to a
+                // predictable mobile height, else the "collapsed" view renders the whole
+                // block and the expand toggle is a no-op showing 0 hidden lines.
+                if (lineCount > NetworkConfig.toolOutputCollapsedLimitLines) {
+                    byChars.lineSequence().take(NetworkConfig.toolOutputCollapsedLimitLines).joinToString("\n")
+                } else {
+                    byChars
+                }
             }
             var expanded by rememberSaveable(part.id) { mutableStateOf(false) }
             val expandedState = stringResource(R.string.state_expanded)
