@@ -82,8 +82,12 @@ data class ImageLoadContext(
 
 /** Build an [ImageLoadContext] from a resolved connection profile (password included). */
 fun ServerProfile.toImageContext(): ImageLoadContext {
-    val auth = if (hasAuth && !password.isNullOrEmpty()) {
-        val raw = "$username:$password".toByteArray()
+    // Mirror HttpClientFactory's auth condition (hasAuth, i.e. a non-blank username): a
+    // profile configured with a username but an empty password is still authenticated by the
+    // REST/SSE channel (password defaults to the empty string there), so image loads must
+    // attach the same Basic header or they'd 401 while every other request succeeds.
+    val auth = if (hasAuth) {
+        val raw = "$username:${password.orEmpty()}".toByteArray()
         "Basic " + Base64.encodeToString(raw, Base64.NO_WRAP)
     } else {
         null

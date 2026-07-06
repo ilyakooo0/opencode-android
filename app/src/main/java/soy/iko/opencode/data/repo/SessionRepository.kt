@@ -13,6 +13,7 @@ import soy.iko.opencode.data.model.ModelRef
 import soy.iko.opencode.data.model.Part
 import soy.iko.opencode.data.model.SessionError
 import soy.iko.opencode.data.model.SessionIdle
+import soy.iko.opencode.data.model.StepFinishPart
 import soy.iko.opencode.data.model.UnknownMessage
 import soy.iko.opencode.data.network.EventStreamClient
 import soy.iko.opencode.data.network.NetworkConfig
@@ -329,7 +330,17 @@ open class SessionRepository(
             // The session id rides on the part for message.part.updated; properties.sessionID
             // is null on the wire. Mirror reduce()'s `part.sessionID ?: properties.sessionID`
             // so a run that's only streaming parts still re-lights the indicator on reconnect.
-            is MessagePartUpdated -> (event.properties.part.sessionID ?: event.properties.sessionID) == sessionId
+            // A step-finish part is the trailing completion marker for a run (it carries the
+            // final cost/token totals) and arrives after the last stream delta. Treating it as
+            // live activity would re-light the running indicator after a reconnect when the run
+            // already finished during the outage — with no following SessionIdle to clear it,
+            // pinning the spinner (and the foreground service) indefinitely. Mirrors
+            // AppContainer.isLiveRunActivity's exclusion.
+            is MessagePartUpdated -> {
+                val part = event.properties.part
+                part !is StepFinishPart &&
+                    (part.sessionID ?: event.properties.sessionID) == sessionId
+            }
             is MessageUpdated -> {
                 val info = event.properties.info
                 info.sessionID == sessionId && info is AssistantMessage && !info.isComplete && info.error == null
@@ -404,11 +415,15 @@ internal class MessageStore {
 
     fun seed(initial: List<MessageWithParts>, prune: Boolean = false, clearPivot: Boolean = true): Boolean {
         var changed = false
-        // On re-seed (after SSE reconnect), remove messages that are no longer in the
-        // server snapshot (e.g. deleted during the disconnection gap). This keeps the
-        // in-memory state in sync with the authoritative REST snapshot rather than
-        // accumulating stale messages forever. Skipped on the initial seed to avoid
-        // racing with just-arrived SSE events whose messages may not yet be in REST.
+        // seed() does NOT prune by default. Pruning is intentionally NOT wired into the
+        // reconnect re-seed (the only path that would want it): the live SSE stream — via
+        // MessageRemoved events — drives deletions, and pruneStaleCacheSeeded() handles
+        // ghosts from the on-disk cache on restart. Pruning on re-seed would race with
+        // just-arrived SSE events whose messages may not yet be indexed by REST, dropping
+        // live messages. The `prune = true` branch below is retained as a tested capability
+        // for callers that can guarantee no concurrent SSE (e.g. a future explicit
+        // "discard and reload from REST" entry point); the current production re-seed
+        // callsite passes `prune = false` for the race reason above.
         if (prune) {
             // Build the retain-set from the synthetic key (matching the map's keying for
             // UnknownMessages with empty ids) so an entry stored under "unknown-c<created>"
@@ -596,20 +611,28 @@ internal class MessageStore {
         return true
     }
 
-    /** Returns false if [eventSession] is non-null and doesn't match [sessionId]. */
-    private fun matchesSession(eventSession: String?, sessionId: String): Boolean =
-        eventSession == null || eventSession == sessionId
-
     private fun handlePartRemoved(sessionId: String, event: MessagePartRemoved): Boolean {
         val messageId = event.properties.messageID ?: return false
         val partId = event.properties.partID ?: return false
-        if (!matchesSession(event.properties.sessionID, sessionId)) return false
+        val eventSession = event.properties.sessionID
+        when {
+            eventSession != null && eventSession != sessionId -> return false
+            // Null session id: only act if this store already holds the parent message, so a
+            // null-session part removal can't drop a part from an unrelated session's store.
+            eventSession == null && !messages.containsKey(messageId) -> return false
+        }
         return removePart(messageId, partId)
     }
 
     private fun handleMessageRemoved(sessionId: String, event: MessageRemoved): Boolean {
         val id = event.properties.messageID ?: return false
-        if (!matchesSession(event.properties.sessionID, sessionId)) return false
+        val eventSession = event.properties.sessionID
+        when {
+            eventSession != null && eventSession != sessionId -> return false
+            // Null session id: only act if this store already holds the message (message ids
+            // are globally unique, so this attributes the removal to the owning session only).
+            eventSession == null && !messages.containsKey(id) -> return false
+        }
         val removed = messages.remove(id) ?: return false
         messageInfoUpdatedSincePivot.remove(id)
         removed.parts.keys.forEach { streamedSincePivot.remove(it) }

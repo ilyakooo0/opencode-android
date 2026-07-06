@@ -285,7 +285,17 @@ fun OpencodeApp(container: AppContainer) {
             // whichever is active. The effect re-runs when connection changes (keyed on it),
             // so on the second run the profile matches and the open proceeds.
             if (pending.profileId != null && connection?.profile?.id != pending.profileId) {
-                if (!container.connectByProfileId(pending.profileId)) return@LaunchedEffect
+                // If the originating profile no longer exists (e.g. deleted after the
+                // notification was queued), connectByProfileId returns false: the active
+                // connection is unchanged and none of this effect's keys change, so it
+                // would never re-run — the request would sit in _pendingOpenSession
+                // forever and re-trigger on every later connection change. Consume it so
+                // the stale request is dropped, mirroring the invalid-deep-link path in
+                // MainActivity.
+                if (!container.connectByProfileId(pending.profileId)) {
+                    container.consumePendingOpenSession()
+                    return@LaunchedEffect
+                }
                 return@LaunchedEffect // re-run on the new connection
             }
             // In two-pane mode the detail pane (TwoPaneSessionChat, hosted on the SESSIONS
