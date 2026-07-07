@@ -202,8 +202,15 @@ fun FileViewScreen(
         initialLine = initialLine,
         content = state.content,
         isBinary = state.content?.isBinary == true,
-        lineCount = lines.size,
+        lineCount = allLines.size,
         listState = listState,
+        onExpandRender = { targetLine ->
+            // Expand renderLimit so the LazyColumn actually has the target item to scroll to.
+            // Mirrors goToLine()'s expansion: round up to the next MAX_RENDERED_LINES boundary.
+            if (targetLine >= renderLimit) {
+                renderLimit = (targetLine + MAX_RENDERED_LINES).coerceAtMost(allLines.size)
+            }
+        },
     )
     // Find-in-file match-case toggle (default case-insensitive). Persisted so a rotation keeps
     // the choice, and applied to the off-thread match scan below.
@@ -551,6 +558,7 @@ private fun rememberJumpToLineHighlight(
     isBinary: Boolean,
     lineCount: Int,
     listState: LazyListState,
+    onExpandRender: (Int) -> Unit = {},
 ): MutableState<Int?> {
     val highlight = rememberSaveable(path) { mutableStateOf<Int?>(null) }
     var didInitialScroll by rememberSaveable(path) { mutableStateOf(false) }
@@ -558,6 +566,16 @@ private fun rememberJumpToLineHighlight(
         val line = initialLine ?: return@LaunchedEffect
         if (didInitialScroll || content == null || isBinary) return@LaunchedEffect
         val target = (line - 1).coerceIn(0, (lineCount - 1).coerceAtLeast(0))
+        // If the target is beyond the current render cap, expand the render limit before
+        // scrolling so the LazyColumn actually has that item — otherwise scrollToItem would
+        // clamp to the last rendered line and the user would land on the wrong line. Mirrors
+        // goToLine()'s expansion. A short delay lets the state change trigger recomposition
+        // and the LazyColumn measure the expanded item count before the scroll runs; without
+        // this the scroll still sees the old (capped) item count and clamps to the last
+        // rendered line. The delay is harmless when no expansion was needed (onExpandRender
+        // is a no-op in that case).
+        onExpandRender(target)
+        kotlinx.coroutines.delay(1)
         runCatchingCancellable { listState.scrollToItem(target) }
         highlight.value = target
         didInitialScroll = true

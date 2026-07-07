@@ -157,6 +157,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import soy.iko.opencode.data.model.Part
@@ -1118,14 +1119,25 @@ fun ChatScreen(
         // focus id is threaded through the chat route from GlobalSearchScreen. The highlight
         // clears itself after a short delay so the user can re-read the surrounding context
         // without a persistent marker. Runs once per focusMessageId (cleared on consume).
+        //
+        // Keyed ONLY on focusedMessageId (not listItems): a bare listItems key re-keys on every
+        // streamed token (the list is rebuilt per snapshot), which cancels the 2.5s delay before
+        // it can clear the highlight — re-scrolling to the focus on every token and making an
+        // actively-streaming chat unreadable. snapshotFlow waits for the message to appear in the
+        // list (it may not be present on the first composition while messages load) without
+        // re-keying the effect on every list change.
         var focusedMessageId by remember(focusMessageId) { mutableStateOf(focusMessageId) }
-        LaunchedEffect(focusedMessageId, listItems) {
+        val currentListItemsForFocus by rememberUpdatedState(listItems)
+        LaunchedEffect(focusedMessageId) {
             val focus = focusedMessageId ?: return@LaunchedEffect
-            if (listItems.isEmpty()) return@LaunchedEffect
-            val index = listItems.indexOfFirst {
-                it is MessageListItem.Message && it.message.info.id == focus
-            }
-            if (index < 0) return@LaunchedEffect
+            // Wait for the focused message to appear in the list, then resolve its index. A
+            // first-composition empty list (messages still loading) will populate as the seed
+            // arrives; snapshotFlow re-evaluates on each list change until the match is found.
+            val index = snapshotFlow {
+                currentListItemsForFocus.indexOfFirst {
+                    it is MessageListItem.Message && it.message.info.id == focus
+                }
+            }.first { it >= 0 }
             runCatchingCancellable { listState.animateScrollToItem(index) }
             kotlinx.coroutines.delay(2500)
             focusedMessageId = null
@@ -1711,7 +1723,15 @@ fun ChatScreen(
                             // user can see how long the run lasted before they stopped it, rather
                             // than the clock continuing to tick until SessionIdle clears _running.
                             val startMs by vm.runStartMs.collectAsStateWithLifecycle()
-                            val elapsedMs by produceState(0L, startMs, aborting) {
+                            // Seed the initial value synchronously from startMs so the timer
+                            // doesn't flash 0:00 when the __typing row is recycled by LazyColumn
+                            // (scrolled out then back in): produceState's coroutine is cancelled on
+                            // disposal and re-launched on re-entry, and a 0L initialValue would
+                            // briefly show "0:00" before the producer's first iteration runs.
+                            val elapsedMs by produceState(
+                                initialValue = if (startMs > 0L) (System.currentTimeMillis() - startMs).coerceAtLeast(0L) else 0L,
+                                startMs, aborting,
+                            ) {
                                 if (startMs == 0L) return@produceState
                                 if (aborting) {
                                     // Freeze at the last-computed value: one final snapshot then stop.

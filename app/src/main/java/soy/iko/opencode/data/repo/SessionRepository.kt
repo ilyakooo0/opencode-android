@@ -516,7 +516,10 @@ internal class MessageStore {
      *  Returns true if anything was removed. */
     fun pruneStaleCacheSeeded(cacheSeededIds: Set<String>, rest: List<MessageWithParts>): Boolean {
         if (cacheSeededIds.isEmpty()) return false
-        val restIds = rest.mapTo(mutableSetOf()) { it.info.id }
+        // Build the retain-set from the synthetic key (matching the map's keying for
+        // UnknownMessages with empty ids) so an entry stored under "unknown-c<created>" isn't
+        // wrongly pruned just because its raw id ("") isn't in the REST snapshot's raw-id set.
+        val restIds = rest.mapTo(mutableSetOf()) { syntheticKeyFor(it) }
         var changed = false
         for (id in cacheSeededIds) {
             if (id !in restIds && messages.remove(id) != null) changed = true
@@ -535,6 +538,26 @@ internal class MessageStore {
         } else {
             m.info.id
         }
+
+    /** Resolve the actual map key for a raw message id from a server event. A non-empty id is
+     *  the map key as-is. An empty id ("") can't be the map key (handleMessageUpdated stores
+     *  UnknownMessages with empty ids under a synthetic "unknown-c<created>" / "unknown-h<hash>"
+     *  key), so search the map for the holder whose info is an UnknownMessage with an empty id.
+     *  Returns null when no holder matches — callers treat this as "not in the store" and skip.
+     *
+     *  This is O(N) only for the rare empty-id case (UnknownMessages from unrecognized server
+     *  roles); the common non-empty-id path is an O(1) map lookup. Without this, handleMessageRemoved
+     *  / handlePartRemoved / the null-session MessagePartUpdated guard would all miss synthetic-keyed
+     *  holders, leaving ghost entries and dropped part removals. */
+    private fun resolveMapKey(messageId: String): String? {
+        if (messageId.isNotEmpty()) return messageId
+        // Empty id: find a holder stored under a synthetic key whose info is an UnknownMessage
+        // with an empty id. There's normally at most one such holder per session (an unrecognized
+        // server role with no id is rare), so the linear scan is acceptable.
+        return messages.entries.firstOrNull { entry ->
+            entry.value.info is UnknownMessage && entry.value.info.id.isEmpty()
+        }?.key
+    }
 
     /** Reorder the message map by message creation time (stable). Ties and entries with no
      *  server time yet (e.g. a brand-new message still streaming and not in REST) keep their
@@ -562,18 +585,30 @@ internal class MessageStore {
 
             is MessagePartUpdated -> {
                 val part = event.properties.part
-                val messageId = part.messageID ?: event.properties.messageID
+                val rawMessageId = part.messageID ?: event.properties.messageID
                 val partSession = part.sessionID ?: event.properties.sessionID
                 when {
-                    messageId == null -> false
-                    partSession != null -> if (partSession == sessionId) upsertPart(messageId, part) else false
-                    // No session id anywhere on the event: a null session is NOT a wildcard
-                    // (mirroring isIdle/isError). Every open session's store sees the shared
-                    // event stream, so accepting it unconditionally would leak the part into
-                    // unrelated conversations (e.g. both panes in two-pane mode). Attribute it
-                    // only if this store already holds the parent message — MessageUpdated,
-                    // which always carries a session id, will have created it here first.
-                    else -> if (messages.containsKey(messageId)) upsertPart(messageId, part) else false
+                    rawMessageId == null -> false
+                    // Resolve the map key: an UnknownMessage with an empty id is stored under a
+                    // synthetic key, so upsertPart(rawMessageId, part) would miss it and fork a
+                    // duplicate holder under key "". resolveMapKey returns the synthetic key when
+                    // the holder exists, or the raw id (possibly "") when it doesn't — in which
+                    // case upsertPart creates a fresh holder under that id, matching the prior
+                    // behavior for a genuinely new message.
+                    else -> {
+                        val mapKey = resolveMapKey(rawMessageId) ?: rawMessageId
+                        if (partSession != null) {
+                            if (partSession == sessionId) upsertPart(mapKey, part) else false
+                        } else {
+                            // No session id anywhere on the event: a null session is NOT a wildcard
+                            // (mirroring isIdle/isError). Every open session's store sees the shared
+                            // event stream, so accepting it unconditionally would leak the part into
+                            // unrelated conversations (e.g. both panes in two-pane mode). Attribute it
+                            // only if this store already holds the parent message — MessageUpdated,
+                            // which always carries a session id, will have created it here first.
+                            if (messages.containsKey(mapKey)) upsertPart(mapKey, part) else false
+                        }
+                    }
                 }
             }
 
@@ -619,21 +654,30 @@ internal class MessageStore {
     }
 
     private fun handlePartRemoved(sessionId: String, event: MessagePartRemoved): Boolean {
-        val messageId = event.properties.messageID ?: return false
+        val rawMessageId = event.properties.messageID ?: return false
         val partId = event.properties.partID ?: return false
         val eventSession = event.properties.sessionID
+        // Resolve the actual map key: an UnknownMessage with an empty id is stored under a
+        // synthetic key, so a bare messages.containsKey(rawMessageId) would miss it and the
+        // part removal would be silently dropped.
+        val mapKey = resolveMapKey(rawMessageId) ?: return false
         when {
             eventSession != null && eventSession != sessionId -> return false
             // Null session id: only act if this store already holds the parent message, so a
             // null-session part removal can't drop a part from an unrelated session's store.
-            eventSession == null && !messages.containsKey(messageId) -> return false
+            eventSession == null && !messages.containsKey(mapKey) -> return false
         }
-        return removePart(messageId, partId)
+        return removePart(mapKey, partId)
     }
 
     private fun handleMessageRemoved(sessionId: String, event: MessageRemoved): Boolean {
-        val id = event.properties.messageID ?: return false
+        val rawId = event.properties.messageID ?: return false
         val eventSession = event.properties.sessionID
+        // Resolve the actual map key: an UnknownMessage with an empty id is stored under a
+        // synthetic key ("unknown-c<created>" / "unknown-h<hash>"), so messages.remove(rawId)
+        // would miss it and leave the ghost entry stranded — the pivotKey cleanup below would
+        // be dead code (the early return fires before it runs).
+        val id = resolveMapKey(rawId) ?: return false
         when {
             eventSession != null && eventSession != sessionId -> return false
             // Null session id: only act if this store already holds the message (message ids
@@ -648,7 +692,7 @@ internal class MessageStore {
         // impact today — seed() only consults it when the holder exists — but unbounded growth
         // across many add/remove cycles in a long-lived session). Mirrors evictOldMessages,
         // which already uses the map key (oldestKey) for its pivot cleanup.
-        val pivotKey = if (id.isEmpty() && removed.info is UnknownMessage) {
+        val pivotKey = if (rawId.isEmpty() && removed.info is UnknownMessage) {
             removed.info.time?.created?.let { "unknown-c$it" } ?: "unknown-h${removed.info.hashCode()}"
         } else {
             id

@@ -123,8 +123,12 @@ class McpViewModel(private val container: AppContainer) : ViewModel() {
         val cleanTarget = target.trim()
         if (cleanName.isEmpty() || cleanTarget.isEmpty()) return
         val config = buildMcpConfig(kind, cleanTarget, env)
+        // Set the guard synchronously before launching, so a second invocation can't pass the
+        // guard while the launched coroutine hasn't run yet. viewModelScope uses Main.immediate
+        // (so the body runs immediately on the main thread today), but setting it here is
+        // robust against a future dispatcher change and matches ServerListViewModel's pattern.
+        _adding.value = true
         viewModelScope.launch {
-            _adding.value = true
             val ok = runCatchingCancellable { conn.api.addMcp(cleanName, config) }.isSuccess
             _adding.value = false
             if (ok) {
