@@ -610,7 +610,23 @@ internal class MessageStore {
                     // behavior for a genuinely new message.
                     else -> {
                         val mapKey = resolveMapKey(rawMessageId) ?: rawMessageId
-                        if (partSession != null) {
+                        // An evicted UnknownMessage with an empty id was recorded in
+                        // evictedMessageIds under its synthetic "unknown-c<created>" /
+                        // "unknown-h<hash>" key (see evictOldMessages). resolveMapKey("")
+                        // returns null (the holder is gone), so mapKey falls back to "" —
+                        // which isn't in the set. Drop the late part instead of re-inserting
+                        // a partial bubble. The set could contain synthetic keys for any of
+                        // possibly-several evicted unknown messages; without the message's
+                        // creation time on the Part we can't disambiguate, so treat ANY
+                        // evicted synthetic key as a match. This is over-broad (a genuinely-
+                        // new unknown message's first part would be dropped if an unrelated
+                        // one was just evicted), but UnknownMessages from unrecognized server
+                        // roles are rare, and a following MessageUpdated (which always
+                        // carries full info) re-creates the holder correctly either way.
+                        if (rawMessageId.isEmpty() && mapKey.isEmpty() &&
+                            evictedMessageIds.any { it.startsWith("unknown-") }) {
+                            false
+                        } else if (partSession != null) {
                             if (partSession == sessionId) upsertPart(mapKey, part) else false
                         } else {
                             // No session id anywhere on the event: a null session is NOT a wildcard
@@ -656,7 +672,11 @@ internal class MessageStore {
         // A MessageUpdated re-introduces the message into the store (it was either evicted
         // by evictOldMessages or genuinely new). Drop any eviction record so a following
         // MessagePartUpdated updates this holder instead of being dropped as "late".
+        // For an empty-id UnknownMessage the record was stored under the synthetic key (see
+        // evictOldMessages), so remove that too — otherwise the over-broad empty-id guard in
+        // reduce() would keep dropping parts for this message even after it's back in memory.
         info.id.takeIf { it.isNotEmpty() }?.let { evictedMessageIds.remove(it) }
+        if (info.id.isEmpty()) evictedMessageIds.remove(key)
         if (existing == null) {
             messages[key] = Holder(info, LinkedHashMap())
         } else {
@@ -705,6 +725,9 @@ internal class MessageStore {
         // The message is gone from the store; drop any eviction record for it so the set
         // doesn't retain ids of long-deleted messages. (A re-seed would also clear this,
         // but a quiet session that never reconnects could otherwise accumulate entries.)
+        // For an empty-id UnknownMessage the record was stored under the synthetic key (see
+        // evictOldMessages), so remove that too — keep the set bounded and prevent the
+        // over-broad empty-id guard in reduce() from dropping parts for a reused id.
         removed.info.id.takeIf { it.isNotEmpty() }?.let { evictedMessageIds.remove(it) }
         // Derive the same key handleMessageUpdated would have stored this holder under. For an
         // UnknownMessage with an empty id, that's the synthetic "unknown-c<created>" /
@@ -718,6 +741,7 @@ internal class MessageStore {
         } else {
             id
         }
+        if (removed.info.id.isEmpty()) evictedMessageIds.remove(pivotKey)
         messageInfoUpdatedSincePivot.remove(pivotKey)
         removed.parts.keys.forEach { streamedSincePivot.remove(it) }
         return true
@@ -786,9 +810,18 @@ internal class MessageStore {
             // Record the evicted message's id so a late MessagePartUpdated for it is dropped
             // instead of re-inserting a single-part bubble (see upsertPart). Also clear any
             // prior eviction record for this id from an older cycle (the message re-entered
-            // via seed/MessageUpdated and has now been evicted again).
+            // via seed/MessageUpdated and has now been evicted again). Record the MAP KEY
+            // (oldestKey), not just info.id: an UnknownMessage with an empty id is stored
+            // under a synthetic "unknown-c<created>" / "unknown-h<hash>" key, so recording
+            // only info.id (which is "") would never match — a late MessagePartUpdated for
+            // it would resolveMapKey("") → null → fall back to upsertPart("") and re-insert
+            // a partial bubble. Recording the synthetic key lets the empty-id guard below
+            // (in reduce) catch it.
             removed?.info?.id?.takeIf { it.isNotEmpty() }?.let { id ->
                 evictedMessageIds.add(id)
+            }
+            if (removed != null && removed.info.id.isEmpty()) {
+                evictedMessageIds.add(oldestKey)
             }
             // Prune the evicted message's pivot bookkeeping so these sets don't grow
             // unbounded over a long-running session that never reconnects (they're only

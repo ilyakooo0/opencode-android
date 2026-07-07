@@ -79,6 +79,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -910,8 +911,13 @@ private fun androidx.compose.foundation.layout.BoxScope.SessionListBody(
                 // Windowed render: compose only the first `renderCap` rows, growing as the
                 // user scrolls near the bottom. Bounds the LazyColumn's key+arrange work on a
                 // huge list and keeps the tree-build + filter cost proportional to what's seen.
-                var renderCap by remember {
-                    mutableStateOf(NetworkConfig.sessionListInitialPage)
+                // rememberSaveable (not plain remember) so the window survives a rotation
+                // alongside the LazyListState: with plain remember the list state restores the
+                // scroll index (e.g. 200) while renderCap resets to the initial page (e.g. 50),
+                // and the LazyColumn clamps to the last available item then re-grows the window
+                // in a janky loop.
+                var renderCap by rememberSaveable {
+                    mutableIntStateOf(NetworkConfig.sessionListInitialPage)
                 }
                 // Build the grouped entry list: a Pinned header (if any pinned sessions are
                 // present), then date-grouped sections (Today / Yesterday / Last week / Older)

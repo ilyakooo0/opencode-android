@@ -156,13 +156,17 @@ open class OutboxStore private constructor(
                     // decode and load() would then drop ALL queued offline messages.
                     val encoded = json.encodeToString(list)
                     val tmp = File(f.parentFile, f.name + ".tmp")
-                    tmp.writeText(encoded)
-                    if (!tmp.renameTo(f)) {
-                        try {
+                    // One try/finally covers BOTH write paths: a throw from the initial
+                    // tmp.writeText (disk full, permission) is cleaned up too — otherwise the
+                    // inner finally below only ran after the rename failed, orphaning *.tmp
+                    // files across failed first writes.
+                    try {
+                        tmp.writeText(encoded)
+                        if (!tmp.renameTo(f)) {
                             f.writeText(encoded)
-                        } finally {
-                            tmp.delete()
                         }
+                    } finally {
+                        tmp.delete()
                     }
                 }
             }.onFailure { Log.w("OutboxStore", "Failed to persist outbox", it) }

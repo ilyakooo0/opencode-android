@@ -99,15 +99,17 @@ open class MessageCacheStore private constructor(
                     // wiping the cached conversation on the next open.
                     val encoded = OpencodeJson.encodeToString(serializer, messages)
                     val tmp = File(file.parentFile, file.name + ".tmp")
-                    tmp.writeText(encoded)
-                    if (!tmp.renameTo(file)) {
-                        // try/finally so a throw from file.writeText (disk full, permission) still
-                        // cleans up tmp — otherwise *.tmp files accumulate across failed writes.
-                        try {
+                    // One try/finally covers BOTH write paths: a throw from the initial
+                    // tmp.writeText (disk full, permission) is cleaned up too — otherwise the
+                    // inner finally below only ran after the rename failed, orphaning *.tmp
+                    // files across failed first writes.
+                    try {
+                        tmp.writeText(encoded)
+                        if (!tmp.renameTo(file)) {
                             file.writeText(encoded)
-                        } finally {
-                            tmp.delete()
                         }
+                    } finally {
+                        tmp.delete()
                     }
                 }
             }.onFailure { Log.w("MessageCacheStore", "Failed to cache messages for $sessionId", it) }

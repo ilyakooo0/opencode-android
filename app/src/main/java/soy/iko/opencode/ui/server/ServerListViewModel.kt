@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -199,12 +200,25 @@ class ServerListViewModel(private val container: AppContainer) : ViewModel() {
      *  the server list. Gives the user a familiar gesture to retry a failed auto-connect
      *  instead of having to tap a server card. Targets the profile with the highest
      *  lastUsed timestamp (the most natural "retry the one I was just on"), falling back
-     *  to the first profile if none has been used yet. */
+     *  to the first profile if none has been used yet.
+     *
+     *  Reads from `profileStore.profiles.first()` (not the local [profiles] StateFlow) because
+     *  [profiles] is `stateIn(... initialValue = emptyList())` — on a cold start, before
+     *  DataStore has emitted, the cached value is empty even if a most-recently-used profile
+     *  exists on disk. Reading the cached value would silently no-op the retry gesture exactly
+     *  when the user most needs it. The DataStore read suspends briefly, so this runs in a
+     *  coroutine and re-checks the connecting/reconnecting guards before connecting. */
     fun refresh(onConnected: () -> Unit) {
         if (_connecting.value != null || container.reconnecting.value) return
-        val target = profiles.value.maxByOrNull { it.lastUsed }
-            ?: profiles.value.firstOrNull() ?: return
-        connect(target, onConnected)
+        viewModelScope.launch {
+            // Re-check after the suspending DataStore read: a concurrent connect (or the
+            // cold-start auto-connect) may have started while we were waiting on profiles.
+            if (_connecting.value != null || container.reconnecting.value) return@launch
+            val all = runCatchingCancellable { container.profileStore.profiles.first() }
+                .getOrDefault(emptyList())
+            val target = all.maxByOrNull { it.lastUsed } ?: all.firstOrNull() ?: return@launch
+            connect(target, onConnected)
+        }
     }
 
     /**

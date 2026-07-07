@@ -79,16 +79,28 @@ class UsageViewModel(private val container: AppContainer) : ViewModel() {
 
     /** Re-aggregate the cached fetch under the current time range, if a Ready report exists. */
     private suspend fun reaggregate() {
+        // Snapshot the cached inputs and state together. Reading cachedInputs and _state.value
+        // as two separate @Volatile reads is non-atomic: a concurrent doLoad() from a manual
+        // reload can update cachedInputs and set State.Ready(newReport) in between, after which
+        // reaggregate would pass the is-Ready check (now the new Ready) but aggregate the OLD
+        // inputs — clobbering the user's fresh reload with stale totals. Capture both up front,
+        // and re-check cachedInputs hasn't changed before publishing so a doLoad that landed
+        // mid-aggregation wins instead.
+        //
+        // The is-Ready guard also serves the original purpose: a failed doLoad leaves state as
+        // Error (with cachedInputs still populated from the prior successful fetch), and
+        // reaggregating that stale cache would flip Error back to Ready — hiding the failure
+        // and showing old totals as if the load succeeded. The user must retry (which clears
+        // cachedInputs on its own success) to see fresh data again.
         val inputs = cachedInputs ?: return
-        // Only re-aggregate into Ready when we're already Ready: a failed doLoad leaves the
-        // state as Error (with cachedInputs still populated from the prior successful fetch),
-        // and reaggregating that stale cache would flip Error back to Ready — hiding the
-        // failure and showing old totals as if the load succeeded. The user must retry (which
-        // clears cachedInputs on its own success) to see fresh data again.
         if (_state.value !is State.Ready) return
         val cutoff = _timeRange.value.cutoffMs()
         withContext(Dispatchers.Default) {
             val report = aggregateUsage(inputs, cutoff)
+            // Skip the publish if a doLoad replaced the cache while we were aggregating —
+            // that doLoad set a fresher State.Ready, and overwriting it here would regress
+            // the report to the pre-reload inputs under the (possibly stale) cutoff.
+            if (cachedInputs !== inputs) return@withContext
             _state.value = State.Ready(report)
         }
     }

@@ -1192,10 +1192,14 @@ class ChatViewModel(
             // server switch between send() returning and this coroutine starting would send the
             // prompt to the OLD (closed) server. Route to the outbox instead so the message is
             // delivered to the correct server on reconnect, rather than failing against a stale
-            // connection. Reset _running (set by beginRun above) since no SSE streaming will
+            // connection. Pass the ORIGINAL connection's profile id so the outbox attributes the
+            // message to the server the user was typing against — without this, enqueueOffline
+            // would re-read container.activeConnection.value (now the NEW server) and queue the
+            // message against a session id that doesn't exist there, 404ing on flush.
+            // Reset _running (set by beginRun above) since no SSE streaming will
             // follow an outbox enqueue — without this the run indicator would be stuck on.
             if (container.activeConnection.value !== conn) {
-                enqueueOffline(trimmed, attachments)
+                enqueueOffline(trimmed, attachments, profileId = conn.profile.id)
                 _running.value = false
                 return@launch
             }
@@ -1259,8 +1263,14 @@ class ChatViewModel(
      * reconnect. The prompt is attributed to the active (or most-recent) server profile so a
      * reconnect to a different server doesn't misfire it. On any failure the draft/attachments
      * are restored so nothing is lost.
+     *
+     * [profileId] pins the message to a specific server: when [send] re-routes here because a
+     * server switch was detected mid-send, it passes the ORIGINAL connection's profile id so
+     * the queued message flushes against the session on that server, not the new one (which
+     * may not have a session with this id and would 404). When null (the user was genuinely
+     * offline with no connection), the profile is resolved at enqueue time as before.
      */
-    private fun enqueueOffline(trimmed: String, attachments: List<PendingAttachment>): Boolean {
+    private fun enqueueOffline(trimmed: String, attachments: List<PendingAttachment>, profileId: String? = null): Boolean {
         _failedDraft.value = null
         if (attachments.isNotEmpty()) _attachments.value = emptyList()
         val clearDraft = _draft.value.trim() == trimmed
@@ -1269,9 +1279,10 @@ class ChatViewModel(
             _draft.value = ""
         }
         viewModelScope.launch {
-            val profileId = connection?.profile?.id
+            val resolvedProfileId = profileId
+                ?: connection?.profile?.id
                 ?: runCatchingCancellable { container.profileStore.profiles.first().firstOrNull()?.id }.getOrNull()
-            if (profileId == null) {
+            if (resolvedProfileId == null) {
                 // No server to attribute the message to — restore the composer and report it
                 // rather than silently dropping the prompt.
                 suppressDraftPersist.set(false)
@@ -1285,7 +1296,7 @@ class ChatViewModel(
                 container.outboxStore.enqueue(
                     OutboxMessage(
                         id = java.util.UUID.randomUUID().toString(),
-                        profileId = profileId,
+                        profileId = resolvedProfileId,
                         sessionId = sessionId,
                         text = trimmed,
                         attachments = attachments.map { it.toPersisted() },

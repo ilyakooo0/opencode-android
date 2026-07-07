@@ -313,9 +313,10 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                 // Windowed render: compose only the first `renderCap` rows, growing as the
                 // user scrolls near the bottom. Bounds composition work on a device that has
                 // accumulated many crash reports (e.g. a flaky build used for weeks), matching
-                // the session/file lists' pattern.
-                var renderCap by remember {
-                    mutableStateOf(NetworkConfig.diagnosticsListInitialPage)
+                // the session/file lists' pattern. rememberSaveable (not plain remember) so the
+                // window survives a rotation alongside the LazyListState — see SessionListScreen.
+                var renderCap by rememberSaveable {
+                    mutableIntStateOf(NetworkConfig.diagnosticsListInitialPage)
                 }
                 val listState = androidx.compose.foundation.lazy.rememberLazyListState()
                 androidx.compose.runtime.LaunchedEffect(listState, filtered.size) {

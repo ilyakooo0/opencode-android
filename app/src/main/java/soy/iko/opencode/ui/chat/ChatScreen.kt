@@ -1528,28 +1528,32 @@ fun ChatScreen(
                                     (message.info as? soy.iko.opencode.data.model.AssistantMessage)
                                         ?.let { resolveModelLabel(it, models) }
                                 }
-                                // Key agentLabel/quoteText on the message id (not message.parts) so
-                                // the streaming message — whose `parts` list is replaced on every
-                                // token — doesn't re-run filterIsInstance per token for these two
-                                // derived labels. For a non-streaming message, `message.parts` is
-                                // reference-stable anyway, so this is equivalent. For the streaming
-                                // message the label updates as parts change via the message.info/
-                                // parts reference change below — keyed on messageId + a parts-hash
-                                // is overkill; agentLabel/quoteText only need to reflect the latest
-                                // parts, and `remember(messageId, message.parts)` would re-key per
-                                // token. Instead key on `messageId` alone and accept that the label
-                                // lags by one recomposition for the streaming bubble (it stabilizes
-                                // once the stream finishes). This is invisible in practice: agent
-                                // label is set on the first part, quote text grows with text parts
-                                // but is only consumed on a swipe (user-initiated, post-stream).
-                                val agentLabel = remember(messageId) {
+                                // Key agentLabel/quoteText on the message id + the id of the
+                                // last TextPart/AgentPart, so the streaming message's label
+                                // updates when a NEW text/agent part is appended (its id
+                                // changes) without re-running filterIsInstance per token (a
+                                // streaming TextPart's id is stable across token updates, so
+                                // the key only changes on append, not on every token). The
+                                // prior `remember(messageId)` pinned these at first
+                                // composition: for a message that started with reasoning/tool
+                                // parts before any TextPart, quoteText stayed "" for the life
+                                // of the list item, so swipe-to-reply yielded "cannot quote
+                                // this" even after text arrived.
+                                val lastTextPartId = remember(message.parts) {
+                                    message.parts.lastOrNull { it is TextPart }?.id
+                                }
+                                val lastAgentPartId = remember(message.parts) {
+                                    message.parts.filterIsInstance<soy.iko.opencode.data.model.AgentPart>()
+                                        .lastOrNull { it.name.isNotBlank() }?.id
+                                }
+                                val agentLabel = remember(messageId, lastAgentPartId) {
                                     message.parts
                                         .filterIsInstance<soy.iko.opencode.data.model.AgentPart>()
                                         .firstOrNull { it.name.isNotBlank() }?.name
                                 }
                                 // Text used to drive swipe-to-reply (and pre-fill the quote). Empty for
                                 // image/code-only messages, which then opt out of the swipe gesture.
-                                val quoteText = remember(messageId) {
+                                val quoteText = remember(messageId, lastTextPartId) {
                                     message.parts
                                         .filterIsInstance<TextPart>()
                                         .joinToString("\n\n") { it.text }

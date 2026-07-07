@@ -85,13 +85,17 @@ open class AttachmentDraftStore private constructor(
                     // and silently drops the staged attachments on reload.
                     val encoded = json.encodeToString(attachments)
                     val tmp = File(file.parentFile, file.name + ".tmp")
-                    tmp.writeText(encoded)
-                    if (!tmp.renameTo(file)) {
-                        try {
+                    // One try/finally covers BOTH write paths: a throw from the initial
+                    // tmp.writeText (disk full, permission) is cleaned up too — otherwise the
+                    // inner finally below only ran after the rename failed, orphaning *.tmp
+                    // files across failed first writes.
+                    try {
+                        tmp.writeText(encoded)
+                        if (!tmp.renameTo(file)) {
                             file.writeText(encoded)
-                        } finally {
-                            tmp.delete()
                         }
+                    } finally {
+                        tmp.delete()
                     }
                 }
             }.onFailure { Log.w("AttachmentDraftStore", "Failed to persist attachments for $sessionId", it) }

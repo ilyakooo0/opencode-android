@@ -61,6 +61,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -718,7 +719,9 @@ private fun DirectoryListing(
     // so the order is correct — only the composed slice is capped). Mirrors the
     // session list's windowed render pattern. Hoisted above the LazyColumn because
     // state reads must be in a @Composable scope (LazyListScope is not one).
-    var renderCap by remember { mutableStateOf(NetworkConfig.fileListInitialPage) }
+    // rememberSaveable (not plain remember) so the window survives a rotation alongside
+    // the LazyListState — see SessionListScreen for the clamp-and-regrow jank otherwise.
+    var renderCap by rememberSaveable { mutableIntStateOf(NetworkConfig.fileListInitialPage) }
     val visibleSorted = remember(sorted, renderCap) {
         if (sorted.size <= renderCap) sorted else sorted.take(renderCap)
     }

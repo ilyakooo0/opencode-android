@@ -1254,6 +1254,10 @@ open class AppContainer private constructor(
         synchronized(activeRuns) {
             activeRuns.clear()
             publishRunState()
+            // Clear the progress text too: with no SSE stream there's no SessionIdle to drop
+            // it (line ~789 does it on idle), so without this a mid-run server switch would
+            // leave "Step 2 of 5" exposed in the public StateFlow with no run actually active.
+            _runProgressText.value = null
         }
         if (previousProfileId != profile.id) {
             _unread.value = emptyMap()
@@ -1298,6 +1302,10 @@ open class AppContainer private constructor(
         synchronized(activeRuns) {
             activeRuns.clear()
             publishRunState()
+            // Clear the progress text too: with no SSE stream there's no SessionIdle to drop
+            // it (line ~789 does it on idle), so without this a disconnect mid-run would leave
+            // "Step 2 of 5" exposed in the public StateFlow with no run actually active.
+            _runProgressText.value = null
         }
         _unread.value = emptyMap()
         unreadMessageIds.clear()
