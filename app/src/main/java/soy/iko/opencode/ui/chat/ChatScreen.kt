@@ -1486,9 +1486,27 @@ fun ChatScreen(
                         // Default placement animation so inserted/moved rows glide in. Skipped
                         // entirely under reduced motion so a streaming message growing in place
                         // doesn't animate on every token (and respects the a11y preference).
+                        //
+                        // Also skipped for the actively-streaming message even at full motion.
+                        // animateItem() is backed by SizeAnimationModifierNode, which forces a
+                        // draw-phase remeasure (the display-list rebuild triggered by
+                        // AndroidComposeView.dispatchDraw) when its target's size changes. While
+                        // the streaming bubble grows token-by-token, that remeasure runs inside
+                        // the draw pass and reads Placeable.getWidth()/getHeight() of a child
+                        // whose measured size hasn't been committed yet — an NPE in
+                        // PaddingValuesModifier.measure / FillNode.measure (the R8 map marks both
+                        // sites with a throws(NullPointerException) rewriteFrame). This is the
+                        // same class of draw-phase-remeasure crash previously fixed for the
+                        // markdown library's animateContentSize and MessageBubble's send-status
+                        // AnimatedContent; animateItem() on a continuously-resizing row is the
+                        // remaining instance. Non-streaming rows (including the one that just
+                        // finished streaming) keep the glide animation since their size is stable.
+                        val isStreamingMessage = item is MessageListItem.Message &&
+                            running &&
+                            item.message.info.id == lastMessageId
                         Box(
                             Modifier
-                                .then(reducedMotionAnimateItem())
+                                .then(if (isStreamingMessage) Modifier else reducedMotionAnimateItem())
                                 .then(
                                     if (isFocusedMatch) {
                                         Modifier.background(
