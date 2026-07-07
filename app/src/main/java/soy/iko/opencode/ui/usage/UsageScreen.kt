@@ -113,7 +113,18 @@ fun UsageScreen(container: AppContainer, onBack: () -> Unit, onOpenSession: (Str
                 // layer keeps rendering the OLD state type while it fades out — reading `state`
                 // directly would recompose both layers to the latest content and defeat the
                 // crossfade into an instant snap.
-                val stateKey = state::class.simpleName
+                //
+                // Include the Error message in the key so a transition between two distinct
+                // errors (e.g. "not connected" -> "auth failed") crossfades instead of snapping:
+                // the class-name-only key stays constant across Error variants, so Crossfade
+                // treats them as the same target and doesn't animate. The other states carry no
+                // data, so their class name alone is a stable key.
+                val stateKey = state.let { s ->
+                    when (s) {
+                        is UsageViewModel.State.Error -> "Error:${s.message}"
+                        else -> s::class.simpleName
+                    }
+                }
                     Crossfade(
                         targetState = stateKey,
                         animationSpec = tween(NetworkConfig.motionFadeDurationMs.toInt()),

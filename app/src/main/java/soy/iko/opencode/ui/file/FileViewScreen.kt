@@ -399,9 +399,14 @@ fun FileViewScreen(
                     // Start a new session with this file attached as an @path reference,
                     // mirroring the file browser row's "Open in chat" action — the viewer is
                     // the more natural place for it since the user is already looking at the file.
+                    // Don't call onBack() here (unlike a plain dismiss): the pendingNewSession
+                    // effect in OpencodeApp creates the session and navigates to it, so calling
+                    // onBack() first would pop/clear this screen prematurely and flash through
+                    // the file browser (single-pane) or an empty detail pane (two-pane) before
+                    // the chat navigation fires. The browser's "Open in chat" doesn't call onBack
+                    // either — this mirrors that.
                     container.setPendingShare("@$path")
                     container.requestNewSession()
-                    onBack()
                 },
             )
         },

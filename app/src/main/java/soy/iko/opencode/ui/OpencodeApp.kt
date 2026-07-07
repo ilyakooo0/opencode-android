@@ -155,6 +155,17 @@ fun OpencodeApp(container: AppContainer) {
         val session = runCatchingCancellable { conn.repository.createSession() }.getOrNull()
             ?: return@LaunchedEffect
         if (!container.consumePendingNewSession()) return@LaunchedEffect
+        // The file browser/viewer "Open in chat" action queues an @path reference as a
+        // pending share alongside the new-session request. Unlike onOpenSession (which
+        // injects it there), this effect creates the session directly and navigates to it
+        // — so consume the share here and seed the new session's draft, otherwise the
+        // text stays queued and silently misfires into the next session the user opens
+        // from the list. Mirror the onOpenSession pattern: set in-memory synchronously
+        // so ChatScreen sees it on first composition, then persist to disk in the back.
+        container.consumePendingShare()?.let { shareText ->
+            container.draftStore.setImmediate(session.id, shareText)
+            scope.launch { runCatchingCancellable { container.draftStore.set(session.id, shareText) } }
+        }
         if (!navController.popBackStack(Routes.SESSIONS, inclusive = false)) {
             navController.navigate(Routes.SESSIONS) { launchSingleTop = true }
         }

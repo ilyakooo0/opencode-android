@@ -26,6 +26,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
@@ -101,6 +102,28 @@ class GlobalSearchViewModel(private val container: AppContainer) : ViewModel() {
     // per-session fetches run concurrently under the semaphore.
     @Volatile private var sessionsCache: List<Session>? = null
     private val messageCache = ConcurrentHashMap<String, List<MessageWithParts>>()
+
+    init {
+        // Observe the active connection so a server switch clears the cross-server caches
+        // and re-runs the current query against the new server. Without this, a search run
+        // on server A leaves sessionsCache / messageCache populated with A's sessions, so
+        // re-running the same query on server B reuses A's cached list — returning sessions
+        // that don't exist on B (opening them navigates to a non-existent conversation) and
+        // B's history for sessions that happen to share an id. Also covers the reconnect
+        // window: if the screen opens while activeConnection.value is null, the first search
+        // shows "not connected" and never auto-retries once the connection lands. Mirrors
+        // FileBrowserViewModel's activeConnection.collectLatest pattern.
+        viewModelScope.launch {
+            container.activeConnection.collectLatest { conn ->
+                sessionsCache = null
+                messageCache.clear()
+                if (conn != null) {
+                    val trimmed = _state.value.query.trim()
+                    if (trimmed.length >= NetworkConfig.minSearchQueryLength) runSearch(trimmed)
+                }
+            }
+        }
+    }
 
     fun setQuery(query: String) {
         _state.update { it.copy(query = query) }
