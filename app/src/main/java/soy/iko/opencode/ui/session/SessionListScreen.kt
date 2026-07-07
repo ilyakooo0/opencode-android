@@ -1136,15 +1136,20 @@ private sealed interface SessionListEntry {
 }
 
 /** Bucket a session's last-activity timestamp into a display group. Returns null when no
- *  timestamp is available (the session is then grouped under "Older"). */
+ *  timestamp is available (the session is then grouped under "Older"). Day boundaries are
+ *  resolved in the device's local timezone (not UTC) so a session near local midnight lands
+ *  in the right "today"/"yesterday" bucket for users outside UTC. */
 private fun sessionDateGroup(session: soy.iko.opencode.data.model.Session, now: Long): String {
     val ts = session.time?.updated ?: session.time?.created ?: return "older"
-    val dayMs = 24L * 60 * 60 * 1000
-    val todayStart = (now / dayMs) * dayMs
+    val today = java.time.Instant.ofEpochMilli(now)
+        .atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+    val sessionDay = java.time.Instant.ofEpochMilli(ts)
+        .atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+    val daysBetween = java.time.Period.between(sessionDay, today).days
     return when {
-        ts >= todayStart -> "today"
-        ts >= todayStart - dayMs -> "yesterday"
-        ts >= todayStart - 7 * dayMs -> "last_week"
+        daysBetween <= 0 -> "today"
+        daysBetween == 1 -> "yesterday"
+        daysBetween <= 7 -> "last_week"
         else -> "older"
     }
 }

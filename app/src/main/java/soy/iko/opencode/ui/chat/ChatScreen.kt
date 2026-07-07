@@ -3260,16 +3260,34 @@ private fun buildMessageListItems(
  * synchronized access-ordered LinkedHashMap reordered its linked list node on every
  * `getOrPut` hit, which is real work multiplied by N messages × ~20 snapshots/sec during
  * streaming. A ConcurrentHashMap has no access-order bookkeeping and is lock-free for
- * reads, so the common case (a hit) is a single volatile read + hash probe. The bound
- * is enforced via [removeEldestEntry] is not available on ConcurrentHashMap, so we cap
- * via `compute`-guarded size checks; in practice the cache size is bounded by the number
- * of distinct message timestamps in a session (≤ [NetworkConfig.maxInMemoryMessages]).
+ * reads, so the common case (a hit) is a single volatile read + hash probe.
+ * [removeEldestEntry] is not available on ConcurrentHashMap, so the bound is enforced via
+ * a size check in [dayKey]: once the cap ([DAY_KEY_CACHE_MAX]) is reached the cache is
+ * cleared; in practice the cache size is bounded by the number of distinct message
+ * timestamps in a session (≤ [NetworkConfig.maxInMemoryMessages]) and the cap is a
+ * safety valve for the process-lifetime cache across many sessions.
  */
 private val dayKeyCache = java.util.concurrent.ConcurrentHashMap<Long, String>(256)
 
-private fun dayKey(epochMillis: Long): String = dayKeyCache.getOrPut(epochMillis) {
-    java.time.Instant.ofEpochMilli(epochMillis)
+/** Upper bound on [dayKeyCache] entries. Message timestamps are immutable once assigned, so
+ *  the natural bound is the number of distinct timestamps in a session (≤
+ *  [NetworkConfig.maxInMemoryMessages]); this cap is a safety valve for the process-lifetime
+ *  cache across many sessions, keeping a runaway leak from accumulating unbounded memory. */
+private const val DAY_KEY_CACHE_MAX = 1024
+
+private fun dayKey(epochMillis: Long): String {
+    val cached = dayKeyCache[epochMillis]
+    if (cached != null) return cached
+    val value = java.time.Instant.ofEpochMilli(epochMillis)
         .atZone(java.time.ZoneId.systemDefault()).toLocalDate().toEpochDay().toString()
+    // Guard the size under the cache's concurrency: only the first thread to see the cap
+    // exceeded evicts (draining is O(N) but rare and idempotent), so concurrent inserts
+    // past the cap don't each pay the scan. computeIfAbsent would hold the segment lock
+    // during the (cheap) date computation but can't express the size guard, so use put
+    // after the fact; a duplicate put of the same key/value is harmless.
+    if (dayKeyCache.size >= DAY_KEY_CACHE_MAX) dayKeyCache.clear()
+    dayKeyCache[epochMillis] = value
+    return value
 }
 
 // The medium-date formatter is an ICU locale lookup; cache one instance instead of

@@ -598,15 +598,39 @@ private fun SymbolResults(results: List<SymbolResult>, emptyMessage: String?, on
     }
 }
 
-/** Build the matched line with each ripgrep submatch bolded. Offsets are byte columns
- *  within the line; clamped to the (trimmed) line length so a multibyte line can't crash. */
+/** Build the matched line with each ripgrep submatch bolded. Ripgrep reports submatch
+ *  offsets as UTF-8 *byte* columns within the line, but String indexing is by UTF-16 char,
+ *  so the raw offsets must be translated to char indices before substring(); otherwise any
+ *  line containing non-ASCII characters would highlight the wrong span (or, when clamped,
+ *  nothing at all). */
 private fun highlightMatchLine(match: FindMatch): androidx.compose.ui.text.AnnotatedString {
     val line = match.lineText
+    // Precompute the byte-offset → char-index mapping once per call: walk the line tracking
+    // the cumulative UTF-8 byte length of each code point, recording the char index at each
+    // byte boundary a submatch can land on. Submatches per line are few, but a per-submatch
+    // walk would re-scan the prefix each time; this builds a single lookup table.
+    val byteToChar = java.util.TreeMap<Int, Int>()
+    byteToChar[0] = 0
+    var bytes = 0
+    var i = 0
+    while (i < line.length) {
+        val cp = line.codePointAt(i)
+        bytes += when (cp) {
+            in 0..0x7F -> 1
+            in 0x80..0x7FF -> 2
+            in 0x800..0xFFFF -> 3
+            else -> 4
+        }
+        i += if (cp >= 0x10000) 2 else 1
+        byteToChar[bytes] = i
+    }
     return buildAnnotatedString {
         var cursor = 0
         for (sub in match.submatches.sortedBy { it.start }) {
-            val start = sub.start.coerceIn(0, line.length)
-            val end = sub.end.coerceIn(start, line.length)
+            // floorEntry maps a byte offset to the char index at or before it; an offset past
+            // the end maps to line.length via the null fallback.
+            val start = (byteToChar.floorEntry(sub.start)?.value ?: line.length).coerceIn(0, line.length)
+            val end = (byteToChar.floorEntry(sub.end)?.value ?: line.length).coerceIn(start, line.length)
             if (start > cursor) append(line.substring(cursor, start))
             withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(line.substring(start, end)) }
             cursor = end

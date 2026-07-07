@@ -379,9 +379,17 @@ object SessionNotifications {
             .setContentIntent(openSessionIntent(context, sessionId, notifId, profileId))
             .setCategory(NotificationCompat.CATEGORY_ERROR)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            // Group with the other error notifications (mirrors postError/postOutboxDropped)
+            // so this notification joins the GROUP_ERROR stack and the group summary stays
+            // consistent. Without .setGroup, reusing the NS_ERROR id space would overwrite a
+            // prior postError for this session without the group association, leaving an
+            // orphaned SUMMARY_ERROR_ID group summary with no children lingering in the shade.
+            .setGroup(GROUP_ERROR)
             .build()
         runCatching { NotificationManagerCompat.from(context).notify(notifId, notification) }
             .onFailure { Log.w(TAG, "Failed to post reply-failed notification", it) }
+        runCatching { postGroupSummary(context, NotificationChannels.ERROR, GROUP_ERROR, SUMMARY_ERROR_ID) }
+            .onFailure { Log.w(TAG, "Failed to post error summary notification", it) }
     }
 
     /** A queued outbox message was permanently undeliverable (e.g. the target session was
