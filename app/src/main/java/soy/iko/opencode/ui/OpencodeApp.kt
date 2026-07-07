@@ -584,9 +584,15 @@ fun OpencodeApp(container: AppContainer) {
 
         // Collect unread/run state for nav badges (rail on large screens, bottom bar on
         // compact screens), so a user on Files/Settings sees pending activity at a glance.
+        // Muted sessions are excluded from the nav badge so muting suppresses the badge here
+        // too, not just the in-list row badge — mirrors the launcher-icon badge in
+        // SessionListScreen and the SSE-driven unread tracking in AppContainer.
         val unread by container.unread.collectAsStateWithLifecycle()
+        val mutedSessions by container.mutedSessions.collectAsStateWithLifecycle()
         val anyRunActive by container.anyRunActive.collectAsStateWithLifecycle()
-        val totalUnread = remember(unread) { unread.values.sum() }
+        val totalUnread = remember(unread, mutedSessions) {
+            unread.filterKeys { it !in mutedSessions }.values.sum()
+        }
 
         if (showNavRail) {
             Row(modifier = Modifier.fillMaxSize()) {

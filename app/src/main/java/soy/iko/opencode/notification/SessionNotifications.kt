@@ -44,11 +44,14 @@ object SessionNotifications {
     private const val UNREAD_BADGE_ID = -10
     private const val CONNECTION_LOST_ID = -11
 
-    // Distinct namespaces so a session can have a completion, a permission, and an error
-    // notification outstanding at once without their ids colliding.
+    // Distinct namespaces so a session can have a completion, a permission, an error, and an
+    // outbox-dropped notification outstanding at once without their ids colliding. The outbox
+    // drop is semantically distinct from a run error (no run failed — a queued reply couldn't
+    // be delivered), so it gets its own namespace rather than overwriting a prior postError.
     private const val NS_COMPLETED = "done"
     private const val NS_PERMISSION = "perm"
     private const val NS_ERROR = "err"
+    private const val NS_OUTBOX_DROPPED = "outbox"
 
     private val notifIdRegex = Regex("[^A-Za-z0-9_-]")
 
@@ -395,11 +398,14 @@ object SessionNotifications {
     /** A queued outbox message was permanently undeliverable (e.g. the target session was
      *  deleted server-side → 404). Distinct from [postError] (which is titled "Run failed"):
      *  no run failed — a queued reply couldn't be delivered. Uses a distinct title/body so the
-     *  user understands the failure mode and recovery action (open the session and re-send). */
+     *  user understands the failure mode and recovery action (open the session and re-send).
+     *  Uses a distinct notification namespace ([NS_OUTBOX_DROPPED]) so it doesn't overwrite a
+     *  prior [postError] for the same session — the two failure modes are independent and the
+     *  user may need to see both. */
     @SuppressLint("MissingPermission")
     fun postOutboxDropped(context: Context, sessionId: String, sessionTitle: String, profileId: String? = null) {
         if (!canPost(context)) return
-        val notifId = notifId(NS_ERROR, sessionId)
+        val notifId = notifId(NS_OUTBOX_DROPPED, sessionId)
         val notification = NotificationCompat.Builder(context, NotificationChannels.ERROR)
             .setSmallIcon(R.drawable.ic_stat_notify)
             .setContentTitle(context.getString(R.string.message_not_delivered))
@@ -508,9 +514,13 @@ object SessionNotifications {
 
     /** Cancel a session's error notification (e.g. when the user opens it). Without this a
      *  stale "run failed" notification lingers when the session is opened by any route other
-     *  than tapping the notification itself (setAutoCancel only clears it on a direct tap). */
+     *  than tapping the notification itself (setAutoCancel only clears it on a direct tap).
+     *  Also cancels an outbox-dropped notification ([postOutboxDropped]) since it shares the
+     *  error channel/group and should likewise clear on open. */
     fun cancelError(context: Context, sessionId: String) {
-        NotificationManagerCompat.from(context).cancel(notifId(NS_ERROR, sessionId))
+        val nm = NotificationManagerCompat.from(context)
+        nm.cancel(notifId(NS_ERROR, sessionId))
+        nm.cancel(notifId(NS_OUTBOX_DROPPED, sessionId))
         maybeCancelSummary(context, GROUP_ERROR, SUMMARY_ERROR_ID)
     }
 

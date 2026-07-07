@@ -183,7 +183,7 @@ import soy.iko.opencode.ui.components.DiffView
 import soy.iko.opencode.ui.components.PaletteAction
 import soy.iko.opencode.ui.components.LocalReducedMotion
 import soy.iko.opencode.ui.components.LocalSearchHighlight
-import soy.iko.opencode.ui.components.reducedMotionAnimateItem
+
 import soy.iko.opencode.ui.components.copyToClipboard
 import soy.iko.opencode.ui.components.LocalRelativeTimeTick
 import soy.iko.opencode.ui.components.rememberRelativeTimeTick
@@ -1483,30 +1483,28 @@ fun ChatScreen(
                         val isFocusedMatch = focusedMatchId != null &&
                             item is MessageListItem.Message &&
                             item.message.info.id == focusedMatchId
-                        // Default placement animation so inserted/moved rows glide in. Skipped
-                        // entirely under reduced motion so a streaming message growing in place
-                        // doesn't animate on every token (and respects the a11y preference).
+                        // No animateItem() here. It is backed by SizeAnimationModifierNode, which
+                        // forces a draw-phase remeasure (the display-list rebuild triggered by
+                        // AndroidComposeView.dispatchDraw) when its target's size changes. That
+                        // remeasure runs inside the draw pass and reads Placeable.getWidth()/
+                        // getHeight() of a child whose measured size hasn't been committed yet —
+                        // an NPE in PaddingValuesModifier.measure / FillNode.measure (the R8 map
+                        // marks both sites with a throws(NullPointerException) rewriteFrame).
                         //
-                        // Also skipped for the actively-streaming message even at full motion.
-                        // animateItem() is backed by SizeAnimationModifierNode, which forces a
-                        // draw-phase remeasure (the display-list rebuild triggered by
-                        // AndroidComposeView.dispatchDraw) when its target's size changes. While
-                        // the streaming bubble grows token-by-token, that remeasure runs inside
-                        // the draw pass and reads Placeable.getWidth()/getHeight() of a child
-                        // whose measured size hasn't been committed yet — an NPE in
-                        // PaddingValuesModifier.measure / FillNode.measure (the R8 map marks both
-                        // sites with a throws(NullPointerException) rewriteFrame). This is the
-                        // same class of draw-phase-remeasure crash previously fixed for the
-                        // markdown library's animateContentSize and MessageBubble's send-status
-                        // AnimatedContent; animateItem() on a continuously-resizing row is the
-                        // remaining instance. Non-streaming rows (including the one that just
-                        // finished streaming) keep the glide animation since their size is stable.
-                        val isStreamingMessage = item is MessageListItem.Message &&
-                            running &&
-                            item.message.info.id == lastMessageId
+                        // This is the same crash class previously fixed for the markdown library's
+                        // animateContentSize and MessageBubble's send-status AnimatedContent. An
+                        // earlier fix kept animateItem() but skipped it for the actively-streaming
+                        // row; that was insufficient because the crash also fires when OPENING a
+                        // chat (running = false, so every row kept animateItem()): historical rows
+                        // with async-loading content (DiffView's produceState starts empty and
+                        // fills a frame later; RemoteImage loading; large markdown) change size
+                        // after mount and trigger the same draw-phase remeasure. animateItem() is
+                        // fundamentally unsafe on any chat row whose size can change post-mount,
+                        // so it is removed entirely. The glide-in animation it provided is
+                        // decorative (the list already auto-scrolls to new messages) and is not
+                        // worth a 4th round of this crash.
                         Box(
                             Modifier
-                                .then(if (isStreamingMessage) Modifier else reducedMotionAnimateItem())
                                 .then(
                                     if (isFocusedMatch) {
                                         Modifier.background(
@@ -1799,11 +1797,15 @@ fun ChatScreen(
                             }
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                // Animate this slot in/out so the working row doesn't pop in and
-                                // jolt the message list when a run starts/stops — matching the
-                                // AnimatedVisibility used by every other transient banner/FAB here.
+                                // No animateItem() here for the same reason as the message rows
+                                // above: the __typing row's size changes (the elapsed-time Text
+                                // grows from "0:00" to "M:SS" and the spinner mounts on first
+                                // frame), and animateItem()'s SizeAnimationModifierNode forces a
+                                // draw-phase remeasure that NPEs on Placeable.getWidth(). The
+                                // working row is mounted/unmounted as a whole item (key="__typing")
+                                // by LazyColumn, which already crossfades the appearance; the
+                                // placement animation is not needed.
                                 modifier = Modifier
-                                    .then(reducedMotionAnimateItem())
                                     .padding(vertical = 4.dp),
                             ) {
                                 // Merge the indicator + label + clock into one TalkBack node so

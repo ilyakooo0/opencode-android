@@ -1638,6 +1638,10 @@ class ChatViewModel(
         // every streamed part of the continuation, leaving the working indicator / Stop button /
         // foreground service off for the whole run.
         runEndedByIdle = false
+        // Track the synthetic "continue" prompt so an undoable Stop re-sends it (not the prior
+        // real prompt), matching send()'s lastSentPrompt contract. Without this a Stop-Undo mid-
+        // continuation would silently re-send the previous user prompt instead of "continue".
+        lastSentPrompt = "continue"
         viewModelScope.launch {
             // Route through the repository (not conn.api directly) so the prompt inherits
             // withRetry (transient-failure backoff) and the user's selected model/agent — a

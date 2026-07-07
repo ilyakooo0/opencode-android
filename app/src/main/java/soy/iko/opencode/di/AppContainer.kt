@@ -322,8 +322,14 @@ open class AppContainer private constructor(
      *  session list's "Mark as unread" overflow action so a user can re-flag a conversation
      *  they want to revisit. No-op when the session is the one currently being viewed — a
      *  viewed session clears its own unread badge via [setCurrentSession], so marking it
-     *  unread would race and immediately clear. Muted sessions are still marked (the count is
-     *  tracked so unmuting restores it) but the list UI hides the badge while muted. */
+     *  unread would race and immediately clear.
+     *
+     *  Unlike the SSE-driven unread tracking in [observeMessageActivity] (which skips muted
+     *  sessions so a muted conversation doesn't accumulate counts from incoming events), this
+     *  manual action does NOT skip muted sessions: the count is stored in [_unread] regardless
+     *  so unmuting restores it, and the list UI hides the badge while muted. The launcher-icon
+     *  and nav badges (in SessionListScreen / OpencodeApp) filter out muted sessions when
+     *  summing the total, so a manually-marked-unread muted session doesn't bump those. */
     open fun markSessionUnread(id: String, count: Int = 1) {
         if (id == _currentSession.value) return
         _unread.update { it + (id to count) }

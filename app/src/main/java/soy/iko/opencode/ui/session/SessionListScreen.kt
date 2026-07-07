@@ -239,7 +239,12 @@ fun SessionListScreen(
 
     // Reflect total unread sessions as a launcher-icon badge (silent notification on a
     // badge-enabled channel). Skips itself when the session list isn't loading a server yet.
-    val totalUnread = remember(unread) { unread.values.sum() }
+    // Muted sessions are excluded so muting a conversation suppresses the launcher badge too,
+    // not just the in-list row badge — a muted session marked unread manually would otherwise
+    // still bump the launcher count despite being invisible in the list.
+    val totalUnread = remember(unread, mutedSessions) {
+        unread.filterKeys { it !in mutedSessions }.values.sum()
+    }
     LaunchedEffect(totalUnread) {
         soy.iko.opencode.notification.SessionNotifications.updateUnreadBadge(platformContext, totalUnread)
     }
