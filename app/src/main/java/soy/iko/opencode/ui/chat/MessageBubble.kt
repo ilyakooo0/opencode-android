@@ -46,7 +46,6 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.animation.togetherWith
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -640,20 +639,31 @@ private fun UserBubble(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    // Crossfade the send-status slot so SENDING → FAILED → null transitions
-                    // don't snap; a subtle fade reads as a polish detail rather than a pop.
-                    // Only mounted when there's an actual status to show: a null status (the
+                    // Crossfade the send-status slot so SENDING → FAILED transitions don't
+                    // snap; a subtle fade reads as a polish detail rather than a pop. Only
+                    // mounted when there's an actual status to show: a null status (the
                     // common case for any historical/confirmed message) renders nothing at all.
-                    // Passing null into AnimatedContent crashes its measure policy (an NPE in
-                    // the SubcomposeLayout's ChildData lookup when the null-state content is
-                    // empty), so gate the whole composable on sendStatus != null.
+                    //
+                    // Crossfade is used instead of AnimatedContent deliberately. AnimatedContent
+                    // animates size transitions via SizeAnimationModifierNode, whose measure
+                    // policy reads AnimatedContentTransitionScopeImpl$ChildData.isTarget — a
+                    // MutableState<Boolean> that can be null at the moment the whole
+                    // AnimatedContent subtree is removed from composition mid-transition (which
+                    // is exactly what happens here when sendStatus flips SENDING/FAILED → null
+                    // on confirmation/dismiss). That null read throws an NPE inside
+                    // SizeAnimationModifierNode.measure during the next draw-phase display-list
+                    // rebuild, crashing the app when opening a chat or sending a message. The
+                    // prior fix (gating AnimatedContent on sendStatus != null) only avoided
+                    // passing null as targetState; it did not avoid the removal-mid-animation
+                    // tear. Crossfade has no SizeModifier/ChildData path, so removing it
+                    // mid-fade (when sendStatus → null) is safe — the fade simply ends early,
+                    // which is the intended visual (the indicator vanishes on confirmation).
                     sendStatus?.let { status ->
-                        androidx.compose.animation.AnimatedContent(
+                        androidx.compose.animation.Crossfade(
                             targetState = status,
-                            transitionSpec = {
-                                androidx.compose.animation.fadeIn() togetherWith
-                                    androidx.compose.animation.fadeOut()
-                            },
+                            animationSpec = androidx.compose.animation.core.tween(
+                                NetworkConfig.motionFadeDurationMs,
+                            ),
                             label = "send_status",
                         ) { current ->
                             when (current) {
