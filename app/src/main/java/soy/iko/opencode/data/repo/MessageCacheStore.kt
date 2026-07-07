@@ -64,7 +64,8 @@ open class MessageCacheStore private constructor(
      *  "$profileId/$sessionId" — a bare sessionId would suppress a *different* server's
      *  saves if two servers share a colliding session id (the very case the per-profile
      *  namespacing at [profileDir] exists to defend against). Cleared by [load] so
-     *  re-opening a session re-enables saving. Bounded by distinct deleted sessions. */
+     *  re-opening a session re-enables saving. Capped at [NetworkConfig.maxMessageCacheTombstones]
+     *  entries (see [remove]) to prevent unbounded growth across many deletions. */
     private val tombstones: MutableSet<String> =
         java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap())
 
@@ -128,6 +129,14 @@ open class MessageCacheStore private constructor(
             // Set the tombstone before deleting so a concurrent/loser save sees it and skips,
             // instead of re-creating the file we're about to delete.
             tombstones.add(tombstoneKey(profileId, sessionId))
+            // Cap the tombstone set so it doesn't grow unbounded across many session deletions.
+            // Tombstones only protect against a racing teardown flush (which resolves within
+            // seconds), so stale entries are useless. Clearing wholesale is safe because no
+            // racing flush can still be alive for a session deleted long ago.
+            if (tombstones.size > soy.iko.opencode.data.network.NetworkConfig.maxMessageCacheTombstones) {
+                tombstones.clear()
+                tombstones.add(tombstoneKey(profileId, sessionId))
+            }
             withContext(Dispatchers.IO) {
                 runCatchingCancellable {
                     val name = idRegex.replace(sessionId, "_") + ".json"

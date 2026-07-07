@@ -236,25 +236,28 @@ fun FileBrowserScreen(
                     val loadingLabel = stringResource(R.string.loading)
                     // Crossfade between content states so transitions read as a smooth fade
                     // instead of an instant snap. Matches the session list's Crossfade pattern;
-                    // reduced motion is honored by Crossfade's default spec.
+                    // reduced motion is honored by Crossfade's default spec. The content lambda
+                    // branches on its target-state parameter (not the captured `state`) so the
+                    // outgoing layer keeps rendering the OLD state type while it fades out —
+                    // reading `state` directly would recompose both layers to the latest content
+                    // and defeat the crossfade into an instant snap.
                     val stateKey = fileBrowserStateKey(state)
-                    @Suppress("UnusedCrossfadeTargetStateParameter")
                     Crossfade(
                         targetState = stateKey,
                         animationSpec = tween(NetworkConfig.motionFadeDurationMs.toInt()),
                         label = "file_browser_state",
-                    ) {
-                        when {
+                    ) { key ->
+                        when (key) {
                         // Skeleton loader for the initial directory load. An in-flight search
                         // keeps the previous results visible (a slim top bar below shows the
                         // progress) instead of blanking the list on every keystroke.
-                        state.loading -> Column(
+                        "loading" -> Column(
                             modifier = Modifier.fillMaxSize().padding(16.dp),
                             verticalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
                             repeat(6) { SkeletonRow() }
                         }
-                        state.error != null -> {
+                        "error" -> {
                             // Detect a permission-denied error (the server returns a 403/EACCES
                             // when the workspace directory isn't readable) and show a specific
                             // message + icon instead of the generic error, so the user
@@ -297,17 +300,17 @@ fun FileBrowserScreen(
                             }
                         }
                         }
-                        state.mode == SearchMode.TEXT ->
+                        "text" ->
                             TextResults(
                                 state.textResults,
                                 searchEmptyMessage(state.searching, state.query.isBlank(), R.string.search_contents_hint),
                             ) { path, line -> onOpenFile(path, line) }
-                        state.mode == SearchMode.SYMBOL ->
+                        "symbol" ->
                             SymbolResults(
                                 state.symbolResults,
                                 searchEmptyMessage(state.searching, state.query.isBlank(), R.string.search_symbols_hint),
                             ) { path, line -> onOpenFile(path, line) }
-                        state.isSearching -> SearchResults(state.results) { onOpenFile(it, null) }
+                        "search" -> SearchResults(state.results) { onOpenFile(it, null) }
                         else -> DirectoryListing(
                             container = container,
                             state = state,

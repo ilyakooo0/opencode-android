@@ -1188,6 +1188,17 @@ class ChatViewModel(
             // the launch without wiping the persisted follow-up — the follow-up is then
             // recovered on the next session open instead of being silently lost.
             if (queuedFollowUpToClear != null) setQueuedFollowUp(null)
+            // Re-check the active connection: send() captured `conn` synchronously above, but a
+            // server switch between send() returning and this coroutine starting would send the
+            // prompt to the OLD (closed) server. Route to the outbox instead so the message is
+            // delivered to the correct server on reconnect, rather than failing against a stale
+            // connection. Reset _running (set by beginRun above) since no SSE streaming will
+            // follow an outbox enqueue — without this the run indicator would be stuck on.
+            if (container.activeConnection.value !== conn) {
+                enqueueOffline(trimmed, attachments)
+                _running.value = false
+                return@launch
+            }
             runCatchingCancellable {
                 conn.repository.sendPrompt(
                     sessionId,

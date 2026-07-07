@@ -112,6 +112,13 @@ object NetworkConfig {
      *  instant/offline first paint; the network corrects it on the next open. */
     const val messageCacheWriteThrottleMs = 2_000L
 
+    /** Max entries in MessageCacheStore's tombstone set. Tombstones only need to survive long
+     *  enough to block a racing teardown flush (which resolves within seconds of deletion), so
+     *  entries from long-ago deletions are useless. Capping prevents unbounded growth across
+     *  many session deletions over the app's lifetime; when exceeded the set is cleared wholesale
+     *  (coarse but safe — no racing flush can still be alive for a session deleted sessions ago). */
+    const val maxMessageCacheTombstones = 128
+
     /** Grace period before a deferred session delete actually fires, during which an
      *  Undo snackbar lets the user cancel it. */
     const val undoDeleteDelayMs = 5_000L

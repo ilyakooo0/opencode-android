@@ -1066,7 +1066,10 @@ fun ChatScreen(
         // New-content signal for the jump-to-latest FAB: counts how many new items arrived
         // while the user was scrolled away from the bottom, cleared once they return. A count
         // (vs. a bare dot) tells the user how much they missed at a glance.
-        var newContentCount by remember { mutableIntStateOf(0) }
+        // rememberSaveable (not plain remember) so the badge count survives rotation: plain
+        // remember resets to 0 on recreation, hiding the "new content" signal even though new
+        // messages are still arriving. Int is Bundle-savable.
+        var newContentCount by rememberSaveable { mutableIntStateOf(0) }
 
         val isPinnedToBottom by remember {
             derivedStateOf {
@@ -1116,13 +1119,24 @@ fun ChatScreen(
         // Scroll the focused search match into view whenever the user steps through results with
         // the up/down arrows. Resolves the filtered message to its slot in listItems (which
         // includes date separators) and animates there.
-        LaunchedEffect(searchPos, searchQuery, listItems) {
+        //
+        // Keyed ONLY on searchPos and searchQuery (not listItems): a bare listItems key re-keys
+        // on every streamed token (the list is rebuilt per snapshot), which re-fires this effect
+        // ~20×/sec during an active stream — re-scrolling to the focused match on every token
+        // and making it impossible to browse other matches with the up/down arrows while content
+        // is streaming. snapshotFlow (reading currentListItems, a rememberUpdatedState) waits for
+        // the target to appear without re-keying the effect on every list change, mirroring the
+        // focusedMessageId pattern below.
+        LaunchedEffect(searchPos, searchQuery) {
             if (!searchActive || searchQuery.isEmpty()) return@LaunchedEffect
             val target = searchMessages.getOrNull(searchPos) ?: return@LaunchedEffect
-            val index = listItems.indexOfFirst {
-                it is MessageListItem.Message && it.message.info.id == target.info.id
-            }
-            if (index >= 0) runCatchingCancellable { listState.animateScrollToItem(index) }
+            val targetId = target.info.id
+            val index = snapshotFlow {
+                currentListItems.indexOfFirst {
+                    it is MessageListItem.Message && it.message.info.id == targetId
+                }
+            }.first { it >= 0 }
+            runCatchingCancellable { listState.animateScrollToItem(index) }
         }
 
         // Global-search deep link: scroll to and briefly highlight the matched message. The
@@ -1136,7 +1150,11 @@ fun ChatScreen(
         // actively-streaming chat unreadable. snapshotFlow waits for the message to appear in the
         // list (it may not be present on the first composition while messages load) without
         // re-keying the effect on every list change.
-        var focusedMessageId by remember(focusMessageId) { mutableStateOf(focusMessageId) }
+        // rememberSaveable (not plain remember) so the cleared null survives rotation:
+        // plain remember keyed on focusMessageId re-seeds the non-null nav arg on every
+        // recreation, re-firing this effect and yanking scroll back to the focus after the
+        // user already dismissed the highlight. String? is Bundle-savable.
+        var focusedMessageId by rememberSaveable(focusMessageId) { mutableStateOf(focusMessageId) }
         val currentListItemsForFocus by rememberUpdatedState(listItems)
         LaunchedEffect(focusedMessageId) {
             val focus = focusedMessageId ?: return@LaunchedEffect

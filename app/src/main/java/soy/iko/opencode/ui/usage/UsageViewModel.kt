@@ -102,7 +102,12 @@ class UsageViewModel(private val container: AppContainer) : ViewModel() {
         // spinner on the first load.
         if (_state.value is State.Ready) _refreshing.value = true else _state.value = State.Loading
         try {
-            runCatchingCancellable {
+            // Fetch the raw per-session data first; the slow part is the network I/O, not the
+            // aggregation. The cutoff is read AFTER the fetch completes (not before) so a time-
+            // range change that arrives mid-fetch is honored: reaggregate() returns early while
+            // state is Loading, so without this the report would be computed with the stale cutoff
+            // and the user's new selection wouldn't apply until the next manual reload.
+            val fetched = runCatchingCancellable {
                 val sessions = conn.repository.listSessions()
                 // Cap concurrent message fetches so a large history doesn't open dozens of
                 // sockets at once; a per-session fetch failure yields an empty list rather
@@ -111,7 +116,7 @@ class UsageViewModel(private val container: AppContainer) : ViewModel() {
                 // coroutineScope so the per-session fetches are children of THIS load: when
                 // collectLatest cancels a stale load (connection changed / manual reload), the
                 // in-flight fetches are cancelled with it instead of leaking.
-                val perSession = coroutineScope {
+                coroutineScope {
                     sessions.map { session ->
                         async {
                             limiter.withPermit {
@@ -127,12 +132,21 @@ class UsageViewModel(private val container: AppContainer) : ViewModel() {
                         }
                     }.awaitAll()
                 }
-                cachedInputs = perSession
-                val cutoff = _timeRange.value.cutoffMs()
-                withContext(Dispatchers.Default) { aggregateUsage(perSession, cutoff) }
             }
-                .onSuccess { _state.value = State.Ready(it) }
-                .onFailure { _state.value = State.Error(safeExceptionSummary(it)) }
+            // On failure, set Error; the finally block resets _refreshing. On success, cache
+            // the inputs and aggregate under the LATEST time-range cutoff (read after the fetch
+            // so a range change that arrived mid-fetch is honored — reaggregate() returns early
+            // while state is Loading, so without re-reading here the report would use the stale
+            // cutoff and the user's new selection wouldn't apply until the next manual reload).
+            if (fetched.isFailure) {
+                _state.value = State.Error(safeExceptionSummary(fetched.exceptionOrNull()!!))
+            } else {
+                val inputs = fetched.getOrThrow()
+                cachedInputs = inputs
+                val cutoff = _timeRange.value.cutoffMs()
+                val report = withContext(Dispatchers.Default) { aggregateUsage(inputs, cutoff) }
+                _state.value = State.Ready(report)
+            }
         } finally {
             // Reset in finally so a collectLatest cancellation (which rethrows
             // CancellationException out of runCatchingCancellable, skipping the lines above)

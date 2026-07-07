@@ -282,15 +282,18 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
             )
             // Crossfade between empty and list states so the transition reads as a smooth fade
             // instead of an instant snap. Matches the session list's Crossfade pattern; reduced
-            // motion is honored by Crossfade's default spec.
+            // motion is honored by Crossfade's default spec. The content lambda branches on its
+            // target-state parameter (not the captured `reports`) so the outgoing layer keeps
+            // rendering the OLD state type while it fades out — reading `reports` directly would
+            // recompose both layers to the latest content and defeat the crossfade into an
+            // instant snap.
             val stateKey = if (reports.isEmpty()) "empty" else "list"
-            @Suppress("UnusedCrossfadeTargetStateParameter")
             Crossfade(
                 targetState = stateKey,
                 animationSpec = tween(NetworkConfig.motionFadeDurationMs.toInt()),
                 label = "diagnostics_state",
-            ) {
-                if (reports.isEmpty()) {
+            ) { key ->
+                if (key == "empty") {
                 EmptyState(
                     icon = Icons.Filled.BugReport,
                     title = stringResource(R.string.no_crash_reports),

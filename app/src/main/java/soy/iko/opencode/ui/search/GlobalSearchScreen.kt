@@ -163,16 +163,19 @@ fun GlobalSearchScreen(
                 val showResultsWhileSearching = state.searching && state.hasSearched && state.results.isNotEmpty()
                 // Crossfade between content states so transitions read as a smooth fade instead
                 // of an instant snap. Matches the session list's Crossfade pattern; reduced
-                // motion is honored by Crossfade's default spec.
+                // motion is honored by Crossfade's default spec. The content lambda branches
+                // on its target-state parameter (not the captured `state`) so the outgoing
+                // layer keeps rendering the OLD state type while it fades out — reading `state`
+                // directly would recompose both layers to the latest content and defeat the
+                // crossfade into an instant snap.
                 val stateKey = globalSearchStateKey(state)
-                @Suppress("UnusedCrossfadeTargetStateParameter")
                 Crossfade(
                         targetState = stateKey,
                         animationSpec = tween(soy.iko.opencode.data.network.NetworkConfig.motionFadeDurationMs.toInt()),
                         label = "global_search_state",
-                    ) {
-                    when {
-                    state.searching && !showResultsWhileSearching -> Column(
+                    ) { key ->
+                    when (key) {
+                    "searching" -> Column(
                         modifier = Modifier.align(Alignment.Center),
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
@@ -189,14 +192,14 @@ fun GlobalSearchScreen(
                             )
                         }
                     }
-                    state.error != null -> EmptyState(
+                    "error" -> EmptyState(
                         icon = Icons.Filled.ErrorOutline,
                         title = state.error ?: "",
                         modifier = Modifier.align(Alignment.Center),
                         actionLabel = stringResource(R.string.retry),
                         onAction = vm::retry,
                     )
-                    state.hasSearched && state.results.isEmpty() -> EmptyState(
+                    "no_matches" -> EmptyState(
                         icon = Icons.Filled.SearchOff,
                         title = stringResource(R.string.search_no_matches),
                         modifier = Modifier.align(Alignment.Center),
@@ -204,14 +207,14 @@ fun GlobalSearchScreen(
                     // Typed something but below the min length (no search run yet): nudge to keep
                     // typing rather than reverting to the untouched start state, which reads as if
                     // the field were empty.
-                    state.query.isNotBlank() && !state.hasSearched -> EmptyState(
+                    "keep_typing" -> EmptyState(
                         icon = Icons.Filled.Search,
                         title = stringResource(R.string.search_keep_typing),
                         modifier = Modifier.align(Alignment.Center),
                     )
                     // Empty query + persisted history: surface suggestions so a returning user can
                     // re-run a prior search in one tap instead of retyping it.
-                    state.query.isBlank() && state.history.isNotEmpty() -> HistorySuggestions(
+                    "history" -> HistorySuggestions(
                         history = state.history,
                         onPick = { query ->
                             vm.setQuery(query)
@@ -220,7 +223,7 @@ fun GlobalSearchScreen(
                         onClear = vm::clearHistory,
                         modifier = Modifier.fillMaxSize(),
                     )
-                    state.results.isEmpty() -> EmptyState(
+                    "start" -> EmptyState(
                         icon = Icons.Filled.Search,
                         title = stringResource(R.string.search_all_start),
                         description = stringResource(R.string.search_all_start_hint),

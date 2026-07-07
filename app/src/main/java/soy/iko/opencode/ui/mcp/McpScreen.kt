@@ -142,54 +142,59 @@ fun McpScreen(container: AppContainer, onBack: () -> Unit) {
                 ConnectionBannerFor(container)
                 // Crossfade between content states so transitions read as a smooth fade instead
                 // of an instant snap. Matches the session list's Crossfade pattern; reduced
-                // motion is honored by Crossfade's default spec.
+                // motion is honored by Crossfade's default spec. The content lambda branches
+                // on its target-state parameter (not the captured `state`) so the outgoing
+                // layer keeps rendering the OLD state type while it fades out — reading `state`
+                // directly would recompose both layers to the latest content and defeat the
+                // crossfade into an instant snap.
                 val stateKey = state::class.simpleName
-                    @Suppress("UnusedCrossfadeTargetStateParameter")
                     Crossfade(
                         targetState = stateKey,
                         animationSpec = tween(soy.iko.opencode.data.network.NetworkConfig.motionFadeDurationMs.toInt()),
                         label = "mcp_state",
-                    ) {
-                    when (val s = state) {
-                    is McpViewModel.State.Loading -> Column(
+                    ) { key ->
+                    when (key) {
+                    "Loading" -> Column(
                         modifier = Modifier.fillMaxSize().padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         repeat(6) { SkeletonRow() }
                     }
-                    is McpViewModel.State.Disconnected -> EmptyState(
+                    "Disconnected" -> EmptyState(
                         icon = Icons.Filled.CloudOff,
                         title = stringResource(R.string.not_connected),
                         modifier = Modifier.align(Alignment.Center),
                     )
-                    is McpViewModel.State.Error -> EmptyState(
+                    "Error" -> EmptyState(
                         icon = Icons.Filled.ErrorOutline,
                         title = stringResource(R.string.mcp_failed),
-                        description = s.message,
+                        description = (state as? McpViewModel.State.Error)?.message,
                         modifier = Modifier.align(Alignment.Center),
                         actionLabel = stringResource(R.string.retry),
                         onAction = { vm.load() },
                     )
-                    is McpViewModel.State.Ready ->
-                        if (s.servers.isEmpty()) {
-                            EmptyState(
-                                icon = Icons.Filled.Hub,
-                                title = stringResource(R.string.mcp_empty),
-                                modifier = Modifier.align(Alignment.Center),
-                                actionIcon = Icons.Filled.Add,
-                                actionLabel = stringResource(R.string.mcp_add_server),
-                                onAction = { showAddDialog = true },
-                            )
-                        } else {
-                            LazyColumn(
-                                modifier = Modifier.fillMaxWidth(),
-                                contentPadding = PaddingValues(
-                                    start = 16.dp, end = 16.dp, top = 16.dp, bottom = soy.iko.opencode.data.network.NetworkConfig.listFabInsetDp.dp,
-                                ),
-                                verticalArrangement = Arrangement.spacedBy(12.dp),
-                            ) {
-                                items(s.servers, key = { it.name }) {
-                                    McpServerCard(it, modifier = Modifier.then(reducedMotionAnimateItem()))
+                    "Ready" ->
+                        (state as? McpViewModel.State.Ready)?.let { s ->
+                            if (s.servers.isEmpty()) {
+                                EmptyState(
+                                    icon = Icons.Filled.Hub,
+                                    title = stringResource(R.string.mcp_empty),
+                                    modifier = Modifier.align(Alignment.Center),
+                                    actionIcon = Icons.Filled.Add,
+                                    actionLabel = stringResource(R.string.mcp_add_server),
+                                    onAction = { showAddDialog = true },
+                                )
+                            } else {
+                                LazyColumn(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    contentPadding = PaddingValues(
+                                        start = 16.dp, end = 16.dp, top = 16.dp, bottom = soy.iko.opencode.data.network.NetworkConfig.listFabInsetDp.dp,
+                                    ),
+                                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                                ) {
+                                    items(s.servers, key = { it.name }) {
+                                        McpServerCard(it, modifier = Modifier.then(reducedMotionAnimateItem()))
+                                    }
                                 }
                             }
                         }

@@ -665,7 +665,12 @@ open class AppContainer private constructor(
         kotlinx.coroutines.runBlocking {
             withTimeoutOrNull(2_000) {
                 connectionMutex.withLock {
-                    runCatching { _activeConnection.value?.close() }
+                    // runCatchingCancellable (not plain runCatching) per the repo convention:
+                    // close() is a suspend function, and withTimeoutOrNull above can cancel
+                    // this block mid-close — plain runCatching would swallow the
+                    // CancellationException, leaving the connection half-closed and falsely
+                    // reporting success via `closed = true`.
+                    runCatchingCancellable { _activeConnection.value?.close() }
                     _activeConnection.value = null
                     closed = true
                 }
@@ -681,7 +686,10 @@ open class AppContainer private constructor(
             // stuck connection's scope directly. close() suspends (scopeJob.join), so
             // wrap in a bounded runBlocking that can't ANR — at this point the app is
             // shutting down, so reaping is best-effort.
-            runCatching {
+            // runCatchingCancellable: withTimeoutOrNull can cancel stuck.close() mid-flight,
+            // and plain runCatching would swallow the CancellationException — same invariant
+            // as the locked close above.
+            runCatchingCancellable {
                 kotlinx.coroutines.runBlocking {
                     kotlinx.coroutines.withTimeoutOrNull(1_000) { stuck.close() }
                 }

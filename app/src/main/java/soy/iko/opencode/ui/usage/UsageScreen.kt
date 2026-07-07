@@ -108,50 +108,55 @@ fun UsageScreen(container: AppContainer, onBack: () -> Unit, onOpenSession: (Str
                 ConnectionBannerFor(container)
                 // Crossfade between content states so transitions read as a smooth fade instead
                 // of an instant snap. Matches the session list's Crossfade pattern; reduced
-                // motion is honored by Crossfade's default spec.
+                // motion is honored by Crossfade's default spec. The content lambda branches
+                // on its target-state parameter (not the captured `state`) so the outgoing
+                // layer keeps rendering the OLD state type while it fades out — reading `state`
+                // directly would recompose both layers to the latest content and defeat the
+                // crossfade into an instant snap.
                 val stateKey = state::class.simpleName
-                    @Suppress("UnusedCrossfadeTargetStateParameter")
                     Crossfade(
                         targetState = stateKey,
                         animationSpec = tween(NetworkConfig.motionFadeDurationMs.toInt()),
                         label = "usage_state",
-                    ) {
-                    when (val s = state) {
-                    is UsageViewModel.State.Loading -> Column(
+                    ) { key ->
+                    when (key) {
+                    "Loading" -> Column(
                         modifier = Modifier.fillMaxSize().padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         repeat(6) { SkeletonRow() }
                     }
-                    is UsageViewModel.State.Disconnected -> EmptyState(
+                    "Disconnected" -> EmptyState(
                         icon = Icons.Filled.CloudOff,
                         title = stringResource(R.string.not_connected),
                         modifier = Modifier.align(Alignment.Center),
                     )
-                    is UsageViewModel.State.Error -> EmptyState(
+                    "Error" -> EmptyState(
                         icon = Icons.Filled.ErrorOutline,
                         title = stringResource(R.string.usage_failed),
-                        description = s.message,
+                        description = (state as? UsageViewModel.State.Error)?.message,
                         modifier = Modifier.align(Alignment.Center),
                         actionLabel = stringResource(R.string.retry),
                         onAction = { vm.load() },
                     )
-                    is UsageViewModel.State.Ready ->
-                        if (s.report.isEmpty) {
-                            EmptyState(
-                                icon = Icons.Filled.QueryStats,
-                                title = stringResource(R.string.usage_empty),
-                                description = stringResource(R.string.usage_empty_desc),
-                                modifier = Modifier.align(Alignment.Center),
-                            )
-                        } else {
-                            val timeRange by vm.timeRange.collectAsStateWithLifecycle()
-                            UsageContent(
-                                report = s.report,
-                                onOpenSession = onOpenSession,
-                                timeRange = timeRange,
-                                onTimeRangeChange = vm::setTimeRange,
-                            )
+                    "Ready" ->
+                        (state as? UsageViewModel.State.Ready)?.let { s ->
+                            if (s.report.isEmpty) {
+                                EmptyState(
+                                    icon = Icons.Filled.QueryStats,
+                                    title = stringResource(R.string.usage_empty),
+                                    description = stringResource(R.string.usage_empty_desc),
+                                    modifier = Modifier.align(Alignment.Center),
+                                )
+                            } else {
+                                val timeRange by vm.timeRange.collectAsStateWithLifecycle()
+                                UsageContent(
+                                    report = s.report,
+                                    onOpenSession = onOpenSession,
+                                    timeRange = timeRange,
+                                    onTimeRangeChange = vm::setTimeRange,
+                                )
+                            }
                         }
                     }
                 }

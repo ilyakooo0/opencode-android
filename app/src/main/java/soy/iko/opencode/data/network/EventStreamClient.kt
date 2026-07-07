@@ -312,6 +312,13 @@ open class EventStreamClient(
                         _state.value = ConnectionState.Disconnected
                         throw c
                     }
+                    // Reset the reconnect-attempt counter: the user explicitly triggered this
+                    // reconnect (fixed credentials, manual refresh, ...), so it's a fresh
+                    // attempt — not a continuation of the pre-failure outage. Without this,
+                    // firstAttempt is already false and line 196 increments the counter on
+                    // every manual reconnect, growing "Reconnecting (attempt N)" unboundedly
+                    // across repeated 4xx → fix → retry cycles.
+                    _reconnectAttempts.value = 0
                     continue
                 } else if (isActive) {
                     Log.w("EventStream", "SSE stream error, will retry: ${safeExceptionSummary(e)}")
