@@ -336,7 +336,12 @@ private fun rememberDiffRows(
     tertiary: Color,
     onSurface: Color,
     onSurfaceVariant: Color,
-): DiffRows = produceState<DiffRows>(DiffRows(emptyList(), 0), diff, expanded, collapsedHunks) {
+): DiffRows = produceState<DiffRows>(
+    DiffRows(emptyList(), 0),
+    diff, expanded, collapsedHunks,
+    addColor, removeColor, addText, removeText,
+    tertiary, onSurface, onSurfaceVariant,
+) {
     val result = withContext(Dispatchers.Default) {
         runCatchingCancellable {
             val lines = parseDiff(diff)

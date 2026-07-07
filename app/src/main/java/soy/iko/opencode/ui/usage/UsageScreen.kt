@@ -142,14 +142,6 @@ fun UsageScreen(container: AppContainer, onBack: () -> Unit, onOpenSession: (Str
                         title = stringResource(R.string.not_connected),
                         modifier = Modifier.align(Alignment.Center),
                     )
-                    "Error" -> EmptyState(
-                        icon = Icons.Filled.ErrorOutline,
-                        title = stringResource(R.string.usage_failed),
-                        description = (state as? UsageViewModel.State.Error)?.message,
-                        modifier = Modifier.align(Alignment.Center),
-                        actionLabel = stringResource(R.string.retry),
-                        onAction = { vm.load() },
-                    )
                     "Ready" ->
                         (state as? UsageViewModel.State.Ready)?.let { s ->
                             if (s.report.isEmpty) {
@@ -169,6 +161,14 @@ fun UsageScreen(container: AppContainer, onBack: () -> Unit, onOpenSession: (Str
                                 )
                             }
                         }
+                    else -> if (key?.startsWith("Error") == true) EmptyState(
+                        icon = Icons.Filled.ErrorOutline,
+                        title = stringResource(R.string.usage_failed),
+                        description = (state as? UsageViewModel.State.Error)?.message,
+                        modifier = Modifier.align(Alignment.Center),
+                        actionLabel = stringResource(R.string.retry),
+                        onAction = { vm.load() },
+                    )
                     }
                 }
             }

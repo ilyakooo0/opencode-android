@@ -176,14 +176,6 @@ fun McpScreen(container: AppContainer, onBack: () -> Unit) {
                         title = stringResource(R.string.not_connected),
                         modifier = Modifier.align(Alignment.Center),
                     )
-                    "Error" -> EmptyState(
-                        icon = Icons.Filled.ErrorOutline,
-                        title = stringResource(R.string.mcp_failed),
-                        description = (state as? McpViewModel.State.Error)?.message,
-                        modifier = Modifier.align(Alignment.Center),
-                        actionLabel = stringResource(R.string.retry),
-                        onAction = { vm.load() },
-                    )
                     "Ready" ->
                         (state as? McpViewModel.State.Ready)?.let { s ->
                             if (s.servers.isEmpty()) {
@@ -209,6 +201,14 @@ fun McpScreen(container: AppContainer, onBack: () -> Unit) {
                                 }
                             }
                         }
+                    else -> if (key?.startsWith("Error") == true) EmptyState(
+                        icon = Icons.Filled.ErrorOutline,
+                        title = stringResource(R.string.mcp_failed),
+                        description = (state as? McpViewModel.State.Error)?.message,
+                        modifier = Modifier.align(Alignment.Center),
+                        actionLabel = stringResource(R.string.retry),
+                        onAction = { vm.load() },
+                    )
                     }
                 }
             }

@@ -14,6 +14,7 @@ import android.annotation.SuppressLint
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.ServiceCompat
+import androidx.core.content.ContextCompat
 import soy.iko.opencode.MainActivity
 import soy.iko.opencode.R
 import java.security.MessageDigest
@@ -63,6 +64,7 @@ class RunForegroundService : Service() {
     @android.annotation.SuppressLint("MissingPermission")
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         instance = this
+        runCatching { NotificationManagerCompat.from(this).cancel(NOTIF_TIMEOUT_ID) }
         // The session title (when a single run is active) is passed via the intent extra so
         // the notification can identify which session is running, instead of a generic
         // "Agent is working…". Null/blank falls back to the generic title.
@@ -243,6 +245,10 @@ class RunForegroundService : Service() {
      *  timed out by the system — the run continues but may be killed by Doze without warning. */
     @SuppressLint("MissingPermission")
     private fun postTimeoutNotification() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, android.Manifest.permission.POST_NOTIFICATIONS) !=
+                android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) return
         runCatching {
             val notification = NotificationCompat.Builder(this, NotificationChannels.STATUS)
                 .setSmallIcon(R.drawable.ic_stat_notify)
@@ -260,13 +266,16 @@ class RunForegroundService : Service() {
     override fun onDestroy() {
         // Safety net: if the process is being killed while a run is in progress,
         // ensure the notification is removed rather than lingering.
+        // Clear isInForeground BEFORE stopForeground so a concurrent updateProgress (called
+        // from the companion start() on Dispatchers.IO) returns early before re-posting the
+        // notification that stopForeground is about to remove.
+        isInForeground = false
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
-        // Clear the run-start / foreground / instance state so the next run's chronometer
+        // Clear the run-start / instance state so the next run's chronometer
         // begins fresh and startForeground is re-asserted on the first intent of the next
         // run. These are instance fields, so a recreated service resets them by construction
         // — but clearing here also covers the same-instance restart case.
         runStartMillis = 0L
-        isInForeground = false
         lastTitle = null
         lastSessionId = null
         lastProfileId = null

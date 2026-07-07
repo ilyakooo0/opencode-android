@@ -92,7 +92,16 @@ open class OutboxStore private constructor(
         // offline-composed messages.
         val diskList = withContext(Dispatchers.IO) {
             runCatchingCancellable { json.decodeFromString<List<OutboxMessage>>(f.readText()) }
-        }.getOrElse { return false }
+        }.getOrElse {
+            // A corrupt or unreadable outbox.json would permanently brick the queue: every
+            // subsequent mutate retries the read, fails, and skips its persist. Delete the
+            // corrupt file so the queue can recover — the data is already unreadable, and
+            // preserving any in-memory messages enqueued since the failure keeps new work.
+            Log.w("OutboxStore", "Corrupt outbox.json; deleting and starting fresh", it)
+            runCatchingCancellable { f.delete() }
+            loaded = true
+            return true
+        }
         // Don't clobber items enqueued while the load was in flight: merge by id, keeping
         // the in-memory version on conflict (it's newer).
         if (_messages.value.isEmpty()) {
@@ -163,7 +172,15 @@ open class OutboxStore private constructor(
                     try {
                         tmp.writeText(encoded)
                         if (!tmp.renameTo(f)) {
-                            f.writeText(encoded)
+                            try {
+                                java.nio.file.Files.move(
+                                    tmp.toPath(), f.toPath(),
+                                    java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                                )
+                            } catch (e: Exception) {
+                                Log.w("OutboxStore", "NIO move failed; falling back to direct write", e)
+                                f.writeText(encoded)
+                            }
                         }
                     } finally {
                         tmp.delete()

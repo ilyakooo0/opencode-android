@@ -779,7 +779,7 @@ private fun DirectoryListing(
                         DropdownMenuItem(
                             text = {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(stringResource(labels[key]!!), modifier = Modifier.weight(1f))
+                                    Text(stringResource(labels.getValue(key)), modifier = Modifier.weight(1f))
                                     if (sortKey == key) {
                                         Icon(
                                             if (sortDesc) Icons.Filled.KeyboardArrowDown else Icons.Filled.KeyboardArrowUp,

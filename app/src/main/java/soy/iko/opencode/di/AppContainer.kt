@@ -892,7 +892,10 @@ open class AppContainer private constructor(
         // message.updated, treating it as live would re-add the session to activeRuns with no
         // following SessionIdle to clear it — pinning anyRunActive true indefinitely when such
         // a part is replayed/reordered after the run already went idle.
-        val part = (event as MessagePartUpdated).properties.part
+        val part = when (event) {
+            is MessagePartUpdated -> event.properties.part
+            else -> return false
+        }
         return part !is StepFinishPart
     }
 
@@ -1260,7 +1263,7 @@ open class AppContainer private constructor(
             _runProgressText.value = null
         }
         if (previousProfileId != profile.id) {
-            _unread.value = emptyMap()
+            _unread.update { emptyMap() }
             unreadMessageIds.clear()
         }
         val now = System.currentTimeMillis()
@@ -1307,7 +1310,7 @@ open class AppContainer private constructor(
             // "Step 2 of 5" exposed in the public StateFlow with no run actually active.
             _runProgressText.value = null
         }
-        _unread.value = emptyMap()
+        _unread.update { emptyMap() }
         unreadMessageIds.clear()
     }
 
@@ -1538,7 +1541,7 @@ open class AppContainer private constructor(
             // immediately on cold start (before any session list composition).
             appScope.launch {
                 runCatchingCancellable {
-                    sessionPrefsStore.muted.collect { ids -> _mutedSessions.value = ids }
+                    sessionPrefsStore.muted.collect { ids -> _mutedSessions.update { ids } }
                 }
             }
             // Flush right after load() populates the queue. observeOutbox()'s combine is keyed

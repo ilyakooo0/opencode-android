@@ -1107,8 +1107,8 @@ fun SettingsScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .defaultMinSize(minHeight = 48.dp)
-                            .padding(top = 8.dp)
                             .clickable(role = Role.Button) { onManageServers() }
+                            .padding(top = 8.dp)
                             .padding(vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {

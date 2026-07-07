@@ -507,6 +507,13 @@ class ChatViewModel(
     private val _pendingPermission = MutableStateFlow<Permission?>(null)
     val pendingPermission: StateFlow<Permission?> = _pendingPermission.asStateFlow()
 
+    // Permission ids already responded to, guarding against a duplicate response after a
+    // config change: the dialog's `responded` flag uses plain `remember` so a re-queued
+    // permission is always answerable, but a rotation between tap and VM resolution resets
+    // it to false, allowing a second tap. Cleared on failure (so a re-queued permission is
+    // answerable) and on connection change.
+    private val respondedPermissionIds = mutableSetOf<String>()
+
     /** Backlog indicator for the permission dialog (see [PermissionProgress]). */
     private val _permissionProgress = MutableStateFlow(PermissionProgress(0, 0))
     val permissionProgress: StateFlow<PermissionProgress> = _permissionProgress.asStateFlow()
@@ -553,6 +560,7 @@ class ChatViewModel(
 
     private fun clearPermissions() {
         pendingPermissions.clear()
+        respondedPermissionIds.clear()
         _pendingPermission.value = null
         updatePermissionProgress()
     }
@@ -873,6 +881,7 @@ class ChatViewModel(
                 // user intent that is now persisted; wiping it on every (re)connect — which
                 // this collector does, including transient SSE drops and the cold-start
                 // restore path — would drop a legitimately queued/recovered follow-up.
+                hasShownMessages = false
                 _selectedAgent.value = null
                 // Apply the user's persisted preferred-agent for this new session/load, so a
                 // user who always runs a specific agent doesn't have to pick it every session.
@@ -1447,6 +1456,7 @@ class ChatViewModel(
         // A new run is starting: reopen the re-light gate (as send() does) so a mid-run SSE
         // reconnect keeps the working indicator lit instead of leaving it stuck off.
         runEndedByIdle = false
+        lastSentPrompt = null
         viewModelScope.launch {
             runCatchingCancellable {
                 conn.repository.runCommand(sessionId, command.name, agent = command.agent)
@@ -1500,7 +1510,7 @@ class ChatViewModel(
     fun resendLastPrompt() {
         val prompt = lastSentPrompt ?: return
         lastSentPrompt = null
-        send(prompt, includeAttachments = false)
+        if (!send(prompt, includeAttachments = false)) lastSentPrompt = prompt
     }
 
     fun addAttachment(attachment: PendingAttachment) {
@@ -1842,6 +1852,7 @@ class ChatViewModel(
         // A new run is starting: reopen the re-light gate (as send() does) so a mid-run SSE
         // reconnect keeps the working indicator lit instead of leaving it stuck off.
         runEndedByIdle = false
+        lastSentPrompt = null
         viewModelScope.launch {
             runCatchingCancellable { conn.api.summarize(sessionId, model) }
                 .onFailure {
@@ -1861,6 +1872,7 @@ class ChatViewModel(
         // A new run is starting: reopen the re-light gate (as send() does) so a mid-run SSE
         // reconnect keeps the working indicator lit instead of leaving it stuck off.
         runEndedByIdle = false
+        lastSentPrompt = null
         viewModelScope.launch {
             runCatchingCancellable { conn.api.initSession(sessionId) }
                 .onFailure {
@@ -1887,6 +1899,7 @@ class ChatViewModel(
         // A new run is starting: reopen the re-light gate (as send() does) so a mid-run SSE
         // reconnect keeps the working indicator lit instead of leaving it stuck off.
         runEndedByIdle = false
+        lastSentPrompt = null
         viewModelScope.launch {
             runCatchingCancellable { conn.api.shell(sessionId, cmd, agent, _selectedModel.value?.ref) }
                 .onFailure {
@@ -1977,6 +1990,7 @@ class ChatViewModel(
 
     fun respondPermission(permission: Permission, response: PermissionResponse) {
         val conn = connection ?: return
+        if (!respondedPermissionIds.add(permission.id)) return
         // Record a session-scoped grant so subsequent matching requests are auto-answered.
         // SESSION maps to ONCE on the wire (the server has no session-scope concept); the
         // client-side set is what gives it the "for this session" semantics.
@@ -2007,6 +2021,7 @@ class ChatViewModel(
                     val type = permission.type.orEmpty()
                     val pattern = permission.patternText.orEmpty()
                     if (type.isNotEmpty()) sessionAllowed.remove(type to pattern)
+                    respondedPermissionIds.remove(permission.id)
                     enqueuePermission(permission)
                 }
         }

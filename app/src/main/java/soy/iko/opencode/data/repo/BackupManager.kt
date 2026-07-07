@@ -6,6 +6,7 @@ import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import soy.iko.opencode.data.model.ServerProfile
+import soy.iko.opencode.util.runCatchingCancellable
 
 /** A server entry in a backup. [password] is present only when the user opted to include it. */
 @Serializable
@@ -137,78 +138,64 @@ class BackupManager(
         require(data.version in supportedVersions) {
             "Unsupported backup version ${data.version}; supported: $supportedVersions"
         }
+        var hadError = false
         for (s in data.servers) {
-            val username = s.username?.takeIf { it.isNotBlank() }
-            val incomingPassword = s.password?.takeIf { it.isNotEmpty() }
-            // A backup exported *without* passwords carries null. This is an upsert, so don't let
-            // that null wipe a password already stored for this server id — preserve the existing
-            // secret when the backup didn't include one (only the backup explicitly carrying a
-            // password should overwrite it). Re-importing a password-less backup would otherwise
-            // silently break auth for every matching server.
-            val password = incomingPassword ?: username?.let {
-                profileStore.resolve(
-                    ServerProfile(id = s.id, label = s.label, baseUrl = s.baseUrl, username = it),
-                ).password
-            }
-            profileStore.save(
-                ServerProfile(
-                    id = s.id,
-                    label = s.label,
-                    baseUrl = s.baseUrl,
-                    username = username,
-                    password = password,
-                    lastUsed = 0,
-                    requireHttps = s.requireHttps,
-                    certPin = s.certPin?.takeIf { it.isNotBlank() },
-                ),
-            )
+            runCatchingCancellable {
+                val username = s.username?.takeIf { it.isNotBlank() }
+                val incomingPassword = s.password?.takeIf { it.isNotEmpty() }
+                val password = incomingPassword ?: username?.let {
+                    profileStore.resolve(
+                        ServerProfile(id = s.id, label = s.label, baseUrl = s.baseUrl, username = it),
+                    ).password
+                }
+                profileStore.save(
+                    ServerProfile(
+                        id = s.id,
+                        label = s.label,
+                        baseUrl = s.baseUrl,
+                        username = username,
+                        password = password,
+                        lastUsed = 0,
+                        requireHttps = s.requireHttps,
+                        certPin = s.certPin?.takeIf { it.isNotBlank() },
+                    ),
+                )
+            }.onFailure { hadError = true }
         }
         data.settings?.let { settings ->
-            // Parse the enum defensively (a bad name from an edited backup shouldn't abort the
-            // import) WITHOUT wrapping the suspend setThemeMode call — wrapping it would swallow
-            // a CancellationException and break structured concurrency.
-            ThemeMode.entries.find { it.name == settings.themeMode }?.let { settingsStore.setThemeMode(it) }
-            settingsStore.setDynamicColor(settings.dynamicColor)
-            settingsStore.setSendOnEnter(settings.sendOnEnter)
-            settingsStore.setAppLock(settings.appLock)
-            settingsStore.setAppLockReLockSeconds(settings.appLockReLockSeconds)
-            settingsStore.setChatTextScale(settings.chatTextScale)
-            settingsStore.setCodeWrap(settings.codeWrap)
-            // sessionSortMode is written below, AFTER validation against the known enum
-            // entries — do NOT write it unconditionally here, or a garbage string from a
-            // hand-edited/malicious backup would persist with no in-app reset path (the
-            // validated write below only fires when the enum is found, so an earlier
-            // unconditional write would leave the corrupt value in place when it's not).
-            settingsStore.setSessionSortDescending(settings.sessionSortDescending)
-            settingsStore.setSessionShowArchived(settings.sessionShowArchived)
-            settingsStore.setPreferredModelId(settings.preferredModelId)
-            settingsStore.setPreferredAgentName(settings.preferredAgentName)
-            settingsStore.setCompactMessageSpacing(settings.compactMessageSpacing)
-            settingsStore.setHapticsEnabled(settings.hapticsEnabled)
-            settingsStore.setReducedMotion(settings.reducedMotion)
-            // Validate the sort mode against the known enum entries before persisting, so a
-            // garbage string from a hand-edited/malicious backup can't produce a broken sort
-            // with no in-app reset path (the picker writes known values, but a corrupt one
-            // would persist and leave the list in an undefined order). Mirrors the defensive
-            // enum parsing used for themeMode and swipe actions above.
-            soy.iko.opencode.ui.session.SessionSortMode.entries
-                .find { it.name == settings.sessionSortMode }
-                ?.let { settingsStore.setSessionSortMode(it.name) }
-            // Validate the language override is a plausible ISO 639-1 code (2–3 lowercase
-            // letters, optionally with a region/script subtag) before persisting, so a bad
-            // string doesn't reach AppCompat's per-app language API. Empty (system default)
-            // is always allowed.
-            val lang = settings.languageOverride
-            if (lang.isEmpty() || lang.matches(Regex("^[a-z]{2,3}(-[A-Za-z0-9]+)*$"))) {
-                settingsStore.setLanguageOverride(lang)
-            }
-            settingsStore.setNotifRunComplete(settings.notifRunComplete)
-            settingsStore.setNotifPermission(settings.notifPermission)
-            settingsStore.setNotifError(settings.notifError)
-            SwipeAction.entries.find { it.name == settings.swipeLeftAction }?.let { settingsStore.setSwipeLeftAction(it) }
-            SwipeAction.entries.find { it.name == settings.swipeRightAction }?.let { settingsStore.setSwipeRightAction(it) }
+            runCatchingCancellable {
+                ThemeMode.entries.find { it.name == settings.themeMode }?.let { settingsStore.setThemeMode(it) }
+                settingsStore.setDynamicColor(settings.dynamicColor)
+                settingsStore.setSendOnEnter(settings.sendOnEnter)
+                settingsStore.setAppLock(settings.appLock)
+                settingsStore.setAppLockReLockSeconds(settings.appLockReLockSeconds)
+                settingsStore.setChatTextScale(settings.chatTextScale)
+                settingsStore.setCodeWrap(settings.codeWrap)
+                settingsStore.setSessionSortDescending(settings.sessionSortDescending)
+                settingsStore.setSessionShowArchived(settings.sessionShowArchived)
+                settingsStore.setPreferredModelId(settings.preferredModelId)
+                settingsStore.setPreferredAgentName(settings.preferredAgentName)
+                settingsStore.setCompactMessageSpacing(settings.compactMessageSpacing)
+                settingsStore.setHapticsEnabled(settings.hapticsEnabled)
+                settingsStore.setReducedMotion(settings.reducedMotion)
+                soy.iko.opencode.ui.session.SessionSortMode.entries
+                    .find { it.name == settings.sessionSortMode }
+                    ?.let { settingsStore.setSessionSortMode(it.name) }
+                val lang = settings.languageOverride
+                if (lang.isEmpty() || lang.matches(Regex("^[a-z]{2,3}(-[A-Za-z0-9]+)*$"))) {
+                    settingsStore.setLanguageOverride(lang)
+                }
+                settingsStore.setNotifRunComplete(settings.notifRunComplete)
+                settingsStore.setNotifPermission(settings.notifPermission)
+                settingsStore.setNotifError(settings.notifError)
+                SwipeAction.entries.find { it.name == settings.swipeLeftAction }?.let { settingsStore.setSwipeLeftAction(it) }
+                SwipeAction.entries.find { it.name == settings.swipeRightAction }?.let { settingsStore.setSwipeRightAction(it) }
+            }.onFailure { hadError = true }
         }
-        data.pinned.forEach { sessionPrefsStore.setPinned(it, true) }
-        data.archived.forEach { sessionPrefsStore.setArchived(it, true) }
+        runCatchingCancellable {
+            data.pinned.forEach { sessionPrefsStore.setPinned(it, true) }
+            data.archived.forEach { sessionPrefsStore.setArchived(it, true) }
+        }.onFailure { hadError = true }
+        if (hadError) throw IllegalStateException("Backup import completed with errors")
     }
 }

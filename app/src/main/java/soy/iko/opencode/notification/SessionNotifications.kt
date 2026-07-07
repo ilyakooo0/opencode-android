@@ -200,6 +200,7 @@ object SessionNotifications {
             .setContentText(context.getString(R.string.app_name))
             .setContentIntent(contentIntent)
             .setAutoCancel(true)
+            .setOnlyAlertOnce(true)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setGroup(GROUP_COMPLETED)
             .setGroupSummary(true)
@@ -560,10 +561,19 @@ object SessionNotifications {
     @SuppressLint("MissingPermission")
     private fun postGroupSummary(context: Context, channelId: String, group: String, summaryId: Int) {
         if (!canPost(context)) return
+        val openIntent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val contentIntent = PendingIntent.getActivity(
+            context, 0, openIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
         val summary = NotificationCompat.Builder(context, channelId)
             .setSmallIcon(R.drawable.ic_stat_notify)
             .setContentTitle(context.getString(R.string.app_name))
+            .setContentIntent(contentIntent)
             .setAutoCancel(true)
+            .setOnlyAlertOnce(true)
             .setGroup(group)
             .setGroupSummary(true)
             .build()

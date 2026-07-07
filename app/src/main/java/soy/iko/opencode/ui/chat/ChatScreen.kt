@@ -315,6 +315,7 @@ fun ChatScreen(
     // the list to each one, mirroring desktop chat apps (the bare filtered list previously
     // required reading each message to find the term).
     var searchPos by rememberSaveable { mutableIntStateOf(0) }
+    var searchFiltering by remember { mutableStateOf(false) }
     // Summarize and init (generate AGENTS.md) are irreversible, so a single tap is gated behind
     // a confirmation dialog (from both the overflow menu and the command palette).
     var showSummarizeConfirm by rememberSaveable { mutableStateOf(false) }
@@ -1035,6 +1036,7 @@ fun ChatScreen(
                         }
                     }
                 }
+                searchFiltering = false
             }
             filtered
         }
@@ -1045,10 +1047,11 @@ fun ChatScreen(
         // the last valid index (keyed on size so a content refresh that shrinks the matches
         // without a query change doesn't leave searchPos out of range).
         LaunchedEffect(searchQuery) {
+            if (searchQuery.isNotEmpty()) searchFiltering = true
             searchPos = 0
         }
         LaunchedEffect(searchMessages.size) {
-            if (searchPos >= searchMessages.size) searchPos = 0
+            if (searchPos >= searchMessages.size) searchPos = (searchMessages.size - 1).coerceAtLeast(0)
         }
         val listItems = remember(searchMessages, todayLabel, yesterdayLabel) {
             buildMessageListItems(searchMessages, todayLabel, yesterdayLabel)
@@ -1177,7 +1180,7 @@ fun ChatScreen(
         // @Composable property, so we read it inside a snapshotFlow registered in the composable
         // scope; the flow re-emits whenever the IME inset changes (open/close transitions).
         val density = androidx.compose.ui.platform.LocalDensity.current
-        var wasImeOpen by remember { mutableStateOf(false) }
+        var wasImeOpen by rememberSaveable { mutableStateOf(false) }
         val imeBottomPx = WindowInsets.ime.getBottom(density)
         androidx.compose.runtime.LaunchedEffect(imeBottomPx, listItems.isNotEmpty(), isPinnedToBottom) {
             if (listItems.isEmpty()) return@LaunchedEffect
@@ -1196,6 +1199,7 @@ fun ChatScreen(
         LaunchedEffect(Unit) {
             var prevSize = 0
             var prevLen = 0
+            var initialized = false
             snapshotFlow {
                 // Track list size + the streaming length of the last part so we auto-scroll
                 // as content arrives, plus the pinned flag. A small data class with primitive
@@ -1207,6 +1211,12 @@ fun ChatScreen(
                 val lastLen = streamingContentLength(messages.lastOrNull()?.parts?.lastOrNull())
                 AutoScrollSignal(currentListItems.size, lastLen, isPinnedToBottom)
             }.collect { signal ->
+                if (!initialized) {
+                    prevSize = signal.size
+                    prevLen = signal.lastTextLength
+                    initialized = true
+                    return@collect
+                }
                 if (signal.pinned) {
                     // Back at the bottom: clear the new-content badge.
                     newContentCount = 0
@@ -2037,7 +2047,9 @@ fun ChatScreen(
                 }
                 // When a search yields no matches (but the conversation isn't empty), say so
                 // instead of showing a blank list.
-                if (searchActive && searchQuery.isNotEmpty() && searchMessages.isEmpty() && messages.isNotEmpty()) {
+                val noMatches = searchActive && searchQuery.isNotEmpty() &&
+                    !searchFiltering && searchMessages.isEmpty() && messages.isNotEmpty()
+                if (noMatches) {
                     Text(
                         stringResource(R.string.search_no_matches),
                         style = MaterialTheme.typography.bodyMedium,
