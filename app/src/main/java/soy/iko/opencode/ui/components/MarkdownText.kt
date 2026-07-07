@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.WrapText
@@ -60,6 +61,7 @@ import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.invisibleToUser
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
@@ -80,7 +82,6 @@ import com.mikepenz.markdown.compose.LocalMarkdownColors
 import com.mikepenz.markdown.compose.LocalMarkdownTypography
 import com.mikepenz.markdown.compose.components.MarkdownComponentModel
 import com.mikepenz.markdown.compose.components.markdownComponents
-import com.mikepenz.markdown.compose.elements.MarkdownText as LibraryMarkdownText
 import com.mikepenz.markdown.m3.Markdown
 import com.mikepenz.markdown.model.DefaultMarkdownAnnotator
 import com.mikepenz.markdown.model.DefaultMarkdownAnnotatorConfig
@@ -94,7 +95,7 @@ import soy.iko.opencode.data.model.FilePart
 import soy.iko.opencode.data.network.NetworkConfig
 
 /** String-annotation tag stamped onto each inline-code (`CODE_SPAN`) range by the inline-code
- *  annotator wrapper, so [ParagraphWithInlineCodeCopy]'s `pointerInput` can resolve a long-press
+ *  annotator wrapper, so [MarkdownTextNoAnim]'s `pointerInput` can resolve a long-press
  *  offset back to the code text and copy it. Mirrors the library's own `MARKDOWN_TAG_URL` pattern
  *  for link-tap hit-testing. */
 private const val MARKDOWN_TAG_INLINE_CODE = "MARKDOWN_INLINE_CODE"
@@ -164,22 +165,30 @@ private fun MarkdownBody(
     // Without this the library's default image loader fetches with no auth and fails on
     // server-relative URLs. When no context is available, fall back to the library default
     // by not overriding the image component.
-    // The `paragraph` component is overridden with [ParagraphWithInlineCodeCopy] so a long-press
+    // The `paragraph` and `heading` components are overridden with [MarkdownTextNoAnim] so a long-press
     // on a single-backtick inline code span copies its text — matching the copy affordance the
     // fenced/indented code blocks already have via [CodeWithCopy].
     val components = if (imageContext != null) {
         // Remember on imageContext so a recomposition that doesn't change the context (the
         // common case during streaming/scroll) doesn't rebuild the 21-field components
         // container + 4 lambdas. The lambdas capture `imageContext` (for the image component)
-        // and the CodeWithCopy/ParagraphWithInlineCodeCopy factories (which only capture the
+        // and the CodeWithCopy/MarkdownTextNoAnim factories (which only capture the
         // stable MarkdownComponentModel passed by the library at invoke time), so keying on
         // imageContext is sufficient for stability.
         remember(imageContext) {
             markdownComponents(
                 codeFence = { CodeWithCopy(it) },
                 codeBlock = { CodeWithCopy(it) },
-                paragraph = { ParagraphWithInlineCodeCopy(it) },
+                paragraph = { MarkdownTextNoAnim(it, it.typography.paragraph) },
                 image = { MarkdownImage(it, imageContext) },
+                heading1 = { MarkdownTextNoAnim(it, it.typography.h1, Modifier.semantics { heading() }) },
+                heading2 = { MarkdownTextNoAnim(it, it.typography.h2, Modifier.semantics { heading() }) },
+                heading3 = { MarkdownTextNoAnim(it, it.typography.h3, Modifier.semantics { heading() }) },
+                heading4 = { MarkdownTextNoAnim(it, it.typography.h4, Modifier.semantics { heading() }) },
+                heading5 = { MarkdownTextNoAnim(it, it.typography.h5, Modifier.semantics { heading() }) },
+                heading6 = { MarkdownTextNoAnim(it, it.typography.h6, Modifier.semantics { heading() }) },
+                setextHeading1 = { MarkdownTextNoAnim(it, it.typography.h1, Modifier.semantics { heading() }) },
+                setextHeading2 = { MarkdownTextNoAnim(it, it.typography.h2, Modifier.semantics { heading() }) },
             )
         }
     } else {
@@ -187,7 +196,15 @@ private fun MarkdownBody(
             markdownComponents(
                 codeFence = { CodeWithCopy(it) },
                 codeBlock = { CodeWithCopy(it) },
-                paragraph = { ParagraphWithInlineCodeCopy(it) },
+                paragraph = { MarkdownTextNoAnim(it, it.typography.paragraph) },
+                heading1 = { MarkdownTextNoAnim(it, it.typography.h1, Modifier.semantics { heading() }) },
+                heading2 = { MarkdownTextNoAnim(it, it.typography.h2, Modifier.semantics { heading() }) },
+                heading3 = { MarkdownTextNoAnim(it, it.typography.h3, Modifier.semantics { heading() }) },
+                heading4 = { MarkdownTextNoAnim(it, it.typography.h4, Modifier.semantics { heading() }) },
+                heading5 = { MarkdownTextNoAnim(it, it.typography.h5, Modifier.semantics { heading() }) },
+                heading6 = { MarkdownTextNoAnim(it, it.typography.h6, Modifier.semantics { heading() }) },
+                setextHeading1 = { MarkdownTextNoAnim(it, it.typography.h1, Modifier.semantics { heading() }) },
+                setextHeading2 = { MarkdownTextNoAnim(it, it.typography.h2, Modifier.semantics { heading() }) },
             )
         }
     }
@@ -223,7 +240,7 @@ private fun MarkdownBody(
     val inlineCodeTypography = LocalMarkdownTypography.current
     val inlineCodeColors = LocalMarkdownColors.current
     // Inline-code tag annotator: stamps a MARKDOWN_TAG_INLINE_CODE string annotation onto each
-    // CODE_SPAN range so [ParagraphWithInlineCodeCopy] can resolve a long-press offset to the
+    // CODE_SPAN range so [MarkdownTextNoAnim] can resolve a long-press offset to the
     // code text and copy it. The library's default CODE_SPAN branch in buildMarkdownAnnotatedString
     // is bypassed (the annotator returns true) so the span is rendered exactly once, with the tag.
     // The CODE_SPAN rendering (padding spaces, inlineCode typography span, colors) is inlined here
@@ -485,25 +502,45 @@ private fun LinkActionDialog(
 }
 
 /**
- * Custom markdown `paragraph` component that adds a long-press-to-copy affordance for inline
- * code spans (single-backtick `` `code` ``). The library renders CODE_SPAN inline as a styled
- * run within the paragraph's [AnnotatedString]; there's no discrete `inlineCode` component to
- * override. Instead, [MarkdownBody] installs an annotator that stamps each CODE_SPAN range with
- * a [MARKDOWN_TAG_INLINE_CODE] string annotation; this component builds the paragraph's
- * [AnnotatedString] via the library's [buildMarkdownAnnotatedString] (so the annotator runs and
- * the tags land), then renders it with a `pointerInput` that hit-tests a long-press against the
- * tagged ranges and copies the span's text on hit — mirroring the copy affordance fenced/indented
- * code blocks get via [CodeWithCopy], for the common case of short inline commands/identifiers.
- * A long-press inside a [SelectionContainer] is consumed by the selection machinery first, so
- * the copy fires from non-selectable contexts (e.g. while streaming, where no SelectionContainer
- * wraps the text); when selection is active the user can still copy via the selection handles.
- * Haptic feedback matches every other copy affordance.
+ * Custom markdown `paragraph` / `heading` component that renders via [BasicText] directly,
+ * bypassing the library's [com.mikepenz.markdown.compose.elements.MarkdownText].
+ *
+ * The library's `MarkdownText` wraps every text segment in
+ * [animateContentSize][androidx.compose.animation.animateContentSize], which triggers draw-phase
+ * remeasures through the nested SubcomposeLayout (BasicText-with-links uses SubcomposeLayout for
+ * link hit-testing). During streaming and during the Loading→Success state transition, these
+ * remeasures crash with an NPE in the innermost MeasurePolicy.measure (an R8-rewritten frame
+ * throwing NullPointerException in ChildData.isTarget). [BasicText] handles link taps natively
+ * (via LayoutWithLinksAndInlineContent), so the library's wrapper adds nothing but the
+ * crash-prone animateContentSize.
+ *
+ * Also adds a long-press-to-copy affordance for inline code spans (single-backtick `` `code` ``).
+ * The library renders CODE_SPAN inline as a styled run within the paragraph's [AnnotatedString];
+ * there's no discrete `inlineCode` component to override. Instead, [MarkdownBody] installs an
+ * annotator that stamps each CODE_SPAN range with a [MARKDOWN_TAG_INLINE_CODE] string annotation;
+ * this component builds the [AnnotatedString] via the library's [buildMarkdownAnnotatedString]
+ * (so the annotator runs and the tags land), then renders it with a `pointerInput` that hit-tests
+ * a long-press against the tagged ranges and copies the span's text on hit — mirroring the copy
+ * affordance fenced/indented code blocks get via [CodeWithCopy], for the common case of short
+ * inline commands/identifiers. A long-press inside a [SelectionContainer] is consumed by the
+ * selection machinery first, so the copy fires from non-selectable contexts (e.g. while streaming,
+ * where no SelectionContainer wraps the text); when selection is active the user can still copy
+ * via the selection handles. Haptic feedback matches every other copy affordance.
+ *
+ * The color resolution mirrors MarkdownBasicText's logic (style.color →
+ * LocalMarkdownColors.current.text). The [modifier] is applied to the BasicText (used by headings
+ * to add `heading()` semantics). Used for both the `paragraph` component (style =
+ * typography.paragraph, no modifier) and the `heading1`–`heading6` / `setextHeading` components
+ * (style = typography.h1–h6, `heading()` semantics modifier).
  */
 @Composable
-private fun ParagraphWithInlineCodeCopy(model: MarkdownComponentModel) {
+private fun MarkdownTextNoAnim(
+    model: MarkdownComponentModel,
+    style: TextStyle,
+    modifier: Modifier = Modifier,
+) {
     val context = LocalContext.current
     val haptics = LocalHapticFeedback.current
-    val style = model.typography.paragraph
     val typography = LocalMarkdownTypography.current
     val annotator = LocalMarkdownAnnotator.current
     // buildMarkdownAnnotatedString needs an explicit AnnotatorSettings in 0.43+ (the old
@@ -531,10 +568,10 @@ private fun ParagraphWithInlineCodeCopy(model: MarkdownComponentModel) {
     // Capture the layout result so a long-press position can be mapped to a character offset,
     // then to a tagged range — the same hit-testing pattern the library uses for link taps.
     var layoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
-    LibraryMarkdownText(
-        content = styledText,
-        node = model.node,
-        modifier = Modifier.pointerInput(styledText) {
+    val baseColor = LocalMarkdownColors.current.text
+    BasicText(
+        text = styledText,
+        modifier = modifier.pointerInput(styledText) {
             detectTapGestures(
                 onLongPress = { pos ->
                     val result = layoutResult ?: return@detectTapGestures
@@ -549,7 +586,8 @@ private fun ParagraphWithInlineCodeCopy(model: MarkdownComponentModel) {
             )
         },
         style = style,
-        onTextLayout = { result, _ -> layoutResult = result },
+        color = { baseColor },
+        onTextLayout = { result -> layoutResult = result },
     )
 }
 
