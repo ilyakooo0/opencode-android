@@ -51,8 +51,11 @@ fun classifyError(t: Throwable): ErrorKind {
             is SocketTimeoutException, is HttpRequestTimeoutException ->
                 return ErrorKind.TIMEOUT
             is ServerResponseException -> return ErrorKind.SERVER
-            is ClientRequestException -> return ErrorKind.CLIENT
+            // RedirectResponseException extends ClientRequestException, so it must be checked
+            // first: a 3xx response is semantically distinct from a 4xx, and matching the
+            // parent class first would make this branch unreachable dead code.
             is RedirectResponseException -> return ErrorKind.CLIENT
+            is ClientRequestException -> return ErrorKind.CLIENT
             is IOException -> return ErrorKind.NETWORK
             else -> {
                 // Any other ResponseException (unrecognized status family).

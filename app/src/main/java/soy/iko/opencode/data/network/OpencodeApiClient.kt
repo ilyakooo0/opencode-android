@@ -216,18 +216,34 @@ open class OpencodeApiClient private constructor(
     }
 
     /** Revert the session to just before [messageId] (optionally part [partId]); the
-     *  server hides everything after the checkpoint. Returns the updated session. Naturally
-     *  idempotent (reverting to the same point twice yields the same state). */
-    open suspend fun revert(sessionId: String, messageId: String, partId: String? = null): Session = withRetry {
+     *  server hides everything after the checkpoint. Returns the updated session.
+     *
+     *  NOT retried (single attempt), mirroring [abort]: a lost response followed by a retry
+     *  would POST revert again, and if a new run started in the gap the retry would hide
+     *  that new run's messages too (until the user noticed and called [unrevert]). There's
+     *  no Idempotency-Key the server could dedupe on, so a single attempt is the safe
+     *  choice — the SSE stream reflects the actual revert state regardless. */
+    open suspend fun revert(sessionId: String, messageId: String, partId: String? = null): Session = withRetry(maxAttempts = 1) {
         client!!.post("session/${encode(sessionId)}/revert") {
             contentType(ContentType.Application.Json)
             setBody(RevertRequest(messageID = messageId, partID = partId))
         }.body()
     }
 
-    /** Undo the active revert checkpoint, restoring the hidden messages. */
-    open suspend fun unrevert(sessionId: String): Session = withRetry {
-        client!!.post("session/${encode(sessionId)}/unrevert").body()
+    /** Undo the active revert checkpoint, restoring the hidden messages.
+     *
+     *  Mint an Idempotency-Key *before* withRetry so a retried POST (first request reached
+     *  the server but its response was lost) doesn't trigger a second unrevert on a session
+     *  whose checkpoint was already cleared — the second attempt would hit a session with no
+     *  active revert and the server could return a non-retryable 4xx, surfacing a spurious
+     *  error for an operation that actually succeeded. The key lets the server dedupe. */
+    open suspend fun unrevert(sessionId: String): Session {
+        val idempotencyKey = java.util.UUID.randomUUID().toString()
+        return withRetry {
+            client!!.post("session/${encode(sessionId)}/unrevert") {
+                header("Idempotency-Key", idempotencyKey)
+            }.body()
+        }
     }
 
     /** Create a public share link for the session. Returns the session with [Session.share] set.

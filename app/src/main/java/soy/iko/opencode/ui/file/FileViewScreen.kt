@@ -163,8 +163,11 @@ fun FileViewScreen(
     var matchPos by rememberSaveable(path) { mutableIntStateOf(0) }
     // Seed the per-file wrap toggle from the user's global code-wrap preference so the viewer
     // respects it by default; they can still flip it per-file (persisted across rotation).
+    // Key on BOTH path and codeWrap so a change to the global preference while the file is
+    // open re-seeds the toggle — without the codeWrap key, rememberSaveable(path) would keep
+    // the old value and ignore the new preference until the file were closed and reopened.
     val codeWrap = LocalCodeWrap.current
-    var wrap by rememberSaveable(path) { mutableStateOf(codeWrap) }
+    var wrap by rememberSaveable(path, codeWrap) { mutableStateOf(codeWrap) }
     val listState = rememberLazyListState()
     val rawText = state.content?.content.orEmpty()
     // Directory portion of the path, shown under the filename in the top bar so a user who
@@ -279,7 +282,16 @@ fun FileViewScreen(
         // scroll lands on the right item once recomposition expands the LazyColumn.
         val target = (clamped - 1).coerceIn(0, allLines.size - 1)
         highlightLine.value = null
-        scope.launch { runCatchingCancellable { listState.animateScrollToItem(target) } }
+        scope.launch {
+            // When the render limit was just expanded above, the LazyColumn hasn't recomposed
+            // yet (Dispatchers.Main.immediate runs this body before recomposition), so
+            // animateScrollToItem would clamp to the last currently-rendered item. A short
+            // delay lets the state change propagate and the LazyColumn measure the expanded
+            // item count before the scroll runs. Mirrors rememberJumpToLineHighlight's
+            // identical race fix. The delay is harmless when no expansion was needed.
+            kotlinx.coroutines.delay(1)
+            runCatchingCancellable { listState.animateScrollToItem(target) }
+        }
     }
     Scaffold(
         topBar = {

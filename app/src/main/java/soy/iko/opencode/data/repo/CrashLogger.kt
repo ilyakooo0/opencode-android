@@ -130,6 +130,15 @@ class CrashLogger private constructor(private val appContext: Context) {
     /** Deferred deletions keyed by file name, so an Undo can cancel one before it fires. */
     private val pendingDeletes = java.util.concurrent.ConcurrentHashMap<String, Job>()
 
+    /** Files whose scheduled delete has already claimed (passed its delay and removed its
+     *  map entry) and is about to delete or has just deleted. [cancelScheduledDelete]
+     *  consults this to honor its contract: once a delete has fired, undo returns false
+     *  even if a reschedule installed a newer job in the map in the gap between the claim
+     *  and the cancel. Without this, the cancel would remove the newer job and report
+     *  "undo succeeded" while the older job's delete proceeds — contradicting the user
+     *  who tapped Undo and the Diagnostics screen that then shows the file gone. */
+    private val claimedDeletes = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+
     /**
      * Schedule [fileName] for deletion after [delayMs], cancellable via
      * [cancelScheduledDelete]. Runs on the logger's own long-lived scope — not the
@@ -149,11 +158,20 @@ class CrashLogger private constructor(private val appContext: Context) {
             // remove(name, thisJob) also no-ops for a stale job after a reschedule.
             val claimed = coroutineContext[Job]?.let { pendingDeletes.remove(fileName, it) } == true
             if (!claimed) return@launch
+            // Mark this delete as fired so a cancel that arrives AFTER the claim (but before
+            // the file.delete() completes) honestly reports "already fired" instead of
+            // "undo succeeded". A reschedule that installed a newer job in the map in that
+            // gap would otherwise make cancelScheduledDelete remove the newer job and return
+            // true, while this coroutine still deletes — violating the documented contract.
+            claimedDeletes[fileName] = true
             val file = File(crashDir, fileName).canonicalFile
             if (file.path.startsWith(crashDir.canonicalPath + File.separator)) {
                 file.delete()
             }
             refresh()
+            // Clear the fired marker after the delete + refresh so a future scheduleDelete
+            // for the same name (e.g. a re-created report) starts with a clean slate.
+            claimedDeletes.remove(fileName)
         }
         pendingDeletes.put(fileName, job)?.cancel()
     }
@@ -161,6 +179,9 @@ class CrashLogger private constructor(private val appContext: Context) {
     /** Cancel a pending deferred delete (the Undo action). Returns true if it was still
      *  pending (undo succeeded), false if the delete had already fired. */
     fun cancelScheduledDelete(fileName: String): Boolean {
+        // If the delete has already claimed (passed its delay), the undo is too late —
+        // report false even if a reschedule installed a newer job that's still in the map.
+        if (claimedDeletes.containsKey(fileName)) return false
         val job = pendingDeletes.remove(fileName) ?: return false
         job.cancel()
         return true

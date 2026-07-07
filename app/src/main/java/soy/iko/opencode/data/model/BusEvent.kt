@@ -22,7 +22,7 @@ data object ServerConnected : BusEvent
 @SerialName("message.updated")
 data class MessageUpdated(val properties: Props) : BusEvent {
     @Serializable
-    data class Props(val info: MessageInfo)
+    data class Props(val info: MessageInfo? = null)
 }
 
 @Serializable
@@ -78,7 +78,7 @@ data class SessionError(val properties: Props) : BusEvent {
 @SerialName("session.updated")
 data class SessionUpdated(val properties: Props) : BusEvent {
     @Serializable
-    data class Props(val info: Session)
+    data class Props(val info: Session? = null, val sessionID: String? = null)
 }
 
 @Serializable

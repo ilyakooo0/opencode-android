@@ -221,28 +221,37 @@ open class SessionRepository(
                             store.beginReseed()
                             ++seedGeneration
                         }
-                        val fresh = runCatchingCancellable { api.listMessages(sessionId) }
+                        val freshResult = runCatchingCancellable { api.listMessages(sessionId) }
                             .onFailure { Log.w("SessionRepository", "Re-seed message load failed for $sessionId; relying on SSE: ${safeExceptionSummary(it)}") }
-                            .getOrDefault(emptyList())
+                        val fresh = freshResult.getOrNull()
                         var seedChanged = false
                         lock.withLock {
                             if (generation == seedGeneration) {
-                                // Prune cache-seeded ghosts here too, not only in the initial
-                                // REST seed. If the SSE stream connected→dropped→reconnected
-                                // before the initial listMessages returned, seedGeneration was
-                                // already >0 by the time the initial seed ran, so its prune was
-                                // skipped (the `seedGeneration == 0` guard below). Without this
-                                // prune, messages deleted server-side while the app was closed
-                                // would survive as ghosts until a future app restart where the
-                                // timing happened not to recur.
-                                val pruned = store.pruneStaleCacheSeeded(cacheSeededIds, fresh)
+                                // Only prune when the fetch SUCCEEDED. A failed fetch yields
+                                // fresh == null; treating null as an empty REST snapshot would
+                                // make pruneStaleCacheSeeded remove EVERY cache-seeded message
+                                // (none are in the empty retain-set), wiping the whole cached
+                                // conversation on a transient network error — the cache is the
+                                // only thing keeping the session readable until SSE repopulates.
+                                var pruned = false
+                                if (fresh != null) {
+                                    // Prune cache-seeded ghosts here too, not only in the initial
+                                    // REST seed. If the SSE stream connected→dropped→reconnected
+                                    // before the initial listMessages returned, seedGeneration was
+                                    // already >0 by the time the initial seed ran, so its prune was
+                                    // skipped (the `seedGeneration == 0` guard below). Without this
+                                    // prune, messages deleted server-side while the app was closed
+                                    // would survive as ghosts until a future app restart where the
+                                    // timing happened not to recur.
+                                    pruned = store.pruneStaleCacheSeeded(cacheSeededIds, fresh)
+                                }
                                 // Merge without pruning: SSE events arriving during the
                                 // REST fetch may have added messages not yet indexed by
                                 // the REST endpoint. Pruning would silently delete them.
                                 // Stale messages from deletions during the disconnect
                                 // gap are eventually removed via MessageRemoved events
                                 // or on the next app restart.
-                                val seeded = store.seed(fresh, prune = false)
+                                val seeded = if (fresh != null) store.seed(fresh, prune = false) else false
                                 seedChanged = pruned || seeded
                             }
                         }
@@ -349,7 +358,7 @@ open class SessionRepository(
                     (part.sessionID ?: event.properties.sessionID) == sessionId
             }
             is MessageUpdated -> {
-                val info = event.properties.info
+                val info = event.properties.info ?: return false
                 info.sessionID == sessionId && info is AssistantMessage && !info.isComplete && info.error == null
             }
             else -> false
@@ -441,6 +450,10 @@ internal class MessageStore {
             messages.keys.retainAll(incomingKeys)
             if (messages.size != before) changed = true
         }
+        // An authoritative seed supersedes any eviction record: a message re-introduced by
+        // this seed is back in memory, so a later MessagePartUpdated should update it, not
+        // be dropped as "late for an evicted message". Clearing keeps the set bounded too.
+        evictedMessageIds.clear()
 
         for (m in initial) {
             val key = syntheticKeyFor(m)
@@ -621,7 +634,7 @@ internal class MessageStore {
     }
 
     private fun handleMessageUpdated(sessionId: String, event: MessageUpdated): Boolean {
-        val info = event.properties.info
+        val info = event.properties.info ?: return false
         if (info.sessionID != sessionId) return false
         // An UnknownMessage with an empty id (e.g. from an unrecognized server role with no id
         // field) would collide with other such messages in the map. It carries no id, only
@@ -640,6 +653,10 @@ internal class MessageStore {
         // A server re-sending byte-identical info is a no-op: skip it so we don't publish a
         // redundant snapshot (mirrors upsertPart's identical-part guard).
         if (existing != null && existing.info == info) return false
+        // A MessageUpdated re-introduces the message into the store (it was either evicted
+        // by evictOldMessages or genuinely new). Drop any eviction record so a following
+        // MessagePartUpdated updates this holder instead of being dropped as "late".
+        info.id.takeIf { it.isNotEmpty() }?.let { evictedMessageIds.remove(it) }
         if (existing == null) {
             messages[key] = Holder(info, LinkedHashMap())
         } else {
@@ -685,6 +702,10 @@ internal class MessageStore {
             eventSession == null && !messages.containsKey(id) -> return false
         }
         val removed = messages.remove(id) ?: return false
+        // The message is gone from the store; drop any eviction record for it so the set
+        // doesn't retain ids of long-deleted messages. (A re-seed would also clear this,
+        // but a quiet session that never reconnects could otherwise accumulate entries.)
+        removed.info.id.takeIf { it.isNotEmpty() }?.let { evictedMessageIds.remove(it) }
         // Derive the same key handleMessageUpdated would have stored this holder under. For an
         // UnknownMessage with an empty id, that's the synthetic "unknown-c<created>" /
         // "unknown-h<hash>" key (not the raw empty id) — removing the raw id here would leave
@@ -712,6 +733,13 @@ internal class MessageStore {
             current.parts[part.id] = part
             current.invalidate()
         } else {
+            // A late part update for a message that was evicted by evictOldMessages() (the
+            // store caps at maxMessages) would otherwise re-insert the message with only
+            // this single part — a partial, contextless bubble at the end of the list. The
+            // evicted message's other parts are gone from memory, so re-inserting can't
+            // restore them; ignore the late part instead. (A later MessageUpdated for the
+            // same id — which always carries full info — re-creates the holder correctly.)
+            if (evictedMessageIds.contains(messageId)) return false
             val parts = LinkedHashMap<String, Part>()
             parts[part.id] = part
             messages[messageId] = Holder(
@@ -739,6 +767,15 @@ internal class MessageStore {
         return true
     }
 
+    /** Message ids evicted by [evictOldMessages] (capped at [maxMessages]). A late
+     *  [MessagePartUpdated] for one of these would otherwise re-insert the message under
+     *  [upsertPart] with only the late part — a partial, contextless bubble at the end of
+     *  the list. Membership here tells upsertPart to drop the late part instead. Bounded by
+     *  the same cap (entries are removed when the message is re-seeded via [seed] or removed
+     *  via [handleMessageRemoved]); a long-lived session that cycles past maxMessages many
+     *  times never grows this beyond the most recent eviction batch. */
+    private val evictedMessageIds = mutableSetOf<String>()
+
     /** Evict the oldest messages when the store exceeds [maxMessages], keeping memory bounded.
      *  Returns true if any messages were evicted. */
     private fun evictOldMessages(): Boolean {
@@ -746,6 +783,13 @@ internal class MessageStore {
         while (messages.size > maxMessages) {
             val oldestKey = messages.keys.iterator().next()
             val removed = messages.remove(oldestKey)
+            // Record the evicted message's id so a late MessagePartUpdated for it is dropped
+            // instead of re-inserting a single-part bubble (see upsertPart). Also clear any
+            // prior eviction record for this id from an older cycle (the message re-entered
+            // via seed/MessageUpdated and has now been evicted again).
+            removed?.info?.id?.takeIf { it.isNotEmpty() }?.let { id ->
+                evictedMessageIds.add(id)
+            }
             // Prune the evicted message's pivot bookkeeping so these sets don't grow
             // unbounded over a long-running session that never reconnects (they're only
             // otherwise cleared on reseed/seed).

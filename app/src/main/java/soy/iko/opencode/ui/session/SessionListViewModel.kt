@@ -444,7 +444,7 @@ class SessionListViewModel(private val container: AppContainer) : ViewModel() {
                         conn.events.events.collect { event ->
                             when (event) {
                                 is SessionUpdated -> {
-                                    val session = event.properties.info
+                                    val session = event.properties.info ?: return@collect
                                     // Ignore updates for a session the user just deleted (still
                                     // within its undo window): the server hasn't deleted it yet
                                     // and can legitimately emit updates, but buffering them here

@@ -369,9 +369,18 @@ class MainActivity : FragmentActivity() {
                 }
             }
             "file" -> {
-                // Reconstruct the path from the path segments after "file", preserving internal
-                // slashes. Decoded + validated against traversal/control characters.
-                val rawPath = data.path?.removePrefix("/file/")?.let { android.net.Uri.decode(it) }
+                // Reconstruct the path from the URI. `file` is the URI *host* (authority), so
+                // data.path is the path AFTER the authority — e.g. `opencode://file/foo/bar.txt`
+                // yields data.path = "/foo/bar.txt", which begins with a leading slash that the
+                // server's file endpoints don't expect (the in-app browser uses server-returned
+                // FileNode.path values with no leading slash, e.g. "foo/bar.txt"). Strip the
+                // single leading slash, then percent-decode and validate against traversal/control
+                // characters. (Using pathSegments would also work but over-decodes `+` and other
+                // characters that aren't percent-encoded in real workspace paths.)
+                val rawPath = data.path?.let { p ->
+                    val stripped = if (p.startsWith("/")) p.substring(1) else p
+                    android.net.Uri.decode(stripped)
+                }
                 if (!openFileHandled) {
                     rawPath?.takeIf { isValidFilePath(it) }
                         ?.let { container.requestOpenFile(it); openFileHandled = true } ?: run {

@@ -957,14 +957,15 @@ class ChatViewModel(
                                         if (event.properties.sessionID == sessionId) enqueuePermission(event.properties)
                                     is PermissionReplied ->
                                         if (event.properties.sessionID == sessionId) event.properties.permissionID?.let { resolvePermission(it) }
-                                    is SessionUpdated ->
-                                        if (event.properties.info.id == sessionId) {
-                                            val info = event.properties.info
+                                    is SessionUpdated -> {
+                                        val info = event.properties.info
+                                        if (info != null && info.id == sessionId) {
                                             _sessionTitle.value = info.displayTitle
                                             _reverted.value = info.isReverted
                                             _revertDiff.value = info.revert?.diff?.takeIf { it.isNotBlank() }
                                             _shareUrl.value = info.share?.url?.takeIf { it.isNotBlank() }
                                         }
+                                    }
                                     is SessionDeleted ->
                                         if (event.properties.info?.id == sessionId || event.properties.sessionID == sessionId) {
                                             _sessionDeleted.value = true

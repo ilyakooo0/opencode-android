@@ -547,7 +547,17 @@ fun ChatScreen(
         }
     }
 
-    BackHandler(enabled = running && !showModelPicker && !showAgentPicker && !showCommandPicker) { showExitConfirm = true }
+    // The in-conversation search bar is an AnimatedVisibility overlay (not a Dialog/Dropdown),
+    // so it has no built-in back handling. Close it first on back press, before the exit
+    // confirmation or navigation-away can fire — standard Android "back closes the topmost
+    // overlay" behavior. Declared before the exit-confirm BackHandler so it takes precedence
+    // when both could be active (search open + a run in progress).
+    BackHandler(enabled = searchActive) {
+        searchActive = false
+        chatSearch = ""
+    }
+
+    BackHandler(enabled = running && !showModelPicker && !showAgentPicker && !showCommandPicker && !searchActive) { showExitConfirm = true }
 
     Scaffold(
         // Hardware-keyboard shortcuts (tablets / DeX / Chromebooks): Ctrl+K opens the command

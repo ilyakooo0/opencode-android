@@ -870,7 +870,7 @@ open class AppContainer private constructor(
         // to clear it — pinning anyRunActive true and the foreground notification indefinitely.
         // Mirrors SessionRepository.isRunActivity's guard exactly.
         if (event is MessageUpdated) {
-            val info = event.properties.info
+            val info = event.properties.info ?: return false
             return info is AssistantMessage && !info.isComplete && info.error == null
         }
         // A step-finish part is the trailing completion marker for a run (it carries the
@@ -1473,7 +1473,10 @@ open class AppContainer private constructor(
             val status = responseStatusCode(e)
             if (status == 401 || status == 403) false else throw e
         } finally {
-            runCatching { client.close() }
+            // runCatchingCancellable (not plain runCatching): this is a suspend finally, and
+            // plain runCatching swallows CancellationException — if the caller's scope is
+            // cancelled while client.close() is in flight, the cancellation must propagate.
+            runCatchingCancellable { client.close() }
         }
     }
 
@@ -1493,7 +1496,8 @@ open class AppContainer private constructor(
                 ProbeResult.Unreachable(friendlyErrorFor(e, profile.baseUrl))
             }
         } finally {
-            runCatching { client.close() }
+            // runCatchingCancellable: see probeWithCredentials for the rationale.
+            runCatchingCancellable { client.close() }
         }
     }
 
@@ -1541,7 +1545,7 @@ open class AppContainer private constructor(
  * [Context] (the surrounding [AppContainer] needs one).
  */
 internal fun sessionOfEvent(event: BusEvent): String? = when (event) {
-    is MessageUpdated -> event.properties.info.sessionID
+    is MessageUpdated -> event.properties.info?.sessionID
     is MessagePartUpdated -> event.properties.part.sessionID ?: event.properties.sessionID
     else -> null
 }
@@ -1552,7 +1556,7 @@ internal fun sessionOfEvent(event: BusEvent): String? = when (event) {
  * message id (those fall back to being counted individually).
  */
 internal fun messageIdOfEvent(event: BusEvent): String? = when (event) {
-    is MessageUpdated -> event.properties.info.id
+    is MessageUpdated -> event.properties.info?.id
     is MessagePartUpdated -> event.properties.messageID ?: event.properties.part.messageID
     else -> null
 }

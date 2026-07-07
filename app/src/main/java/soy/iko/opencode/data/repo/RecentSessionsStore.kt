@@ -80,11 +80,17 @@ object RecentSessionsStore {
                         tmp2.writeText(encoded)
                         if (!tmp2.renameTo(target)) {
                             // Truly last resort: some OEM filesystems reject even a create-rename.
-                            // Only here do we accept a non-atomic overwrite, with a final cleanup.
-                            target.delete()
-                            tmp2.renameTo(target)
+                            // Write directly to target, accepting a brief non-atomic window (a
+                            // concurrent reader could see a partially-written file). The previous
+                            // delete-then-rename here was worse: between the delete and the rename
+                            // a reader saw NO file (empty recents), and if the rename failed too,
+                            // target was left missing and tmp2 orphaned. writeText at least keeps
+                            // either the old or the new content visible, never a gap. Clean up
+                            // both temps afterwards.
+                            target.writeText(encoded)
                         }
                         tmp.delete()
+                        tmp2.delete()
                     }
                 }
             }

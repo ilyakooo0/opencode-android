@@ -278,7 +278,18 @@ open class DraftStore private constructor(
     open fun shutdown() {
         flushExecutor.shutdown()
         // Await pending flushDraft writes so drafts aren't lost if the process exits
-        // immediately after shutdown (e.g. ANR-triggered process kill).
-        runCatching { flushExecutor.awaitTermination(2, java.util.concurrent.TimeUnit.SECONDS) }
+        // immediately after shutdown (e.g. ANR-triggered process kill). Loop until the
+        // executor is truly idle (or 5s elapses) rather than a single 2s wait: a slow disk
+        // with a deep queue of keystroke-triggered flushes can exceed 2s, and dropping the
+        // tail would lose the user's most recent edits. The JVM shutdown hook's own deadline
+        // is the hard limit; this loop just gives the executor the best chance to drain.
+        var waitedMs = 0L
+        while (waitedMs < 5000L) {
+            if (flushExecutor.isTerminated) break
+            runCatching {
+                flushExecutor.awaitTermination(500, java.util.concurrent.TimeUnit.MILLISECONDS)
+            }
+            waitedMs += 500L
+        }
     }
 }

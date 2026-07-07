@@ -16,6 +16,7 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.ServiceCompat
 import soy.iko.opencode.MainActivity
 import soy.iko.opencode.R
+import java.security.MessageDigest
 
 /**
  * A foreground service kept alive while an opencode agent is actively running. Holding a
@@ -37,7 +38,12 @@ class RunForegroundService : Service() {
     // recreated service instance and leave the chronometer pinned to a previous run's start
     // if onDestroy hadn't run yet when the next run's first intent arrived. As an instance
     // field it's reset by construction on every new Service instance.
-    private var runStartMillis: Long = 0L
+    //
+    // @Volatile: onStartCommand/onDestroy write these on the main thread, but updateProgress
+    // (reached via the companion start() from AppContainer.observeRunForegroundService, which
+    // runs on Dispatchers.IO) reads them. Without @Volatile there's no happens-before edge,
+    // so a 64-bit Long (runStartMillis) can be torn and the booleans/strings can be stale.
+    @Volatile private var runStartMillis: Long = 0L
     // Whether *this* service instance has successfully called startForeground. Tracked so
     // progress-driven re-starts (which re-enter onStartCommand) don't re-call startForeground
     // and re-bind the 5s obligation each time — that would let a backgrounded re-start throw
@@ -45,14 +51,14 @@ class RunForegroundService : Service() {
     // foreground. After the first successful startForeground, progress updates refresh the
     // notification via NotificationManager.notify directly (see [updateProgress]), which
     // never throws the background-start exception.
-    private var isInForeground: Boolean = false
+    @Volatile private var isInForeground: Boolean = false
     // The most recent session title/id/profile/progress handed to onStartCommand, retained so
     // [updateProgress] can rebuild the notification with a new progress string without a fresh
     // startForegroundService intent (which can throw when backgrounded).
-    private var lastTitle: String? = null
-    private var lastSessionId: String? = null
-    private var lastProfileId: String? = null
-    private var lastProgress: String? = null
+    @Volatile private var lastTitle: String? = null
+    @Volatile private var lastSessionId: String? = null
+    @Volatile private var lastProfileId: String? = null
+    @Volatile private var lastProgress: String? = null
 
     @android.annotation.SuppressLint("MissingPermission")
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -113,19 +119,33 @@ class RunForegroundService : Service() {
      *  re-entering [onStartCommand] (and therefore without calling [Context.startForegroundService],
      *  which can throw [android.app.ForegroundServiceStartNotAllowedException] on Android 12+ when
      *  the app is backgrounded — even if the service is already in the foreground). Called directly
-     *  by the companion [updateProgress] when a progress refresh is needed while the service is
-     *  already running; falls back to [start] (which goes through startForegroundService) when the
-     *  service isn't alive yet, so the first progress update still lands. */
+     *  by the companion [start] when a progress refresh is needed while the service is already
+     *  running; falls back to [start] (which goes through startForegroundService) when the
+     *  service isn't alive yet, so the first progress update still lands.
+     *
+     *  Forwards the full set of run fields (title/sessionId/profileId/progress), not just the
+     *  progress string, so a late-resolved session title or a second run starting after the
+     *  first updates the notification text AND the Stop action's target session/profile.
+     *  Without this, the Stop action would keep targeting the originally-captured session even
+     *  after a profile switch (mirroring the SessionNotifications abort-routing guard). */
     @SuppressLint("MissingPermission")
-    private fun updateProgress(progress: String?) {
+    private fun updateProgress(
+        progress: String?,
+        sessionTitle: String? = lastTitle,
+        sessionId: String? = lastSessionId,
+        profileId: String? = lastProfileId,
+    ) {
         // Guard against the companion start() → instance race: start() reads @Volatile instance
         // on a background dispatcher and calls updateProgress, but onDestroy (on the main thread)
         // can null instance and call stopForeground between the read and this notify(). isInForeground
         // is cleared in onDestroy, so checking it here covers the stopForeground-already-called case
         // and avoids touching NotificationManager during teardown.
         if (!isInForeground) return
+        lastTitle = sessionTitle
+        lastSessionId = sessionId
+        lastProfileId = profileId
         lastProgress = progress
-        val notification = buildNotification(lastTitle, lastSessionId, lastProfileId, progress)
+        val notification = buildNotification(sessionTitle, sessionId, profileId, progress)
         runCatching {
             NotificationManagerCompat.from(this).notify(NOTIF_ID, notification)
         }.onFailure { Log.w(TAG, "Failed to update foreground notification progress", it) }
@@ -181,8 +201,15 @@ class RunForegroundService : Service() {
                 putExtra(NotificationActionReceiver.EXTRA_SESSION_ID, sessionId)
                 profileId?.let { putExtra(NotificationActionReceiver.EXTRA_PROFILE_ID, it) }
             }
+            // Derive the request code from a SHA-256 of the session id (truncated to 31 bits),
+            // NOT String.hashCode(): two distinct session ids can share a 32-bit hashCode, and
+            // with FLAG_UPDATE_CURRENT the second registration overwrites the first's extras —
+            // so a hash collision between two concurrent runs would make tapping Stop on one
+            // session's notification broadcast the OTHER session's id. Mirrors SessionNotifications.
+            // notifId's collision-resistant derivation.
+            val requestCode = stopRequestCode(sessionId)
             val stopPending = PendingIntent.getBroadcast(
-                this, sessionId.hashCode(), stopIntent,
+                this, requestCode, stopIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             )
             builder.addAction(
@@ -263,6 +290,21 @@ class RunForegroundService : Service() {
         private const val TAG = "RunForegroundService"
         private const val NOTIF_ID = 1
         private const val NOTIF_TIMEOUT_ID = 2
+
+        /** Derive a stable, collision-resistant PendingIntent request code from a session id.
+         *  String.hashCode() can collide for distinct session ids; a SHA-256 truncated to 31
+         *  bits makes accidental collisions astronomically unlikely, so two concurrent runs'
+         *  Stop actions can't overwrite each other's PendingIntent extras. Mirrors
+         *  [SessionNotifications.notifId]'s derivation. */
+        private fun stopRequestCode(sessionId: String): Int {
+            val digest = runCatching { MessageDigest.getInstance("SHA-256") }
+                .getOrNull()?.digest(sessionId.toByteArray()) ?: return sessionId.hashCode()
+            val hash = (((digest[0].toInt() and 0xFF) shl 24) or
+                ((digest[1].toInt() and 0xFF) shl 16) or
+                ((digest[2].toInt() and 0xFF) shl 8) or
+                (digest[3].toInt() and 0xFF)).and(0x7FFFFFFF)
+            return hash
+        }
         // Brand accent for the foreground notifications' small-icon tint circle. Resolved
         // from resources (R.color.notif_brand) so it follows the app theme (light/dark)
         // instead of a hardcoded constant. Lazily computed on first use from the app context
@@ -304,7 +346,11 @@ class RunForegroundService : Service() {
             // notify never throws, so progress refreshes always land while the service runs.
             val live = instance
             if (live != null) {
-                live.updateProgress(progress)
+                // Forward the full set of run fields (not just progress) so a late-resolved
+                // session title or a second run updates the notification text AND the Stop
+                // action's target session/profile — otherwise the Stop action would keep
+                // targeting the originally-captured session even after a profile switch.
+                live.updateProgress(progress, sessionTitle, sessionId, profileId)
                 return
             }
             // startForegroundService can throw ForegroundServiceStartNotAllowedException
