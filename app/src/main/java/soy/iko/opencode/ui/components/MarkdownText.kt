@@ -85,7 +85,9 @@ import com.mikepenz.markdown.compose.components.markdownComponents
 import com.mikepenz.markdown.m3.Markdown
 import com.mikepenz.markdown.model.DefaultMarkdownAnnotator
 import com.mikepenz.markdown.model.DefaultMarkdownAnnotatorConfig
+import com.mikepenz.markdown.model.MarkdownAnimations
 import com.mikepenz.markdown.model.MarkdownState
+import com.mikepenz.markdown.model.markdownAnimations
 import com.mikepenz.markdown.model.rememberMarkdownState
 import org.intellij.markdown.MarkdownElementTypes
 import org.intellij.markdown.ast.ASTNode
@@ -209,6 +211,21 @@ private fun MarkdownBody(
         }
     }
     val context = LocalContext.current
+    // No-op [MarkdownAnimations] disables the library's [animateContentSize] wrapper applied
+    // by [com.mikepenz.markdown.compose.elements.MarkdownText] via [MarkdownAnimations.animateTextSize].
+    // That modifier triggers draw-phase remeasures through the nested SubcomposeLayout
+    // (BasicText-with-links uses SubcomposeLayout for link hit-testing); during streaming and
+    // during the Loading→Success state transition, these remeasures crash with an NPE in
+    // AnimatedContentTransitionScopeImpl$ChildData.isTarget (an R8-rewritten frame throwing
+    // NullPointerException). Overriding paragraph/heading components to [MarkdownTextNoAnim]
+    // (which renders via [BasicText] directly) avoids the wrapper for those paths, but the
+    // library's MarkdownText is still reached through the `text` component (bare TEXT nodes,
+    // which appear during partial streaming parses), the `checkbox` component (GFM task lists),
+    // and the inline-image path. Disabling animateTextSize globally closes all of them at once
+    // — the size animation is decorative (only inline image placeholder→final size swaps), and
+    // the crash it causes is a regression in the library's interaction with Compose's
+    // SubcomposeLayout under streaming/recomposition bursts.
+    val animations: MarkdownAnimations = markdownAnimations(animateTextSize = { this })
     // Intercept link taps so the scheme can be validated before the library fires an
     // implicit ACTION_VIEW. A hallucinated javascript:/file:/intent: URL must not launch
     // an unexpected intent chooser. Taps are routed to a dialog offering Open (only for
@@ -370,6 +387,7 @@ private fun MarkdownBody(
                 modifier = modifier.semantics { liveRegion = LiveRegionMode.Polite },
                 components = components,
                 annotator = effectiveAnnotator,
+                animations = animations,
             )
         }
         // A blinking caret at the end of a streaming reply gives a "live" typewriter feel.
@@ -393,6 +411,7 @@ private fun MarkdownBody(
                     modifier = modifier.semantics { liveRegion = LiveRegionMode.Polite },
                     components = components,
                     annotator = effectiveAnnotator,
+                    animations = animations,
                 )
             }
         }
