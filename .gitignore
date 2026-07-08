@@ -30,3 +30,12 @@ Thumbs.db
 # Nix
 result
 .direnv/
+
+# Rust
+shared/target/
+
+# Generated Kotlin types (regenerated from Rust core)
+generated/jniLibs/
+
+# Gradle wrapper (should be committed, but ignore if not present)
+gradle/wrapper/gradle-wrapper.jar

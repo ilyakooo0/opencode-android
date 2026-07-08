@@ -1,5 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <string name="notif_permission_public">Se necesita aprobación</string>
-    <string name="notif_error_public">La ejecución falló</string>
-</resources>

@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <!-- Generic, detail-free text for the lock-screen (public) version of notifications whose
-         detail line may carry sensitive file paths or commands, so that content isn't shown
-         on a locked device. -->
-    <string name="notif_permission_public">Approval needed</string>
-    <string name="notif_error_public">Run failed</string>
-</resources>

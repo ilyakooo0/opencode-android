@@ -1,22 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!--
-  The Compose theme (OpencodeTheme) takes over once the UI inflates; this XML
-  theme only governs the window before Compose and hosts the SplashScreen API.
-
-  Parents off the framework light Material theme (not the dark one) and sets a
-  windowBackground matching the app's light surface, so the brief window between
-  splash dismiss and Compose's first frame isn't a dark flash on a light UI. The
-  values-night variant swaps to the dark Material parent + dark windowBackground.
--->
 <resources>
-    <style name="Theme.OpencodeAndroid" parent="android:Theme.Material.Light.NoActionBar">
-        <item name="android:windowBackground">@color/window_background</item>
-    </style>
-
-    <!-- Shown by core-splashscreen on cold start, then swapped for the theme above. -->
-    <style name="Theme.OpencodeAndroid.Splash" parent="Theme.SplashScreen">
-        <item name="windowSplashScreenBackground">@color/splash_background</item>
-        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
-        <item name="postSplashScreenTheme">@style/Theme.OpencodeAndroid</item>
-    </style>
+    <style name="Theme.Opencode" parent="android:Theme.Material.Light.NoActionBar" />
 </resources>

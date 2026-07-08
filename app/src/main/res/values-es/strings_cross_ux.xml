@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <!-- UX transversal: mensajes 4xx diferenciados y avisos de cola de salida. -->
-    <string name="error_not_found">No encontrado — puede que se haya eliminado.</string>
-    <string name="outbox_dropped_title">No se pudo enviar el mensaje</string>
-    <string name="outbox_dropped_text">No se pudo entregar una respuesta en cola — puede que la sesión se haya eliminado.</string>
-</resources>
