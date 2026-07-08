@@ -141,6 +141,7 @@ fun SessionsScreen(state: UiState, dispatch: (Event) -> Unit) {
             }
             when {
                 state.sessions.isEmpty() && !state.loading -> EmptySessions()
+                filteredSessions.isEmpty() && searchQuery.isNotEmpty() -> NoSearchResults(searchQuery)
                 else -> PullToRefreshBox(
                     isRefreshing = isPullRefreshing,
                     onRefresh = {
@@ -247,6 +248,20 @@ private fun SwipeDeleteBackground() {
 /** Shorten a session ID for display: "abc12345…" instead of the full UUID. */
 private fun shortSessionId(id: String): String =
     if (id.length > 12) id.take(8) + "…" else id
+
+@Composable
+private fun NoSearchResults(query: String) {
+    Box(
+        modifier = Modifier.fillMaxSize().padding(32.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = "No results for “$query”",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
 
 @Composable
 private fun EmptySessions() {

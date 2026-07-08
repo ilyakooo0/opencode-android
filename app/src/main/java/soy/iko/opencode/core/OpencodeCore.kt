@@ -84,13 +84,13 @@ class OpencodeCore(
                 scope.launch { loadMessages(event.id) }
             }
 
-            Event.CreateSession -> { loading = true; emit(); scope.launch { createSession() } }
+            Event.CreateSession -> { loading = true; error = null; emit(); scope.launch { createSession() } }
 
             is Event.DeleteSession -> {
                 val id = event.id
                 // Delete on the server first; only drop it from the UI once that
                 // succeeds, so a failed request leaves the session recoverable.
-                loading = true; emit()
+                loading = true; error = null; emit()
                 scope.launch {
                     http.delete("$serverUrl/session/$id", authHeader()).fold(
                         onSuccess = { resp ->
@@ -145,6 +145,9 @@ class OpencodeCore(
                 sessions.clear()
                 messages.clear()
                 currentSessionId = null
+                // Reset to the default so a late-firing close callback from the old
+                // SSE connection can't flash the reconnecting banner on the next connect.
+                sseConnected = true
                 closeSse()
                 emit()
             }

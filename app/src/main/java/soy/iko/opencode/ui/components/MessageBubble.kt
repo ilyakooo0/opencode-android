@@ -81,7 +81,7 @@ fun MessageBubble(message: MessageView, modifier: Modifier = Modifier) {
                 )
                 .padding(horizontal = 14.dp, vertical = 10.dp),
         ) {
-            message.reasoning?.let { ReasoningBlock(it) }
+            message.reasoning?.let { ReasoningBlock(it, context) }
 
             message.tools.forEach { ToolRow(it) }
 
@@ -117,7 +117,7 @@ private fun copyToClipboard(context: Context, text: String) {
 }
 
 @Composable
-private fun ReasoningBlock(text: String) {
+private fun ReasoningBlock(text: String, context: Context) {
     var expanded by remember { mutableStateOf(false) }
     Column(modifier = Modifier.padding(bottom = 6.dp)) {
         Row(
@@ -142,6 +142,17 @@ private fun ReasoningBlock(text: String) {
                 style = MaterialTheme.typography.bodySmall.copy(fontStyle = FontStyle.Italic),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 4.dp),
+            )
+            Text(
+                text = "Copy",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .padding(top = 4.dp)
+                    .clickable {
+                        copyToClipboard(context, text)
+                        Toast.makeText(context, "Copied", Toast.LENGTH_SHORT).show()
+                    },
             )
         }
     }
