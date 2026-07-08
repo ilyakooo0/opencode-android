@@ -27,6 +27,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.CircularProgressIndicator
@@ -136,6 +137,7 @@ fun ChatScreen(state: UiState, dispatch: (Event) -> Unit) {
             ChatInputBar(
                 draft = state.draft,
                 generating = state.generating,
+                loading = state.loading && state.messages.isEmpty(),
                 onDraftChange = { dispatch(Event.DraftChanged(it)) },
                 onSend = { dispatch(Event.SendMessage(state.draft)) },
                 onStop = { dispatch(Event.CancelGeneration) },
@@ -148,6 +150,12 @@ fun ChatScreen(state: UiState, dispatch: (Event) -> Unit) {
             }
             if (state.loading && state.messages.isEmpty()) {
                 LinearProgressIndicator(Modifier.fillMaxWidth())
+            }
+            if (state.error != null && state.messages.isNotEmpty()) {
+                ErrorBanner(
+                    message = state.error,
+                    onDismiss = { dispatch(Event.DismissError) },
+                )
             }
             Box(Modifier.fillMaxWidth().weight(1f)) {
                 if (state.messages.isEmpty() && !state.loading) {
@@ -243,9 +251,39 @@ private fun ReconnectingBanner() {
 }
 
 @Composable
+private fun ErrorBanner(message: String, onDismiss: () -> Unit) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.errorContainer,
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(start = 16.dp, top = 6.dp, bottom = 6.dp, end = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onErrorContainer,
+                modifier = Modifier.weight(1f),
+            )
+            IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
+                Icon(
+                    Icons.Filled.Close,
+                    contentDescription = "Dismiss error",
+                    tint = MaterialTheme.colorScheme.onErrorContainer,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun ChatInputBar(
     draft: String,
     generating: Boolean,
+    loading: Boolean,
     onDraftChange: (String) -> Unit,
     onSend: () -> Unit,
     onStop: () -> Unit,
@@ -261,11 +299,12 @@ private fun ChatInputBar(
                 value = draft,
                 onValueChange = onDraftChange,
                 modifier = Modifier.weight(1f),
+                enabled = !loading,
                 placeholder = { Text("Message opencode…") },
                 maxLines = 5,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                 keyboardActions = KeyboardActions(onSend = {
-                    if (!generating && draft.isNotBlank()) onSend()
+                    if (!generating && !loading && draft.isNotBlank()) onSend()
                 }),
             )
             if (generating) {
@@ -278,7 +317,7 @@ private fun ChatInputBar(
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         onSend()
                     },
-                    enabled = draft.isNotBlank(),
+                    enabled = draft.isNotBlank() && !loading,
                 ) {
                     Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
                 }

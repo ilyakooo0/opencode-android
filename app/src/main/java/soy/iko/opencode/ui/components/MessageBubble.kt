@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Check
@@ -35,7 +36,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import soy.iko.opencode.core.MessageStatus
@@ -86,14 +90,16 @@ fun MessageBubble(message: MessageView, modifier: Modifier = Modifier) {
 
             message.tools.forEach { ToolRow(it) }
 
-            if (message.text.isNotEmpty()) {
-                Text(
-                    text = message.text + if (message.streaming) " ▌" else "",
-                    color = textColor,
-                    style = MaterialTheme.typography.bodyLarge,
-                )
-            } else if (message.streaming && message.tools.isEmpty() && message.reasoning == null) {
-                Text("▌", color = textColor, style = MaterialTheme.typography.bodyLarge)
+            SelectionContainer {
+                if (message.text.isNotEmpty()) {
+                    Text(
+                        text = message.text + if (message.streaming) " ▌" else "",
+                        color = textColor,
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                } else if (message.streaming && message.tools.isEmpty() && message.reasoning == null) {
+                    Text("▌", color = textColor, style = MaterialTheme.typography.bodyLarge)
+                }
             }
 
             if (message.time > 0) {
@@ -162,6 +168,13 @@ private fun ReasoningBlock(text: String, context: Context) {
 @Composable
 private fun ToolRow(tool: ToolView) {
     var expanded by remember { mutableStateOf(false) }
+    val baseColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val statusColor = when (tool.status) {
+        "completed", "success" -> MaterialTheme.colorScheme.primary
+        "error", "failed" -> MaterialTheme.colorScheme.error
+        "pending", "running", "in_progress" -> MaterialTheme.colorScheme.onSurfaceVariant
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
@@ -176,14 +189,23 @@ private fun ToolRow(tool: ToolView) {
             modifier = Modifier.padding(end = 6.dp).widthIn(max = 16.dp),
         )
         Text(
-            text = buildString {
-                append(tool.name)
-                append(" · ")
-                append(tool.status)
-                if (expanded) tool.title?.let { append(" — "); append(it) }
+            text = buildAnnotatedString {
+                withStyle(SpanStyle(color = baseColor)) {
+                    append(tool.name)
+                    append(" · ")
+                }
+                withStyle(SpanStyle(color = statusColor)) {
+                    append(tool.status)
+                }
+                if (expanded) tool.title?.let {
+                    withStyle(SpanStyle(color = baseColor)) {
+                        append(" — ")
+                        append(it)
+                    }
+                }
             },
             style = MonoStyle,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = baseColor,
             maxLines = if (expanded) Int.MAX_VALUE else 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),

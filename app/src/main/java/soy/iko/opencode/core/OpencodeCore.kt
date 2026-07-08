@@ -1,6 +1,7 @@
 package soy.iko.opencode.core
 
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -48,6 +49,7 @@ class OpencodeCore(
     private var sse: SseClient? = null
     private var sseClosedIntentionally = false
     private var reconnectAttempts = 0
+    private var reconnectJob: Job? = null
 
     // ── Event entry point ──────────────────────────────────────────────────────
     fun dispatch(event: Event) {
@@ -175,6 +177,9 @@ class OpencodeCore(
             textParts["local"] = text
         }
         messages.add(user)
+        // Keep the draft text so we can restore it if the send fails; otherwise the
+        // user's message is lost and they'd have to retype it.
+        val savedDraft = draft
         draft = ""
         generating = true
         error = null
@@ -191,6 +196,7 @@ class OpencodeCore(
                         messages.firstOrNull { it.id == user.id }?.status = MessageStatus.Failed
                         generating = false
                         messages.forEach { it.streaming = false }
+                        draft = savedDraft
                         error = "Server returned status ${resp.code}"
                     }
                 },
@@ -198,6 +204,7 @@ class OpencodeCore(
                     messages.firstOrNull { it.id == user.id }?.status = MessageStatus.Failed
                     generating = false
                     messages.forEach { it.streaming = false }
+                    draft = savedDraft
                     error = "Request failed: ${e.message}"
                 },
             )
@@ -326,6 +333,8 @@ class OpencodeCore(
 
     private fun closeSse() {
         sseClosedIntentionally = true
+        reconnectJob?.cancel()
+        reconnectJob = null
         sse?.close()
         sse = null
     }
@@ -336,7 +345,10 @@ class OpencodeCore(
         // stream reconnects (onStateChange(true)) so a healthy server starts fresh.
         val delayMs = (2000L * (1L shl reconnectAttempts)).coerceAtMost(30_000L)
         if (delayMs < 30_000L) reconnectAttempts += 1
-        scope.launch {
+        // Cancel any pending reconnect so rapid network flapping can't stack multiple
+        // coroutines that each open a new SSE connection.
+        reconnectJob?.cancel()
+        reconnectJob = scope.launch {
             delay(delayMs)
             if (!sseClosedIntentionally && connected && screen != Screen.Connect) startSse()
         }
@@ -370,16 +382,24 @@ class OpencodeCore(
             is Protocol.Event.PartUpdated -> {
                 val part = event.part
                 val msg = messages.firstOrNull { it.id == part.messageId } ?: return false
-                when (part) {
-                    is Protocol.Part.Text -> if (!part.synthetic) {
+                // Synthetic text parts are intentionally skipped; report no change so we
+                // don't trigger a needless re-render/emit for them.
+                return when (part) {
+                    is Protocol.Part.Text -> if (part.synthetic) {
+                        false
+                    } else {
                         msg.textParts[part.id] = pickText(part.text, event.delta, msg.textParts[part.id])
+                        true
                     }
-                    is Protocol.Part.Reasoning ->
+                    is Protocol.Part.Reasoning -> {
                         msg.reasoningParts[part.id] = pickText(part.text, event.delta, msg.reasoningParts[part.id])
-                    is Protocol.Part.Tool ->
+                        true
+                    }
+                    is Protocol.Part.Tool -> {
                         msg.toolParts[part.id] = ToolView(part.tool, part.status, part.title)
+                        true
+                    }
                 }
-                return true
             }
 
             is Protocol.Event.PartRemoved -> {
