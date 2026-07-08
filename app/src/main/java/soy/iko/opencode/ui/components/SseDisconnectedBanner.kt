@@ -1,9 +1,16 @@
 package soy.iko.opencode.ui.components
 
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material3.Icon
@@ -12,6 +19,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -130,5 +138,71 @@ fun SseStatusBanner(
                 style = MaterialTheme.typography.bodySmall,
             )
         }
+    }
+}
+
+/**
+ * A compact "Live" pill with a pulsing dot, shown in the chat TopAppBar when
+ * the SSE stream is [SseState.Connected]. Gives users positive confirmation
+ * that live updates are flowing — the app otherwise only surfaces *negative*
+ * SSE states (disconnected / connecting). Small enough to sit inline in the
+ * app bar actions row without crowding the overflow menu.
+ *
+ * Marked as a polite live region so TalkBack announces "Live" when streaming
+ * starts, without stealing focus.
+ */
+@Composable
+fun SseLiveIndicator(
+    label: String,
+    modifier: Modifier = Modifier,
+) {
+    val pulseTransition = rememberInfiniteTransition(label = "sse-live-pulse")
+    val pulseAlpha by pulseTransition.animateFloat(
+        initialValue = 0.35f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 900),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "sse-live-pulse-alpha",
+    )
+    val dotColor = MaterialTheme.colorScheme.primary
+    Surface(
+        color = MaterialTheme.colorScheme.primaryContainer,
+        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+        shape = MaterialTheme.shapes.extraSmall,
+        modifier = modifier
+            .semantics(mergeDescendants = true) {
+                liveRegion = LiveRegionMode.Polite
+                contentDescription = label
+            },
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Dimens.spaceTiny),
+            modifier = Modifier.padding(
+                horizontal = Dimens.spaceSmall,
+                vertical = Dimens.spaceTiny,
+            ),
+        ) {
+            Canvas(modifier = Modifier.size(Dimens.iconInlineSpinner)) {
+                drawCircle(
+                    color = dotColor.copy(alpha = pulseAlpha.coerceIn(0.2f, 1f)),
+                    radius = size.minDimension / 2f,
+                )
+            }
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+            )
+        }
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+private fun SseLiveIndicatorPreview() {
+    OpencodeTheme {
+        SseLiveIndicator(label = "Live")
     }
 }

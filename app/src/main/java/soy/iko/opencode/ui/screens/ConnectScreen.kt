@@ -84,6 +84,7 @@ fun ConnectScreen(core: Core) {
         core = core,
         successConnectedLabel = stringResource(R.string.connect_success),
         successSessionCreatedLabel = stringResource(R.string.session_created),
+        crashCopiedLabel = stringResource(R.string.crash_reports_copied),
     )
 
     // Auto-focus the username field when the server reveals it requires
@@ -281,6 +282,7 @@ fun ConnectScreen(core: Core) {
                 CrashLogger.clearReports()
                 showCrashLogs = false
             },
+            onCopied = { core.notifyCrashCopied() },
             title = stringResource(R.string.crash_reports_title),
             clearLabel = stringResource(R.string.crash_reports_clear),
             closeLabel = stringResource(R.string.crash_reports_close),

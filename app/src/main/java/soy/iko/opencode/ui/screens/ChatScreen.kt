@@ -71,6 +71,7 @@ import soy.iko.opencode.ui.components.InfoHost
 import soy.iko.opencode.ui.components.LoadingPlaceholder
 import soy.iko.opencode.ui.components.MessageBubble
 import soy.iko.opencode.ui.components.SseDisconnectedBanner
+import soy.iko.opencode.ui.components.SseLiveIndicator
 import soy.iko.opencode.ui.components.SseStatusBanner
 import soy.iko.opencode.ui.components.dayOfEpoch
 import soy.iko.opencode.ui.theme.Dimens
@@ -177,6 +178,7 @@ fun ChatScreen(core: Core) {
     val chatEmptyHint = stringResource(R.string.chat_empty_hint)
     val copySessionIdCd = stringResource(R.string.chat_cd_copy_session_id)
     val sessionIdCopiedLabel = stringResource(R.string.chat_session_id_copied)
+    val sseLiveLabel = stringResource(R.string.sse_live)
 
     Scaffold(
         topBar = {
@@ -234,6 +236,12 @@ fun ChatScreen(core: Core) {
                     }
                 },
                 actions = {
+                    // Positive "Live" pill: shown when the SSE stream is open
+                    // and a chat is active, so users can tell streaming is
+                    // healthy without only ever seeing negative banners.
+                    if (sseState == SseState.Connected && sessionId != null && !view.loading) {
+                        SseLiveIndicator(label = sseLiveLabel)
+                    }
                     // Overflow menu with a "Refresh messages" action. Gives
                     // a discoverable manual reload path (e.g. when the SSE
                     // banner has been dismissed) and a home for future items.

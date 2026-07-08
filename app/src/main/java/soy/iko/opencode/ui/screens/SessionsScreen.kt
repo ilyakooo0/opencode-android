@@ -88,7 +88,7 @@ fun SessionsScreen(core: Core) {
                     IconButton(onClick = { showDisconnectConfirm = true }) {
                         Icon(
                             Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = stringResource(R.string.sessions_cd_back),
+                            contentDescription = stringResource(R.string.sessions_cd_disconnect),
                         )
                     }
                 },

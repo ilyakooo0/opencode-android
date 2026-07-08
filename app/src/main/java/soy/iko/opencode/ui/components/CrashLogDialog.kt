@@ -49,7 +49,9 @@ import java.io.File
  *  - List view:     dismiss = "Clear all" (error-tinted), confirm = "Close"
  *  - Confirm view:  dismiss = "Cancel",    confirm = "Clear"  (error-tinted)
  *
- * Each report has a "Copy" and "Share" button for filing bug reports.
+ * Each report has a "Copy" and "Share" button for filing bug reports. Tapping
+ * "Copy" writes to the clipboard and invokes [onCopied] so the caller can
+ * surface a snackbar.
  */
 @Composable
 fun CrashLogDialog(
@@ -57,6 +59,7 @@ fun CrashLogDialog(
     onDismiss: () -> Unit,
     onClear: () -> Unit,
     modifier: Modifier = Modifier,
+    onCopied: () -> Unit = {},
     title: String = "Crash Reports",
     clearLabel: String = "Clear all",
     closeLabel: String = "Close",
@@ -65,7 +68,6 @@ fun CrashLogDialog(
     clearConfirmYesLabel: String = "Clear",
     copyLabel: String = "Copy",
     shareLabel: String = "Share",
-    copiedLabel: String = "Crash report copied",
     emptyLabel: String = "No crash reports",
 ) {
     // Read crash report contents asynchronously on Dispatchers.IO so disk
@@ -123,6 +125,7 @@ fun CrashLogDialog(
                                     clipboard?.setPrimaryClip(
                                         android.content.ClipData.newPlainText("crash_report", text),
                                     )
+                                    onCopied()
                                 },
                                 contentPadding = androidx.compose.foundation.layout.PaddingValues(
                                     horizontal = Dimens.spaceSmall,

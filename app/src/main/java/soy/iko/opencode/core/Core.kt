@@ -107,6 +107,11 @@ class Core(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { _info.emit(SUCCESS_SESSION_DELETED) }
     }
 
+    /** Surface a transient "Crash report copied" snackbar to the user. */
+    fun notifyCrashCopied() {
+        viewModelScope.launch { _info.emit(SUCCESS_CRASH_COPIED) }
+    }
+
     private fun processEffect(request: Request) {
         when (val effect = request.effect) {
             is Effect.Render -> {
@@ -234,5 +239,6 @@ class Core(application: Application) : AndroidViewModel(application) {
         const val SUCCESS_SESSION_CREATED = "__success_session_created__"
         const val SUCCESS_COPIED = "__success_copied__"
         const val SUCCESS_SESSION_DELETED = "__success_session_deleted__"
+        const val SUCCESS_CRASH_COPIED = "__success_crash_copied__"
     }
 }

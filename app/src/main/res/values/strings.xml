@@ -36,7 +36,6 @@
 
     <!-- Sessions screen -->
     <string name="sessions_empty_hint">No sessions yet. Tap + to create one.</string>
-    <string name="sessions_cd_back">Change server</string>
     <string name="sessions_cd_new">New session</string>
     <string name="sessions_untitled">Untitled</string>
     <string name="sessions_id_short">Session %s</string>
@@ -93,7 +92,7 @@
     <!-- Chat: message status -->
     <string name="chat_message_status_pending">Sending</string>
     <string name="chat_message_status_failed">Failed to send</string>
-    <string name="chat_cd_message_status_failed">Failed to send. Long-press to retry.</string>
+    <string name="chat_cd_message_status_failed">Failed to send. Long-press to copy text.</string>
 
     <!-- Crash log dialog -->
     <string name="crash_reports_copy">Copy</string>
