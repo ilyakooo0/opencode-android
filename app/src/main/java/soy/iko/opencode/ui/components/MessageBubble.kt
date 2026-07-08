@@ -37,15 +37,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 import soy.iko.opencode.core.MessageStatus
 import soy.iko.opencode.core.MessageView
 import soy.iko.opencode.core.ToolView
 import soy.iko.opencode.ui.theme.MonoStyle
 
-private val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
+private val timeFormat = java.time.format.DateTimeFormatter.ofPattern("HH:mm")
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -100,7 +97,7 @@ fun MessageBubble(message: MessageView, modifier: Modifier = Modifier) {
 
             if (message.time > 0) {
                 Text(
-                    text = timeFormat.format(Date(message.time)),
+                    text = timeFormat.format(java.time.Instant.ofEpochMilli(message.time).atZone(java.time.ZoneId.systemDefault()).toLocalTime()),
                     style = MaterialTheme.typography.labelSmall,
                     color = mutedColor,
                     modifier = Modifier.padding(top = 4.dp),

@@ -9,8 +9,10 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
@@ -28,7 +30,15 @@ fun OpencodeApp(state: UiState, dispatch: (Event) -> Unit) {
 
     LaunchedEffect(state.error) {
         state.error?.let {
-            snackbar.showSnackbar(it)
+            val result = snackbar.showSnackbar(
+                message = it,
+                actionLabel = "Dismiss",
+                duration = SnackbarDuration.Short,
+            )
+            if (result == SnackbarResult.ActionPerformed) {
+                dispatch(Event.DismissError)
+            }
+            // Always clear the error from state after showing.
             dispatch(Event.DismissError)
         }
     }

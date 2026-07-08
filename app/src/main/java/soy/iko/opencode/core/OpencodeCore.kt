@@ -62,6 +62,9 @@ class OpencodeCore(
             Event.Connect -> {
                 serverUrl = normalizeUrl(serverUrl)
                 if (serverUrl.isEmpty()) { error = "Enter a server URL"; emit(); return }
+                // The auth fields are showing but empty — sending the request now
+                // would just 401 again in a loop. Prompt for credentials instead.
+                if (authRequired && !hasCredentials()) { error = "Enter username and password"; emit(); return }
                 loading = true; error = null; authRequired = false; emit()
                 scope.launch { probeHealth() }
             }

@@ -5,6 +5,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -19,6 +20,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -43,10 +45,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.input.ImeAction
@@ -74,6 +79,16 @@ fun ChatScreen(state: UiState, dispatch: (Event) -> Unit) {
             totalItems > 0 && lastVisibleIndex < totalItems - 3
         }
     }
+
+    // Track how many messages the user has "seen" (i.e. was at the bottom for). While
+    // they're scrolled up, any messages beyond that count are unseen — flag the FAB.
+    var lastSeenCount by remember { mutableStateOf(0) }
+    LaunchedEffect(showScrollButton, state.messages.size) {
+        if (!showScrollButton) {
+            lastSeenCount = state.messages.size
+        }
+    }
+    val hasUnseenMessages = showScrollButton && state.messages.size > lastSeenCount
 
     // Keep the newest content in view as it streams in, but only when the user is
     // already near the bottom. If they've scrolled up to read history, leave it alone.
@@ -152,6 +167,7 @@ fun ChatScreen(state: UiState, dispatch: (Event) -> Unit) {
                 }
                 ScrollToBottomButton(
                     visible = showScrollButton,
+                    showBadge = hasUnseenMessages,
                     onClick = {
                         coroutineScope.launch {
                             if (state.messages.isNotEmpty()) {
@@ -169,23 +185,32 @@ fun ChatScreen(state: UiState, dispatch: (Event) -> Unit) {
 // resolves cleanly. Called inline inside a Column, the enclosing ColumnScope receiver
 // would otherwise capture the ColumnScope.AnimatedVisibility overload and fail to compile.
 @Composable
-private fun BoxScope.ScrollToBottomButton(visible: Boolean, onClick: () -> Unit) {
+private fun BoxScope.ScrollToBottomButton(visible: Boolean, showBadge: Boolean, onClick: () -> Unit) {
     AnimatedVisibility(
         visible = visible,
         modifier = Modifier.align(Alignment.BottomEnd),
         enter = scaleIn() + fadeIn(),
         exit = scaleOut() + fadeOut(),
     ) {
-        FloatingActionButton(
-            onClick = onClick,
-            modifier = Modifier
-                .padding(16.dp)
-                .size(44.dp),
-        ) {
-            Icon(
-                Icons.Filled.KeyboardArrowDown,
-                contentDescription = "Scroll to latest message",
-            )
+        Box(Modifier.padding(16.dp)) {
+            FloatingActionButton(
+                onClick = onClick,
+                modifier = Modifier.size(44.dp),
+            ) {
+                Icon(
+                    Icons.Filled.KeyboardArrowDown,
+                    contentDescription = "Scroll to latest message",
+                )
+            }
+            if (showBadge) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.error),
+                )
+            }
         }
     }
 }

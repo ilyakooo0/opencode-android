@@ -1,7 +1,9 @@
 package soy.iko.opencode.ui.screens
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -28,12 +30,16 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -53,6 +59,13 @@ import soy.iko.opencode.core.UiState
 fun SessionsScreen(state: UiState, dispatch: (Event) -> Unit) {
     val haptic = LocalHapticFeedback.current
     var pendingDeleteId by remember { mutableStateOf<String?>(null) }
+    var isPullRefreshing by remember { mutableStateOf(false) }
+
+    // The pull-to-refresh spinner should only reflect a user-initiated pull, not
+    // every loading operation. Clear it once the underlying load completes.
+    LaunchedEffect(state.loading) {
+        if (!state.loading) isPullRefreshing = false
+    }
 
     pendingDeleteId?.let { deleteId ->
         val pendingSession = state.sessions.firstOrNull { it.id == deleteId }
@@ -102,14 +115,17 @@ fun SessionsScreen(state: UiState, dispatch: (Event) -> Unit) {
         },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
-            if (state.loading) {
+            if (state.loading && !isPullRefreshing) {
                 LinearProgressIndicator(Modifier.fillMaxWidth())
             }
             when {
                 state.sessions.isEmpty() && !state.loading -> EmptySessions()
                 else -> PullToRefreshBox(
-                    isRefreshing = state.loading,
-                    onRefresh = { dispatch(Event.LoadSessions) },
+                    isRefreshing = isPullRefreshing,
+                    onRefresh = {
+                        isPullRefreshing = true
+                        dispatch(Event.LoadSessions)
+                    },
                     modifier = Modifier.fillMaxSize(),
                     state = rememberPullToRefreshState(),
                 ) {
@@ -118,11 +134,27 @@ fun SessionsScreen(state: UiState, dispatch: (Event) -> Unit) {
                         contentPadding = PaddingValues(bottom = 88.dp),
                     ) {
                         items(state.sessions, key = { it.id }) { session ->
-                            SessionRow(
-                                session = session,
-                                onOpen = { dispatch(Event.SelectSession(session.id)) },
-                                onDelete = { pendingDeleteId = session.id },
+                            val dismissState = rememberSwipeToDismissBoxState(
+                                // Only a swipe from the end (right-to-left) triggers deletion;
+                                // return false so the row snaps back and the confirm dialog decides.
+                                confirmValueChange = { value ->
+                                    if (value == SwipeToDismissBoxValue.EndToStart) {
+                                        pendingDeleteId = session.id
+                                    }
+                                    false
+                                },
                             )
+                            SwipeToDismissBox(
+                                state = dismissState,
+                                enableDismissFromStartToEnd = false,
+                                backgroundContent = { SwipeDeleteBackground() },
+                            ) {
+                                SessionRow(
+                                    session = session,
+                                    onOpen = { dispatch(Event.SelectSession(session.id)) },
+                                    onDelete = { pendingDeleteId = session.id },
+                                )
+                            }
                             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
                         }
                     }
@@ -137,6 +169,7 @@ private fun SessionRow(session: SessionView, onOpen: () -> Unit, onDelete: () ->
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surface)
             .clickable(onClick = onOpen)
             .padding(start = 20.dp, end = 8.dp, top = 14.dp, bottom = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -169,6 +202,24 @@ private fun SessionRow(session: SessionView, onOpen: () -> Unit, onDelete: () ->
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+    }
+}
+
+/** Red background with a trailing delete icon, revealed while swiping a session row away. */
+@Composable
+private fun SwipeDeleteBackground() {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.error)
+            .padding(horizontal = 24.dp),
+        contentAlignment = Alignment.CenterEnd,
+    ) {
+        Icon(
+            Icons.Filled.DeleteOutline,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onError,
+        )
     }
 }
 
