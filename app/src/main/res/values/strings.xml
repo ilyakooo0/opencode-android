@@ -34,7 +34,7 @@
     <string name="crash_reports_clear_confirm_yes">Clear</string>
 
     <!-- Sessions screen -->
-    <string name="sessions_empty">No sessions yet</string>
+    <string name="sessions_empty_hint">No sessions yet. Tap + to create one.</string>
     <string name="sessions_cd_back">Change server</string>
     <string name="sessions_cd_new">New session</string>
     <string name="sessions_untitled">Untitled</string>
@@ -42,9 +42,8 @@
     <string name="session_created">Session created</string>
 
     <!-- Chat screen -->
-    <string name="chat_empty">Send a message to start chatting</string>
+    <string name="chat_empty_hint">Send a message below to start the conversation.</string>
     <string name="chat_no_content">(no content)</string>
-    <string name="chat_generating">Generating…</string>
     <string name="chat_input_placeholder">Message…</string>
     <string name="chat_cd_back">Back</string>
     <string name="chat_cd_send">Send</string>
@@ -53,6 +52,8 @@
     <string name="chat_cd_generating">Generating reply</string>
     <string name="chat_cd_scroll_to_bottom">Scroll to latest message</string>
     <string name="chat_session_id_short">Session %s</string>
+    <string name="chat_menu_overflow">More options</string>
+    <string name="chat_menu_refresh">Refresh messages</string>
 
     <!-- Error / snackbar -->
     <string name="action_dismiss">Dismiss</string>

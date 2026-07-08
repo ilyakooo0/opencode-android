@@ -93,7 +93,7 @@ fun SessionsScreen(core: Core) {
                     LoadingPlaceholder()
                 }
                 view.sessions.isEmpty() -> {
-                    EmptyState(message = stringResource(R.string.sessions_empty))
+                    EmptyState(message = stringResource(R.string.sessions_empty_hint))
                 }
                 else -> {
                     PullToRefreshBox(

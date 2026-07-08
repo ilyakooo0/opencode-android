@@ -102,14 +102,16 @@ fun ConnectScreen(core: Core) {
     }
 
     fun submit() {
-        if (!isValidUrl(url)) {
+        val trimmedUrl = url.trim()
+        if (!isValidUrl(trimmedUrl)) {
             urlError = true
             return
         }
         urlError = false
-        core.update(Event.ServerUrlChanged(url))
+        url = trimmedUrl
+        core.update(Event.ServerUrlChanged(trimmedUrl))
         if (view.authRequired || username.isNotBlank() || password.isNotBlank()) {
-            core.update(Event.UsernameChanged(username))
+            core.update(Event.UsernameChanged(username.trim()))
             core.update(Event.PasswordChanged(password))
         }
         core.update(Event.Connect)

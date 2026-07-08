@@ -1,21 +1,26 @@
 package soy.iko.opencode.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -33,6 +38,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
@@ -62,6 +69,8 @@ fun ChatScreen(core: Core) {
     var inputText by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
     var scrollRequest by remember { mutableIntStateOf(0) }
+    var menuExpanded by remember { mutableStateOf(false) }
+    val inputFocusRequester = remember { FocusRequester() }
 
     // Track whether the user is parked at the bottom of the list. We only
     // auto-scroll when they are, so reading history isn't yanked away as
@@ -90,6 +99,16 @@ fun ChatScreen(core: Core) {
         }
     }
 
+    // Auto-focus the input when the chat is empty so the user can start
+    // typing immediately without an extra tap. Only request focus once per
+    // session entry — keyed on the session id so switching sessions retriggers.
+    val sessionId = view.currentSessionId
+    LaunchedEffect(sessionId, view.messages.isEmpty()) {
+        if (sessionId != null && view.messages.isEmpty() && !view.loading && !view.generating) {
+            inputFocusRequester.requestFocus()
+        }
+    }
+
     val errorHostState = ErrorHost(
         core = core,
         dismissLabel = stringResource(R.string.action_dismiss),
@@ -106,7 +125,6 @@ fun ChatScreen(core: Core) {
 
     // Resolve nullable session fields into locals once per recomposition so we
     // never smart-cast a delegate-backed collected property across calls.
-    val sessionId = view.currentSessionId
     val sessionTitle = view.currentSessionTitle
     val chatFallback = stringResource(R.string.top_bar_chat_fallback)
     val idShortTemplate = stringResource(R.string.chat_session_id_short)
@@ -125,6 +143,10 @@ fun ChatScreen(core: Core) {
             idShortTemplate.format(sessionId.take(8))
         } else null
     }
+
+    val refreshLabel = stringResource(R.string.chat_menu_refresh)
+    val overflowLabel = stringResource(R.string.chat_menu_overflow)
+    val chatEmptyHint = stringResource(R.string.chat_empty_hint)
 
     Scaffold(
         topBar = {
@@ -154,6 +176,34 @@ fun ChatScreen(core: Core) {
                         )
                     }
                 },
+                actions = {
+                    // Overflow menu with a "Refresh messages" action. Gives
+                    // a discoverable manual reload path (e.g. when the SSE
+                    // banner has been dismissed) and a home for future items.
+                    Box {
+                        IconButton(onClick = { menuExpanded = true }) {
+                            Icon(
+                                Icons.Default.MoreVert,
+                                contentDescription = overflowLabel,
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = menuExpanded,
+                            onDismissRequest = { menuExpanded = false },
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text(refreshLabel) },
+                                leadingIcon = {
+                                    Icon(Icons.Default.Refresh, contentDescription = null)
+                                },
+                                onClick = {
+                                    menuExpanded = false
+                                    sessionId?.let { core.update(Event.LoadMessages(it)) }
+                                },
+                            )
+                        }
+                    }
+                },
             )
         },
         bottomBar = {
@@ -171,6 +221,7 @@ fun ChatScreen(core: Core) {
                 enabled = !view.loading && !view.generating,
                 placeholder = stringResource(R.string.chat_input_placeholder),
                 sendContentDescription = stringResource(R.string.chat_cd_send),
+                modifier = Modifier.focusRequester(inputFocusRequester),
             )
         },
         snackbarHost = { DualSnackbarHost(errorHostState, infoHostState) },
@@ -196,25 +247,38 @@ fun ChatScreen(core: Core) {
                         LoadingPlaceholder()
                     }
                     view.messages.isEmpty() -> {
-                        EmptyState(message = stringResource(R.string.chat_empty))
+                        EmptyState(message = chatEmptyHint)
                     }
                     else -> {
-                        LazyColumn(
-                            state = listState,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(horizontal = Dimens.listHorizontalPadding),
-                            verticalArrangement = Arrangement.spacedBy(Dimens.listItemSpacing),
-                            contentPadding = PaddingValues(vertical = Dimens.listVerticalPadding),
+                        // Pull-to-refresh lets the user manually reload
+                        // messages, e.g. when the SSE stream stalled and the
+                        // banner was dismissed. Mirrors the Sessions screen.
+                        androidx.compose.material3.pulltorefresh.PullToRefreshBox(
+                            isRefreshing = view.loading,
+                            onRefresh = { sessionId?.let { core.update(Event.LoadMessages(it)) } },
+                            modifier = Modifier.fillMaxSize(),
                         ) {
-                            items(view.messages, key = { it.id }) { message ->
-                                MessageBubble(message)
-                            }
-                            // "Thinking" indicator shown after the user sends, while
-                            // the assistant reply hasn't arrived yet.
-                            item(key = "__generating__") {
-                                AnimatedVisibility(visible = view.generating) {
-                                    GeneratingIndicator()
+                            LazyColumn(
+                                state = listState,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(horizontal = Dimens.listHorizontalPadding),
+                                verticalArrangement = Arrangement.spacedBy(Dimens.listItemSpacing),
+                                contentPadding = PaddingValues(vertical = Dimens.listVerticalPadding),
+                            ) {
+                                items(view.messages, key = { it.id }) { message ->
+                                    MessageBubble(message)
+                                }
+                                // "Thinking" indicator shown after the user sends, while
+                                // the assistant reply hasn't arrived yet. The indicator
+                                // itself animates (pulsing dots), so we don't wrap it in
+                                // AnimatedVisibility — an outer ColumnScope receiver from
+                                // the chat Column would shadow the LazyItemScope here and
+                                // break AnimatedVisibility overload resolution.
+                                if (view.generating) {
+                                    item(key = "__generating__") {
+                                        GeneratingIndicator()
+                                    }
                                 }
                             }
                         }
@@ -224,24 +288,30 @@ fun ChatScreen(core: Core) {
 
             // Scroll-to-bottom FAB: only when the user has scrolled up away
             // from the latest message and there's content to scroll to.
-            if (view.messages.isNotEmpty() && !isAtBottom) {
-                FloatingActionButton(
+            // Animated so it scales in/out rather than popping.
+            AnimatedVisibility(
+                visible = view.messages.isNotEmpty() && !isAtBottom,
+                enter = scaleIn(),
+                exit = scaleOut(),
+                modifier = Modifier.align(Alignment.BottomEnd),
+            ) {
+                ExtendedFloatingActionButton(
                     onClick = { scrollRequest++ },
+                    icon = {
+                        Icon(
+                            Icons.Default.KeyboardArrowDown,
+                            contentDescription = stringResource(R.string.chat_cd_scroll_to_bottom),
+                        )
+                    },
+                    text = { Text(stringResource(R.string.chat_cd_scroll_to_bottom)) },
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
                     modifier = Modifier
-                        .align(Alignment.BottomEnd)
                         .padding(
                             end = Dimens.fabEndMargin,
                             bottom = Dimens.fabBottomMargin,
-                        )
-                        .size(Dimens.fabSize),
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                ) {
-                    Icon(
-                        Icons.Default.KeyboardArrowDown,
-                        contentDescription = stringResource(R.string.chat_cd_scroll_to_bottom),
-                    )
-                }
+                        ),
+                )
             }
         }
     }

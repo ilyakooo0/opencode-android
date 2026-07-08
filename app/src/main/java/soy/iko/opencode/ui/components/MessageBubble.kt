@@ -1,5 +1,12 @@
 package soy.iko.opencode.ui.components
 
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -9,22 +16,25 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontStyle
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.mikepenz.markdown.m3.Markdown
@@ -47,7 +57,11 @@ import java.util.Locale
  * TalkBack reads the role label + content as a single utterance. Assistant
  * bubbles are marked as a [LiveRegionMode.Polite] live region so streaming
  * updates are announced without stealing focus.
+ *
+ * Long-press anywhere on the bubble copies the raw message text to the
+ * clipboard and emits a long-press haptic, mirroring the standard chat UX.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun MessageBubble(
     message: MessageView,
@@ -61,6 +75,8 @@ fun MessageBubble(
         stringResource(R.string.chat_role_assistant)
     }
     val timeLabel = remember(message.time) { formatTimestamp(message.time) }
+    val clipboardManager = LocalClipboardManager.current
+    val hapticFeedback = LocalHapticFeedback.current
     // Build a single TalkBack utterance that includes the role and the
     // message body. Setting an explicit contentDescription on a merge node
     // replaces descendant text, so we must include the body ourselves rather
@@ -77,6 +93,15 @@ fun MessageBubble(
     Row(
         modifier = modifier
             .fillMaxWidth()
+            .combinedClickable(
+                onLongClick = {
+                    if (message.text.isNotBlank()) {
+                        clipboardManager.setText(AnnotatedString(message.text))
+                        hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                    }
+                },
+                onClick = {},
+            )
             .semantics(mergeDescendants = true) {
                 contentDescription = announcement
             },
@@ -173,6 +198,38 @@ fun MessageBubble(
 fun GeneratingIndicator(modifier: Modifier = Modifier) {
     val maxWidth = maxBubbleWidthDp()
     val generatingLabel = stringResource(R.string.chat_cd_generating)
+    val dotColor = MaterialTheme.colorScheme.onSurfaceVariant
+    // Three dots that pulse in sequence: each dot scales/fades with a
+    // staggered delay so the indicator reads as "typing" rather than a
+    // single frozen spinner. One shared infinite transition drives them.
+    val transition = rememberInfiniteTransition(label = "generating-dots")
+    val phase1 by transition.animateFloat(
+        initialValue = 0.3f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 600, delayMillis = 0),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "dot-1",
+    )
+    val phase2 by transition.animateFloat(
+        initialValue = 0.3f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 600, delayMillis = 200),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "dot-2",
+    )
+    val phase3 by transition.animateFloat(
+        initialValue = 0.3f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 600, delayMillis = 400),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "dot-3",
+    )
     Row(
         horizontalArrangement = Arrangement.Start,
         modifier = modifier
@@ -187,6 +244,7 @@ fun GeneratingIndicator(modifier: Modifier = Modifier) {
         ) {
             Row(
                 verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Dimens.spaceTiny),
                 modifier = Modifier
                     .padding(
                         horizontal = Dimens.bubbleHorizontalPadding,
@@ -198,20 +256,28 @@ fun GeneratingIndicator(modifier: Modifier = Modifier) {
                         contentDescription = generatingLabel
                     },
             ) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(Dimens.iconInlineSpinner),
-                    strokeWidth = Dimens.strokeThin,
-                )
-                Spacer(Modifier.size(Dimens.spaceSmall))
-                Text(
-                    text = stringResource(R.string.chat_generating),
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontStyle = FontStyle.Italic,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                GeneratingDot(alpha = phase1, color = dotColor)
+                GeneratingDot(alpha = phase2, color = dotColor)
+                GeneratingDot(alpha = phase3, color = dotColor)
             }
         }
+    }
+}
+
+@Composable
+private fun GeneratingDot(alpha: Float, color: androidx.compose.ui.graphics.Color) {
+    // Scale slightly with alpha so the pulse feels like motion, not just a
+    // dimmer toggle. alpha drives both the dot's alpha and a small scale.
+    val scale = 0.75f + alpha * 0.25f
+    androidx.compose.foundation.Canvas(
+        modifier = Modifier.size(Dimens.iconInlineSpinner),
+    ) {
+        val diameter = size.minDimension * scale
+        drawCircle(
+            color = color.copy(alpha = alpha.coerceIn(0.15f, 1f)),
+            radius = diameter / 2f,
+            center = androidx.compose.ui.geometry.Offset(size.width / 2f, size.height / 2f),
+        )
     }
 }
 
