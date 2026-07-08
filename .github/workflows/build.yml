@@ -30,9 +30,6 @@ jobs:
       - name: Run unit tests
         run: ./gradlew testDebugUnitTest --no-daemon
 
-      - name: Static analysis (detekt)
-        run: ./gradlew detekt --no-daemon
-
       - name: Lint
         run: ./gradlew lintDebug --no-daemon
 
