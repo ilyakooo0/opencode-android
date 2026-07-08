@@ -32,18 +32,28 @@ class HttpClient(
     private val jsonMedia = "application/json".toMediaType()
 
     suspend fun get(url: String, auth: String?): Result<HttpResp> =
-        exec(Request.Builder().url(url).get(), auth)
+        exec(url, auth) { get() }
 
     suspend fun postJson(url: String, body: String, auth: String?): Result<HttpResp> =
-        exec(Request.Builder().url(url).post(body.toRequestBody(jsonMedia)), auth)
+        exec(url, auth) { post(body.toRequestBody(jsonMedia)) }
 
     suspend fun delete(url: String, auth: String?): Result<HttpResp> =
-        exec(Request.Builder().url(url).delete(), auth)
+        exec(url, auth) { delete() }
 
-    private suspend fun exec(builder: Request.Builder, auth: String?): Result<HttpResp> = withContext(Dispatchers.IO) {
-        if (auth != null) builder.header("Authorization", auth)
-        val request = builder.build()
-        runCatching { await(okhttp.newCall(request)) }
+    // Build and run the request off the main thread. Building it — parsing [url]
+    // in particular — can throw (e.g. a URL with no scheme), so that happens
+    // inside [runCatching] too: a bad URL then surfaces as [Result.failure]
+    // instead of crashing the caller's coroutine.
+    private suspend fun exec(
+        url: String,
+        auth: String?,
+        method: Request.Builder.() -> Request.Builder,
+    ): Result<HttpResp> = withContext(Dispatchers.IO) {
+        runCatching {
+            val builder = Request.Builder().url(url).method()
+            if (auth != null) builder.header("Authorization", auth)
+            await(okhttp.newCall(builder.build()))
+        }
     }
 
     private suspend fun await(call: Call): HttpResp = suspendCancellableCoroutine { cont ->

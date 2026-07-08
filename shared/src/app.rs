@@ -740,9 +740,18 @@ fn set_last_pending(model: &mut Model, status: MessageStatus) {
     }
 }
 
-/// Trim whitespace and any trailing `/` so paths concatenate cleanly.
+/// Trim whitespace and any trailing `/` so paths concatenate cleanly, and
+/// default to an `http://` scheme when the user didn't type one (e.g.
+/// "192.168.1.10:4096") — otherwise the shell's URL parser rejects it.
 fn normalize_url(url: &str) -> String {
-    url.trim().trim_end_matches('/').to_string()
+    let trimmed = url.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        String::new()
+    } else if trimmed.contains("://") {
+        trimmed.to_string()
+    } else {
+        format!("http://{trimmed}")
+    }
 }
 
 fn display_title(title: &str) -> String {
@@ -799,6 +808,24 @@ mod tests {
         let mut model = Model::default();
         let _ = app.update(Event::ServerUrlChanged("  http://host:4096/  ".into()), &mut model);
         assert_eq!(app.view(&model).server_url, "http://host:4096");
+    }
+
+    #[test]
+    fn server_url_without_scheme_defaults_to_http() {
+        let app = app();
+        let mut model = Model::default();
+        // A scheme-less host (what a user often types) must gain http://, or the
+        // shell's URL parser throws and the connect attempt crashes.
+        let _ = app.update(Event::ServerUrlChanged("192.168.1.10:4096".into()), &mut model);
+        assert_eq!(app.view(&model).server_url, "http://192.168.1.10:4096");
+    }
+
+    #[test]
+    fn server_url_keeps_https_scheme() {
+        let app = app();
+        let mut model = Model::default();
+        let _ = app.update(Event::ServerUrlChanged("https://host:4096".into()), &mut model);
+        assert_eq!(app.view(&model).server_url, "https://host:4096");
     }
 
     #[test]
