@@ -363,10 +363,22 @@ sealed interface Event {
         }
     }
 
-    data object DismissError: Event {
+    data object NavigateToConnect: Event {
         override fun serialize(serializer: Serializer) {
             serializer.increase_container_depth()
             serializer.serialize_variant_index(14)
+            serializer.decrease_container_depth()
+        }
+
+        fun deserialize(deserializer: Deserializer): NavigateToConnect {
+            return NavigateToConnect
+        }
+    }
+
+    data object DismissError: Event {
+        override fun serialize(serializer: Serializer) {
+            serializer.increase_container_depth()
+            serializer.serialize_variant_index(15)
             serializer.decrease_container_depth()
         }
 
@@ -394,7 +406,8 @@ sealed interface Event {
                 11 -> EventReceived.deserialize(deserializer)
                 12 -> NavigateToChat.deserialize(deserializer)
                 13 -> NavigateToSessions.deserialize(deserializer)
-                14 -> DismissError.deserialize(deserializer)
+                14 -> NavigateToConnect.deserialize(deserializer)
+                15 -> DismissError.deserialize(deserializer)
                 else -> throw DeserializationError("Unknown variant index for Event: $index")
             }
         }
@@ -1054,8 +1067,11 @@ data class ViewModel(
     val error: String? = null,
     val sessions: List<soy.iko.opencode.core.SessionView>,
     val currentSessionId: String? = null,
+    val currentSessionTitle: String,
     val messages: List<soy.iko.opencode.core.MessageView>,
     val draftMessage: String,
+    /// True while waiting for the assistant to reply after the user sends.
+    val generating: Boolean,
     val crashLogCount: UInt,
     val latestCrashLog: String? = null,
 ) {
@@ -1077,10 +1093,12 @@ data class ViewModel(
         currentSessionId.serializeOptionOf(serializer) {
             serializer.serialize_str(it)
         }
+        serializer.serialize_str(currentSessionTitle)
         messages.serialize(serializer) {
             it.serialize(serializer)
         }
         serializer.serialize_str(draftMessage)
+        serializer.serialize_bool(generating)
         serializer.serialize_u32(crashLogCount)
         latestCrashLog.serializeOptionOf(serializer) {
             serializer.serialize_str(it)
@@ -1116,18 +1134,20 @@ data class ViewModel(
                 deserializer.deserializeOptionOf {
                     deserializer.deserialize_str()
                 }
+            val currentSessionTitle = deserializer.deserialize_str()
             val messages =
                 deserializer.deserializeListOf {
                     soy.iko.opencode.core.MessageView.deserialize(deserializer)
                 }
             val draftMessage = deserializer.deserialize_str()
+            val generating = deserializer.deserialize_bool()
             val crashLogCount = deserializer.deserialize_u32()
             val latestCrashLog =
                 deserializer.deserializeOptionOf {
                     deserializer.deserialize_str()
                 }
             deserializer.decrease_container_depth()
-            return ViewModel(screen, serverUrl, username, password, authRequired, connected, loading, error, sessions, currentSessionId, messages, draftMessage, crashLogCount, latestCrashLog)
+            return ViewModel(screen, serverUrl, username, password, authRequired, connected, loading, error, sessions, currentSessionId, currentSessionTitle, messages, draftMessage, generating, crashLogCount, latestCrashLog)
         }
 
         @Throws(DeserializationError::class)

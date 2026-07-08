@@ -1,5 +1,7 @@
 package soy.iko.opencode.core
 
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -23,15 +25,23 @@ import soy.iko.opencode.CrashLogger
  * Crash logs from [CrashLogger] are forwarded to the core as
  * [Event.CrashLog] events so they appear in the ViewModel.
  */
-class Core : androidx.lifecycle.ViewModel() {
+class Core(application: Application) : AndroidViewModel(application) {
     private val ffi: CoreFfi = CoreFfi.create()
     private val httpClient = HttpClient()
     private val sseClient = SseClient()
+
+    private val prefs = application.getSharedPreferences(PREFS_NAME, android.content.Context.MODE_PRIVATE)
 
     private val _view = MutableStateFlow(getInitialView())
     val view: StateFlow<ViewModel> = _view.asStateFlow()
 
     init {
+        // Restore the persisted server URL before the first connect so the
+        // user doesn't have to re-enter it on every launch.
+        val savedUrl = prefs.getString(KEY_SERVER_URL, null)
+        if (savedUrl != null) {
+            update(Event.ServerUrlChanged(savedUrl))
+        }
         update(Event.Start)
 
         viewModelScope.launch {
@@ -54,7 +64,7 @@ class Core : androidx.lifecycle.ViewModel() {
     private fun processEffect(request: Request) {
         when (val effect = request.effect) {
             is Effect.Render -> {
-                _view.value = ViewModel.bincodeDeserialize(ffi.view())
+                refreshView()
             }
             is Effect.Http -> {
                 handleHttpEffect(effect.value, request.id)
@@ -70,13 +80,20 @@ class Core : androidx.lifecycle.ViewModel() {
             for (req in requests) {
                 processEffect(req)
             }
-            _view.value = ViewModel.bincodeDeserialize(ffi.view())
+            refreshView()
 
             val currentView = _view.value
             if (currentView.connected && currentView.currentSessionId != null) {
                 sseClient.connect("${currentView.serverUrl}/event")
             }
         }
+    }
+
+    private fun refreshView() {
+        val newView = ViewModel.bincodeDeserialize(ffi.view())
+        _view.value = newView
+        // Persist the server URL whenever it changes so it survives relaunch.
+        prefs.edit().putString(KEY_SERVER_URL, newView.serverUrl).apply()
     }
 
     /**
@@ -99,9 +116,10 @@ class Core : androidx.lifecycle.ViewModel() {
         return try {
             ViewModel.bincodeDeserialize(ffi.view())
         } catch (e: Throwable) {
+            val defaultUrl = prefs.getString(KEY_SERVER_URL, "http://localhost:4096") ?: "http://localhost:4096"
             ViewModel(
                 screen = Screen.CONNECT,
-                serverUrl = "http://localhost:4096",
+                serverUrl = defaultUrl,
                 username = "",
                 password = "",
                 authRequired = false,
@@ -110,8 +128,10 @@ class Core : androidx.lifecycle.ViewModel() {
                 error = null,
                 sessions = emptyList(),
                 currentSessionId = null,
+                currentSessionTitle = "",
                 messages = emptyList(),
                 draftMessage = "",
+                generating = false,
                 crashLogCount = 0u,
                 latestCrashLog = null,
             )
@@ -120,5 +140,10 @@ class Core : androidx.lifecycle.ViewModel() {
 
     override fun onCleared() {
         sseClient.disconnect()
+    }
+
+    companion object {
+        private const val PREFS_NAME = "opencode_prefs"
+        private const val KEY_SERVER_URL = "server_url"
     }
 }

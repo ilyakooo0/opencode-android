@@ -3,30 +3,36 @@ package soy.iko.opencode.ui.screens
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -37,9 +43,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import soy.iko.opencode.CrashLogger
 import soy.iko.opencode.core.Core
 import soy.iko.opencode.core.Event
+import soy.iko.opencode.ui.components.ErrorHost
+import soy.iko.opencode.ui.components.ErrorSnackbarHost
+import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -48,19 +59,24 @@ fun ConnectScreen(core: Core) {
     var url by remember(view.serverUrl) { mutableStateOf(view.serverUrl) }
     var username by remember(view.username) { mutableStateOf(view.username) }
     var password by remember(view.password) { mutableStateOf(view.password) }
-    val snackbarHostState = remember { SnackbarHostState() }
+    var passwordVisible by remember { mutableStateOf(false) }
+    var showCrashLogs by remember { mutableStateOf(false) }
+    val snackbarHostState = ErrorHost(core)
 
-    LaunchedEffect(view.error) {
-        view.error?.let {
-            snackbarHostState.showSnackbar(it)
+    fun submit() {
+        core.update(Event.ServerUrlChanged(url))
+        if (view.authRequired || username.isNotBlank() || password.isNotBlank()) {
+            core.update(Event.UsernameChanged(username))
+            core.update(Event.PasswordChanged(password))
         }
+        core.update(Event.Connect)
     }
 
     Scaffold(
         topBar = {
             TopAppBar(title = { Text("Opencode") })
         },
-        snackbarHost = { SnackbarHost(snackbarHostState) },
+        snackbarHost = { ErrorSnackbarHost(snackbarHostState) },
     ) { padding ->
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -68,7 +84,8 @@ fun ConnectScreen(core: Core) {
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(24.dp),
+                .padding(24.dp)
+                .verticalScroll(rememberScrollState()),
         ) {
             Icon(
                 imageVector = Icons.Default.Dns,
@@ -91,7 +108,8 @@ fun ConnectScreen(core: Core) {
                     keyboardType = KeyboardType.Uri,
                     imeAction = ImeAction.Go,
                 ),
-                modifier = Modifier.padding(horizontal = 16.dp),
+                keyboardActions = KeyboardActions(onGo = { submit() }),
+                modifier = Modifier.fillMaxWidth(),
             )
 
             AnimatedVisibility(visible = view.authRequired) {
@@ -113,7 +131,10 @@ fun ConnectScreen(core: Core) {
                         leadingIcon = {
                             Icon(Icons.Default.Lock, contentDescription = null)
                         },
-                        modifier = Modifier.padding(horizontal = 16.dp),
+                        keyboardOptions = KeyboardOptions(
+                            imeAction = ImeAction.Next,
+                        ),
+                        modifier = Modifier.fillMaxWidth(),
                     )
                     Spacer(Modifier.height(8.dp))
                     OutlinedTextField(
@@ -121,12 +142,33 @@ fun ConnectScreen(core: Core) {
                         onValueChange = { password = it },
                         label = { Text("Password") },
                         singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(),
+                        visualTransformation = if (passwordVisible) {
+                            VisualTransformation.None
+                        } else {
+                            PasswordVisualTransformation()
+                        },
+                        trailingIcon = {
+                            IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                                Icon(
+                                    if (passwordVisible) {
+                                        Icons.Default.VisibilityOff
+                                    } else {
+                                        Icons.Default.Visibility
+                                    },
+                                    contentDescription = if (passwordVisible) {
+                                        "Hide password"
+                                    } else {
+                                        "Show password"
+                                    },
+                                )
+                            }
+                        },
                         keyboardOptions = KeyboardOptions(
                             keyboardType = KeyboardType.Password,
                             imeAction = ImeAction.Go,
                         ),
-                        modifier = Modifier.padding(horizontal = 16.dp),
+                        keyboardActions = KeyboardActions(onGo = { submit() }),
+                        modifier = Modifier.fillMaxWidth(),
                     )
                     Spacer(Modifier.height(4.dp))
                     TextButton(onClick = { core.update(Event.CancelAuth) }) {
@@ -137,15 +179,9 @@ fun ConnectScreen(core: Core) {
 
             Spacer(Modifier.height(16.dp))
             Button(
-                onClick = {
-                    core.update(Event.ServerUrlChanged(url))
-                    if (view.authRequired || username.isNotBlank() || password.isNotBlank()) {
-                        core.update(Event.UsernameChanged(username))
-                        core.update(Event.PasswordChanged(password))
-                    }
-                    core.update(Event.Connect)
-                },
+                onClick = { submit() },
                 enabled = !view.loading,
+                modifier = Modifier.fillMaxWidth(),
             ) {
                 if (view.loading) {
                     CircularProgressIndicator(
@@ -158,14 +194,78 @@ fun ConnectScreen(core: Core) {
                 }
             }
 
-            if (view.crashLogCount > 0u) {
+            val crashCount = CrashLogger.getReports().size
+            if (crashCount > 0) {
                 Spacer(Modifier.height(16.dp))
-                Text(
-                    text = "${view.crashLogCount} crash report(s) recorded",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Default.Warning,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Spacer(Modifier.size(6.dp))
+                    TextButton(onClick = { showCrashLogs = true }) {
+                        Text(
+                            text = "$crashCount crash report(s) — view",
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
+                }
             }
         }
     }
+
+    if (showCrashLogs) {
+        CrashLogDialog(
+            reports = CrashLogger.getReports(),
+            onDismiss = { showCrashLogs = false },
+            onClear = {
+                CrashLogger.clearReports()
+                showCrashLogs = false
+            },
+        )
+    }
+}
+
+@Composable
+private fun CrashLogDialog(
+    reports: List<File>,
+    onDismiss: () -> Unit,
+    onClear: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Crash Reports") },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(360.dp)
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                reports.forEachIndexed { index, file ->
+                    Text(
+                        text = file.name,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = file.readText(),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    if (index < reports.lastIndex) {
+                        Spacer(Modifier.height(12.dp))
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onClear) { Text("Clear all") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Close") }
+        },
+    )
 }

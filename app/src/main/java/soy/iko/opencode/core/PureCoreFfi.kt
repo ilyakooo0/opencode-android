@@ -45,8 +45,10 @@ internal data class PureModel(
     var error: String? = null,
     var sessions: MutableList<PureSession> = mutableListOf(),
     var currentSessionId: String? = null,
+    var currentSessionTitle: String = "",
     var messages: MutableList<PureMessage> = mutableListOf(),
     var draftMessage: String = "",
+    var generating: Boolean = false,
     var crashLogs: MutableList<String> = mutableListOf(),
     var pendingRequests: MutableMap<UInt, PendingRequest> = mutableMapOf(),
     var nextId: UInt = 0u,
@@ -55,7 +57,7 @@ internal data class PureModel(
         val requests = mutableListOf<Request>()
         when (event) {
             is Event.Start -> {
-                serverUrl = "http://localhost:4096"
+                // Don't reset serverUrl — the shell restores the persisted value.
             }
             is Event.ServerUrlChanged -> {
                 serverUrl = event.value
@@ -87,6 +89,7 @@ internal data class PureModel(
             }
             is Event.SelectSession -> {
                 currentSessionId = event.value
+                currentSessionTitle = sessions.firstOrNull { it.id == event.value }?.title ?: ""
                 messages.clear()
                 val id = nextId++
                 pendingRequests[id] = PendingRequest.LoadMessages(event.value)
@@ -104,6 +107,7 @@ internal data class PureModel(
             }
             is Event.LoadMessages -> {
                 loading = true
+                generating = false
                 val id = nextId++
                 pendingRequests[id] = PendingRequest.LoadMessages(event.value)
                 requests.add(
@@ -113,6 +117,7 @@ internal data class PureModel(
             is Event.SendMessage -> {
                 val sessionId = currentSessionId ?: return Requests(requests)
                 draftMessage = ""
+                generating = true
                 val body = """{"sessionID":"$sessionId","parts":[{"type":"text","text":"${event.value}"}]}"""
                     .toByteArray()
                 val id = nextId++
@@ -139,11 +144,23 @@ internal data class PureModel(
             }
             is Event.NavigateToChat -> {
                 currentSessionId = event.value
+                currentSessionTitle = sessions.firstOrNull { it.id == event.value }?.title ?: ""
                 messages.clear()
             }
             is Event.NavigateToSessions -> {
                 currentSessionId = null
+                currentSessionTitle = ""
                 messages.clear()
+                generating = false
+            }
+            is Event.NavigateToConnect -> {
+                currentSessionId = null
+                currentSessionTitle = ""
+                messages.clear()
+                generating = false
+                connected = false
+                authRequired = false
+                loading = false
             }
             is Event.DismissError -> {
                 error = null
@@ -210,7 +227,11 @@ internal data class PureModel(
                         val body = result.value.body.content.decodeToString()
                         val sid = extractJsonString(body, "id") ?: ""
                         if (sid.isNotEmpty()) {
+                            val title = extractJsonString(body, "title")?.takeIf { it.isNotEmpty() }
+                                ?: "New session"
                             currentSessionId = sid
+                            currentSessionTitle = title
+                            sessions.add(0, PureSession(sid, title))
                             messages.clear()
                             val newId = nextId++
                             pendingRequests[newId] = PendingRequest.LoadMessages(sid)
@@ -226,6 +247,7 @@ internal data class PureModel(
             }
             is PendingRequest.LoadMessages -> {
                 loading = false
+                generating = false
                 when (result) {
                     is HttpResult.Ok -> {
                         val body = result.value.body.content.decodeToString()
@@ -247,6 +269,7 @@ internal data class PureModel(
                         )
                     }
                     is HttpResult.Err -> {
+                        generating = false
                         error = "Failed to send message: ${result.value}"
                     }
                 }
@@ -272,8 +295,10 @@ internal data class PureModel(
             error = error,
             sessions = sessions.map { SessionView(it.id, it.title) },
             currentSessionId = currentSessionId,
+            currentSessionTitle = currentSessionTitle,
             messages = messages.map { MessageView(it.id, it.role, it.text, it.time) },
             draftMessage = draftMessage,
+            generating = generating,
             crashLogCount = crashLogs.size.toUInt(),
             latestCrashLog = crashLogs.lastOrNull(),
         )

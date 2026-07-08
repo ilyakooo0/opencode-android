@@ -42,6 +42,7 @@ pub enum Event {
     // Navigation
     NavigateToChat(String),
     NavigateToSessions,
+    NavigateToConnect,
 
     // Errors
     DismissError,
@@ -101,8 +102,11 @@ pub struct Model {
     error: Option<String>,
     sessions: Vec<SessionSummary>,
     current_session_id: Option<String>,
+    current_session_title: String,
     messages: Vec<MessageView>,
     draft_message: String,
+    /// True between sending a message and the assistant reply arriving.
+    generating: bool,
     /// Accumulated crash logs (sent from the shell's uncaught-exception handler)
     crash_logs: Vec<String>,
 }
@@ -135,8 +139,11 @@ pub struct ViewModel {
     pub error: Option<String>,
     pub sessions: Vec<SessionView>,
     pub current_session_id: Option<String>,
+    pub current_session_title: String,
     pub messages: Vec<MessageView>,
     pub draft_message: String,
+    /// True while waiting for the assistant to reply after the user sends.
+    pub generating: bool,
     pub crash_log_count: u32,
     pub latest_crash_log: Option<String>,
 }
@@ -216,7 +223,8 @@ impl App for OpencodeApp {
     fn update(&self, event: Event, model: &mut Model) -> Command<Effect, Event> {
         match event {
             Event::Start => {
-                model.server_url = "http://localhost:4096".to_string();
+                // Don't reset server_url here — the shell restores it from
+                // persisted storage via ServerUrlChanged before any connect.
                 render()
             }
 
@@ -264,6 +272,13 @@ impl App for OpencodeApp {
                         let body = response.take_body().unwrap_or_default();
                         model.sessions = parse_sessions(&body);
                         model.connected = true;
+                        // Refresh the current session's title in case it was
+                        // populated after creation.
+                        if let Some(id) = model.current_session_id.clone() {
+                            if let Some(s) = model.sessions.iter().find(|s| s.id == id) {
+                                model.current_session_title = s.title.clone();
+                            }
+                        }
                         render()
                     }
                     Err(e) => {
@@ -275,18 +290,45 @@ impl App for OpencodeApp {
 
             Event::SelectSession(id) => {
                 model.current_session_id = Some(id.clone());
+                model.current_session_title = model
+                    .sessions
+                    .iter()
+                    .find(|s| s.id == id)
+                    .map(|s| s.title.clone())
+                    .unwrap_or_default();
                 Command::event(Event::NavigateToChat(id))
             }
 
             Event::NavigateToChat(id) => {
                 model.current_session_id = Some(id.clone());
+                model.current_session_title = model
+                    .sessions
+                    .iter()
+                    .find(|s| s.id == id)
+                    .map(|s| s.title.clone())
+                    .unwrap_or_default();
                 model.messages.clear();
                 render().and(Command::event(Event::LoadMessages(id)))
             }
 
             Event::NavigateToSessions => {
                 model.current_session_id = None;
+                model.current_session_title.clear();
                 model.messages.clear();
+                model.generating = false;
+                render()
+            }
+
+            Event::NavigateToConnect => {
+                // Return to the connect screen to switch servers / credentials.
+                // Keep the sessions list so a re-connect can refresh in place.
+                model.current_session_id = None;
+                model.current_session_title.clear();
+                model.messages.clear();
+                model.generating = false;
+                model.connected = false;
+                model.auth_required = false;
+                model.loading = false;
                 render()
             }
 
@@ -303,6 +345,16 @@ impl App for OpencodeApp {
                     Ok(mut response) => {
                         let body = response.take_body().unwrap_or_default();
                         let id = parse_session_id(&body);
+                        // Some servers echo the title in the created payload;
+                        // fall back to "New session" if absent.
+                        let title = extract_string(&body, "title")
+                            .filter(|t| !t.is_empty())
+                            .unwrap_or_else(|| "New session".to_string());
+                        model.current_session_title = title.clone();
+                        model.sessions.insert(
+                            0,
+                            SessionSummary { id: id.clone(), title },
+                        );
                         Command::event(Event::NavigateToChat(id))
                     }
                     Err(e) => {
@@ -320,6 +372,7 @@ impl App for OpencodeApp {
 
             Event::MessagesLoaded(result) => {
                 model.loading = false;
+                model.generating = false;
                 match result {
                     Ok(mut response) => {
                         let body = response.take_body().unwrap_or_default();
@@ -338,6 +391,7 @@ impl App for OpencodeApp {
                     return render();
                 };
                 model.draft_message.clear();
+                model.generating = true;
                 let body = serde_json::json!({
                     "sessionID": session_id,
                     "parts": [{ "type": "text", "text": text }]
@@ -357,10 +411,12 @@ impl App for OpencodeApp {
                         if let Some(session_id) = model.current_session_id.clone() {
                             Command::event(Event::LoadMessages(session_id))
                         } else {
+                            model.generating = false;
                             render()
                         }
                     }
                     Err(e) => {
+                        model.generating = false;
                         model.error = Some(format!("Failed to send message: {e}"));
                         render()
                     }
@@ -418,8 +474,10 @@ impl App for OpencodeApp {
                 })
                 .collect(),
             current_session_id: model.current_session_id.clone(),
+            current_session_title: model.current_session_title.clone(),
             messages: model.messages.clone(),
             draft_message: model.draft_message.clone(),
+            generating: model.generating,
             crash_log_count: model.crash_logs.len() as u32,
             latest_crash_log: model.crash_logs.last().cloned(),
         }
@@ -604,11 +662,15 @@ mod test {
     use super::*;
 
     #[test]
-    fn start_sets_default_server_url() {
+    fn start_does_not_reset_server_url() {
+        // Start no longer overwrites server_url — the shell restores the
+        // persisted value via ServerUrlChanged so the user's last server
+        // survives a relaunch.
         let app = OpencodeApp;
         let mut model = Model::default();
+        model.server_url = "http://10.0.0.1:4096".to_string();
         app.update(Event::Start, &mut model).expect_only_render();
-        assert_eq!(model.server_url, "http://localhost:4096");
+        assert_eq!(model.server_url, "http://10.0.0.1:4096");
     }
 
     #[test]
@@ -628,6 +690,7 @@ mod test {
     fn connect_emits_http_effect() {
         let app = OpencodeApp;
         let mut model = Model::default();
+        model.server_url = "http://localhost:4096".to_string();
         app.update(Event::Start, &mut model);
         let mut cmd = app.update(Event::Connect, &mut model);
         assert!(cmd.effects().any(|e| matches!(e, Effect::Http(_))));
@@ -669,6 +732,8 @@ mod test {
         let app = OpencodeApp;
         let mut model = Model::default();
         model.current_session_id = Some("test".to_string());
+        model.current_session_title = "Test".to_string();
+        model.generating = true;
         model.messages.push(MessageView {
             id: "m1".to_string(),
             role: "user".to_string(),
@@ -677,7 +742,53 @@ mod test {
         });
         app.update(Event::NavigateToSessions, &mut model);
         assert!(model.current_session_id.is_none());
+        assert!(model.current_session_title.is_empty());
         assert!(model.messages.is_empty());
+        assert!(!model.generating);
+    }
+
+    #[test]
+    fn select_session_records_title_from_sessions_list() {
+        let app = OpencodeApp;
+        let mut model = Model::default();
+        model.sessions = vec![
+            SessionSummary { id: "s1".to_string(), title: "First".to_string() },
+            SessionSummary { id: "s2".to_string(), title: "Second".to_string() },
+        ];
+        app.update(Event::SelectSession("s2".to_string()), &mut model);
+        assert_eq!(model.current_session_id.as_deref(), Some("s2"));
+        assert_eq!(model.current_session_title, "Second");
+        let view = app.view(&model);
+        assert_eq!(view.current_session_title, "Second");
+    }
+
+    #[test]
+    fn send_message_sets_generating_until_messages_loaded() {
+        let app = OpencodeApp;
+        let mut model = Model::default();
+        model.server_url = "http://localhost:4096".to_string();
+        model.current_session_id = Some("s1".to_string());
+        app.update(Event::SendMessage("hello".to_string()), &mut model);
+        assert!(model.generating);
+        // Simulate the MessagesLoaded internal event clearing it.
+        let ok_resp = crux_http::testing::ResponseBuilder::ok().body("[]".to_string()).build();
+        let result: HttpResult<String> = Ok(ok_resp);
+        app.update(Event::MessagesLoaded(result), &mut model);
+        assert!(!model.generating);
+    }
+
+    #[test]
+    fn failed_send_clears_generating() {
+        let app = OpencodeApp;
+        let mut model = Model::default();
+        model.server_url = "http://localhost:4096".to_string();
+        model.current_session_id = Some("s1".to_string());
+        app.update(Event::SendMessage("hello".to_string()), &mut model);
+        assert!(model.generating);
+        let err = crux_http::HttpError::Io("boom".to_string());
+        app.update(Event::MessageSent(Err(err)), &mut model);
+        assert!(!model.generating);
+        assert!(model.error.is_some());
     }
 
     #[test]
@@ -717,7 +828,8 @@ mod test {
         //   0=Start, 1=ServerUrlChanged, 2=UsernameChanged, 3=PasswordChanged,
         //   4=Connect, 5=CancelAuth, 6=LoadSessions, 7=SelectSession,
         //   8=CreateSession, 9=LoadMessages, 10=SendMessage, 11=EventReceived,
-        //   12=NavigateToChat, 13=NavigateToSessions, 14=DismissError
+        //   12=NavigateToChat, 13=NavigateToSessions, 14=NavigateToConnect,
+        //   15=DismissError
         //
         // Serialize each Rust variant and check the leading u32 index.
         let cases: &[(Event, u32)] = &[
@@ -735,7 +847,8 @@ mod test {
             (Event::EventReceived(String::new()), 11),
             (Event::NavigateToChat(String::new()), 12),
             (Event::NavigateToSessions, 13),
-            (Event::DismissError, 14),
+            (Event::NavigateToConnect, 14),
+            (Event::DismissError, 15),
         ];
         for (event, expected) in cases {
             let bytes = bincode::serialize(event).unwrap();

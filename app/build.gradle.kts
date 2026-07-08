@@ -9,8 +9,8 @@ plugins {
 
 android {
     namespace = "soy.iko.opencode"
-    compileSdk = 36
-    buildToolsVersion = "36.0.0"
+    compileSdk = 37
+    buildToolsVersion = "37.0.0"
 
     defaultConfig {
         applicationId = "soy.iko.opencode"
@@ -77,6 +77,8 @@ dependencies {
     implementation(libs.androidx.navigation.compose)
 
     implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.markdown.renderer.core)
+    implementation(libs.markdown.renderer.m3)
 
     implementation(libs.ktor.client.core)
     implementation(libs.ktor.client.okhttp)
