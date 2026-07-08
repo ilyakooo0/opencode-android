@@ -24,8 +24,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -36,6 +40,14 @@ import soy.iko.opencode.core.UiState
 
 @Composable
 fun ConnectScreen(state: UiState, dispatch: (Event) -> Unit) {
+    val focusRequester = remember { FocusRequester() }
+
+    // Focus the server URL field when the screen opens, but only when it's empty
+    // so we don't steal focus (and pop the keyboard) on a return visit.
+    LaunchedEffect(Unit) {
+        if (state.serverUrl.isEmpty()) focusRequester.requestFocus()
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -72,7 +84,7 @@ fun ConnectScreen(state: UiState, dispatch: (Event) -> Unit) {
             label = { Text("Server URL") },
             placeholder = { Text("http://192.168.1.10:4096") },
             singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
             keyboardOptions = KeyboardOptions(
                 keyboardType = KeyboardType.Uri,
                 imeAction = if (state.authRequired) ImeAction.Next else ImeAction.Go,
@@ -130,6 +142,18 @@ fun ConnectScreen(state: UiState, dispatch: (Event) -> Unit) {
             } else {
                 Text(if (state.authRequired) "Sign in" else "Connect")
             }
+        }
+
+        // Surface the error inline as well, so it stays visible while the user
+        // corrects the form (the snackbar is transient).
+        if (state.error != null && !state.loading) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = state.error,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+                textAlign = TextAlign.Center,
+            )
         }
     }
 }

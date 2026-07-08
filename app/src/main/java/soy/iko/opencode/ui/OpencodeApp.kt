@@ -2,9 +2,8 @@ package soy.iko.opencode.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.SizeTransform
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -12,7 +11,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.SnackbarResult
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
@@ -30,14 +28,11 @@ fun OpencodeApp(state: UiState, dispatch: (Event) -> Unit) {
 
     LaunchedEffect(state.error) {
         state.error?.let {
-            val result = snackbar.showSnackbar(
+            snackbar.showSnackbar(
                 message = it,
                 actionLabel = "Dismiss",
                 duration = SnackbarDuration.Short,
             )
-            if (result == SnackbarResult.ActionPerformed) {
-                dispatch(Event.DismissError)
-            }
             // Always clear the error from state after showing.
             dispatch(Event.DismissError)
         }
@@ -56,7 +51,13 @@ fun OpencodeApp(state: UiState, dispatch: (Event) -> Unit) {
             targetState = state.screen,
             modifier = Modifier.fillMaxSize().padding(padding),
             transitionSpec = {
-                (fadeIn() togetherWith fadeOut()).using(SizeTransform(clip = false))
+                // Compare screen ordinals to decide slide direction: forward navigation
+                // (Connect → Sessions → Chat) slides in from the right, back slides from the left.
+                if (targetState.ordinal > initialState.ordinal) {
+                    slideInHorizontally { it } togetherWith slideOutHorizontally { -it }
+                } else {
+                    slideInHorizontally { -it } togetherWith slideOutHorizontally { it }
+                }
             },
             label = "screen",
         ) { screen ->

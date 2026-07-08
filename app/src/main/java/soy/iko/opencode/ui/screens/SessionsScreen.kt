@@ -29,6 +29,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
@@ -60,6 +61,7 @@ fun SessionsScreen(state: UiState, dispatch: (Event) -> Unit) {
     val haptic = LocalHapticFeedback.current
     var pendingDeleteId by remember { mutableStateOf<String?>(null) }
     var isPullRefreshing by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
 
     // The pull-to-refresh spinner should only reflect a user-initiated pull, not
     // every loading operation. Clear it once the underlying load completes.
@@ -118,6 +120,25 @@ fun SessionsScreen(state: UiState, dispatch: (Event) -> Unit) {
             if (state.loading && !isPullRefreshing) {
                 LinearProgressIndicator(Modifier.fillMaxWidth())
             }
+            if (state.sessions.isNotEmpty()) {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = { Text("Search sessions") },
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                )
+            }
+            val filteredSessions = if (searchQuery.isEmpty()) {
+                state.sessions
+            } else {
+                state.sessions.filter {
+                    it.title.contains(searchQuery, ignoreCase = true) ||
+                        it.id.contains(searchQuery, ignoreCase = true)
+                }
+            }
             when {
                 state.sessions.isEmpty() && !state.loading -> EmptySessions()
                 else -> PullToRefreshBox(
@@ -133,7 +154,7 @@ fun SessionsScreen(state: UiState, dispatch: (Event) -> Unit) {
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(bottom = 88.dp),
                     ) {
-                        items(state.sessions, key = { it.id }) { session ->
+                        items(filteredSessions, key = { it.id }) { session ->
                             val dismissState = rememberSwipeToDismissBoxState(
                                 // Only a swipe from the end (right-to-left) triggers deletion;
                                 // return false so the row snaps back and the confirm dialog decides.

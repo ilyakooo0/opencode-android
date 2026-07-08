@@ -65,7 +65,9 @@ class OpencodeCore(
                 // The auth fields are showing but empty — sending the request now
                 // would just 401 again in a loop. Prompt for credentials instead.
                 if (authRequired && !hasCredentials()) { error = "Enter username and password"; emit(); return }
-                loading = true; error = null; authRequired = false; emit()
+                // Leave authRequired as-is; probeHealth sets it from the response (true on
+                // 401, false on success). Resetting it here just flickers the auth fields.
+                loading = true; error = null; emit()
                 scope.launch { probeHealth() }
             }
 
@@ -335,15 +337,17 @@ class OpencodeCore(
 
     private fun handleServerEvent(json: String) {
         val event = Protocol.parseEvent(json) ?: return
-        applyEvent(event)
-        emit()
+        // Only re-render if the event actually changed our state; applyEvent returns
+        // false for events that don't apply (other session, unknown message, …).
+        if (applyEvent(event)) emit()
     }
 
-    private fun applyEvent(event: Protocol.Event) {
+    /** Apply a server event to the model. Returns true iff any state actually changed. */
+    private fun applyEvent(event: Protocol.Event): Boolean {
         when (event) {
             is Protocol.Event.MessageUpdated -> {
                 val info = event.info
-                if (info.role != "assistant" || !isCurrent(info.sessionId)) return
+                if (info.role != "assistant" || !isCurrent(info.sessionId)) return false
                 val streaming = info.time.completed == null && info.error == null
                 val existing = messages.firstOrNull { it.id == info.id }
                 if (existing != null) {
@@ -353,11 +357,12 @@ class OpencodeCore(
                     messages.add(MsgState(info.id, "assistant", info.time.created).apply { this.streaming = streaming })
                 }
                 info.error?.let { error = it.message(); generating = false }
+                return true
             }
 
             is Protocol.Event.PartUpdated -> {
                 val part = event.part
-                val msg = messages.firstOrNull { it.id == part.messageId } ?: return
+                val msg = messages.firstOrNull { it.id == part.messageId } ?: return false
                 when (part) {
                     is Protocol.Part.Text -> if (!part.synthetic) {
                         msg.textParts[part.id] = pickText(part.text, event.delta, msg.textParts[part.id])
@@ -367,24 +372,31 @@ class OpencodeCore(
                     is Protocol.Part.Tool ->
                         msg.toolParts[part.id] = ToolView(part.tool, part.status, part.title)
                 }
+                return true
             }
 
-            is Protocol.Event.PartRemoved -> messages.firstOrNull { it.id == event.messageId }?.remove(event.partId)
+            is Protocol.Event.PartRemoved -> {
+                val msg = messages.firstOrNull { it.id == event.messageId } ?: return false
+                msg.remove(event.partId)
+                return true
+            }
 
-            is Protocol.Event.MessageRemoved -> messages.removeAll { it.id == event.messageId }
+            is Protocol.Event.MessageRemoved -> return messages.removeAll { it.id == event.messageId }
 
-            is Protocol.Event.SessionIdle -> if (isCurrent(event.sessionId)) {
+            is Protocol.Event.SessionIdle -> {
+                if (!isCurrent(event.sessionId)) return false
                 generating = false
                 messages.forEach { it.streaming = false }
+                return true
             }
 
             is Protocol.Event.SessionError -> {
                 val scoped = event.sessionId == null || isCurrent(event.sessionId)
-                if (scoped) {
-                    event.error?.let { error = it.message() }
-                    generating = false
-                    messages.forEach { it.streaming = false }
-                }
+                if (!scoped) return false
+                event.error?.let { error = it.message() }
+                generating = false
+                messages.forEach { it.streaming = false }
+                return true
             }
 
             is Protocol.Event.SessionUpserted -> {
@@ -396,18 +408,22 @@ class OpencodeCore(
                     sessions.add(0, SessionView(event.info.id, title))
                 }
                 if (isCurrent(event.info.id)) currentSessionTitle = title
+                return true
             }
 
-            is Protocol.Event.SessionDeleted -> event.sessionId?.let { id ->
-                sessions.removeAll { it.id == id }
+            is Protocol.Event.SessionDeleted -> {
+                val id = event.sessionId ?: return false
+                val removed = sessions.removeAll { it.id == id }
                 if (isCurrent(id)) {
                     currentSessionId = null
                     messages.clear()
                     screen = Screen.Sessions
+                    return true
                 }
+                return removed
             }
 
-            Protocol.Event.Other -> Unit
+            Protocol.Event.Other -> return false
         }
     }
 
