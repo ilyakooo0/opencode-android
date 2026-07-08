@@ -2,9 +2,14 @@ name: Release
 
 # Build a minified, signed release APK and publish it as a GitHub Release.
 #
-# Trigger by pushing a version tag (e.g. `git tag v1.2.0 && git push --tags`),
-# or run manually from the Actions tab (workflow_dispatch), in which case the
-# version is derived from the current UTC time as YYYY.MM.DD.HHMM.
+# Runs automatically on every push to `master` (e.g. a merged PR), on a pushed
+# version tag (e.g. `git tag v1.2.0 && git push --tags`), or manually from the
+# Actions tab (workflow_dispatch). For a branch push or manual run the version
+# is derived from the current UTC time as YYYY.MM.DD.HHMM; a tag push uses the
+# tag name (with the leading `v` stripped) as the version.
+#
+# The `v*` tag this workflow pushes when publishing a release does NOT retrigger
+# it: events created with the default GITHUB_TOKEN don't start new workflow runs.
 #
 # Signing: if the `OPENCODE_STORE_*` secrets are configured the APK is signed
 # with that keystore; otherwise the Gradle build falls back to the debug key so
@@ -12,6 +17,7 @@ name: Release
 # is passed to Gradle as `-PversionName/-PversionCode` and stamped into the APK.
 on:
   push:
+    branches: [master]
     tags: ["v*"]
   workflow_dispatch:
 
