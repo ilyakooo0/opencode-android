@@ -444,7 +444,16 @@ private fun messageFromWire(env: Protocol.WireMessageEnvelope): MsgState {
 private fun pickText(text: String, delta: String?, prior: String?): String =
     if (text.isNotEmpty()) text else (prior.orEmpty() + (delta ?: ""))
 
-private fun normalizeUrl(url: String): String = url.trim().trimEnd('/')
+private fun normalizeUrl(url: String): String {
+    val trimmed = url.trim().trimEnd('/')
+    // Default to http:// when the user didn't type a scheme (e.g. "192.168.1.10:4096").
+    // Without a scheme OkHttp's URL parser throws and the connect attempt crashes.
+    return when {
+        trimmed.isEmpty() -> ""
+        "://" in trimmed -> trimmed
+        else -> "http://$trimmed"
+    }
+}
 
 private fun displayTitle(title: String): String = title.trim().ifEmpty { "Untitled" }
 
