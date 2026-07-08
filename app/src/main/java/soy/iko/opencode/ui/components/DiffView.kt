@@ -339,9 +339,8 @@ private fun rememberDiffRows(
 ): DiffRows = produceState<DiffRows>(
     DiffRows(emptyList(), 0),
     diff, expanded, collapsedHunks,
-    addColor.value.toLong(), removeColor.value.toLong(),
-    addText.value.toLong(), removeText.value.toLong(),
-    tertiary.value.toLong(), onSurface.value.toLong(), onSurfaceVariant.value.toLong(),
+    addColor, removeColor, addText, removeText,
+    tertiary, onSurface, onSurfaceVariant,
 ) {
     val result = withContext(Dispatchers.Default) {
         runCatchingCancellable {

@@ -46,7 +46,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import coil3.compose.SubcomposeAsyncImage
+import coil3.compose.AsyncImagePainter
+import coil3.compose.rememberAsyncImagePainter
+import androidx.compose.foundation.Image
 import coil3.network.NetworkHeaders
 import coil3.network.httpHeaders
 import coil3.request.ImageRequest
@@ -210,18 +212,20 @@ fun RemoteImage(part: FilePart, ctx: ImageLoadContext, modifier: Modifier = Modi
             .crossfade(true)
             .build()
     }
-    SubcomposeAsyncImage(
-        model = request,
-        contentDescription = part.filename ?: stringResource(R.string.image),
-        contentScale = ContentScale.FillWidth,
+    // Use rememberAsyncImagePainter + Image instead of SubcomposeAsyncImage to avoid
+    // SubcomposeLayout, which triggers draw-phase remeasures that NPE inside the LazyColumn
+    // when the image loads and the row's size changes post-mount — the same crash class
+    // previously fixed for animateItem(), AnimatedContent, and animateContentSize.
+    val painter = rememberAsyncImagePainter(model = request)
+    val painterState = painter.state.value
+    Box(
         modifier = modifier
             .heightIn(max = NetworkConfig.inlineImageMaxHeightDp.dp)
             .clip(MaterialTheme.shapes.small)
-            // Tap to open a fullscreen zoomable viewer so the user can inspect details
-            // without the inline 320dp height cap.
             .clickable(role = Role.Button) { showFullscreen = true },
-        loading = {
-            Box(
+    ) {
+        when (painterState) {
+            is AsyncImagePainter.State.Loading -> Box(
                 modifier = Modifier.fillMaxWidth().heightIn(min = NetworkConfig.inlineImageMinHeightDp.dp),
                 contentAlignment = Alignment.Center,
             ) {
@@ -230,9 +234,15 @@ fun RemoteImage(part: FilePart, ctx: ImageLoadContext, modifier: Modifier = Modi
                     modifier = Modifier.semantics { contentDescription = loadingLabel },
                 )
             }
-        },
-        error = { ImageRetry(onRetry = { retryKey++ }) },
-    )
+            is AsyncImagePainter.State.Error -> ImageRetry(onRetry = { retryKey++ })
+            else -> Image(
+                painter = painter,
+                contentDescription = part.filename ?: stringResource(R.string.image),
+                contentScale = ContentScale.FillWidth,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+    }
     if (showFullscreen) {
         FullscreenImageViewer(request = request, contentDescription = part.filename ?: stringResource(R.string.image)) {
             showFullscreen = false
@@ -342,8 +352,9 @@ internal fun FullscreenImageViewer(
                 },
             contentAlignment = Alignment.Center,
         ) {
-            SubcomposeAsyncImage(
-                model = request,
+            val fullscreenPainter = rememberAsyncImagePainter(model = request)
+            Image(
+                painter = fullscreenPainter,
                 contentDescription = contentDescription,
                 contentScale = ContentScale.Fit,
                 modifier = Modifier
