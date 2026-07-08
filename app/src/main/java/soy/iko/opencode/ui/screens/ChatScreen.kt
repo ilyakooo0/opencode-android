@@ -47,6 +47,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -221,6 +223,7 @@ private fun ChatInputBar(
     onSend: () -> Unit,
     onStop: () -> Unit,
 ) {
+    val haptic = LocalHapticFeedback.current
     Surface(tonalElevation = 3.dp) {
         Row(
             modifier = Modifier.fillMaxWidth().imePadding().padding(horizontal = 12.dp, vertical = 8.dp),
@@ -244,7 +247,10 @@ private fun ChatInputBar(
                 }
             } else {
                 FilledIconButton(
-                    onClick = onSend,
+                    onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onSend()
+                    },
                     enabled = draft.isNotBlank(),
                 ) {
                     Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")

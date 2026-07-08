@@ -69,6 +69,7 @@ fun MessageBubble(message: MessageView, modifier: Modifier = Modifier) {
     ) {
         Column(
             modifier = Modifier
+                .fillMaxWidth(0.85f)
                 .widthIn(max = 320.dp)
                 .clip(shape)
                 .background(bubbleColor)

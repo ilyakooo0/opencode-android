@@ -115,7 +115,9 @@ class OpencodeCore(
             is Event.SendMessage -> sendMessage(event.text)
 
             Event.CancelGeneration -> {
-                generating = false; emit()
+                generating = false
+                messages.forEach { it.streaming = false }
+                emit()
                 val id = currentSessionId ?: return
                 scope.launch { http.postJson("$serverUrl/session/$id/abort", "{}", authHeader()) }
             }
@@ -270,7 +272,7 @@ class OpencodeCore(
     private suspend fun loadMessages(sessionId: String) {
         http.get("$serverUrl/session/$sessionId/message", authHeader()).fold(
             onSuccess = { resp ->
-                if (!isCurrent(sessionId)) return  // user navigated away while loading
+                if (!isCurrent(sessionId)) { loading = false; return }  // user navigated away while loading
                 loading = false
                 if (resp.code in 200..299) {
                     messages.clear()
@@ -282,7 +284,7 @@ class OpencodeCore(
                 emit()
             },
             onFailure = { e ->
-                if (!isCurrent(sessionId)) return
+                if (!isCurrent(sessionId)) { loading = false; return }
                 loading = false
                 error = "Request failed: ${e.message}"
                 emit()

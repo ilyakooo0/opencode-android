@@ -31,6 +31,8 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -38,6 +40,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import soy.iko.opencode.core.Event
@@ -47,6 +51,7 @@ import soy.iko.opencode.core.UiState
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SessionsScreen(state: UiState, dispatch: (Event) -> Unit) {
+    val haptic = LocalHapticFeedback.current
     var pendingDeleteId by remember { mutableStateOf<String?>(null) }
 
     pendingDeleteId?.let { deleteId ->
@@ -57,6 +62,7 @@ fun SessionsScreen(state: UiState, dispatch: (Event) -> Unit) {
             text = { Text(pendingSession?.title ?: deleteId) },
             confirmButton = {
                 TextButton(onClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     dispatch(Event.DeleteSession(deleteId))
                     pendingDeleteId = null
                 }) {
@@ -101,17 +107,24 @@ fun SessionsScreen(state: UiState, dispatch: (Event) -> Unit) {
             }
             when {
                 state.sessions.isEmpty() && !state.loading -> EmptySessions()
-                else -> LazyColumn(
+                else -> PullToRefreshBox(
+                    isRefreshing = state.loading,
+                    onRefresh = { dispatch(Event.LoadSessions) },
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(bottom = 88.dp),
+                    state = rememberPullToRefreshState(),
                 ) {
-                    items(state.sessions, key = { it.id }) { session ->
-                        SessionRow(
-                            session = session,
-                            onOpen = { dispatch(Event.SelectSession(session.id)) },
-                            onDelete = { pendingDeleteId = session.id },
-                        )
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(bottom = 88.dp),
+                    ) {
+                        items(state.sessions, key = { it.id }) { session ->
+                            SessionRow(
+                                session = session,
+                                onOpen = { dispatch(Event.SelectSession(session.id)) },
+                                onDelete = { pendingDeleteId = session.id },
+                            )
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
+                        }
                     }
                 }
             }
