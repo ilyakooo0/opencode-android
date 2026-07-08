@@ -226,4 +226,59 @@ class PureCoreFfiTest {
     fun `extractJsonNumber returns null for missing key`() {
         assertNull(extractJsonNumber("""{"a":"b"}""", "created"))
     }
+
+    @Test
+    fun `draft changed updates view`() {
+        val core = createCore()
+        core.processEvent(Event.Start)
+        core.processEvent(Event.DraftChanged("in progress"))
+        val view = core.currentView()
+        assertEquals("in progress", view.draftMessage)
+    }
+
+    @Test
+    fun `cancel generation clears generating flag`() {
+        val core = createCore()
+        core.processEvent(Event.Start)
+        // Simulate connected + session selected
+        val connectReqs = core.processEvent(Event.Connect)
+        val loadSessionsReqs = core.resolveHttp(connectReqs.value[0].id, body = """{"healthy":true}""")
+        core.resolveHttp(loadSessionsReqs.value[0].id, body = "[]")
+        val selectReqs = core.processEvent(Event.SelectSession("session-123"))
+        core.resolveHttp(selectReqs.value[0].id, body = "[]")
+
+        // CancelGeneration is a no-op when not generating, but shouldn't crash
+        core.processEvent(Event.CancelGeneration)
+        val view = core.currentView()
+        assertFalse(view.generating)
+    }
+
+    @Test
+    fun `delete session removes from list and emits http effect`() {
+        val core = createCore()
+        core.processEvent(Event.Start)
+        val connectReqs = core.processEvent(Event.Connect)
+        // Health check success → triggers LoadSessions
+        val loadSessionsReqs = core.resolveHttp(connectReqs.value[0].id, body = """{"healthy":true}""")
+        // Sessions loaded
+        val sessionsBody = """[{"id":"s1","title":"First"},{"id":"s2","title":"Second"}]"""
+        core.resolveHttp(loadSessionsReqs.value[0].id, body = sessionsBody)
+
+        val viewBefore = core.currentView()
+        assertEquals(2, viewBefore.sessions.size)
+
+        val deleteReqs = core.processEvent(Event.DeleteSession("s1"))
+        assertTrue(deleteReqs.value.isNotEmpty())
+        val viewAfter = core.currentView()
+        assertEquals(1, viewAfter.sessions.size)
+        assertEquals("s2", viewAfter.sessions[0].id)
+    }
+
+    @Test
+    fun `parseMessages sets status to sent`() {
+        val json = """[{"id":"m1","role":"user","created":100,"parts":[{"type":"text","text":"Hello"}]}]"""
+        val messages = parseMessages(json)
+        assertEquals(1, messages.size)
+        assertEquals(MessageStatus.SENT, messages[0].status)
+    }
 }

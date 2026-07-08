@@ -47,6 +47,16 @@ pub enum Event {
     // Errors
     DismissError,
 
+    // Draft / composer
+    DraftChanged(String),
+    // Cancel waiting for the assistant reply (client-side stop).
+    CancelGeneration,
+
+    // Session management
+    DeleteSession(String),
+    // Retry sending a failed message by its (local) message id.
+    RetryMessage(String),
+
     // ── Internal events (skipped from typegen, sent only via then_send).
     //    These occupy higher discriminant indices that are never
     //    produced by the shell, so the index gap is harmless. ─────────
@@ -69,6 +79,9 @@ pub enum Event {
     #[serde(skip)]
     #[facet(skip)]
     HealthProbed(#[facet(opaque)] HttpResult<String>),
+    #[serde(skip)]
+    #[facet(skip)]
+    SessionDeleted(#[facet(opaque)] HttpResult<String>),
 }
 
 // ─── Effects ───────────────────────────────────────────────────────────────
@@ -117,12 +130,22 @@ pub struct SessionSummary {
     pub title: String,
 }
 
+#[derive(Facet, Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+#[repr(C)]
+pub enum MessageStatus {
+    #[default]
+    Sent,
+    Pending,
+    Failed,
+}
+
 #[derive(Facet, Serialize, Deserialize, Clone, Debug, Default)]
 pub struct MessageView {
     pub id: String,
     pub role: String,
     pub text: String,
     pub time: u64,
+    pub status: MessageStatus,
 }
 
 // ─── ViewModel ─────────────────────────────────────────────────────────────
@@ -183,6 +206,13 @@ impl OpencodeApp {
     fn post(&self, model: &Model, path: &str, body: Vec<u8>) -> RequestBuilder<Effect, Event, String> {
         let url = format!("{}{path}", model.server_url);
         let req = Http::post(&url).expect_string().body_bytes(body);
+        self.with_auth(req, model)
+    }
+
+    /// Build a DELETE request to `path`.
+    fn delete(&self, model: &Model, path: &str) -> RequestBuilder<Effect, Event, String> {
+        let url = format!("{}{path}", model.server_url);
+        let req = Http::delete(&url).expect_string();
         self.with_auth(req, model)
     }
 
@@ -442,8 +472,58 @@ impl App for OpencodeApp {
                 render()
             }
 
+            Event::DraftChanged(text) => {
+                model.draft_message = text;
+                render()
+            }
+
+            Event::CancelGeneration => {
+                // Client-side stop: the server-side generation continues, but
+                // we stop showing the "generating" state and return to ready.
+                // A subsequent SSE event / manual refresh will pick up the
+                // assistant reply when it arrives.
+                model.generating = false;
+                render()
+            }
+
+            Event::DeleteSession(id) => {
+                // Optimistically remove the session from the list. If the
+                // server delete fails, we reload the session list to restore.
+                model.sessions.retain(|s| s.id != id);
+                if model.current_session_id.as_deref() == Some(id.as_str()) {
+                    model.current_session_id = None;
+                    model.current_session_title.clear();
+                    model.messages.clear();
+                    model.generating = false;
+                }
+                let path = format!("/session/{id}");
+                self.delete(model, &path).build().then_send(Event::SessionDeleted)
+            }
+
+            Event::RetryMessage(_msg_id) => {
+                // No persisted failed-message body to re-send in the core, so
+                // retry is a no-op here. The shell can surface a hint. This
+                // event exists so the UI has a stable retry path and so the
+                // core can grow real per-message retry later without a
+                // typegen change.
+                render()
+            }
+
             // ── Internal events (not type-generated, sent via then_send) ───
             Event::HealthProbed(result) => handle_health_probed(self, model, result),
+            Event::SessionDeleted(result) => {
+                match result {
+                    Ok(_) => {
+                        render()
+                    }
+                    Err(e) => {
+                        // Optimistic delete failed — reload sessions to
+                        // restore the list, and surface the error.
+                        model.error = Some(format!("Failed to delete session: {e}"));
+                        self.get(model, "/session").build().then_send(Event::SessionsLoaded)
+                    }
+                }
+            }
         }
     }
 
@@ -607,7 +687,7 @@ fn parse_messages(body: &str) -> Vec<MessageView> {
                     let time = extract_number(obj, "created").unwrap_or(0);
                     if !id.is_empty() {
                         let text = extract_message_text(obj);
-                        messages.push(MessageView { id, role, text, time });
+                        messages.push(MessageView { id, role, text, time, status: MessageStatus::Sent });
                     }
                 }
             }
@@ -739,6 +819,7 @@ mod test {
             role: "user".to_string(),
             text: "hello".to_string(),
             time: 0,
+            status: MessageStatus::Sent,
         });
         app.update(Event::NavigateToSessions, &mut model);
         assert!(model.current_session_id.is_none());
@@ -792,6 +873,61 @@ mod test {
     }
 
     #[test]
+    fn cancel_generation_clears_generating() {
+        let app = OpencodeApp;
+        let mut model = Model::default();
+        model.server_url = "http://localhost:4096".to_string();
+        model.current_session_id = Some("s1".to_string());
+        app.update(Event::SendMessage("hello".to_string()), &mut model);
+        assert!(model.generating);
+        app.update(Event::CancelGeneration, &mut model);
+        assert!(!model.generating);
+    }
+
+    #[test]
+    fn draft_changed_updates_model() {
+        let app = OpencodeApp;
+        let mut model = Model::default();
+        app.update(Event::DraftChanged("in progress".to_string()), &mut model);
+        assert_eq!(model.draft_message, "in progress");
+        let view = app.view(&model);
+        assert_eq!(view.draft_message, "in progress");
+    }
+
+    #[test]
+    fn delete_session_optimistically_removes_from_list() {
+        let app = OpencodeApp;
+        let mut model = Model::default();
+        model.server_url = "http://localhost:4096".to_string();
+        model.sessions = vec![
+            SessionSummary { id: "s1".to_string(), title: "First".to_string() },
+            SessionSummary { id: "s2".to_string(), title: "Second".to_string() },
+        ];
+        let mut cmd = app.update(Event::DeleteSession("s1".to_string()), &mut model);
+        // Session removed optimistically
+        assert_eq!(model.sessions.len(), 1);
+        assert_eq!(model.sessions[0].id, "s2");
+        // HTTP effect emitted for the server-side delete
+        assert!(cmd.effects().any(|e| matches!(e, Effect::Http(_))));
+    }
+
+    #[test]
+    fn delete_current_session_clears_chat_state() {
+        let app = OpencodeApp;
+        let mut model = Model::default();
+        model.server_url = "http://localhost:4096".to_string();
+        model.current_session_id = Some("s1".to_string());
+        model.current_session_title = "First".to_string();
+        model.generating = true;
+        model.messages.push(MessageView::default());
+        app.update(Event::DeleteSession("s1".to_string()), &mut model);
+        assert!(model.current_session_id.is_none());
+        assert!(model.current_session_title.is_empty());
+        assert!(model.messages.is_empty());
+        assert!(!model.generating);
+    }
+
+    #[test]
     fn auth_header_built_from_credentials() {
         let app = OpencodeApp;
         let mut model = Model::default();
@@ -829,7 +965,8 @@ mod test {
         //   4=Connect, 5=CancelAuth, 6=LoadSessions, 7=SelectSession,
         //   8=CreateSession, 9=LoadMessages, 10=SendMessage, 11=EventReceived,
         //   12=NavigateToChat, 13=NavigateToSessions, 14=NavigateToConnect,
-        //   15=DismissError
+        //   15=DismissError, 16=DraftChanged, 17=CancelGeneration,
+        //   18=DeleteSession, 19=RetryMessage
         //
         // Serialize each Rust variant and check the leading u32 index.
         let cases: &[(Event, u32)] = &[
@@ -849,6 +986,10 @@ mod test {
             (Event::NavigateToSessions, 13),
             (Event::NavigateToConnect, 14),
             (Event::DismissError, 15),
+            (Event::DraftChanged(String::new()), 16),
+            (Event::CancelGeneration, 17),
+            (Event::DeleteSession(String::new()), 18),
+            (Event::RetryMessage(String::new()), 19),
         ];
         for (event, expected) in cases {
             let bytes = bincode::serialize(event).unwrap();

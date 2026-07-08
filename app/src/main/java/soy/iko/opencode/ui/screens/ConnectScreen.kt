@@ -38,6 +38,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -71,9 +72,9 @@ fun ConnectScreen(core: Core) {
     var url by remember(view.serverUrl) { mutableStateOf(view.serverUrl) }
     var username by remember(view.username) { mutableStateOf(view.username) }
     var password by remember(view.password) { mutableStateOf(view.password) }
-    var passwordVisible by remember { mutableStateOf(false) }
-    var showCrashLogs by remember { mutableStateOf(false) }
-    var urlError by remember { mutableStateOf(false) }
+    var passwordVisible by rememberSaveable { mutableStateOf(false) }
+    var showCrashLogs by rememberSaveable { mutableStateOf(false) }
+    var urlError by rememberSaveable { mutableStateOf(false) }
     val errorHostState = ErrorHost(
         core = core,
         dismissLabel = stringResource(R.string.action_dismiss),

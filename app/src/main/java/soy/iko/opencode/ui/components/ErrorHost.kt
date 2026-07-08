@@ -73,6 +73,7 @@ fun InfoHost(
     successConnectedLabel: String,
     successSessionCreatedLabel: String,
     copiedLabel: String = "Copied",
+    sessionDeletedLabel: String = "Session deleted",
 ): SnackbarHostState {
     val snackbarHostState = remember { SnackbarHostState() }
     LaunchedEffect(snackbarHostState) {
@@ -81,6 +82,7 @@ fun InfoHost(
                 Core.SUCCESS_CONNECTED -> successConnectedLabel
                 Core.SUCCESS_SESSION_CREATED -> successSessionCreatedLabel
                 Core.SUCCESS_COPIED -> copiedLabel
+                Core.SUCCESS_SESSION_DELETED -> sessionDeletedLabel
                 else -> key
             }
             snackbarHostState.showSnackbar(

@@ -93,3 +93,42 @@ private fun SseDisconnectedBannerPreview() {
         )
     }
 }
+
+/**
+ * A thin non-actionable status banner (e.g. "Connecting…") shown above the
+ * message list. Uses a neutral color scheme so it doesn't read as an error.
+ */
+@Composable
+fun SseStatusBanner(
+    message: String,
+    containerColor: androidx.compose.ui.graphics.Color,
+    contentColor: androidx.compose.ui.graphics.Color,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        color = containerColor,
+        contentColor = contentColor,
+        modifier = modifier
+            .fillMaxWidth()
+            .semantics(mergeDescendants = true) {
+                liveRegion = LiveRegionMode.Polite
+                contentDescription = message
+            },
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(
+                    horizontal = Dimens.spaceLarge,
+                    vertical = Dimens.spaceSmall,
+                ),
+        ) {
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+    }
+}

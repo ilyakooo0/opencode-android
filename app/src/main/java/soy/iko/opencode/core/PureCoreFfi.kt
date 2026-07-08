@@ -165,7 +165,30 @@ internal data class PureModel(
             is Event.DismissError -> {
                 error = null
             }
-            else -> {}
+            is Event.DraftChanged -> {
+                draftMessage = event.value
+            }
+            is Event.CancelGeneration -> {
+                generating = false
+            }
+            is Event.DeleteSession -> {
+                // Optimistically remove the session.
+                sessions.removeAll { it.id == event.value }
+                if (currentSessionId == event.value) {
+                    currentSessionId = null
+                    currentSessionTitle = ""
+                    messages.clear()
+                    generating = false
+                }
+                val id = nextId++
+                pendingRequests[id] = PendingRequest.DeleteSession(event.value)
+                requests.add(
+                    Request(id, Effect.Http(makeDeleteRequest("${serverUrl}/session/${event.value}"))),
+                )
+            }
+            is Event.RetryMessage -> {
+                // No-op in the pure fallback; real retry needs the original body.
+            }
         }
         return Requests(requests)
     }
@@ -274,6 +297,22 @@ internal data class PureModel(
                     }
                 }
             }
+            is PendingRequest.DeleteSession -> {
+                when (result) {
+                    is HttpResult.Ok -> {
+                        // Optimistic removal already happened; nothing to do.
+                    }
+                    is HttpResult.Err -> {
+                        // Restore by reloading sessions.
+                        val newId = nextId++
+                        pendingRequests[newId] = PendingRequest.LoadSessions
+                        requests.add(
+                            Request(newId, Effect.Http(makeGetRequest("${serverUrl}/session"))),
+                        )
+                        error = "Failed to delete session: ${result.value}"
+                    }
+                }
+            }
         }
         return Requests(requests)
     }
@@ -296,7 +335,7 @@ internal data class PureModel(
             sessions = sessions.map { SessionView(it.id, it.title) },
             currentSessionId = currentSessionId,
             currentSessionTitle = currentSessionTitle,
-            messages = messages.map { MessageView(it.id, it.role, it.text, it.time) },
+            messages = messages.map { MessageView(it.id, it.role, it.text, it.time, it.status) },
             draftMessage = draftMessage,
             generating = generating,
             crashLogCount = crashLogs.size.toUInt(),
@@ -305,26 +344,28 @@ internal data class PureModel(
     }
 
     private fun makeGetRequest(url: String): HttpRequest {
-        val headers = if (username.isNotEmpty() || password.isNotEmpty()) {
-            val creds = "$username:$password"
-            val encoded = java.util.Base64.getEncoder().encodeToString(creds.toByteArray())
-            listOf(HttpHeader("Authorization", "Basic $encoded"))
-        } else {
-            emptyList()
-        }
+        val headers = authHeaders()
         return HttpRequest(method = "GET", url = url, headers = headers, body = Bytes(ByteArray(0)))
     }
 
     private fun makePostRequest(url: String, body: ByteArray): HttpRequest {
-        val headers = if (username.isNotEmpty() || password.isNotEmpty()) {
+        val headers = authHeaders()
+        return HttpRequest(method = "POST", url = url, headers = headers, body = Bytes(body))
+    }
+
+    private fun makeDeleteRequest(url: String): HttpRequest {
+        val headers = authHeaders()
+        return HttpRequest(method = "DELETE", url = url, headers = headers, body = Bytes(ByteArray(0)))
+    }
+
+    private fun authHeaders(): List<HttpHeader> =
+        if (username.isNotEmpty() || password.isNotEmpty()) {
             val creds = "$username:$password"
             val encoded = java.util.Base64.getEncoder().encodeToString(creds.toByteArray())
             listOf(HttpHeader("Authorization", "Basic $encoded"))
         } else {
             emptyList()
         }
-        return HttpRequest(method = "POST", url = url, headers = headers, body = Bytes(body))
-    }
 }
 
 internal sealed class PendingRequest {
@@ -333,11 +374,18 @@ internal sealed class PendingRequest {
     data object CreateSession : PendingRequest()
     data class LoadMessages(val sessionId: String) : PendingRequest()
     data class SendMessage(val sessionId: String) : PendingRequest()
+    data class DeleteSession(val sessionId: String) : PendingRequest()
 }
 
 internal data class PureSession(val id: String, val title: String)
 
-internal data class PureMessage(val id: String, val role: String, val text: String, val time: ULong)
+internal data class PureMessage(
+    val id: String,
+    val role: String,
+    val text: String,
+    val time: ULong,
+    val status: MessageStatus = MessageStatus.SENT,
+)
 
 internal fun parseSessions(json: String): List<PureSession> {
     val sessions = mutableListOf<PureSession>()
@@ -384,7 +432,7 @@ internal fun parseMessages(json: String): List<PureMessage> {
                     val time = extractJsonNumber(obj, "created") ?: 0uL
                     if (id.isNotEmpty() && role.isNotEmpty()) {
                         val text = extractMessageText(obj)
-                        messages.add(PureMessage(id, role, text, time))
+                        messages.add(PureMessage(id, role, text, time, MessageStatus.SENT))
                     }
                 }
             }

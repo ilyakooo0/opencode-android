@@ -102,6 +102,11 @@ class Core(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { _info.emit(SUCCESS_COPIED) }
     }
 
+    /** Surface a transient "Session deleted" snackbar to the user. */
+    fun notifyDeleted() {
+        viewModelScope.launch { _info.emit(SUCCESS_SESSION_DELETED) }
+    }
+
     private fun processEffect(request: Request) {
         when (val effect = request.effect) {
             is Effect.Render -> {
@@ -148,6 +153,9 @@ class Core(application: Application) : AndroidViewModel(application) {
             v.currentSessionId != null && prev == Screen.SESSIONS &&
                 lastUserEvent is Event.CreateSession -> {
                 viewModelScope.launch { _info.emit(SUCCESS_SESSION_CREATED) }
+            }
+            lastUserEvent is Event.DeleteSession && v.error == null -> {
+                viewModelScope.launch { _info.emit(SUCCESS_SESSION_DELETED) }
             }
         }
         previousScreen = v.screen
@@ -213,7 +221,8 @@ class Core(application: Application) : AndroidViewModel(application) {
         is Event.LoadSessions,
         is Event.CreateSession,
         is Event.LoadMessages,
-        is Event.SendMessage -> true
+        is Event.SendMessage,
+        is Event.DeleteSession -> true
         else -> false
     }
 
@@ -224,5 +233,6 @@ class Core(application: Application) : AndroidViewModel(application) {
         const val SUCCESS_CONNECTED = "__success_connected__"
         const val SUCCESS_SESSION_CREATED = "__success_session_created__"
         const val SUCCESS_COPIED = "__success_copied__"
+        const val SUCCESS_SESSION_DELETED = "__success_session_deleted__"
     }
 }

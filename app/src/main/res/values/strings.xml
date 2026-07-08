@@ -68,5 +68,36 @@
     <string name="sse_disconnected">Live stream disconnected</string>
     <string name="sse_reconnect">Reconnect</string>
     <string name="sse_dismiss">Dismiss</string>
+    <string name="sse_connecting">Connecting live stream…</string>
+    <string name="sse_live">Live</string>
     <string name="press_back_again_to_exit">Press back again to exit</string>
+
+    <!-- Loading / common -->
+    <string name="loading">Loading</string>
+    <string name="date_today">Today</string>
+    <string name="date_yesterday">Yesterday</string>
+    <string name="session_deleted">Session deleted</string>
+
+    <!-- Sessions screen: delete / disconnect -->
+    <string name="sessions_cd_delete">Delete session</string>
+    <string name="sessions_delete_confirm">Delete this session? This cannot be undone.</string>
+    <string name="sessions_delete_confirm_yes">Delete</string>
+    <string name="sessions_disconnect_confirm">Disconnect from the server?</string>
+    <string name="sessions_disconnect_confirm_yes">Disconnect</string>
+    <string name="sessions_cd_disconnect">Disconnect from server</string>
+
+    <!-- Chat: session ID copy / SSE status -->
+    <string name="chat_cd_copy_session_id">Copy session ID</string>
+    <string name="chat_session_id_copied">Session ID copied</string>
+
+    <!-- Chat: message status -->
+    <string name="chat_message_status_pending">Sending</string>
+    <string name="chat_message_status_failed">Failed to send</string>
+    <string name="chat_cd_message_status_failed">Failed to send. Long-press to retry.</string>
+
+    <!-- Crash log dialog -->
+    <string name="crash_reports_copy">Copy</string>
+    <string name="crash_reports_share">Share</string>
+    <string name="crash_reports_copied">Crash report copied</string>
+    <string name="crash_reports_empty">No crash reports</string>
 </resources>

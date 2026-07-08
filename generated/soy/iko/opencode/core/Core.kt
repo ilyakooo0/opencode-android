@@ -387,6 +387,78 @@ sealed interface Event {
         }
     }
 
+    data class DraftChanged(
+        val value: String,
+    ) : Event {
+        override fun serialize(serializer: Serializer) {
+            serializer.increase_container_depth()
+            serializer.serialize_variant_index(16)
+            serializer.serialize_str(value)
+            serializer.decrease_container_depth()
+        }
+
+        companion object {
+            fun deserialize(deserializer: Deserializer): DraftChanged {
+                deserializer.increase_container_depth()
+                val value = deserializer.deserialize_str()
+                deserializer.decrease_container_depth()
+                return DraftChanged(value)
+            }
+        }
+    }
+
+    data object CancelGeneration: Event {
+        override fun serialize(serializer: Serializer) {
+            serializer.increase_container_depth()
+            serializer.serialize_variant_index(17)
+            serializer.decrease_container_depth()
+        }
+
+        fun deserialize(deserializer: Deserializer): CancelGeneration {
+            return CancelGeneration
+        }
+    }
+
+    data class DeleteSession(
+        val value: String,
+    ) : Event {
+        override fun serialize(serializer: Serializer) {
+            serializer.increase_container_depth()
+            serializer.serialize_variant_index(18)
+            serializer.serialize_str(value)
+            serializer.decrease_container_depth()
+        }
+
+        companion object {
+            fun deserialize(deserializer: Deserializer): DeleteSession {
+                deserializer.increase_container_depth()
+                val value = deserializer.deserialize_str()
+                deserializer.decrease_container_depth()
+                return DeleteSession(value)
+            }
+        }
+    }
+
+    data class RetryMessage(
+        val value: String,
+    ) : Event {
+        override fun serialize(serializer: Serializer) {
+            serializer.increase_container_depth()
+            serializer.serialize_variant_index(19)
+            serializer.serialize_str(value)
+            serializer.decrease_container_depth()
+        }
+
+        companion object {
+            fun deserialize(deserializer: Deserializer): RetryMessage {
+                deserializer.increase_container_depth()
+                val value = deserializer.deserialize_str()
+                deserializer.decrease_container_depth()
+                return RetryMessage(value)
+            }
+        }
+    }
+
     companion object {
         @Throws(DeserializationError::class)
         fun deserialize(deserializer: Deserializer): Event {
@@ -408,6 +480,10 @@ sealed interface Event {
                 13 -> NavigateToSessions.deserialize(deserializer)
                 14 -> NavigateToConnect.deserialize(deserializer)
                 15 -> DismissError.deserialize(deserializer)
+                16 -> DraftChanged.deserialize(deserializer)
+                17 -> CancelGeneration.deserialize(deserializer)
+                18 -> DeleteSession.deserialize(deserializer)
+                19 -> RetryMessage.deserialize(deserializer)
                 else -> throw DeserializationError("Unknown variant index for Event: $index")
             }
         }
@@ -794,11 +870,58 @@ sealed interface HttpResult {
     }
 }
 
+enum class MessageStatus {
+    SENT,
+    PENDING,
+    FAILED;
+
+    fun serialize(serializer: Serializer) {
+        serializer.increase_container_depth()
+        serializer.serialize_variant_index(ordinal)
+        serializer.decrease_container_depth()
+    }
+
+    fun bincodeSerialize(): ByteArray {
+        val serializer = BincodeSerializer()
+        serialize(serializer)
+        return serializer.get_bytes()
+    }
+
+    companion object {
+        @Throws(DeserializationError::class)
+        fun deserialize(deserializer: Deserializer): MessageStatus {
+            deserializer.increase_container_depth()
+            val index = deserializer.deserialize_variant_index()
+            deserializer.decrease_container_depth()
+            return when (index) {
+                0 -> SENT
+                1 -> PENDING
+                2 -> FAILED
+                else -> throw DeserializationError("Unknown variant index for MessageStatus: $index")
+            }
+        }
+
+        @Throws(DeserializationError::class)
+        fun bincodeDeserialize(input: ByteArray?): MessageStatus {
+            if (input == null) {
+                throw DeserializationError("Cannot deserialize null array")
+            }
+            val deserializer = BincodeDeserializer(input)
+            val value = deserialize(deserializer)
+            if (deserializer.get_buffer_offset() < input.size) {
+                throw DeserializationError("Some input bytes were not read")
+            }
+            return value
+        }
+    }
+}
+
 data class MessageView(
     val id: String,
     val role: String,
     val text: String,
     val time: ULong,
+    val status: soy.iko.opencode.core.MessageStatus,
 ) {
     fun serialize(serializer: Serializer) {
         serializer.increase_container_depth()
@@ -806,6 +929,7 @@ data class MessageView(
         serializer.serialize_str(role)
         serializer.serialize_str(text)
         serializer.serialize_u64(time)
+        status.serialize(serializer)
         serializer.decrease_container_depth()
     }
 
@@ -822,8 +946,9 @@ data class MessageView(
             val role = deserializer.deserialize_str()
             val text = deserializer.deserialize_str()
             val time = deserializer.deserialize_u64()
+            val status = soy.iko.opencode.core.MessageStatus.deserialize(deserializer)
             deserializer.decrease_container_depth()
-            return MessageView(id, role, text, time)
+            return MessageView(id, role, text, time, status)
         }
 
         @Throws(DeserializationError::class)

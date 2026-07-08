@@ -17,12 +17,17 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -41,6 +46,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.mikepenz.markdown.m3.Markdown
 import soy.iko.opencode.R
+import soy.iko.opencode.core.MessageStatus
 import soy.iko.opencode.core.MessageView
 import soy.iko.opencode.ui.theme.AssistantBubbleShape
 import soy.iko.opencode.ui.theme.Dimens
@@ -152,18 +158,38 @@ fun MessageBubble(
                     }
                     Spacer(Modifier.height(Dimens.spaceTiny))
                 } else {
-                    // Show a timestamp on user bubbles too, aligned to the
-                    // end so it reads as the message's send time.
-                    if (message.time > 0uL) {
+                    // Show a timestamp and status indicator on user bubbles,
+                    // aligned to the end so it reads as the message's send time.
+                    val showStatus = message.status != MessageStatus.SENT
+                    if (message.time > 0uL || showStatus) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.End,
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Text(
-                                text = timeLabel,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onPrimary,
-                            )
+                            if (message.status == MessageStatus.PENDING) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(Dimens.iconInlineSpinner),
+                                    strokeWidth = Dimens.strokeThin,
+                                    color = MaterialTheme.colorScheme.onPrimary,
+                                )
+                                Spacer(Modifier.size(Dimens.spaceTiny))
+                            } else if (message.status == MessageStatus.FAILED) {
+                                Icon(
+                                    Icons.Default.ErrorOutline,
+                                    contentDescription = stringResource(R.string.chat_cd_message_status_failed),
+                                    modifier = Modifier.size(Dimens.iconInlineSpinner),
+                                    tint = MaterialTheme.colorScheme.onPrimary,
+                                )
+                                Spacer(Modifier.size(Dimens.spaceTiny))
+                            }
+                            if (message.time > 0uL) {
+                                Text(
+                                    text = timeLabel,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onPrimary,
+                                )
+                            }
                         }
                         Spacer(Modifier.height(Dimens.spaceTiny))
                     }
@@ -328,6 +354,7 @@ private fun MessageBubbleUserPreview() {
                     role = "user",
                     text = "Hello! Can you summarize the build steps?",
                     time = 1_700_000_000uL,
+                    status = MessageStatus.SENT,
                 ),
             )
             MessageBubble(
@@ -336,6 +363,7 @@ private fun MessageBubbleUserPreview() {
                     role = "assistant",
                     text = "Sure — here's a **short** list:\n\n1. Generate types\n2. Build the native library\n3. Assemble the APK",
                     time = 1_700_000_010uL,
+                    status = MessageStatus.SENT,
                 ),
             )
         }

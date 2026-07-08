@@ -22,6 +22,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
@@ -35,12 +37,14 @@ import soy.iko.opencode.ui.theme.OpencodeTheme
  *
  * - Honors IME insets via [Modifier.imePadding] so the keyboard never covers
  *   the input bar (the chat Scaffold relies on this).
- * - Exposes a keyboard "Send" action so users can fire-and-forget without
- *   tapping the icon.
+ * - Uses [ImeAction.Default] so the keyboard's action key inserts a newline,
+ *   allowing multi-line messages. The send button on the right fires the
+ *   message.
  * - Send is disabled while [enabled] is false (e.g. during loading) or when
  *   the text is blank.
  * - When [generating] is true, a Stop button replaces the Send button so the
  *   user can cancel the wait; tapping it calls [onStop].
+ * - A long-press haptic fires on send for tactile confirmation.
  */
 @Composable
 fun ChatInputBar(
@@ -55,6 +59,7 @@ fun ChatInputBar(
     placeholder: String = "Message…",
     sendContentDescription: String = "Send",
 ) {
+    val hapticFeedback = LocalHapticFeedback.current
     Surface(
         tonalElevation = Dimens.inputBarTonalElevation,
         modifier = modifier
@@ -78,12 +83,14 @@ fun ChatInputBar(
                 placeholder = { Text(placeholder) },
                 modifier = Modifier.weight(1f),
                 maxLines = 4,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                keyboardActions = KeyboardActions(onSend = { onSend() }),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
             )
             if (generating) {
                 IconButton(
-                    onClick = onStop,
+                    onClick = {
+                        hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onStop()
+                    },
                     modifier = Modifier.semantics {
                         contentDescription = stopContentDescription
                     },
@@ -92,7 +99,10 @@ fun ChatInputBar(
                 }
             } else {
                 IconButton(
-                    onClick = onSend,
+                    onClick = {
+                        hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onSend()
+                    },
                     enabled = enabled && text.isNotBlank(),
                     modifier = Modifier.semantics {
                         contentDescription = sendContentDescription

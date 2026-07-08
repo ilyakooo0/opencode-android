@@ -3,17 +3,23 @@ package soy.iko.opencode.ui.screens
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
@@ -35,18 +41,24 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import soy.iko.opencode.R
 import soy.iko.opencode.core.Core
 import soy.iko.opencode.core.Event
+import soy.iko.opencode.core.MessageStatus
 import soy.iko.opencode.core.MessageView
 import soy.iko.opencode.core.SseState
 import soy.iko.opencode.ui.components.ChatInputBar
@@ -59,29 +71,36 @@ import soy.iko.opencode.ui.components.InfoHost
 import soy.iko.opencode.ui.components.LoadingPlaceholder
 import soy.iko.opencode.ui.components.MessageBubble
 import soy.iko.opencode.ui.components.SseDisconnectedBanner
+import soy.iko.opencode.ui.components.SseStatusBanner
 import soy.iko.opencode.ui.components.dayOfEpoch
 import soy.iko.opencode.ui.theme.Dimens
 import soy.iko.opencode.ui.theme.OpencodeTheme
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun ChatScreen(core: Core) {
     val view by core.view.collectAsState()
     val sseState by core.sseState.collectAsState()
-    var inputText by remember { mutableStateOf("") }
+    // Wire the draft to the core's ViewModel so it survives rotation and
+    // process death. The core stores draftMessage; we seed local state from
+    // it and write via Event.DraftChanged on every keystroke.
+    var inputText by remember(view.draftMessage) { mutableStateOf(view.draftMessage) }
     val listState = rememberLazyListState()
-    var scrollRequest by remember { mutableIntStateOf(0) }
-    var menuExpanded by remember { mutableStateOf(false) }
-    var sseBannerDismissed by remember { mutableStateOf(false) }
+    var scrollRequest by rememberSaveable { mutableIntStateOf(0) }
+    var menuExpanded by rememberSaveable { mutableStateOf(false) }
+    var sseBannerDismissed by rememberSaveable { mutableStateOf(false) }
     val inputFocusRequester = remember { FocusRequester() }
+    val clipboardManager = LocalClipboardManager.current
 
     // Track whether the user is parked at the bottom of the list. We only
     // auto-scroll when they are, so reading history isn't yanked away as
     // new messages stream in.
     val isAtBottom by remember {
         derivedStateOf {
-            val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-            lastVisible >= view.messages.size - 2
+            val layoutInfo = listState.layoutInfo
+            val totalItems = layoutInfo.totalItemsCount
+            val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+            totalItems == 0 || lastVisible >= totalItems - 2
         }
     }
 
@@ -95,10 +114,7 @@ fun ChatScreen(core: Core) {
     // repeated taps keep firing.
     LaunchedEffect(scrollRequest) {
         if (scrollRequest > 0 && view.messages.isNotEmpty()) {
-            // Index of the trailing __generating__ item (it's last in the
-            // list, at position == messages.size). Falling back to the last
-            // message is safe even if the generating item is invisible.
-            listState.animateScrollToItem(view.messages.size)
+            listState.animateScrollToItem(listState.layoutInfo.totalItemsCount - 1)
         }
     }
 
@@ -122,6 +138,7 @@ fun ChatScreen(core: Core) {
         successConnectedLabel = stringResource(R.string.connect_success),
         successSessionCreatedLabel = stringResource(R.string.session_created),
         copiedLabel = stringResource(R.string.chat_copied),
+        sessionDeletedLabel = stringResource(R.string.session_deleted),
     )
 
     val showSseBanner = (sseState is SseState.Error ||
@@ -158,24 +175,53 @@ fun ChatScreen(core: Core) {
     val refreshLabel = stringResource(R.string.chat_menu_refresh)
     val overflowLabel = stringResource(R.string.chat_menu_overflow)
     val chatEmptyHint = stringResource(R.string.chat_empty_hint)
+    val copySessionIdCd = stringResource(R.string.chat_cd_copy_session_id)
+    val sessionIdCopiedLabel = stringResource(R.string.chat_session_id_copied)
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
-                    Column {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
                         Text(
                             text = title,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
-                        if (subtitle != null) {
-                            Text(
-                                text = subtitle,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                            )
+                        if (subtitle != null && sessionId != null) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .combinedClickable(
+                                        onClick = {
+                                            clipboardManager.setText(AnnotatedString(sessionId))
+                                            core.notifyCopied()
+                                        },
+                                        onLongClick = {
+                                            clipboardManager.setText(AnnotatedString(sessionId))
+                                            core.notifyCopied()
+                                        },
+                                    )
+                                    .semantics {
+                                        contentDescription = copySessionIdCd
+                                    },
+                            ) {
+                                Text(
+                                    text = subtitle,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                )
+                                Icon(
+                                    Icons.Default.ContentCopy,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(Dimens.iconInlineSpinner),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                         }
                     }
                 },
@@ -220,18 +266,22 @@ fun ChatScreen(core: Core) {
         bottomBar = {
             ChatInputBar(
                 text = inputText,
-                onTextChange = { inputText = it },
+                onTextChange = {
+                    inputText = it
+                    core.update(Event.DraftChanged(it))
+                },
                 onSend = {
                     if (inputText.isNotBlank()) {
                         core.update(Event.SendMessage(inputText))
                         inputText = ""
+                        core.update(Event.DraftChanged(""))
                     }
                 },
                 // Disable while loading OR while the assistant is generating,
                 // so users can't fire a second message mid-reply.
                 enabled = !view.loading && !view.generating,
                 generating = view.generating,
-                onStop = { sessionId?.let { core.update(Event.LoadMessages(it)) } },
+                onStop = { core.update(Event.CancelGeneration) },
                 stopContentDescription = stringResource(R.string.chat_cd_stop),
                 placeholder = stringResource(R.string.chat_input_placeholder),
                 sendContentDescription = stringResource(R.string.chat_cd_send),
@@ -258,6 +308,14 @@ fun ChatScreen(core: Core) {
                         onDismiss = { sseBannerDismissed = true },
                         reconnectLabel = stringResource(R.string.sse_reconnect),
                         dismissLabel = stringResource(R.string.sse_dismiss),
+                    )
+                } else if (sseState == SseState.Connecting && sessionId != null && !view.loading) {
+                    // Brief "connecting" indicator while the SSE stream
+                    // establishes — not an error, just a transitional state.
+                    SseStatusBanner(
+                        message = stringResource(R.string.sse_connecting),
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
 
@@ -366,12 +424,13 @@ private fun ChatScreenPreview() {
             title = "Refactor the parser",
             sessionId = "abc12345",
             messages = listOf(
-                MessageView("u1", "user", "Can you clean up parse_messages?", 1_700_000_000uL),
+                MessageView("u1", "user", "Can you clean up parse_messages?", 1_700_000_000uL, MessageStatus.SENT),
                 MessageView(
                     "a1",
                     "assistant",
                     "Sure — here's a **plan**:\n\n1. Extract helpers\n2. Add tests",
                     1_700_000_010uL,
+                    MessageStatus.SENT,
                 ),
             ),
             generating = false,
@@ -387,7 +446,7 @@ private fun ChatScreenGeneratingPreview() {
         PreviewChatScreen(
             title = "New session",
             sessionId = "xyz12345",
-            messages = listOf(MessageView("u1", "user", "Hello!", 1_700_000_000uL)),
+            messages = listOf(MessageView("u1", "user", "Hello!", 1_700_000_000uL, MessageStatus.SENT)),
             generating = true,
         )
     }
