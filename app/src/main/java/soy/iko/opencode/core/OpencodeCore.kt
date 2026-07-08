@@ -29,7 +29,6 @@ class OpencodeCore(
     private var username = ""
     private var password = ""
     private var authRequired = false
-    private var authed = false
     private var connected = false
     private var loading = false
     private var error: String? = null
@@ -40,6 +39,7 @@ class OpencodeCore(
     private val messages = mutableListOf<MsgState>()
     private var draft = ""
     private var generating = false
+    private var sseConnected = true
     private var localSeq = 0L
 
     private val _view = MutableStateFlow(snapshot())
@@ -85,6 +85,7 @@ class OpencodeCore(
                 val id = event.id
                 // Delete on the server first; only drop it from the UI once that
                 // succeeds, so a failed request leaves the session recoverable.
+                loading = true; emit()
                 scope.launch {
                     http.delete("$serverUrl/session/$id", authHeader()).fold(
                         onSuccess = { resp ->
@@ -98,8 +99,12 @@ class OpencodeCore(
                             } else {
                                 error = "Failed to delete session"
                             }
+                            loading = false
                         },
-                        onFailure = { error = "Failed to delete session" },
+                        onFailure = {
+                            error = "Failed to delete session"
+                            loading = false
+                        },
                     )
                     emit()
                 }
@@ -120,6 +125,7 @@ class OpencodeCore(
                 currentSessionId = null
                 messages.clear()
                 generating = false
+                loading = true
                 emit()
                 scope.launch { loadSessions() }
             }
@@ -127,6 +133,7 @@ class OpencodeCore(
             Event.NavigateToConnect -> {
                 screen = Screen.Connect
                 connected = false
+                loading = false
                 sessions.clear()
                 messages.clear()
                 currentSessionId = null
@@ -195,7 +202,6 @@ class OpencodeCore(
                         emit()
                     }
                     resp.code in 200..299 -> {
-                        if (hasCreds) authed = true
                         connected = true
                         authRequired = false
                         error = null
@@ -288,7 +294,13 @@ class OpencodeCore(
             url = "$serverUrl/event",
             auth = authHeader(),
             onEvent = { json -> scope.launch { handleServerEvent(json) } },
-            onStateChange = { open -> if (open) reconnectAttempts = 0 else scheduleReconnect() },
+            onStateChange = { open ->
+                scope.launch {
+                    sseConnected = open
+                    if (open) reconnectAttempts = 0 else scheduleReconnect()
+                    emit()
+                }
+            },
         )
         sse = client
         client.connect()
@@ -405,6 +417,7 @@ class OpencodeCore(
         messages = messages.map { it.toView() },
         draft = draft,
         generating = generating,
+        sseConnected = sseConnected,
     )
 
     private fun emit() { _view.value = snapshot() }

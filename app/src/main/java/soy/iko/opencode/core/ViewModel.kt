@@ -48,6 +48,7 @@ data class UiState(
     val messages: List<MessageView> = emptyList(),
     val draft: String = "",
     val generating: Boolean = false,
+    val sseConnected: Boolean = true,
 )
 
 /**

@@ -139,7 +139,7 @@ private fun SessionRow(session: SessionView, onOpen: () -> Unit, onDelete: () ->
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = session.id,
+                text = shortSessionId(session.id),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
@@ -155,6 +155,10 @@ private fun SessionRow(session: SessionView, onOpen: () -> Unit, onDelete: () ->
         }
     }
 }
+
+/** Shorten a session ID for display: "abc12345…" instead of the full UUID. */
+private fun shortSessionId(id: String): String =
+    if (id.length > 12) id.take(8) + "…" else id
 
 @Composable
 private fun EmptySessions() {

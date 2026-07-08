@@ -35,6 +35,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -150,9 +151,13 @@ private fun ReasoningBlock(text: String) {
 
 @Composable
 private fun ToolRow(tool: ToolView) {
+    var expanded by remember { mutableStateOf(false) }
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.padding(bottom = 6.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { expanded = !expanded }
+            .padding(bottom = 6.dp),
     ) {
         Icon(
             Icons.Filled.Build,
@@ -165,11 +170,19 @@ private fun ToolRow(tool: ToolView) {
                 append(tool.name)
                 append(" · ")
                 append(tool.status)
-                tool.title?.let { append(" — "); append(it) }
+                if (expanded) tool.title?.let { append(" — "); append(it) }
             },
             style = MonoStyle,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 3,
+            maxLines = if (expanded) Int.MAX_VALUE else 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        Icon(
+            imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+            contentDescription = if (expanded) "Collapse tool details" else "Expand tool details",
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 2.dp).widthIn(max = 18.dp),
         )
     }
 }

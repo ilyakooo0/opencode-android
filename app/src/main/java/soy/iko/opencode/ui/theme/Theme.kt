@@ -33,8 +33,6 @@ private val LightColors = lightColorScheme(
     outline = LightOutline,
 )
 
-private val Color0x0F1115 = androidx.compose.ui.graphics.Color(0xFF0F1115)
-
 @Composable
 fun OpencodeTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
