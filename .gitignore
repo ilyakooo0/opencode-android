@@ -37,5 +37,4 @@ shared/target/
 # Generated Kotlin types (regenerated from Rust core)
 generated/jniLibs/
 
-# Gradle wrapper (should be committed, but ignore if not present)
-gradle/wrapper/gradle-wrapper.jar
+# Gradle wrapper jar is committed so CI can run ./gradlew
