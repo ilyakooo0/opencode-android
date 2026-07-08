@@ -130,7 +130,6 @@ import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
-import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -1290,28 +1289,18 @@ fun ChatScreen(
                 // (the same hazard FileViewScreen's overlay calls out). onSizeChanged only
                 // fires while the banner is composed (visible), so gate the inset on
                 // bannerVisible and fall back to 44dp until the first measurement arrives.
-                var bannerHeightPx by remember { mutableIntStateOf(0) }
-                // Track the search bar height so the list's top padding can grow when search
-                // is active — otherwise a scrolled-to match lands at index 0, hidden behind
-                // the floating search bar (the "scroll-under-the-search-bar" bug).
-                var searchbarHeightPx by remember { mutableIntStateOf(0) }
-                val density = LocalDensity.current
                 val topPad = if (bannerVisible) {
-                    if (bannerHeightPx > 0) {
-                        with(density) { bannerHeightPx.toDp() } + 4.dp
-                    } else {
-                        44.dp
-                    }
+                    NetworkConfig.connectionBannerHeightDp.dp + 4.dp
                 } else {
                     16.dp
-                } + if (searchActive && searchbarHeightPx > 0) {
-                    with(density) { searchbarHeightPx.toDp() } + 4.dp
+                } + if (searchActive) {
+                    NetworkConfig.chatSearchBarHeightDp.dp + 4.dp
                 } else {
                     0.dp
                 }
                 ConnectionBanner(
                     state = connectionState,
-                    modifier = Modifier.align(Alignment.TopCenter).onSizeChanged { bannerHeightPx = it.height },
+                    modifier = Modifier.align(Alignment.TopCenter),
                     isOnline = isOnline,
                     // On a hard endpoint failure, retry by forcing an SSE reconnect (which
                     // re-seeds from REST). refreshMessages is the right recovery path
@@ -1971,8 +1960,7 @@ fun ChatScreen(
                         tonalElevation = 3.dp,
                         modifier = Modifier
                             .padding(horizontal = 12.dp, vertical = 4.dp)
-                            .fillMaxWidth()
-                            .onSizeChanged { searchbarHeightPx = it.height },
+                            .fillMaxWidth(),
                     ) {
                         // Focus the search field when the bar appears (from the overflow menu's
                         // "Find in conversation" or Ctrl+F), so the user can start typing

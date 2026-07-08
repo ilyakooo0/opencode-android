@@ -431,6 +431,21 @@ object NetworkConfig {
     /** Fallback height (dp) for the connection banner when no text is available (e.g. exit fade). */
     const val connectionBannerFallbackHeightDp = 44
 
+    /** Fixed height (dp) for the connection banner used for LazyColumn top content padding.
+     *  onSizeChanged was previously used to measure the banner's actual height and feed it
+     *  into the LazyColumn's contentPadding, but that created a feedback loop: the banner
+     *  appears → onSizeChanged fires → contentPadding changes → LazyColumn remeasures all
+     *  visible items during the same frame async content (DiffView, images) is settling
+     *  post-mount → draw-phase remeasure NPE. A fixed height eliminates the loop. At large
+     *  accessibility font scales the banner may slightly exceed this, but the 4dp margin
+     *  above it in topPad covers the common case. */
+    const val connectionBannerHeightDp = 44
+
+    /** Fixed height (dp) for the in-conversation search bar used for LazyColumn top
+     *  content padding. Same rationale as connectionBannerHeightDp: onSizeChanged on the
+     *  search bar fed contentPadding and triggered the draw-phase remeasure crash. */
+    const val chatSearchBarHeightDp = 56
+
     // --- Motion tokens (shared across screens) ---
 
     /** Duration (ms) for horizontal slide push/pop nav transitions. M3 spec recommends 200ms
