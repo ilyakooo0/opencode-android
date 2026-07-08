@@ -1,5 +1,6 @@
 package soy.iko.opencode.ui.theme
 
+import android.app.Activity
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
@@ -11,31 +12,28 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 
-private val DarkColorScheme = darkColorScheme(
-    primary = Color(0xFF82B1FF),
-    secondary = Color(0xFF80CBC4),
-    tertiary = Color(0xFFFFB74D),
-    background = Color(0xFF121212),
-    surface = Color(0xFF1E1E1E),
-    onPrimary = Color.Black,
-    onSecondary = Color.Black,
-    onTertiary = Color(0xFF1A1A1A),
-    onBackground = Color.White,
-    onSurface = Color.White,
+private val DarkColors = darkColorScheme(
+    primary = Emerald,
+    onPrimary = Color(0xFF0F1115),
+    secondary = EmeraldDark,
+    background = DarkBackground,
+    surface = DarkSurface,
+    surfaceVariant = DarkSurfaceVariant,
+    onSurface = DarkOnSurface,
+    outline = DarkOutline,
 )
 
-private val LightColorScheme = lightColorScheme(
-    primary = Color(0xFF1565C0),
-    secondary = Color(0xFF00897B),
-    tertiary = Color(0xFFE65100),
-    background = Color(0xFFF5F5F5),
-    surface = Color.White,
-    onPrimary = Color.White,
-    onSecondary = Color.White,
-    onTertiary = Color.White,
-    onBackground = Color.Black,
-    onSurface = Color.Black,
+private val LightColors = lightColorScheme(
+    primary = EmeraldDark,
+    secondary = Emerald,
+    background = LightBackground,
+    surface = LightSurface,
+    surfaceVariant = LightSurfaceVariant,
+    onSurface = LightOnSurface,
+    outline = LightOutline,
 )
+
+private val Color0x0F1115 = androidx.compose.ui.graphics.Color(0xFF0F1115)
 
 @Composable
 fun OpencodeTheme(
@@ -43,18 +41,17 @@ fun OpencodeTheme(
     dynamicColor: Boolean = true,
     content: @Composable () -> Unit,
 ) {
+    val context = LocalContext.current
     val colorScheme = when {
-        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            val context = LocalContext.current
+        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ->
             if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-        }
-        darkTheme -> DarkColorScheme
-        else -> LightColorScheme
+        darkTheme -> DarkColors
+        else -> LightColors
     }
+
     MaterialTheme(
         colorScheme = colorScheme,
-        typography = OpencodeTypography,
-        shapes = OpencodeShapes,
+        typography = AppTypography,
         content = content,
     )
 }

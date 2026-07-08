@@ -1,11 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Base theme for the Compose app. Uses a neutral NoActionBar parent so
-         the legacy Material (Material1) widget styling doesn't clash with the
-         Compose Material3 UI that paints on top. The window background matches
-         the Compose surface color so the pre-Compose splash crossfade is
-         seamless. -->
-    <style name="Theme.Opencode" parent="android:Theme.DeviceDefault.Light.NoActionBar">
-        <item name="android:windowBackground">@color/splash_background</item>
+    <!--
+      Minimal platform theme. All real theming is done in Compose (OpencodeTheme);
+      this only removes the action bar and gives a neutral window background so
+      there's no flash before the first frame.
+    -->
+    <style name="Theme.OpencodeAndroid" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/window_background</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
     </style>
 </resources>

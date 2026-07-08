@@ -12,7 +12,19 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The Crux core is plain Rust — build and unit-test it natively (the Android
+  # shell mirrors this logic; see README).
+  core:
+    name: Crux core
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test the Crux core
+        working-directory: shared
+        run: cargo test
+
   build:
+    name: Android app
     runs-on: ubuntu-latest
 
     steps:

@@ -1,137 +1,203 @@
+//! The Crux `App`: model, events, effects, update logic and view.
+//!
+//! Streaming works like this: after a successful connect the shell opens the
+//! `/event` SSE stream and forwards every decoded event as
+//! [`Event::ServerEvent`]. The core parses those and mutates the chat
+//! incrementally — creating the assistant message on `message.updated`, growing
+//! its text on `message.part.updated`, and clearing the "generating" flag on
+//! `session.idle`. User messages are shown optimistically the moment they're
+//! sent, so the stream only ever *adds* assistant content.
+
 use base64::Engine;
 use crux_core::{
-    App, Command,
     macros::effect,
-    render::{RenderOperation, render},
+    render::{render, RenderOperation},
+    App, Command,
 };
 use crux_http::command::{Http, RequestBuilder};
 use crux_http::protocol::HttpRequest;
-use facet::Facet;
 use serde::{Deserialize, Serialize};
 
-// ─── Events ────────────────────────────────────────────────────────────────
+use crate::protocol::{self, ServerEvent, WireMessageEnvelope, WirePart};
 
-#[derive(Facet, Serialize, Deserialize, Clone, Debug)]
-#[repr(C)]
+/// Result of an HTTP effect handed back to the core.
+pub type HttpResult = Result<crux_http::Response<String>, crux_http::HttpError>;
+
+// ─── Events ──────────────────────────────────────────────────────────────────
+
 pub enum Event {
-    // ── Type-generated events (sent from Shell → Core).
-    //    These MUST be contiguous starting at index 0 to match the
-    //    generated Kotlin/Swift/TS enum indices. Do not interleave
-    //    skipped variants here. ──────────────────────────────────────
-
-    // Lifecycle
+    // Lifecycle / connect
     Start,
     ServerUrlChanged(String),
     UsernameChanged(String),
     PasswordChanged(String),
     Connect,
-    CancelAuth,
 
-    // Session list
+    // Sessions
     LoadSessions,
     SelectSession(String),
     CreateSession,
+    DeleteSession(String),
 
     // Chat
     LoadMessages(String),
-    SendMessage(String),
-
-    // SSE event received
-    EventReceived(String),
-
-    // Navigation
-    NavigateToChat(String),
-    NavigateToSessions,
-    NavigateToConnect,
-
-    // Errors
-    DismissError,
-
-    // Draft / composer
     DraftChanged(String),
-    // Cancel waiting for the assistant reply (client-side stop).
+    SendMessage(String),
     CancelGeneration,
 
-    // Session management
-    DeleteSession(String),
-    // Retry sending a failed message by its (local) message id.
-    RetryMessage(String),
+    // A raw event line from the shell's `/event` SSE subscription.
+    ServerEvent(String),
 
-    // ── Internal events (skipped from typegen, sent only via then_send).
-    //    These occupy higher discriminant indices that are never
-    //    produced by the shell, so the index gap is harmless. ─────────
+    // Navigation / misc
+    NavigateToSessions,
+    NavigateToConnect,
+    DismissError,
 
-    #[serde(skip)]
-    #[facet(skip)]
-    SessionsLoaded(#[facet(opaque)] HttpResult<String>),
-    #[serde(skip)]
-    #[facet(skip)]
-    SessionCreated(#[facet(opaque)] HttpResult<String>),
-    #[serde(skip)]
-    #[facet(skip)]
-    MessagesLoaded(#[facet(opaque)] HttpResult<String>),
-    #[serde(skip)]
-    #[facet(skip)]
-    MessageSent(#[facet(opaque)] HttpResult<String>),
-    #[serde(skip)]
-    #[facet(skip)]
-    CrashLog(String),
-    #[serde(skip)]
-    #[facet(skip)]
-    HealthProbed(#[facet(opaque)] HttpResult<String>),
-    #[serde(skip)]
-    #[facet(skip)]
-    SessionDeleted(#[facet(opaque)] HttpResult<String>),
+    // ── Internal: results of HTTP effects (never sent by the shell) ──────────
+    HealthProbed(HttpResult),
+    SessionsLoaded(HttpResult),
+    SessionCreated(HttpResult),
+    MessagesLoaded(String, HttpResult),
+    PromptSent(HttpResult),
+    SessionDeleted(HttpResult),
+    Aborted(HttpResult),
 }
 
-// ─── Effects ───────────────────────────────────────────────────────────────
+// ─── Effects ─────────────────────────────────────────────────────────────────
 
-#[effect(facet_typegen)]
+#[effect]
 #[derive(Debug)]
 pub enum Effect {
     Render(RenderOperation),
     Http(HttpRequest),
 }
 
-// ─── HTTP result wrapper (opaque, not type-generated) ──────────────────────
-
-pub type HttpResult<T> = Result<crux_http::Response<T>, crux_http::HttpError>;
-
-// ─── Model ─────────────────────────────────────────────────────────────────
+// ─── Model ───────────────────────────────────────────────────────────────────
 
 #[derive(Default)]
 pub struct Model {
     server_url: String,
     username: String,
     password: String,
-    /// Set once the server replies 401 to an unauthenticated probe.
-    /// The view surfaces this so the shell can show credential fields.
+    /// The server answered 401 to an unauthenticated probe — show credentials.
     auth_required: bool,
-    /// Set once a request with credentials succeeds. All subsequent
-    /// requests carry the Authorization header.
+    /// Credentials were accepted; attach the auth header to every request.
     authed: bool,
     connected: bool,
     loading: bool,
     error: Option<String>,
-    sessions: Vec<SessionSummary>,
+    screen: Screen,
+
+    sessions: Vec<SessionView>,
     current_session_id: Option<String>,
     current_session_title: String,
-    messages: Vec<MessageView>,
-    draft_message: String,
-    /// True between sending a message and the assistant reply arriving.
+
+    messages: Vec<MsgState>,
+    draft: String,
     generating: bool,
-    /// Accumulated crash logs (sent from the shell's uncaught-exception handler)
-    crash_logs: Vec<String>,
+
+    /// Monotonic counter for optimistic (client-side) user-message ids.
+    local_seq: u64,
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct SessionSummary {
+impl Model {
+    fn message_mut(&mut self, id: &str) -> Option<&mut MsgState> {
+        self.messages.iter_mut().find(|m| m.id == id)
+    }
+
+    fn has_credentials(&self) -> bool {
+        !self.username.is_empty() || !self.password.is_empty()
+    }
+
+    fn is_current(&self, session_id: &str) -> bool {
+        self.current_session_id.as_deref() == Some(session_id)
+    }
+}
+
+/// Internal per-message state. Parts are tracked by id so streaming updates can
+/// upsert them; the [`MessageView`] handed to the shell is derived from these.
+struct MsgState {
+    id: String,
+    role: String,
+    time: u64,
+    status: MessageStatus,
+    streaming: bool,
+    text_parts: Vec<(String, String)>,
+    reasoning_parts: Vec<(String, String)>,
+    tool_parts: Vec<(String, ToolView)>,
+}
+
+impl MsgState {
+    fn new(id: String, role: String, time: u64) -> Self {
+        Self {
+            id,
+            role,
+            time,
+            status: MessageStatus::Sent,
+            streaming: false,
+            text_parts: Vec::new(),
+            reasoning_parts: Vec::new(),
+            tool_parts: Vec::new(),
+        }
+    }
+
+    fn upsert_part(parts: &mut Vec<(String, String)>, id: &str, text: String) {
+        if let Some(slot) = parts.iter_mut().find(|(pid, _)| pid == id) {
+            slot.1 = text;
+        } else {
+            parts.push((id.to_string(), text));
+        }
+    }
+
+    fn upsert_tool(&mut self, id: &str, view: ToolView) {
+        if let Some(slot) = self.tool_parts.iter_mut().find(|(pid, _)| pid == id) {
+            slot.1 = view;
+        } else {
+            self.tool_parts.push((id.to_string(), view));
+        }
+    }
+
+    fn remove_part(&mut self, part_id: &str) {
+        self.text_parts.retain(|(pid, _)| pid != part_id);
+        self.reasoning_parts.retain(|(pid, _)| pid != part_id);
+        self.tool_parts.retain(|(pid, _)| pid != part_id);
+    }
+
+    fn to_view(&self) -> MessageView {
+        let join = |parts: &[(String, String)]| {
+            parts.iter().map(|(_, t)| t.as_str()).collect::<String>()
+        };
+        let reasoning = join(&self.reasoning_parts);
+        MessageView {
+            id: self.id.clone(),
+            role: self.role.clone(),
+            text: join(&self.text_parts),
+            reasoning: (!reasoning.is_empty()).then_some(reasoning),
+            tools: self.tool_parts.iter().map(|(_, t)| t.clone()).collect(),
+            time: self.time,
+            status: self.status.clone(),
+            streaming: self.streaming,
+        }
+    }
+}
+
+// ─── View model ──────────────────────────────────────────────────────────────
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+pub enum Screen {
+    #[default]
+    Connect,
+    Sessions,
+    Chat,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct SessionView {
     pub id: String,
     pub title: String,
 }
 
-#[derive(Facet, Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
-#[repr(C)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
 pub enum MessageStatus {
     #[default]
     Sent,
@@ -139,18 +205,26 @@ pub enum MessageStatus {
     Failed,
 }
 
-#[derive(Facet, Serialize, Deserialize, Clone, Debug, Default)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct ToolView {
+    pub name: String,
+    pub status: String,
+    pub title: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct MessageView {
     pub id: String,
     pub role: String,
     pub text: String,
+    pub reasoning: Option<String>,
+    pub tools: Vec<ToolView>,
     pub time: u64,
     pub status: MessageStatus,
+    pub streaming: bool,
 }
 
-// ─── ViewModel ─────────────────────────────────────────────────────────────
-
-#[derive(Facet, Serialize, Deserialize, Clone, Debug, Default)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct ViewModel {
     pub screen: Screen,
     pub server_url: String,
@@ -164,83 +238,48 @@ pub struct ViewModel {
     pub current_session_id: Option<String>,
     pub current_session_title: String,
     pub messages: Vec<MessageView>,
-    pub draft_message: String,
-    /// True while waiting for the assistant to reply after the user sends.
+    pub draft: String,
     pub generating: bool,
-    pub crash_log_count: u32,
-    pub latest_crash_log: Option<String>,
 }
 
-#[derive(Facet, Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
-#[repr(C)]
-pub enum Screen {
-    #[default]
-    Connect,
-    Sessions,
-    Chat,
-}
-
-#[derive(Facet, Serialize, Deserialize, Clone, Debug, Default)]
-pub struct SessionView {
-    pub id: String,
-    pub title: String,
-}
-
-// ─── App ───────────────────────────────────────────────────────────────────
+// ─── App ─────────────────────────────────────────────────────────────────────
 
 #[derive(Default)]
 pub struct OpencodeApp;
 
 impl OpencodeApp {
-    /// Build a GET request to `path`, adding the Basic-Auth header when the
-    /// model has credentials. The header is always added once `authed` is true
-    /// (i.e. after the server has accepted credentials), and also during the
-    /// credential-retry attempt itself.
     fn get(&self, model: &Model, path: &str) -> RequestBuilder<Effect, Event, String> {
         let url = format!("{}{path}", model.server_url);
-        let req = Http::get(&url).expect_string();
-        self.with_auth(req, model)
+        self.with_auth(Http::get(&url).expect_string(), model)
     }
 
-    /// Build a POST request to `path` with the given body bytes.
-    fn post(&self, model: &Model, path: &str, body: Vec<u8>) -> RequestBuilder<Effect, Event, String> {
+    fn post_json(&self, model: &Model, path: &str, body: &serde_json::Value) -> RequestBuilder<Effect, Event, String> {
         let url = format!("{}{path}", model.server_url);
-        let req = Http::post(&url).expect_string().body_bytes(body);
+        let bytes = serde_json::to_vec(body).unwrap_or_default();
+        let req = Http::post(&url)
+            .expect_string()
+            .header("Content-Type", "application/json")
+            .body_bytes(bytes);
         self.with_auth(req, model)
     }
 
-    /// Build a DELETE request to `path`.
     fn delete(&self, model: &Model, path: &str) -> RequestBuilder<Effect, Event, String> {
         let url = format!("{}{path}", model.server_url);
-        let req = Http::delete(&url).expect_string();
-        self.with_auth(req, model)
+        self.with_auth(Http::delete(&url).expect_string(), model)
     }
 
-    /// Attach the Basic-Auth `Authorization` header if the model carries
-    /// credentials. Uses RFC 7617 `Basic` scheme with base64-encoded
-    /// `username:password`.
-    fn with_auth<E>(
-        &self,
-        req: RequestBuilder<Effect, Event, E>,
-        model: &Model,
-    ) -> RequestBuilder<Effect, Event, E>
+    /// Attach an RFC 7617 Basic-Auth header when the model carries credentials.
+    fn with_auth<E>(&self, req: RequestBuilder<Effect, Event, E>, model: &Model) -> RequestBuilder<Effect, Event, E>
     where
         E: 'static,
     {
-        if !model.username.is_empty() || !model.password.is_empty() {
+        if model.has_credentials() {
             let creds = format!("{}:{}", model.username, model.password);
             let encoded = base64::engine::general_purpose::STANDARD.encode(creds.as_bytes());
             req.header("Authorization", format!("Basic {encoded}"))
         } else {
             req
         }
-    }
-
-    /// Render helper that also stamps the crash-log summary into the view.
-    fn render_with_crashes(&self, _model: &Model) -> Command<Effect, Event> {
-        // render() is the base; the view() function reads the model directly
-        // for crash-log fields, so a plain render suffices.
-        render()
     }
 }
 
@@ -252,292 +291,238 @@ impl App for OpencodeApp {
 
     fn update(&self, event: Event, model: &mut Model) -> Command<Effect, Event> {
         match event {
-            Event::Start => {
-                // Don't reset server_url here — the shell restores it from
-                // persisted storage via ServerUrlChanged before any connect.
-                render()
-            }
+            // ── Lifecycle / connect ─────────────────────────────────────────
+            Event::Start => render(),
 
             Event::ServerUrlChanged(url) => {
-                model.server_url = url;
+                model.server_url = normalize_url(&url);
                 render()
             }
-
             Event::UsernameChanged(u) => {
                 model.username = u;
                 render()
             }
-
             Event::PasswordChanged(p) => {
                 model.password = p;
                 render()
             }
 
             Event::Connect => {
+                if model.server_url.is_empty() {
+                    model.error = Some("Enter a server URL".to_string());
+                    return render();
+                }
                 model.loading = true;
                 model.error = None;
-                // Probe health. `with_auth` attaches credentials if present,
-                // so a retry after a 401 carries the Authorization header.
-                let req = self.get(model, "/global/health");
-                req.build().then_send(|result| Event::HealthProbed(result))
-            }
-
-            Event::CancelAuth => {
                 model.auth_required = false;
-                model.username.clear();
-                model.password.clear();
-                model.loading = false;
-                render()
+                render().and(self.get(model, "/global/health").build().then_send(Event::HealthProbed))
             }
 
+            Event::HealthProbed(result) => self.on_health_probed(model, result),
+
+            // ── Sessions ────────────────────────────────────────────────────
             Event::LoadSessions => {
                 model.loading = true;
-                self.get(model, "/session").build().then_send(Event::SessionsLoaded)
+                render().and(self.get(model, "/session").build().then_send(Event::SessionsLoaded))
             }
 
             Event::SessionsLoaded(result) => {
                 model.loading = false;
-                match result {
-                    Ok(mut response) => {
-                        let body = response.take_body().unwrap_or_default();
-                        model.sessions = parse_sessions(&body);
-                        model.connected = true;
-                        // Refresh the current session's title in case it was
-                        // populated after creation.
-                        if let Some(id) = model.current_session_id.clone() {
-                            if let Some(s) = model.sessions.iter().find(|s| s.id == id) {
-                                model.current_session_title = s.title.clone();
-                            }
-                        }
-                        render()
+                match ok_body(result) {
+                    Ok(body) => {
+                        model.sessions = protocol::parse_sessions(&body)
+                            .into_iter()
+                            .map(|s| SessionView {
+                                id: s.id,
+                                title: display_title(&s.title),
+                            })
+                            .collect();
                     }
-                    Err(e) => {
-                        model.error = Some(format!("Failed to load sessions: {e}"));
-                        render()
-                    }
+                    Err(e) => model.error = Some(e),
                 }
+                render()
             }
 
             Event::SelectSession(id) => {
-                model.current_session_id = Some(id.clone());
                 model.current_session_title = model
                     .sessions
                     .iter()
                     .find(|s| s.id == id)
                     .map(|s| s.title.clone())
                     .unwrap_or_default();
-                Command::event(Event::NavigateToChat(id))
-            }
-
-            Event::NavigateToChat(id) => {
                 model.current_session_id = Some(id.clone());
-                model.current_session_title = model
-                    .sessions
-                    .iter()
-                    .find(|s| s.id == id)
-                    .map(|s| s.title.clone())
-                    .unwrap_or_default();
                 model.messages.clear();
+                model.screen = Screen::Chat;
+                model.loading = true;
+                model.error = None;
                 render().and(Command::event(Event::LoadMessages(id)))
-            }
-
-            Event::NavigateToSessions => {
-                model.current_session_id = None;
-                model.current_session_title.clear();
-                model.messages.clear();
-                model.generating = false;
-                render()
-            }
-
-            Event::NavigateToConnect => {
-                // Return to the connect screen to switch servers / credentials.
-                // Keep the sessions list so a re-connect can refresh in place.
-                model.current_session_id = None;
-                model.current_session_title.clear();
-                model.messages.clear();
-                model.generating = false;
-                model.connected = false;
-                model.auth_required = false;
-                model.loading = false;
-                render()
             }
 
             Event::CreateSession => {
                 model.loading = true;
-                self.post(model, "/session", Vec::new())
-                    .build()
-                    .then_send(Event::SessionCreated)
+                render().and(
+                    self.post_json(model, "/session", &serde_json::json!({}))
+                        .build()
+                        .then_send(Event::SessionCreated),
+                )
             }
 
             Event::SessionCreated(result) => {
                 model.loading = false;
-                match result {
-                    Ok(mut response) => {
-                        let body = response.take_body().unwrap_or_default();
-                        let id = parse_session_id(&body);
-                        // Some servers echo the title in the created payload;
-                        // fall back to "New session" if absent.
-                        let title = extract_string(&body, "title")
-                            .filter(|t| !t.is_empty())
-                            .unwrap_or_else(|| "New session".to_string());
-                        model.current_session_title = title.clone();
-                        model.sessions.insert(
-                            0,
-                            SessionSummary { id: id.clone(), title },
-                        );
-                        Command::event(Event::NavigateToChat(id))
+                match ok_body(result) {
+                    Ok(body) => {
+                        if let Some(s) = protocol::parse_session(&body) {
+                            let view = SessionView {
+                                id: s.id.clone(),
+                                title: display_title(&s.title),
+                            };
+                            if !model.sessions.iter().any(|e| e.id == view.id) {
+                                model.sessions.insert(0, view);
+                            }
+                            return render().and(Command::event(Event::SelectSession(s.id)));
+                        }
+                        model.error = Some("Malformed session response".to_string());
                     }
-                    Err(e) => {
-                        model.error = Some(format!("Failed to create session: {e}"));
-                        render()
-                    }
+                    Err(e) => model.error = Some(e),
                 }
+                render()
             }
 
+            Event::DeleteSession(id) => {
+                model.sessions.retain(|s| s.id != id);
+                let mut cmd = self.delete(model, &format!("/session/{id}")).build().then_send(Event::SessionDeleted);
+                if model.is_current(&id) {
+                    model.current_session_id = None;
+                    model.messages.clear();
+                    model.screen = Screen::Sessions;
+                }
+                cmd = render().and(cmd);
+                cmd
+            }
+
+            Event::SessionDeleted(result) => {
+                if let Err(e) = ok_body(result) {
+                    model.error = Some(e);
+                }
+                render()
+            }
+
+            // ── Chat ────────────────────────────────────────────────────────
             Event::LoadMessages(id) => {
-                model.loading = true;
-                let path = format!("/session/{id}/message");
-                self.get(model, &path).build().then_send(Event::MessagesLoaded)
+                render().and(
+                    self.get(model, &format!("/session/{id}/message"))
+                        .build()
+                        .then_send(move |result| Event::MessagesLoaded(id.clone(), result)),
+                )
             }
 
-            Event::MessagesLoaded(result) => {
-                model.loading = false;
-                model.generating = false;
-                match result {
-                    Ok(mut response) => {
-                        let body = response.take_body().unwrap_or_default();
-                        model.messages = parse_messages(&body);
-                        render()
-                    }
-                    Err(e) => {
-                        model.error = Some(format!("Failed to load messages: {e}"));
-                        render()
-                    }
+            Event::MessagesLoaded(session_id, result) => {
+                if !model.is_current(&session_id) {
+                    return render();
                 }
+                model.loading = false;
+                match ok_body(result) {
+                    Ok(body) => {
+                        model.messages = protocol::parse_messages(&body).iter().map(message_from_wire).collect();
+                        model.generating = model.messages.iter().any(|m| m.streaming);
+                    }
+                    Err(e) => model.error = Some(e),
+                }
+                render()
+            }
+
+            Event::DraftChanged(text) => {
+                model.draft = text;
+                render()
             }
 
             Event::SendMessage(text) => {
+                let text = text.trim().to_string();
                 let Some(session_id) = model.current_session_id.clone() else {
                     return render();
                 };
-                model.draft_message.clear();
+                if text.is_empty() {
+                    return render();
+                }
+                model.local_seq += 1;
+                let mut user = MsgState::new(format!("local-{}", model.local_seq), "user".to_string(), 0);
+                user.status = MessageStatus::Pending;
+                MsgState::upsert_part(&mut user.text_parts, "local", text.clone());
+                model.messages.push(user);
+                model.draft.clear();
                 model.generating = true;
-                let body = serde_json::json!({
-                    "sessionID": session_id,
-                    "parts": [{ "type": "text", "text": text }]
-                })
-                .to_string()
-                .into_bytes();
-                let path = format!("/session/{session_id}/prompt_async");
-                self.post(model, &path, body)
-                    .build()
-                    .then_send(Event::MessageSent)
+                model.error = None;
+
+                let body = serde_json::json!({ "parts": [{ "type": "text", "text": text }] });
+                render().and(
+                    self.post_json(model, &format!("/session/{session_id}/prompt_async"), &body)
+                        .build()
+                        .then_send(Event::PromptSent),
+                )
             }
 
-            Event::MessageSent(result) => {
-                match result {
-                    Ok(_) => {
-                        // Reload messages to pick up the assistant reply.
-                        if let Some(session_id) = model.current_session_id.clone() {
-                            Command::event(Event::LoadMessages(session_id))
-                        } else {
-                            model.generating = false;
-                            render()
-                        }
-                    }
+            Event::PromptSent(result) => {
+                match ok_body(result) {
+                    Ok(_) => set_last_pending(model, MessageStatus::Sent),
                     Err(e) => {
+                        set_last_pending(model, MessageStatus::Failed);
                         model.generating = false;
-                        model.error = Some(format!("Failed to send message: {e}"));
-                        render()
+                        model.error = Some(e);
                     }
                 }
+                render()
             }
 
-            Event::EventReceived(_data) => {
-                // SSE event — reload messages for the current session.
-                if let Some(session_id) = model.current_session_id.clone() {
-                    Command::event(Event::LoadMessages(session_id))
-                } else {
-                    render()
+            Event::CancelGeneration => {
+                model.generating = false;
+                match model.current_session_id.clone() {
+                    Some(id) => render().and(
+                        self.post_json(model, &format!("/session/{id}/abort"), &serde_json::json!({}))
+                            .build()
+                            .then_send(Event::Aborted),
+                    ),
+                    None => render(),
                 }
             }
 
-            Event::CrashLog(entry) => {
-                model.crash_logs.push(entry);
-                self.render_with_crashes(model)
+            Event::Aborted(_) => render(),
+
+            // ── SSE ─────────────────────────────────────────────────────────
+            Event::ServerEvent(json) => {
+                if let Some(event) = protocol::parse_event(&json) {
+                    apply_server_event(model, event);
+                }
+                render()
+            }
+
+            // ── Navigation / misc ───────────────────────────────────────────
+            Event::NavigateToSessions => {
+                model.screen = Screen::Sessions;
+                model.current_session_id = None;
+                model.messages.clear();
+                model.generating = false;
+                render().and(self.get(model, "/session").build().then_send(Event::SessionsLoaded))
+            }
+
+            Event::NavigateToConnect => {
+                model.screen = Screen::Connect;
+                model.connected = false;
+                model.sessions.clear();
+                model.messages.clear();
+                model.current_session_id = None;
+                render()
             }
 
             Event::DismissError => {
                 model.error = None;
                 render()
             }
-
-            Event::DraftChanged(text) => {
-                model.draft_message = text;
-                render()
-            }
-
-            Event::CancelGeneration => {
-                // Client-side stop: the server-side generation continues, but
-                // we stop showing the "generating" state and return to ready.
-                // A subsequent SSE event / manual refresh will pick up the
-                // assistant reply when it arrives.
-                model.generating = false;
-                render()
-            }
-
-            Event::DeleteSession(id) => {
-                // Optimistically remove the session from the list. If the
-                // server delete fails, we reload the session list to restore.
-                model.sessions.retain(|s| s.id != id);
-                if model.current_session_id.as_deref() == Some(id.as_str()) {
-                    model.current_session_id = None;
-                    model.current_session_title.clear();
-                    model.messages.clear();
-                    model.generating = false;
-                }
-                let path = format!("/session/{id}");
-                self.delete(model, &path).build().then_send(Event::SessionDeleted)
-            }
-
-            Event::RetryMessage(_msg_id) => {
-                // No persisted failed-message body to re-send in the core, so
-                // retry is a no-op here. The shell can surface a hint. This
-                // event exists so the UI has a stable retry path and so the
-                // core can grow real per-message retry later without a
-                // typegen change.
-                render()
-            }
-
-            // ── Internal events (not type-generated, sent via then_send) ───
-            Event::HealthProbed(result) => handle_health_probed(self, model, result),
-            Event::SessionDeleted(result) => {
-                match result {
-                    Ok(_) => {
-                        render()
-                    }
-                    Err(e) => {
-                        // Optimistic delete failed — reload sessions to
-                        // restore the list, and surface the error.
-                        model.error = Some(format!("Failed to delete session: {e}"));
-                        self.get(model, "/session").build().then_send(Event::SessionsLoaded)
-                    }
-                }
-            }
         }
     }
 
-    fn view(&self, model: &Self::Model) -> Self::ViewModel {
-        let screen = if model.current_session_id.is_some() {
-            Screen::Chat
-        } else if model.connected {
-            Screen::Sessions
-        } else {
-            Screen::Connect
-        };
-
+    fn view(&self, model: &Model) -> ViewModel {
         ViewModel {
-            screen,
+            screen: model.screen.clone(),
             server_url: model.server_url.clone(),
             username: model.username.clone(),
             password: model.password.clone(),
@@ -545,459 +530,472 @@ impl App for OpencodeApp {
             connected: model.connected,
             loading: model.loading,
             error: model.error.clone(),
-            sessions: model
-                .sessions
-                .iter()
-                .map(|s| SessionView {
-                    id: s.id.clone(),
-                    title: s.title.clone(),
-                })
-                .collect(),
+            sessions: model.sessions.clone(),
             current_session_id: model.current_session_id.clone(),
             current_session_title: model.current_session_title.clone(),
-            messages: model.messages.clone(),
-            draft_message: model.draft_message.clone(),
+            messages: model.messages.iter().map(MsgState::to_view).collect(),
+            draft: model.draft.clone(),
             generating: model.generating,
-            crash_log_count: model.crash_logs.len() as u32,
-            latest_crash_log: model.crash_logs.last().cloned(),
         }
     }
 }
 
-// ─── Basic-auth detection ──────────────────────────────────────────────────
-//
-// The opencode server uses HTTP Basic Auth when OPENCODE_SERVER_PASSWORD is set
-// (username defaults to "opencode"). We detect this by probing /global/health
-// without credentials:
-//
-//   - 200  → server is open; proceed to load sessions.
-//   - 401  → server is behind basic auth; surface `auth_required` and wait for
-//            the user to supply credentials. The user then re-issues Connect,
-//            which now attaches the Authorization header to the same probe.
-//            A 200 on that retry flips `authed` and proceeds.
-//   - Other non-2xx → surface as a connection error.
-//   - Transport error → surface as a connection error.
+impl OpencodeApp {
+    fn on_health_probed(&self, model: &mut Model, result: HttpResult) -> Command<Effect, Event> {
+        let has_creds = model.has_credentials();
+        match result {
+            Ok(response) => {
+                let status = response.status().as_u16();
+                if status == 401 {
+                    model.loading = false;
+                    if has_creds {
+                        model.error = Some("Invalid credentials".to_string());
+                    } else {
+                        model.auth_required = true;
+                    }
+                    return render();
+                }
+                if (200..300).contains(&status) {
+                    if has_creds {
+                        model.authed = true;
+                    }
+                    model.connected = true;
+                    model.auth_required = false;
+                    model.error = None;
+                    model.screen = Screen::Sessions;
+                    model.loading = true;
+                    return render().and(self.get(model, "/session").build().then_send(Event::SessionsLoaded));
+                }
+                model.loading = false;
+                model.error = Some(format!("Server returned status {status}"));
+                render()
+            }
+            Err(e) => {
+                model.loading = false;
+                model.error = Some(format!("Connection failed: {e}"));
+                render()
+            }
+        }
+    }
+}
 
-fn handle_health_probed(
-    app: &OpencodeApp,
-    model: &mut Model,
-    result: HttpResult<String>,
-) -> Command<Effect, Event> {
-    let has_creds = !model.username.is_empty() || !model.password.is_empty();
+// ─── SSE application ─────────────────────────────────────────────────────────
+
+fn apply_server_event(model: &mut Model, event: ServerEvent) {
+    match event {
+        // Only assistant messages are created from the stream — the user's own
+        // message is already shown optimistically, so ignoring the server's copy
+        // avoids a duplicate bubble.
+        ServerEvent::MessageUpdated { properties } => {
+            let info = properties.info;
+            if info.role != "assistant" || !model.is_current(&info.session_id) {
+                return;
+            }
+            let streaming = info.time.completed.is_none() && info.error.is_none();
+            if let Some(msg) = model.message_mut(&info.id) {
+                msg.streaming = streaming;
+                if msg.time == 0 {
+                    msg.time = info.time.created;
+                }
+            } else {
+                let mut msg = MsgState::new(info.id.clone(), "assistant".to_string(), info.time.created);
+                msg.streaming = streaming;
+                model.messages.push(msg);
+            }
+            if let Some(err) = info.error {
+                model.error = Some(err.message());
+                model.generating = false;
+            }
+        }
+
+        // Apply only to a message we already track (an assistant message from the
+        // event above). Parts for unknown ids are ignored — see module docs.
+        ServerEvent::MessagePartUpdated { properties } => {
+            let part = properties.part;
+            let delta = properties.delta;
+            let msg_id = part.message_id().to_string();
+            let Some(msg) = model.message_mut(&msg_id) else {
+                return;
+            };
+            match part {
+                WirePart::Text { id, text, synthetic, .. } => {
+                    if synthetic {
+                        return;
+                    }
+                    let value = pick_text(text, &delta, &msg.text_parts, &id);
+                    MsgState::upsert_part(&mut msg.text_parts, &id, value);
+                }
+                WirePart::Reasoning { id, text, .. } => {
+                    let value = pick_text(text, &delta, &msg.reasoning_parts, &id);
+                    MsgState::upsert_part(&mut msg.reasoning_parts, &id, value);
+                }
+                WirePart::Tool { id, tool, state, .. } => {
+                    let sv = protocol::tool_state_view(&state);
+                    msg.upsert_tool(&id, ToolView { name: tool, status: sv.status, title: sv.title });
+                }
+                WirePart::Other => {}
+            }
+        }
+
+        ServerEvent::MessagePartRemoved { properties } => {
+            if let Some(msg) = model.message_mut(&properties.message_id) {
+                msg.remove_part(&properties.part_id);
+            }
+        }
+
+        ServerEvent::MessageRemoved { properties } => {
+            model.messages.retain(|m| m.id != properties.message_id);
+        }
+
+        ServerEvent::SessionIdle { properties } => {
+            if model.is_current(&properties.session_id) {
+                model.generating = false;
+                for m in &mut model.messages {
+                    m.streaming = false;
+                }
+            }
+        }
+
+        ServerEvent::SessionError { properties } => {
+            let scoped = properties.session_id.as_deref().map_or(true, |s| model.is_current(s));
+            if scoped {
+                if let Some(err) = properties.error {
+                    model.error = Some(err.message());
+                }
+                model.generating = false;
+            }
+        }
+
+        ServerEvent::SessionCreated { properties } | ServerEvent::SessionUpdated { properties } => {
+            let s = properties.info;
+            let view = SessionView { id: s.id.clone(), title: display_title(&s.title) };
+            if let Some(existing) = model.sessions.iter_mut().find(|e| e.id == view.id) {
+                existing.title = view.title.clone();
+            } else {
+                model.sessions.insert(0, view);
+            }
+            if model.is_current(&s.id) {
+                model.current_session_title = display_title(&s.title);
+            }
+        }
+
+        ServerEvent::SessionDeleted { properties } => {
+            let id = properties.session_id.or(properties.info.map(|i| i.id));
+            if let Some(id) = id {
+                model.sessions.retain(|s| s.id != id);
+                if model.is_current(&id) {
+                    model.current_session_id = None;
+                    model.messages.clear();
+                    model.screen = Screen::Sessions;
+                }
+            }
+        }
+
+        ServerEvent::Other => {}
+    }
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/// `part.text` is the full current text when present; otherwise fall back to
+/// accumulating the incremental `delta` onto whatever we already have.
+fn pick_text(text: String, delta: &Option<String>, existing: &[(String, String)], part_id: &str) -> String {
+    if !text.is_empty() {
+        return text;
+    }
+    let prior = existing.iter().find(|(pid, _)| pid == part_id).map(|(_, t)| t.clone()).unwrap_or_default();
+    match delta {
+        Some(d) => format!("{prior}{d}"),
+        None => prior,
+    }
+}
+
+fn message_from_wire(env: &WireMessageEnvelope) -> MsgState {
+    let info = &env.info;
+    let mut msg = MsgState::new(info.id.clone(), info.role.clone(), info.time.created);
+    msg.streaming = info.role == "assistant" && info.time.completed.is_none() && info.error.is_none();
+    for part in &env.parts {
+        match part {
+            WirePart::Text { id, text, synthetic, .. } => {
+                if !synthetic {
+                    MsgState::upsert_part(&mut msg.text_parts, id, text.clone());
+                }
+            }
+            WirePart::Reasoning { id, text, .. } => {
+                MsgState::upsert_part(&mut msg.reasoning_parts, id, text.clone());
+            }
+            WirePart::Tool { id, tool, state, .. } => {
+                let sv = protocol::tool_state_view(state);
+                msg.upsert_tool(id, ToolView { name: tool.clone(), status: sv.status, title: sv.title });
+            }
+            WirePart::Other => {}
+        }
+    }
+    msg
+}
+
+fn set_last_pending(model: &mut Model, status: MessageStatus) {
+    if let Some(msg) = model.messages.iter_mut().rev().find(|m| m.status == MessageStatus::Pending) {
+        msg.status = status;
+    }
+}
+
+/// Trim whitespace and any trailing `/` so paths concatenate cleanly.
+fn normalize_url(url: &str) -> String {
+    url.trim().trim_end_matches('/').to_string()
+}
+
+fn display_title(title: &str) -> String {
+    let t = title.trim();
+    if t.is_empty() {
+        "Untitled".to_string()
+    } else {
+        t.to_string()
+    }
+}
+
+/// Reduce an [`HttpResult`] to `Ok(body)` for 2xx, or `Err(message)` otherwise.
+fn ok_body(result: HttpResult) -> Result<String, String> {
     match result {
-        Ok(response) => {
+        Ok(mut response) => {
             let status = response.status().as_u16();
-            if status == 401 {                model.loading = false;
-                if has_creds {
-                    // We sent credentials but the server still rejected them.
-                    model.error = Some("Invalid credentials".to_string());
-                } else {
-                    // No credentials were sent — server is behind basic auth.
-                    // Surface the credential fields and wait for the user.
-                    model.auth_required = true;
-                }
-                return render();
-            }
             if (200..300).contains(&status) {
-                if has_creds {
-                    model.authed = true;
-                }
-                model.loading = true;
-                return app
-                    .get(model, "/session")
-                    .build()
-                    .then_send(Event::SessionsLoaded);
+                Ok(response.take_body().unwrap_or_default())
+            } else {
+                Err(format!("Server returned status {status}"))
             }
-            // Other status codes — treat as connection error.
-            model.loading = false;
-            model.error = Some(format!("Server returned status {status}"));
-            render()
         }
-        Err(e) => {
-            model.loading = false;
-            model.error = Some(format!("Connection failed: {e}"));
-            render()
-        }
+        Err(e) => Err(format!("Request failed: {e}")),
     }
 }
 
-// ─── JSON parsing (minimal, avoids pulling a JSON dep into the core) ───────
-
-fn parse_sessions(body: &str) -> Vec<SessionSummary> {
-    let mut sessions = Vec::new();
-    let mut depth = 0i32;
-    let mut start = 0usize;
-    for (i, ch) in body.char_indices() {
-        match ch {
-            '{' => {
-                if depth == 0 {
-                    start = i;
-                }
-                depth += 1;
-            }
-            '}' => {
-                depth -= 1;
-                if depth == 0 {
-                    let obj = &body[start..=i];
-                    let id = extract_string(obj, "id").unwrap_or_default();
-                    let title = extract_string(obj, "title").unwrap_or_default();
-                    if !id.is_empty() {
-                        sessions.push(SessionSummary {
-                            id,
-                            title: if title.is_empty() {
-                                "Untitled".to_string()
-                            } else {
-                                title
-                            },
-                        });
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    sessions
-}
-
-fn parse_session_id(body: &str) -> String {
-    extract_string(body, "id").unwrap_or_default()
-}
-
-fn parse_messages(body: &str) -> Vec<MessageView> {
-    let mut messages = Vec::new();
-    let mut depth = 0i32;
-    let mut start = 0usize;
-    let mut i = 0usize;
-    let bytes = body.as_bytes();
-    while i < body.len() {
-        let ch = bytes[i] as char;
-        match ch {
-            '{' => {
-                if depth == 0 {
-                    start = i;
-                }
-                depth += 1;
-            }
-            '}' => {
-                depth -= 1;
-                if depth == 0 {
-                    let obj = &body[start..=i];
-                    let id = extract_string(obj, "id").unwrap_or_default();
-                    let role = extract_string(obj, "role").unwrap_or_default();
-                    let time = extract_number(obj, "created").unwrap_or(0);
-                    if !id.is_empty() {
-                        let text = extract_message_text(obj);
-                        messages.push(MessageView { id, role, text, time, status: MessageStatus::Sent });
-                    }
-                }
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-    messages
-}
-
-/// Extract the text from a message part. opencode messages nest the user/assistant
-/// text inside a `parts` array; we do a shallow scan for `"text":"..."` after the
-/// first `"parts"` key.
-fn extract_message_text(obj: &str) -> String {
-    if let Some(parts_idx) = obj.find("\"parts\"") {
-        let rest = &obj[parts_idx..];
-        if let Some(text) = extract_string(rest, "text") {
-            return text;
-        }
-    }
-    extract_string(obj, "text").unwrap_or_default()
-}
-
-fn extract_string(json: &str, key: &str) -> Option<String> {
-    let pattern = format!("\"{key}\"");
-    let idx = json.find(&pattern)?;
-    let rest = &json[idx + pattern.len()..];
-    let colon = rest.find(':')?;
-    let rest = &rest[colon + 1..];
-    let quote = rest.find('"')?;
-    let rest = &rest[quote + 1..];
-    let end = rest.find('"')?;
-    Some(rest[..end].to_string())
-}
-
-fn extract_number(json: &str, key: &str) -> Option<u64> {
-    let pattern = format!("\"{key}\"");
-    let idx = json.find(&pattern)?;
-    let rest = &json[idx + pattern.len()..];
-    let colon = rest.find(':')?;
-    let rest = &rest[colon + 1..].trim_start();
-    let end = rest
-        .find(|c: char| !c.is_ascii_digit())
-        .unwrap_or(rest.len());
-    rest[..end].parse().ok()
-}
-
-// ─── Tests ─────────────────────────────────────────────────────────────────
+// ─── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
-mod test {
+mod tests {
     use super::*;
 
-    #[test]
-    fn start_does_not_reset_server_url() {
-        // Start no longer overwrites server_url — the shell restores the
-        // persisted value via ServerUrlChanged so the user's last server
-        // survives a relaunch.
-        let app = OpencodeApp;
-        let mut model = Model::default();
-        model.server_url = "http://10.0.0.1:4096".to_string();
-        app.update(Event::Start, &mut model).expect_only_render();
-        assert_eq!(model.server_url, "http://10.0.0.1:4096");
+    fn app() -> OpencodeApp {
+        OpencodeApp::default()
     }
 
-    #[test]
-    fn server_url_change_updates_model() {
-        let app = OpencodeApp;
-        let mut model = Model::default();
-        app.update(Event::Start, &mut model);
-        app.update(
-            Event::ServerUrlChanged("http://10.0.0.1:4096".to_string()),
-            &mut model,
-        )
-        .expect_only_render();
-        assert_eq!(model.server_url, "http://10.0.0.1:4096");
-    }
-
-    #[test]
-    fn connect_emits_http_effect() {
-        let app = OpencodeApp;
+    /// Put the model into a connected Chat view for the given session.
+    fn in_chat(session_id: &str) -> Model {
         let mut model = Model::default();
         model.server_url = "http://localhost:4096".to_string();
-        app.update(Event::Start, &mut model);
-        let mut cmd = app.update(Event::Connect, &mut model);
-        assert!(cmd.effects().any(|e| matches!(e, Effect::Http(_))));
-        assert!(model.loading);
+        model.connected = true;
+        model.screen = Screen::Chat;
+        model.current_session_id = Some(session_id.to_string());
+        model
+    }
+
+    fn feed(app: &OpencodeApp, model: &mut Model, json: serde_json::Value) {
+        let _ = app.update(Event::ServerEvent(json.to_string()), model);
     }
 
     #[test]
-    fn parse_sessions_extracts_id_and_title() {
-        let json = r#"[{"id":"abc123","title":"My Session"},{"id":"def456","title":"Test"}]"#;
-        let sessions = parse_sessions(json);
-        assert_eq!(sessions.len(), 2);
-        assert_eq!(sessions[0].id, "abc123");
-        assert_eq!(sessions[0].title, "My Session");
-        assert_eq!(sessions[1].id, "def456");
-    }
-
-    #[test]
-    fn parse_session_id_extracts_id() {
-        let json = r#"{"id":"xyz789","title":"New"}"#;
-        let id = parse_session_id(json);
-        assert_eq!(id, "xyz789");
-    }
-
-    #[test]
-    fn extract_string_finds_nested_keys() {
-        let json = r#"{"a":"b","id":"target","c":"d"}"#;
-        assert_eq!(extract_string(json, "id"), Some("target".to_string()));
-        assert_eq!(extract_string(json, "missing"), None);
-    }
-
-    #[test]
-    fn extract_number_parses_values() {
-        let json = r#"{"created":1234567890}"#;
-        assert_eq!(extract_number(json, "created"), Some(1234567890));
-    }
-
-    #[test]
-    fn navigate_to_sessions_clears_state() {
-        let app = OpencodeApp;
+    fn server_url_is_normalized() {
+        let app = app();
         let mut model = Model::default();
-        model.current_session_id = Some("test".to_string());
-        model.current_session_title = "Test".to_string();
-        model.generating = true;
-        model.messages.push(MessageView {
-            id: "m1".to_string(),
-            role: "user".to_string(),
-            text: "hello".to_string(),
-            time: 0,
-            status: MessageStatus::Sent,
-        });
-        app.update(Event::NavigateToSessions, &mut model);
-        assert!(model.current_session_id.is_none());
-        assert!(model.current_session_title.is_empty());
-        assert!(model.messages.is_empty());
-        assert!(!model.generating);
+        let _ = app.update(Event::ServerUrlChanged("  http://host:4096/  ".into()), &mut model);
+        assert_eq!(app.view(&model).server_url, "http://host:4096");
     }
 
     #[test]
-    fn select_session_records_title_from_sessions_list() {
-        let app = OpencodeApp;
+    fn connect_requires_a_url() {
+        let app = app();
         let mut model = Model::default();
-        model.sessions = vec![
-            SessionSummary { id: "s1".to_string(), title: "First".to_string() },
-            SessionSummary { id: "s2".to_string(), title: "Second".to_string() },
-        ];
-        app.update(Event::SelectSession("s2".to_string()), &mut model);
-        assert_eq!(model.current_session_id.as_deref(), Some("s2"));
-        assert_eq!(model.current_session_title, "Second");
+        let _ = app.update(Event::Connect, &mut model);
+        assert_eq!(app.view(&model).error.as_deref(), Some("Enter a server URL"));
+    }
+
+    #[test]
+    fn sending_adds_optimistic_user_message_and_sets_generating() {
+        let app = app();
+        let mut model = in_chat("ses_1");
+        let _ = app.update(Event::DraftChanged("hello there".into()), &mut model);
+        let _ = app.update(Event::SendMessage("hello there".into()), &mut model);
+
         let view = app.view(&model);
-        assert_eq!(view.current_session_title, "Second");
+        assert!(view.generating);
+        assert!(view.draft.is_empty());
+        assert_eq!(view.messages.len(), 1);
+        assert_eq!(view.messages[0].role, "user");
+        assert_eq!(view.messages[0].text, "hello there");
+        assert_eq!(view.messages[0].status, MessageStatus::Pending);
     }
 
     #[test]
-    fn send_message_sets_generating_until_messages_loaded() {
-        let app = OpencodeApp;
-        let mut model = Model::default();
-        model.server_url = "http://localhost:4096".to_string();
-        model.current_session_id = Some("s1".to_string());
-        app.update(Event::SendMessage("hello".to_string()), &mut model);
-        assert!(model.generating);
-        // Simulate the MessagesLoaded internal event clearing it.
-        let ok_resp = crux_http::testing::ResponseBuilder::ok().body("[]".to_string()).build();
-        let result: HttpResult<String> = Ok(ok_resp);
-        app.update(Event::MessagesLoaded(result), &mut model);
-        assert!(!model.generating);
+    fn empty_send_is_ignored() {
+        let app = app();
+        let mut model = in_chat("ses_1");
+        let _ = app.update(Event::SendMessage("   ".into()), &mut model);
+        assert!(app.view(&model).messages.is_empty());
+        assert!(!app.view(&model).generating);
     }
 
     #[test]
-    fn failed_send_clears_generating() {
-        let app = OpencodeApp;
-        let mut model = Model::default();
-        model.server_url = "http://localhost:4096".to_string();
-        model.current_session_id = Some("s1".to_string());
-        app.update(Event::SendMessage("hello".to_string()), &mut model);
-        assert!(model.generating);
-        let err = crux_http::HttpError::Io("boom".to_string());
-        app.update(Event::MessageSent(Err(err)), &mut model);
-        assert!(!model.generating);
-        assert!(model.error.is_some());
-    }
+    fn assistant_reply_streams_in_from_sse() {
+        let app = app();
+        let mut model = in_chat("ses_1");
 
-    #[test]
-    fn cancel_generation_clears_generating() {
-        let app = OpencodeApp;
-        let mut model = Model::default();
-        model.server_url = "http://localhost:4096".to_string();
-        model.current_session_id = Some("s1".to_string());
-        app.update(Event::SendMessage("hello".to_string()), &mut model);
-        assert!(model.generating);
-        app.update(Event::CancelGeneration, &mut model);
-        assert!(!model.generating);
-    }
+        // Assistant message shell arrives first.
+        feed(&app, &mut model, serde_json::json!({
+            "type": "message.updated",
+            "properties": { "info": {
+                "id": "msg_a", "role": "assistant", "sessionID": "ses_1",
+                "time": { "created": 100 }
+            }}
+        }));
+        assert_eq!(app.view(&model).messages.len(), 1);
+        assert!(app.view(&model).messages[0].streaming);
 
-    #[test]
-    fn draft_changed_updates_model() {
-        let app = OpencodeApp;
-        let mut model = Model::default();
-        app.update(Event::DraftChanged("in progress".to_string()), &mut model);
-        assert_eq!(model.draft_message, "in progress");
+        // Two text deltas for the same part accumulate into full text.
+        feed(&app, &mut model, serde_json::json!({
+            "type": "message.part.updated",
+            "properties": { "part": {
+                "id": "prt_1", "messageID": "msg_a", "sessionID": "ses_1",
+                "type": "text", "text": "Hello"
+            }}
+        }));
+        feed(&app, &mut model, serde_json::json!({
+            "type": "message.part.updated",
+            "properties": { "part": {
+                "id": "prt_1", "messageID": "msg_a", "sessionID": "ses_1",
+                "type": "text", "text": "Hello, world"
+            }}
+        }));
+
         let view = app.view(&model);
-        assert_eq!(view.draft_message, "in progress");
+        assert_eq!(view.messages[0].role, "assistant");
+        assert_eq!(view.messages[0].text, "Hello, world");
     }
 
     #[test]
-    fn delete_session_optimistically_removes_from_list() {
-        let app = OpencodeApp;
-        let mut model = Model::default();
-        model.server_url = "http://localhost:4096".to_string();
-        model.sessions = vec![
-            SessionSummary { id: "s1".to_string(), title: "First".to_string() },
-            SessionSummary { id: "s2".to_string(), title: "Second".to_string() },
-        ];
-        let mut cmd = app.update(Event::DeleteSession("s1".to_string()), &mut model);
-        // Session removed optimistically
-        assert_eq!(model.sessions.len(), 1);
-        assert_eq!(model.sessions[0].id, "s2");
-        // HTTP effect emitted for the server-side delete
-        assert!(cmd.effects().any(|e| matches!(e, Effect::Http(_))));
-    }
-
-    #[test]
-    fn delete_current_session_clears_chat_state() {
-        let app = OpencodeApp;
-        let mut model = Model::default();
-        model.server_url = "http://localhost:4096".to_string();
-        model.current_session_id = Some("s1".to_string());
-        model.current_session_title = "First".to_string();
-        model.generating = true;
-        model.messages.push(MessageView::default());
-        app.update(Event::DeleteSession("s1".to_string()), &mut model);
-        assert!(model.current_session_id.is_none());
-        assert!(model.current_session_title.is_empty());
-        assert!(model.messages.is_empty());
-        assert!(!model.generating);
-    }
-
-    #[test]
-    fn auth_header_built_from_credentials() {
-        let app = OpencodeApp;
-        let mut model = Model::default();
-        model.server_url = "http://localhost:4096".to_string();
-        model.username = "opencode".to_string();
-        model.password = "secret".to_string();
-        // Verify the base64 encoding matches RFC 7617.
-        let creds = format!("{}:{}", model.username, model.password);
-        let encoded = base64::engine::general_purpose::STANDARD.encode(creds.as_bytes());
-        assert_eq!(encoded, "b3BlbmNvZGU6c2VjcmV0");
-        // Building a request should not panic.
-        let _ = app.get(&model, "/global/health");
-    }
-
-    #[test]
-    fn crash_log_event_accumulates() {
-        let app = OpencodeApp;
-        let mut model = Model::default();
-        app.update(Event::CrashLog("boom".to_string()), &mut model);
-        assert_eq!(model.crash_logs.len(), 1);
-        let view = app.view(&model);
-        assert_eq!(view.crash_log_count, 1);
-        assert_eq!(view.latest_crash_log.as_deref(), Some("boom"));
-    }
-
-    /// Verify that the bincode discriminant indices the shell sends match
-    /// the Rust enum variant positions — the type generator skips
-    /// `#[facet(skip)]` variants and renumbers the remaining ones, so the
-    /// shell's index 7 (SelectSession) must land on Rust's SelectSession,
-    /// not on a skipped variant.
-    #[test]
-    fn event_discriminants_match_generated_indices() {
-        // The generated Kotlin Event enum (see generated/.../Core.kt) maps:
-        //   0=Start, 1=ServerUrlChanged, 2=UsernameChanged, 3=PasswordChanged,
-        //   4=Connect, 5=CancelAuth, 6=LoadSessions, 7=SelectSession,
-        //   8=CreateSession, 9=LoadMessages, 10=SendMessage, 11=EventReceived,
-        //   12=NavigateToChat, 13=NavigateToSessions, 14=NavigateToConnect,
-        //   15=DismissError, 16=DraftChanged, 17=CancelGeneration,
-        //   18=DeleteSession, 19=RetryMessage
-        //
-        // Serialize each Rust variant and check the leading u32 index.
-        let cases: &[(Event, u32)] = &[
-            (Event::Start, 0),
-            (Event::ServerUrlChanged(String::new()), 1),
-            (Event::UsernameChanged(String::new()), 2),
-            (Event::PasswordChanged(String::new()), 3),
-            (Event::Connect, 4),
-            (Event::CancelAuth, 5),
-            (Event::LoadSessions, 6),
-            (Event::SelectSession(String::new()), 7),
-            (Event::CreateSession, 8),
-            (Event::LoadMessages(String::new()), 9),
-            (Event::SendMessage(String::new()), 10),
-            (Event::EventReceived(String::new()), 11),
-            (Event::NavigateToChat(String::new()), 12),
-            (Event::NavigateToSessions, 13),
-            (Event::NavigateToConnect, 14),
-            (Event::DismissError, 15),
-            (Event::DraftChanged(String::new()), 16),
-            (Event::CancelGeneration, 17),
-            (Event::DeleteSession(String::new()), 18),
-            (Event::RetryMessage(String::new()), 19),
-        ];
-        for (event, expected) in cases {
-            let bytes = bincode::serialize(event).unwrap();
-            let idx = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
-            assert_eq!(
-                idx, *expected,
-                "Event discriminant mismatch for {event:?}: got {idx}, expected {expected}"
-            );
+    fn text_delta_accumulates_when_full_text_absent() {
+        let app = app();
+        let mut model = in_chat("ses_1");
+        feed(&app, &mut model, serde_json::json!({
+            "type": "message.updated",
+            "properties": { "info": { "id": "msg_a", "role": "assistant", "sessionID": "ses_1", "time": {"created": 1}}}
+        }));
+        for delta in ["Wor", "ld"] {
+            feed(&app, &mut model, serde_json::json!({
+                "type": "message.part.updated",
+                "properties": {
+                    "part": { "id": "p", "messageID": "msg_a", "sessionID": "ses_1", "type": "text", "text": "" },
+                    "delta": delta
+                }
+            }));
         }
+        assert_eq!(app.view(&model).messages[0].text, "World");
+    }
+
+    #[test]
+    fn user_message_from_sse_is_not_duplicated() {
+        let app = app();
+        let mut model = in_chat("ses_1");
+        let _ = app.update(Event::SendMessage("hi".into()), &mut model);
+        // Server echoes the user message on the stream — must be ignored.
+        feed(&app, &mut model, serde_json::json!({
+            "type": "message.updated",
+            "properties": { "info": { "id": "msg_user", "role": "user", "sessionID": "ses_1", "time": {"created": 5}}}
+        }));
+        let users = app.view(&model).messages.iter().filter(|m| m.role == "user").count();
+        assert_eq!(users, 1);
+    }
+
+    #[test]
+    fn session_idle_clears_generating() {
+        let app = app();
+        let mut model = in_chat("ses_1");
+        let _ = app.update(Event::SendMessage("hi".into()), &mut model);
+        assert!(app.view(&model).generating);
+        feed(&app, &mut model, serde_json::json!({
+            "type": "session.idle", "properties": { "sessionID": "ses_1" }
+        }));
+        assert!(!app.view(&model).generating);
+    }
+
+    #[test]
+    fn idle_for_other_session_is_ignored() {
+        let app = app();
+        let mut model = in_chat("ses_1");
+        let _ = app.update(Event::SendMessage("hi".into()), &mut model);
+        feed(&app, &mut model, serde_json::json!({
+            "type": "session.idle", "properties": { "sessionID": "ses_other" }
+        }));
+        assert!(app.view(&model).generating);
+    }
+
+    #[test]
+    fn reasoning_and_tool_parts_are_surfaced() {
+        let app = app();
+        let mut model = in_chat("ses_1");
+        feed(&app, &mut model, serde_json::json!({
+            "type": "message.updated",
+            "properties": { "info": { "id": "m", "role": "assistant", "sessionID": "ses_1", "time": {"created": 1}}}
+        }));
+        feed(&app, &mut model, serde_json::json!({
+            "type": "message.part.updated",
+            "properties": { "part": { "id": "r", "messageID": "m", "type": "reasoning", "text": "thinking..." }}
+        }));
+        feed(&app, &mut model, serde_json::json!({
+            "type": "message.part.updated",
+            "properties": { "part": {
+                "id": "t", "messageID": "m", "type": "tool", "tool": "bash",
+                "state": { "status": "completed", "title": "ls -la" }
+            }}
+        }));
+        let msg = &app.view(&model).messages[0];
+        assert_eq!(msg.reasoning.as_deref(), Some("thinking..."));
+        assert_eq!(msg.tools.len(), 1);
+        assert_eq!(msg.tools[0].name, "bash");
+        assert_eq!(msg.tools[0].status, "completed");
+        assert_eq!(msg.tools[0].title.as_deref(), Some("ls -la"));
+    }
+
+    #[test]
+    fn session_created_event_updates_list() {
+        let app = app();
+        let mut model = in_chat("ses_1");
+        feed(&app, &mut model, serde_json::json!({
+            "type": "session.created",
+            "properties": { "info": { "id": "ses_new", "title": "Fresh" }}
+        }));
+        assert!(app.view(&model).sessions.iter().any(|s| s.id == "ses_new" && s.title == "Fresh"));
+    }
+
+    #[test]
+    fn unknown_event_types_are_ignored() {
+        let app = app();
+        let mut model = in_chat("ses_1");
+        feed(&app, &mut model, serde_json::json!({
+            "type": "pty.created", "properties": { "whatever": true }
+        }));
+        feed(&app, &mut model, serde_json::json!({ "type": "totally.new.event" }));
+        // No panic, no state change.
+        assert!(app.view(&model).messages.is_empty());
+    }
+
+    #[test]
+    fn messages_loaded_parses_info_and_parts() {
+        let app = app();
+        let mut model = in_chat("ses_1");
+        let body = serde_json::json!([
+            { "info": { "id": "m1", "role": "user", "sessionID": "ses_1", "time": {"created": 1} },
+              "parts": [{ "id": "p1", "type": "text", "text": "Question?" }] },
+            { "info": { "id": "m2", "role": "assistant", "sessionID": "ses_1", "time": {"created": 2, "completed": 3} },
+              "parts": [{ "id": "p2", "type": "text", "text": "Answer." }] }
+        ]).to_string();
+        let result: HttpResult = Ok(crux_http::testing::ResponseBuilder::ok().body(body).build());
+        let _ = app.update(Event::MessagesLoaded("ses_1".into(), result), &mut model);
+
+        let view = app.view(&model);
+        assert_eq!(view.messages.len(), 2);
+        assert_eq!(view.messages[0].text, "Question?");
+        assert_eq!(view.messages[1].text, "Answer.");
+        assert!(!view.messages[1].streaming);
+        assert!(!view.generating);
     }
 }
