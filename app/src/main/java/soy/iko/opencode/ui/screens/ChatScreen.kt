@@ -43,11 +43,18 @@ import soy.iko.opencode.ui.components.MessageBubble
 fun ChatScreen(state: UiState, dispatch: (Event) -> Unit) {
     val listState = rememberLazyListState()
 
-    // Keep the newest content in view as it streams in.
+    // Keep the newest content in view as it streams in, but only when the user is
+    // already near the bottom. If they've scrolled up to read history, leave it alone.
     val lastLen = state.messages.lastOrNull()?.text?.length ?: 0
     LaunchedEffect(state.messages.size, lastLen, state.generating) {
         if (state.messages.isNotEmpty()) {
-            listState.animateScrollToItem(state.messages.size - 1)
+            val layoutInfo = listState.layoutInfo
+            val lastVisibleIndex = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+            val totalItems = layoutInfo.totalItemsCount
+            val nearBottom = totalItems == 0 || lastVisibleIndex >= totalItems - 3
+            if (nearBottom) {
+                listState.animateScrollToItem(state.messages.size - 1)
+            }
         }
     }
 

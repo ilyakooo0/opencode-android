@@ -47,6 +47,7 @@ class OpencodeCore(
 
     private var sse: SseClient? = null
     private var sseClosedIntentionally = false
+    private var reconnectAttempts = 0
 
     // ── Event entry point ──────────────────────────────────────────────────────
     fun dispatch(event: Event) {
@@ -81,14 +82,27 @@ class OpencodeCore(
             Event.CreateSession -> { loading = true; emit(); scope.launch { createSession() } }
 
             is Event.DeleteSession -> {
-                sessions.removeAll { it.id == event.id }
-                if (isCurrent(event.id)) {
-                    currentSessionId = null
-                    messages.clear()
-                    screen = Screen.Sessions
+                val id = event.id
+                // Delete on the server first; only drop it from the UI once that
+                // succeeds, so a failed request leaves the session recoverable.
+                scope.launch {
+                    http.delete("$serverUrl/session/$id", authHeader()).fold(
+                        onSuccess = { resp ->
+                            if (resp.code in 200..299) {
+                                sessions.removeAll { it.id == id }
+                                if (isCurrent(id)) {
+                                    currentSessionId = null
+                                    messages.clear()
+                                    screen = Screen.Sessions
+                                }
+                            } else {
+                                error = "Failed to delete session"
+                            }
+                        },
+                        onFailure = { error = "Failed to delete session" },
+                    )
+                    emit()
                 }
-                emit()
-                scope.launch { http.delete("$serverUrl/session/${event.id}", authHeader()) }
             }
 
             is Event.DraftChanged -> { draft = event.text; emit() }
@@ -137,7 +151,7 @@ class OpencodeCore(
         val session = currentSessionId ?: return
         if (text.isEmpty()) return
         localSeq += 1
-        val user = MsgState("local-$localSeq", "user", 0).apply {
+        val user = MsgState("local-$localSeq", "user", System.currentTimeMillis()).apply {
             status = MessageStatus.Pending
             textParts["local"] = text
         }
@@ -207,7 +221,6 @@ class OpencodeCore(
     }
 
     private suspend fun loadSessions() {
-        loading = false
         http.get("$serverUrl/session", authHeader()).fold(
             onSuccess = { resp ->
                 if (resp.code in 200..299) {
@@ -219,11 +232,11 @@ class OpencodeCore(
             },
             onFailure = { e -> error = "Request failed: ${e.message}" },
         )
+        loading = false
         emit()
     }
 
     private suspend fun createSession() {
-        loading = false
         http.postJson("$serverUrl/session", "{}", authHeader()).fold(
             onSuccess = { resp ->
                 val session = if (resp.code in 200..299) Protocol.parseSession(resp.body) else null
@@ -232,6 +245,7 @@ class OpencodeCore(
                         sessions.add(0, SessionView(session.id, displayTitle(session.title)))
                     }
                     emit()
+                    // SelectSession takes over the loading state (loads messages).
                     dispatch(Event.SelectSession(session.id))
                     return
                 }
@@ -239,6 +253,7 @@ class OpencodeCore(
             },
             onFailure = { e -> error = "Request failed: ${e.message}" },
         )
+        loading = false
         emit()
     }
 
@@ -273,7 +288,7 @@ class OpencodeCore(
             url = "$serverUrl/event",
             auth = authHeader(),
             onEvent = { json -> scope.launch { handleServerEvent(json) } },
-            onStateChange = { open -> if (!open) scheduleReconnect() },
+            onStateChange = { open -> if (open) reconnectAttempts = 0 else scheduleReconnect() },
         )
         sse = client
         client.connect()
@@ -287,8 +302,12 @@ class OpencodeCore(
 
     private fun scheduleReconnect() {
         if (sseClosedIntentionally || !connected) return
+        // Exponential backoff: 2s, 4s, 8s, 16s, capped at 30s. Reset to 0 once the
+        // stream reconnects (onStateChange(true)) so a healthy server starts fresh.
+        val delayMs = (2000L * (1L shl reconnectAttempts)).coerceAtMost(30_000L)
+        if (delayMs < 30_000L) reconnectAttempts += 1
         scope.launch {
-            delay(2000)
+            delay(delayMs)
             if (!sseClosedIntentionally && connected && screen != Screen.Connect) startSse()
         }
     }
