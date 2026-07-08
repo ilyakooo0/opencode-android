@@ -1,76 +1,64 @@
 package soy.iko.opencode.core
 
-import com.novi.serde.Bytes
-import io.ktor.client.HttpClient as KtorHttpClient
-import io.ktor.client.engine.okhttp.OkHttp
-import io.ktor.client.plugins.HttpTimeout
-import io.ktor.client.request.headers
-import io.ktor.client.request.request
-import io.ktor.client.request.setBody
-import io.ktor.client.statement.bodyAsText
-import io.ktor.http.HttpMethod
-import io.ktor.util.flattenEntries
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
-import java.net.SocketTimeoutException
-import java.net.UnknownHostException
-import kotlin.coroutines.cancellation.CancellationException
+import okhttp3.Call
+import okhttp3.Callback
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
+import java.io.IOException
+import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+
+/** A completed HTTP response (any status code — non-2xx is not an error here). */
+data class HttpResp(val code: Int, val body: String)
 
 /**
- * Executes HTTP requests on behalf of the Crux core.
- *
- * When the core emits an [Effect.Http], the shell calls [request] with the
- * [HttpRequest] and returns the [HttpResult] back to the core via [Core.resolve].
- *
- * The core attaches the `Authorization` header when basic-auth credentials are
- * available, so this client simply forwards headers as-is — no auth logic here.
+ * Thin OkHttp wrapper for the opencode REST calls. Transport failures surface as
+ * [Result.failure]; every actual HTTP response (including 4xx/5xx) is a success
+ * carrying its status code, matching the Rust core's `HttpResult` handling.
  */
-class HttpClient {
-    private val ktorHttpClient = KtorHttpClient(OkHttp) {
-        install(HttpTimeout) {
-            requestTimeoutMillis = 30_000
-            connectTimeoutMillis = 15_000
-            socketTimeoutMillis = 15_000
-        }
+class HttpClient(
+    val okhttp: OkHttpClient = OkHttpClient.Builder()
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .build(),
+) {
+    private val jsonMedia = "application/json".toMediaType()
+
+    suspend fun get(url: String, auth: String?): Result<HttpResp> =
+        exec(Request.Builder().url(url).get(), auth)
+
+    suspend fun postJson(url: String, body: String, auth: String?): Result<HttpResp> =
+        exec(Request.Builder().url(url).post(body.toRequestBody(jsonMedia)), auth)
+
+    suspend fun delete(url: String, auth: String?): Result<HttpResp> =
+        exec(Request.Builder().url(url).delete(), auth)
+
+    private suspend fun exec(builder: Request.Builder, auth: String?): Result<HttpResp> = withContext(Dispatchers.IO) {
+        if (auth != null) builder.header("Authorization", auth)
+        val request = builder.build()
+        runCatching { await(okhttp.newCall(request)) }
     }
 
-    suspend fun request(request: HttpRequest): HttpResult = withContext(Dispatchers.IO) {
-        try {
-            val response = executeRequest(request)
-            HttpResult.Ok(response)
-        } catch (ce: CancellationException) {
-            throw ce
-        } catch (e: Throwable) {
-            HttpResult.Err(toHttpError(e))
-        }
-    }
+    private suspend fun await(call: Call): HttpResp = suspendCancellableCoroutine { cont ->
+        cont.invokeOnCancellation { runCatching { call.cancel() } }
+        call.enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                if (cont.isActive) cont.resumeWithException(e)
+            }
 
-    private suspend fun executeRequest(request: HttpRequest): HttpResponse {
-        val response = ktorHttpClient.request(request.url) {
-            this.method = HttpMethod.parse(request.method)
-            this.headers {
-                for (header in request.headers) {
-                    append(header.name, header.value)
+            override fun onResponse(call: Call, response: Response) {
+                response.use {
+                    val body = runCatching { it.body?.string() }.getOrNull().orEmpty()
+                    if (cont.isActive) cont.resume(HttpResp(it.code, body))
                 }
             }
-            if (request.body.content.isNotEmpty()) {
-                setBody(request.body.content)
-            }
-        }
-        val bytes: ByteArray = response.bodyAsText().toByteArray()
-        val headers = response.headers
-            .flattenEntries()
-            .map { HttpHeader(it.first, it.second) }
-        return HttpResponse(
-            status = response.status.value.toUShort(),
-            headers = headers,
-            body = Bytes(bytes),
-        )
-    }
-
-    private fun toHttpError(error: Throwable): HttpError = when (error) {
-        is SocketTimeoutException -> HttpError.Timeout
-        is UnknownHostException -> HttpError.Io("Unknown host")
-        else -> HttpError.Io(error.message ?: "HTTP request failed")
+        })
     }
 }

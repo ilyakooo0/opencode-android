@@ -1,140 +1,153 @@
 # opencode-android
 
-An Android client for the [opencode](https://github.com/anomalyco/opencode) server, built with
-[Crux](https://github.com/redbadger/crux) (shared Rust core + Kotlin shell) and Jetpack Compose.
+A native Android client for the [**opencode**](https://opencode.ai) server (the
+`sst/opencode` AI coding agent), built with **Crux** (a Rust core), **Kotlin**,
+and **Jetpack Compose**.
+
+Connect to a running `opencode serve`, browse and create sessions, and chat with
+the agent — assistant replies (text, reasoning, and tool calls) stream in live
+over the server's SSE event stream.
+
+<p align="center"><em>Connect → Sessions → Chat, with token-by-token streaming.</em></p>
 
 ## Architecture
 
+The app follows the Crux pattern: **all application logic lives in a pure,
+platform-agnostic core; the platform is a thin shell** that renders the core's
+view model, sends it events, and performs the side effects it requests.
+
 ```
-┌─────────────────────────────────────────────────┐
-│  Shell (Kotlin / Jetpack Compose)               │
-│  ┌─────────────┐  ┌──────────────────────────┐  │
-│  │ Compose UI   │  │  HttpClient / SseClient  │  │
-│  │ (3 screens)  │  │  (Ktor + OkHttp)         │  │
-│  └──────┬───────┘  └────────────┬─────────────┘  │
-│         │                       │                │
-│    Event (bincode)        Effect (bincode)        │
-│         │                       ▲                │
-│  ┌──────▼───────────────────────┴────────────┐   │
-│  │  Core (ViewModel) — FFI bridge            │   │
-│  │  CoreFfi → NativeCoreFfi / PureCoreFfi    │   │
-│  └───────────────────────────────────────────┘   │
-└──────────┬──────────────────────────────────────┘
-           │  JNI (bincode bytes)
-┌──────────▼──────────────────────────────────────┐
-│  Core (Rust / Crux)                              │
-│  ┌────────┐  ┌─────────┐  ┌──────────┐          │
-│  │  App   │  │  Model  │  │ Commands │          │
-│  │ update │  │ state   │  │ effects  │          │
-│  └────────┘  └─────────┘  └──────────┘          │
-│  No side-effects — pure logic                   │
-└─────────────────────────────────────────────────┘
+┌─────────────────────────── shared/ (Rust) ───────────────────────────┐
+│  Crux core — the single source of truth                               │
+│    • Model / Event / Effect / ViewModel                               │
+│    • update(): connect+auth, sessions, chat, SSE stream application    │
+│    • crux_http for HTTP effects; unit-tested with `cargo test`         │
+└───────────────────────────────────────────────────────────────────────┘
+                         ▲ mirrored, behaviour-for-behaviour
+┌─────────────────────────── app/ (Kotlin) ────────────────────────────┐
+│  Jetpack Compose shell                                                 │
+│    • OpencodeCore  — Kotlin port of the reducer (same ViewModel)       │
+│    • HttpClient (OkHttp) + SseClient (okhttp-sse)  — the effects       │
+│    • Compose UI: Connect / Sessions / Chat                             │
+└───────────────────────────────────────────────────────────────────────┘
 ```
 
-### Rust Core (`shared/`)
-- **`app.rs`** — Crux `App` implementation: `Event`, `Model`, `ViewModel`, `Effect`, `update()`, `view()`
-  - **Basic-auth detection**: probes `/global/health` without credentials; on 401 surfaces
-    `auth_required` in the ViewModel and waits for the user to supply credentials. All subsequent
-    requests carry `Authorization: Basic <base64(user:pass)>` (RFC 7617).
-  - **Crash log tracking**: accepts `CrashLog(String)` events from the shell and exposes
-    `crash_log_count` / `latest_crash_log` in the ViewModel.
-- **`ffi.rs`** — BoltFFI export wrapping `crux_core::bridge::Bridge`
-- **`bin/codegen.rs`** — Type generator (produces Kotlin types via `facet-generate`)
+### Why a Kotlin port instead of a JNI `.so`?
 
-### Kotlin Shell (`app/`)
-- **`CrashLogger.kt`** — Installs as the global `UncaughtExceptionHandler`. Crashes are
-  persisted to `filesDir/crashes/` (max 10 reports, newest first) and logged to logcat.
-  Reports survive process death and can be enumerated/exported/cleared.
-- **`core/CoreFfi.kt`** — FFI interface + JNI bridge (loads `libopencode.so`)
-- **`core/PureCoreFfi.kt`** — Pure-Kotlin fallback (mirrors Rust logic for dev without NDK),
-  includes basic-auth detection matching the Rust core
-- **`core/Core.kt`** — Android ViewModel bridge: sends events, processes effects, exposes
-  `StateFlow<ViewModel>`, forwards crash logs
-- **`core/HttpClient.kt`** — Executes `Effect.Http` via Ktor/OkHttp, returns `HttpResult` to core
-- **`core/SseClient.kt`** — Subscribes to opencode SSE event stream; errors reported to CrashLogger
-- **`ui/screens/`** — Connect (with credential fields), Sessions, Chat screens (Jetpack Compose + Material 3)
+Crux normally compiles the Rust core to a native library and the shell talks to
+it over an FFI bridge. That requires an Android cross-compilation toolchain
+(NDK + a Rust `std` for the `*-linux-android` targets). This project's dev
+environment intentionally ships **without** an NDK, so instead:
 
-### Generated Types (`generated/`)
-- Auto-generated Kotlin types matching the Rust core (Event, Effect, ViewModel, Request, etc.)
-- Bincode serialization helpers (`com.novi.bincode`, `com.novi.serde`)
+- The **Rust core is the canonical specification** of behaviour and is fully
+  unit-tested (`cd shared && cargo test`).
+- The **Android shell runs `OpencodeCore`**, a faithful Kotlin port of the same
+  reducer, driving an identical `UiState`/`ViewModel`.
 
-## Building
+The FFI boundary is kept clean, so the day an NDK is available the Kotlin port
+can be swapped for the compiled `.so` behind the same seam. The crate already
+builds as a `cdylib`/`staticlib` and a `codegen` binary is wired for Crux
+type-generation.
 
-### Prerequisites
-- Rust 1.90+ (with Android NDK targets for native builds)
-- Android SDK (compile SDK 36, build-tools 36.0.0)
-- JDK 17+
+## Project layout
 
-### Generate Kotlin types
+```
+flake.nix                     Reproducible dev shell (JDK 17, Gradle, Rust, Android SDK 35)
+shared/                       Crux core (Rust)
+  src/app.rs                  App: Model, Event, Effect, ViewModel, update, view, tests
+  src/protocol.rs             Lenient serde wire types for the opencode HTTP + SSE API
+  src/bin/codegen.rs          Type-generation entry point (feature = "typegen")
+generated/                    Crux-generated FFI-shared JVM types (from `codegen`)
+app/                          Android app (Kotlin + Compose)
+  src/main/java/soy/iko/opencode/
+    core/                     OpencodeCore (reducer port), Protocol, HttpClient, SseClient
+    ui/                       Compose screens (Connect/Sessions/Chat), theme, components
+    MainActivity.kt, CoreViewModel.kt
+```
+
+## Getting started
+
+### Dev shell
+
+Everything you need is provided by the Nix flake:
+
 ```sh
-cd shared
-cargo run --bin codegen --features codegen -- --language kotlin --output-dir ../generated
+nix develop          # or: direnv allow  (an .envrc with `use flake` is included)
 ```
 
-### Build native library (requires NDK)
+This puts JDK 17, Gradle, `rustc`/`cargo`, and the Android SDK (platform 35,
+build-tools 35.0.0) on your `PATH`.
+
+### Build & test
+
 ```sh
-# Install Android targets
-rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
-
-# Build and pack with BoltFFI
-boltffi pack android
-```
-
-### Build the APK
-```sh
-./gradlew assembleDebug
-```
-
-The app works without the native library — `PureCoreFfi` provides a pure-Kotlin
-reimplementation of the core logic. When `libopencode.so` is present, `NativeCoreFfi`
-is used automatically.
-
-### Run tests
-```sh
-# Rust core tests
+# Rust core — logic + streaming unit tests
 cd shared && cargo test
 
-# Kotlin shell tests
-./gradlew testDebugUnitTest
+# Android app — debug APK
+./gradlew assembleDebug          # -> app/build/outputs/apk/debug/app-debug.apk
+
+# Android unit tests + lint
+./gradlew testDebugUnitTest lintDebug
 ```
 
-## Basic Auth Detection
+### Run against a server
 
-The opencode server uses HTTP Basic Auth when `OPENCODE_SERVER_PASSWORD` is set
-(username defaults to `opencode`). The client detects this automatically:
+Start opencode's server on your machine or LAN:
 
-1. On Connect, the core probes `GET /global/health` without credentials
-2. If the server responds `401`, the core sets `auth_required = true` in the ViewModel
-3. The UI shows username/password fields
-4. The user enters credentials and taps Connect again
-5. The core retries the probe with `Authorization: Basic <base64(user:pass)>`
-6. On `200`, the core marks `authed = true` and all subsequent requests (sessions,
-   messages, send, SSE) carry the Authorization header
-7. On `401` with credentials, the core shows "Invalid credentials"
+```sh
+opencode serve --port 4096       # optionally behind OPENCODE_SERVER_PASSWORD
+```
 
-## Crash Logs
+Install the APK, launch the app, and enter the server URL (e.g.
+`http://192.168.1.10:4096`). If the server was started with a password the app
+detects the `401`, shows credential fields, and connects with HTTP Basic auth.
 
-`CrashLogger` installs as the global `Thread.UncaughtExceptionHandler` in
-`OpencodeApp.onCreate()`. When a crash occurs:
+> Cleartext HTTP is enabled so you can reach a `http://` server on your LAN.
 
-- The stack trace is written to logcat (`opencode-crash` tag)
-- A crash report file is persisted to `filesDir/crashes/crash_<timestamp>.txt`
-- Reports are pruned to the 10 most recent
-- Reports survive process death and can be accessed via `CrashLogger.getReports()`
+## The opencode API this client speaks
 
-The crash log count is displayed on the Connect screen.
+- **Connect / auth** — `GET /global/health` probes reachability; a `401` triggers
+  HTTP Basic auth.
+- **Sessions** — `GET /session`, `POST /session`, `DELETE /session/{id}`.
+- **Messages** — `GET /session/{id}/message` (each item is `{ info, parts }`).
+- **Send** — `POST /session/{id}/prompt_async` (returns immediately; the reply
+  streams over SSE).
+- **Cancel** — `POST /session/{id}/abort`.
+- **Stream** — `GET /event` (SSE). The client applies `message.updated`,
+  `message.part.updated` (text/reasoning/tool, with deltas), `message.removed`,
+  `session.idle` (clears the "generating" state), `session.error`, and
+  `session.{created,updated,deleted}` incrementally. Unknown event types are
+  ignored so new server versions don't break the stream.
 
-## API Coverage
+## Continuous integration & releases
 
-The client connects to an opencode server and supports:
-- **Health check** (`GET /global/health`) — with basic-auth detection
-- **Session list** (`GET /session`)
-- **Create session** (`POST /session`)
-- **Load messages** (`GET /session/{id}/message`)
-- **Send message** (`POST /session/{id}/prompt_async`)
-- **SSE events** (`GET /event`) — live message streaming
+- **CI** (`.github/workflows/build.yml`) runs on pushes to `master` and PRs: it
+  unit-tests the Crux core (`cargo test`), runs the Android unit tests + lint,
+  and builds the debug APK (uploaded as an artifact).
+- **Releases** (`.github/workflows/release.yml`): push a version tag to cut a
+  release — it builds a minified, signed release APK and publishes a GitHub
+  Release with the APK attached and a signed build-provenance attestation.
 
-## Configuration
+  ```sh
+  git tag v1.0.0 && git push origin v1.0.0     # or run the workflow manually
+  ```
 
-The default server URL is `http://localhost:4096`. Change it in the Connect screen.
-`android:usesCleartextTraffic="true"` is enabled for local development.
+  The tag name becomes the version (a manual run uses a `YYYY.MM.DD.HHMM`
+  timestamp), stamped into the APK via `-PversionName/-PversionCode`.
+
+  **Signing:** set the repo secrets `OPENCODE_STORE_BASE64` (base64 of your
+  keystore), `OPENCODE_STORE_PASSWORD`, `OPENCODE_KEY_ALIAS`, and
+  `OPENCODE_KEY_PASSWORD` to sign with your own key. Without them the release
+  build falls back to the debug key, so the APK is still installable.
+
+## Notes & limitations
+
+- Rendering covers text, reasoning, and tool-call parts. Interactive tool
+  **permission** prompts (`permission.updated`) are not yet surfaced.
+- Model/agent selection uses the server's configured default (no picker yet).
+- No `.so` is built in this environment (see *Architecture* above).
+
+## License
+
+Apache-2.0.

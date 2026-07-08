@@ -1,17 +1,22 @@
 name: Release
 
-# Build a signed production APK and publish a GitHub Release for every
-# commit that lands on master. The version -- and the git tag / release name --
-# is derived from the commit's committer date in UTC, formatted as
-# YYYY.MM.DD.HHMM (e.g. 2026.07.08.1430). It is passed to the Gradle build as
-# `-PversionName=...` so it is stamped into the APK.
+# Build a minified, signed release APK and publish it as a GitHub Release.
+#
+# Trigger by pushing a version tag (e.g. `git tag v1.2.0 && git push --tags`),
+# or run manually from the Actions tab (workflow_dispatch), in which case the
+# version is derived from the current UTC time as YYYY.MM.DD.HHMM.
+#
+# Signing: if the `OPENCODE_STORE_*` secrets are configured the APK is signed
+# with that keystore; otherwise the Gradle build falls back to the debug key so
+# the released APK is still installable (see app/build.gradle.kts). The version
+# is passed to Gradle as `-PversionName/-PversionCode` and stamped into the APK.
 on:
   push:
-    branches: [master]
+    tags: ["v*"]
+  workflow_dispatch:
 
-# A release run should never be aborted mid-flight by a newer push (a
-# half-published release with a missing artifact is worse than a slightly stale
-# one), so the group is per-ref but cancel-in-progress is left off.
+# Never abort a release mid-flight — a half-published release with a missing
+# artifact is worse than a slightly delayed one.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
@@ -20,9 +25,14 @@ jobs:
   release:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # required to push the tag and create the release
-      id-token: write # required for OIDC so GitHub can sign the attestation
-      attestations: write # required to publish the attestation record
+      contents: write # push the tag and create the release
+      id-token: write # OIDC so GitHub can sign the provenance attestation
+      attestations: write # publish the attestation record
+    env:
+      OPENCODE_STORE_BASE64: ${{ secrets.OPENCODE_STORE_BASE64 }}
+      OPENCODE_STORE_PASSWORD: ${{ secrets.OPENCODE_STORE_PASSWORD }}
+      OPENCODE_KEY_ALIAS: ${{ secrets.OPENCODE_KEY_ALIAS }}
+      OPENCODE_KEY_PASSWORD: ${{ secrets.OPENCODE_KEY_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -30,14 +40,23 @@ jobs:
           # accurate instead of collapsing to 1 on a shallow clone.
           fetch-depth: 0
 
-      - name: Compute version from commit date
+      - name: Compute version
         id: version
         run: |
-          VERSION="$(TZ=UTC git log -1 --format=%cd --date=format-local:%Y.%m.%d.%H%M)"
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+            TAG="${GITHUB_REF_NAME}"
+          else
+            VERSION="$(TZ=UTC date +%Y.%m.%d.%H%M)"
+            TAG="v${VERSION}"
+          fi
           CODE="$(git rev-list --count HEAD)"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "code=$CODE" >> "$GITHUB_OUTPUT"
-          echo "Version: $VERSION (code $CODE)"
+          {
+            echo "version=$VERSION"
+            echo "tag=$TAG"
+            echo "code=$CODE"
+          } >> "$GITHUB_OUTPUT"
+          echo "Releasing $TAG (version $VERSION, code $CODE)"
 
       - uses: actions/setup-java@v4
         with:
@@ -49,43 +68,30 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
 
       # The keystore ships as base64 in a secret so it never touches the repo.
-      # When the secret isn't configured the Gradle build falls back to an
-      # unsigned APK (the same behavior as a local build), so this workflow is
-      # green even before signing is wired up.
+      # Job-level env makes OPENCODE_STORE_BASE64 available to this `if`.
       - name: Decode signing keystore
         if: env.OPENCODE_STORE_BASE64 != ''
-        env:
-          OPENCODE_STORE_BASE64: ${{ secrets.OPENCODE_STORE_BASE64 }}
         run: |
           STORE_FILE="$RUNNER_TEMP/release.keystore"
           printf '%s' "$OPENCODE_STORE_BASE64" | base64 -d > "$STORE_FILE"
           echo "OPENCODE_STORE_FILE=$STORE_FILE" >> "$GITHUB_ENV"
 
       - name: Build release APK
-        env:
-          OPENCODE_STORE_FILE: ${{ env.OPENCODE_STORE_FILE }}
-          OPENCODE_STORE_PASSWORD: ${{ secrets.OPENCODE_STORE_PASSWORD }}
-          OPENCODE_KEY_ALIAS: ${{ secrets.OPENCODE_KEY_ALIAS }}
-          OPENCODE_KEY_PASSWORD: ${{ secrets.OPENCODE_KEY_PASSWORD }}
         run: |
           ./gradlew assembleRelease \
             -PversionName="${{ steps.version.outputs.version }}" \
+            -PversionCode="${{ steps.version.outputs.code }}" \
             --no-daemon
 
-      # Rename to a stable, version-tagged filename so the release attachment is
-      # recognizable regardless of the release/ vs release-signed/ output dir.
+      # Rename to a stable, version-tagged filename for the release attachment.
       - name: Stage APK
         run: |
           mkdir -p staging
-          APK="$(find app/build/outputs/apk -name '*.apk' | head -n1)"
+          APK="$(find app/build/outputs/apk/release -name '*.apk' | head -n1)"
           cp "$APK" "staging/opencode-${{ steps.version.outputs.version }}.apk"
 
-      # Generate a signed build-provenance attestation for the staged APK and
-      # store it in GitHub's artifact attestation store, keyed by the file's
-      # digest. Anyone can later verify the APK's origin/provenance with
-      # `gh attestation verify` -- its repository & workflow. Run *after*
-      # staging and *before* the release is published so the attested subject
-      # is byte-identical to the artifact attached to the release.
+      # Signed build-provenance attestation for the exact artifact being
+      # published; later verifiable with `gh attestation verify <apk>`.
       - name: Attest build provenance
         uses: actions/attest-build-provenance@v2
         with:
@@ -94,7 +100,7 @@ jobs:
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.version.outputs.version }}
+          tag_name: ${{ steps.version.outputs.tag }}
           name: ${{ steps.version.outputs.version }}
           make_latest: true
           generate_release_notes: true

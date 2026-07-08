@@ -21,5 +21,7 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "opencode-android"
+
+// The Crux core lives in `shared/` and is a pure Rust crate (built and tested with
+// cargo, not Gradle), so the only Gradle module is the Android app shell.
 include(":app")
-include(":shared")

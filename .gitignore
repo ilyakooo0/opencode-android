@@ -1,6 +1,8 @@
 # Gradle
 .gradle/
 build/
+*.apk
+*.aab
 
 # Kotlin
 .kotlin/
@@ -29,12 +31,21 @@ Thumbs.db
 
 # Nix
 result
+result-*
 .direnv/
+
+# Local tooling / editor state (not part of the project)
+.crush/
+.crush.db
+*.log
 
 # Rust
 shared/target/
+/target/
 
-# Generated Kotlin types (regenerated from Rust core)
+# The `generated/` shared type sources ARE committed (regenerable via
+# `cargo run --features typegen --bin codegen`); only the built JNI .so
+# artifacts are ignored.
 generated/jniLibs/
 
 # Gradle wrapper jar is committed so CI can run ./gradlew
