@@ -1,7 +1,13 @@
 package soy.iko.opencode.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -13,6 +19,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
@@ -24,6 +32,7 @@ import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -38,6 +47,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
@@ -117,6 +127,9 @@ fun ChatScreen(state: UiState, dispatch: (Event) -> Unit) {
             if (!state.sseConnected && !state.generating) {
                 ReconnectingBanner()
             }
+            if (state.loading && state.messages.isEmpty()) {
+                LinearProgressIndicator(Modifier.fillMaxWidth())
+            }
             Box(Modifier.fillMaxWidth().weight(1f)) {
                 if (state.messages.isEmpty() && !state.loading) {
                     Text(
@@ -135,27 +148,42 @@ fun ChatScreen(state: UiState, dispatch: (Event) -> Unit) {
                         MessageBubble(message)
                     }
                 }
-                if (showScrollButton) {
-                    FloatingActionButton(
-                        onClick = {
-                            coroutineScope.launch {
-                                if (state.messages.isNotEmpty()) {
-                                    listState.animateScrollToItem(state.messages.size - 1)
-                                }
+                ScrollToBottomButton(
+                    visible = showScrollButton,
+                    onClick = {
+                        coroutineScope.launch {
+                            if (state.messages.isNotEmpty()) {
+                                listState.animateScrollToItem(state.messages.size - 1)
                             }
-                        },
-                        modifier = Modifier
-                            .align(Alignment.BottomEnd)
-                            .padding(16.dp)
-                            .size(44.dp),
-                    ) {
-                        Icon(
-                            Icons.Filled.KeyboardArrowDown,
-                            contentDescription = "Scroll to latest message",
-                        )
-                    }
-                }
+                        }
+                    },
+                )
             }
+        }
+    }
+}
+
+// Extracted into a BoxScope extension so the top-level AnimatedVisibility overload
+// resolves cleanly. Called inline inside a Column, the enclosing ColumnScope receiver
+// would otherwise capture the ColumnScope.AnimatedVisibility overload and fail to compile.
+@Composable
+private fun BoxScope.ScrollToBottomButton(visible: Boolean, onClick: () -> Unit) {
+    AnimatedVisibility(
+        visible = visible,
+        modifier = Modifier.align(Alignment.BottomEnd),
+        enter = scaleIn() + fadeIn(),
+        exit = scaleOut() + fadeOut(),
+    ) {
+        FloatingActionButton(
+            onClick = onClick,
+            modifier = Modifier
+                .padding(16.dp)
+                .size(44.dp),
+        ) {
+            Icon(
+                Icons.Filled.KeyboardArrowDown,
+                contentDescription = "Scroll to latest message",
+            )
         }
     }
 }
@@ -205,6 +233,10 @@ private fun ChatInputBar(
                 modifier = Modifier.weight(1f),
                 placeholder = { Text("Message opencode…") },
                 maxLines = 5,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                keyboardActions = KeyboardActions(onSend = {
+                    if (!generating && draft.isNotBlank()) onSend()
+                }),
             )
             if (generating) {
                 FilledIconButton(onClick = onStop) {

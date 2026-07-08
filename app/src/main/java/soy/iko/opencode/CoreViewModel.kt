@@ -24,6 +24,10 @@ class CoreViewModel(app: Application) : AndroidViewModel(app) {
         prefs.getString(KEY_URL, null)?.let { core.dispatch(Event.ServerUrlChanged(it)) }
         prefs.getString(KEY_USER, null)?.let { core.dispatch(Event.UsernameChanged(it)) }
 
+        // On a fresh process after a configuration change, resume the SSE stream if
+        // the core is already connected (no-op otherwise — it guards on `connected`).
+        core.resumeStreamingIfConnected()
+
         // Persist connection details once a connection succeeds.
         viewModelScope.launch {
             core.view.distinctUntilChangedBy { it.connected to it.serverUrl }.collect { state ->

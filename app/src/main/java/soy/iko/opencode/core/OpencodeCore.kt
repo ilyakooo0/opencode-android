@@ -134,6 +134,7 @@ class OpencodeCore(
                 screen = Screen.Connect
                 connected = false
                 loading = false
+                generating = false
                 sessions.clear()
                 messages.clear()
                 currentSessionId = null
@@ -198,7 +199,10 @@ class OpencodeCore(
                 when {
                     resp.code == 401 -> {
                         loading = false
-                        if (hasCreds) error = "Invalid credentials" else authRequired = true
+                        // Always reveal the auth fields so the user can see/edit
+                        // their credentials — even when the ones supplied were wrong.
+                        authRequired = true
+                        if (hasCreds) error = "Invalid credentials"
                         emit()
                     }
                     resp.code in 200..299 -> {
@@ -374,6 +378,7 @@ class OpencodeCore(
                 if (scoped) {
                     event.error?.let { error = it.message() }
                     generating = false
+                    messages.forEach { it.streaming = false }
                 }
             }
 
