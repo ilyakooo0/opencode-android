@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import soy.iko.opencode.CrashLogger
 
 /**
  * The bridge between the Crux core (Rust or pure-Kotlin fallback) and the
@@ -76,6 +77,7 @@ class Core : androidx.lifecycle.ViewModel() {
         return try {
             ViewModel.bincodeDeserialize(ffi.view())
         } catch (e: Throwable) {
+            CrashLogger.report(e, "Core.getInitialView")
             ViewModel(
                 screen = Screen.CONNECT,
                 serverUrl = "http://localhost:4096",

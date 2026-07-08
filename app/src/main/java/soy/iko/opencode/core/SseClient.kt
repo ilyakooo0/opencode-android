@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
+import soy.iko.opencode.CrashLogger
 
 /**
  * Subscribes to the opencode server's SSE event stream.
@@ -53,8 +54,8 @@ class SseClient {
                         }
                     }
                 }
-            } catch (_: Throwable) {
-                // Connection lost — the Core will retry on next event cycle
+            } catch (e: Throwable) {
+                CrashLogger.report(e, "SseClient")
             }
         }
     }
