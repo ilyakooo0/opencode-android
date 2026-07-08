@@ -1,5 +1,6 @@
 package soy.iko.opencode.ui.components
 
+import androidx.compose.foundation.layout.Column
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarDuration
@@ -60,14 +61,19 @@ fun ErrorHost(
  * Collects transient success/info messages from [Core.info] and surfaces them
  * as a short snackbar. This gives the user positive feedback (e.g. "Session
  * created") instead of only ever showing errors.
+ *
+ * Uses a dedicated [SnackbarHostState] (separate from the error host) so the
+ * info snackbar can be rendered with default colors rather than the error
+ * palette. The screens render both hosts in the Scaffold's `snackbarHost`
+ * slot; typically only one fires at a time.
  */
 @Composable
 fun InfoHost(
     core: Core,
     successConnectedLabel: String,
     successSessionCreatedLabel: String,
-    snackbarHostState: SnackbarHostState,
-) {
+): SnackbarHostState {
+    val snackbarHostState = remember { SnackbarHostState() }
     LaunchedEffect(snackbarHostState) {
         core.info.collect { key ->
             val message = when (key) {
@@ -81,6 +87,7 @@ fun InfoHost(
             )
         }
     }
+    return snackbarHostState
 }
 
 @Composable
@@ -92,5 +99,32 @@ fun ErrorSnackbarHost(snackbarHostState: SnackbarHostState) {
             actionContentColor = MaterialTheme.colorScheme.onErrorContainer,
             snackbarData = data,
         )
+    }
+}
+
+/**
+ * Snackbar host for success/info messages. Uses the default (surface-tonal)
+ * colors so positive feedback doesn't read as an error.
+ */
+@Composable
+fun InfoSnackbarHost(snackbarHostState: SnackbarHostState) {
+    SnackbarHost(snackbarHostState) { data ->
+        Snackbar(snackbarData = data)
+    }
+}
+
+/**
+ * Renders both the error and info snackbar hosts stacked vertically. The
+ * Material 3 [Scaffold] only accepts a single `snackbarHost` slot, so screens
+ * pass this helper to show both flavors without one overwriting the other.
+ */
+@Composable
+fun DualSnackbarHost(
+    errorHostState: SnackbarHostState,
+    infoHostState: SnackbarHostState,
+) {
+    Column {
+        ErrorSnackbarHost(errorHostState)
+        InfoSnackbarHost(infoHostState)
     }
 }

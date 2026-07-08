@@ -23,6 +23,9 @@ object Dimens {
     val spaceLarge = 16.dp
     val spaceXLarge = 24.dp
 
+    // Inline gaps (not large enough for a named "space" token but still shared)
+    val gapTiny = 6.dp
+
     // Bubble internals
     val bubbleHorizontalPadding = 14.dp
     val bubbleVerticalPadding = 10.dp
@@ -42,4 +45,9 @@ object Dimens {
 
     // Strokes
     val strokeThin = 2.dp
+
+    // Floating action button
+    val fabSize = 40.dp
+    val fabEndMargin = 16.dp
+    val fabBottomMargin = 12.dp
 }

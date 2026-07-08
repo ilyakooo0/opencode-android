@@ -10,7 +10,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ChatBubble
-import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -35,9 +34,9 @@ import soy.iko.opencode.R
 import soy.iko.opencode.core.Core
 import soy.iko.opencode.core.Event
 import soy.iko.opencode.core.SessionView
+import soy.iko.opencode.ui.components.DualSnackbarHost
 import soy.iko.opencode.ui.components.EmptyState
 import soy.iko.opencode.ui.components.ErrorHost
-import soy.iko.opencode.ui.components.ErrorSnackbarHost
 import soy.iko.opencode.ui.components.InfoHost
 import soy.iko.opencode.ui.components.LoadingPlaceholder
 import soy.iko.opencode.ui.theme.Dimens
@@ -47,17 +46,18 @@ import soy.iko.opencode.ui.theme.OpencodeTheme
 @Composable
 fun SessionsScreen(core: Core) {
     val view by core.view.collectAsState()
-    val snackbarHostState = ErrorHost(
+    val errorHostState = ErrorHost(
         core = core,
         dismissLabel = stringResource(R.string.action_dismiss),
         retryLabel = stringResource(R.string.action_retry),
     )
-    InfoHost(
+    val infoHostState = InfoHost(
         core = core,
         successConnectedLabel = stringResource(R.string.connect_success),
         successSessionCreatedLabel = stringResource(R.string.session_created),
-        snackbarHostState = snackbarHostState,
     )
+    val untitledLabel = stringResource(R.string.sessions_untitled)
+    val idShortTemplate = stringResource(R.string.sessions_id_short)
 
     Scaffold(
         topBar = {
@@ -78,19 +78,10 @@ fun SessionsScreen(core: Core) {
                             contentDescription = stringResource(R.string.sessions_cd_new),
                         )
                     }
-                    // Disconnect: returns to the Connect screen to switch
-                    // servers / credentials. Labeled and iconed as logout so
-                    // users understand it ends the session, not "settings".
-                    IconButton(onClick = { core.update(Event.NavigateToConnect) }) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.Logout,
-                            contentDescription = stringResource(R.string.sessions_cd_disconnect),
-                        )
-                    }
                 },
             )
         },
-        snackbarHost = { ErrorSnackbarHost(snackbarHostState) },
+        snackbarHost = { DualSnackbarHost(errorHostState, infoHostState) },
     ) { padding ->
         Box(
             modifier = Modifier
@@ -114,7 +105,8 @@ fun SessionsScreen(core: Core) {
                             items(view.sessions, key = { it.id }) { session ->
                                 SessionRow(
                                     session = session,
-                                    untitledLabel = stringResource(R.string.sessions_untitled),
+                                    untitledLabel = untitledLabel,
+                                    idShortLabel = idShortTemplate.format(session.id.take(8)),
                                     onClick = { core.update(Event.SelectSession(session.id)) },
                                 )
                             }
@@ -130,12 +122,13 @@ fun SessionsScreen(core: Core) {
 private fun SessionRow(
     session: SessionView,
     untitledLabel: String,
+    idShortLabel: String,
     onClick: () -> Unit,
 ) {
     val title = session.title.ifEmpty { untitledLabel }
     ListItem(
         headlineContent = { Text(title) },
-        supportingContent = { Text(session.id.take(8)) },
+        supportingContent = { Text(idShortLabel) },
         leadingContent = {
             Icon(
                 Icons.Default.ChatBubble,
@@ -172,9 +165,6 @@ private fun SessionsScreenPreview() {
                     IconButton(onClick = {}) {
                         Icon(Icons.Default.Add, contentDescription = "New session")
                     }
-                    IconButton(onClick = {}) {
-                        Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = "Disconnect")
-                    }
                 },
             )
         }) { padding ->
@@ -187,7 +177,12 @@ private fun SessionsScreenPreview() {
                         ),
                         key = { it.id },
                     ) { session ->
-                        SessionRow(session, "Untitled", onClick = {})
+                        SessionRow(
+                            session,
+                            untitledLabel = "Untitled",
+                            idShortLabel = "Session ${session.id.take(8)}",
+                            onClick = {},
+                        )
                     }
                 }
             }

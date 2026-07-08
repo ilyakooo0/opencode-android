@@ -28,6 +28,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -55,30 +56,33 @@ import soy.iko.opencode.R
 import soy.iko.opencode.core.Core
 import soy.iko.opencode.core.Event
 import soy.iko.opencode.ui.components.CrashLogDialog
+import soy.iko.opencode.ui.components.DualSnackbarHost
 import soy.iko.opencode.ui.components.ErrorHost
 import soy.iko.opencode.ui.components.ErrorSnackbarHost
 import soy.iko.opencode.ui.components.InfoHost
+import soy.iko.opencode.ui.components.InfoSnackbarHost
 import soy.iko.opencode.ui.theme.Dimens
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ConnectScreen(core: Core) {
     val view by core.view.collectAsState()
+    val crashCount by CrashLogger.reportCount.collectAsState()
     var url by remember(view.serverUrl) { mutableStateOf(view.serverUrl) }
     var username by remember(view.username) { mutableStateOf(view.username) }
     var password by remember(view.password) { mutableStateOf(view.password) }
     var passwordVisible by remember { mutableStateOf(false) }
     var showCrashLogs by remember { mutableStateOf(false) }
-    val snackbarHostState = ErrorHost(
+    var urlError by remember { mutableStateOf(false) }
+    val errorHostState = ErrorHost(
         core = core,
         dismissLabel = stringResource(R.string.action_dismiss),
         retryLabel = stringResource(R.string.action_retry),
     )
-    InfoHost(
+    val infoHostState = InfoHost(
         core = core,
         successConnectedLabel = stringResource(R.string.connect_success),
         successSessionCreatedLabel = stringResource(R.string.session_created),
-        snackbarHostState = snackbarHostState,
     )
 
     // Auto-focus the username field when the server reveals it requires
@@ -90,7 +94,19 @@ fun ConnectScreen(core: Core) {
         }
     }
 
+    fun isValidUrl(value: String): Boolean {
+        val trimmed = value.trim()
+        if (trimmed.isEmpty()) return false
+        return trimmed.startsWith("http://", ignoreCase = true) ||
+            trimmed.startsWith("https://", ignoreCase = true)
+    }
+
     fun submit() {
+        if (!isValidUrl(url)) {
+            urlError = true
+            return
+        }
+        urlError = false
         core.update(Event.ServerUrlChanged(url))
         if (view.authRequired || username.isNotBlank() || password.isNotBlank()) {
             core.update(Event.UsernameChanged(username))
@@ -103,7 +119,9 @@ fun ConnectScreen(core: Core) {
         topBar = {
             TopAppBar(title = { Text(stringResource(R.string.top_bar_connect)) })
         },
-        snackbarHost = { ErrorSnackbarHost(snackbarHostState) },
+        snackbarHost = {
+            DualSnackbarHost(errorHostState, infoHostState)
+        },
     ) { padding ->
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -128,9 +146,16 @@ fun ConnectScreen(core: Core) {
             Spacer(Modifier.height(Dimens.spaceXLarge))
             OutlinedTextField(
                 value = url,
-                onValueChange = { url = it },
+                onValueChange = {
+                    url = it
+                    if (urlError) urlError = false
+                },
                 label = { Text(stringResource(R.string.connect_field_server_url)) },
                 singleLine = true,
+                isError = urlError,
+                supportingText = if (urlError) {
+                    { Text(stringResource(R.string.connect_error_invalid_url)) }
+                } else null,
                 keyboardOptions = KeyboardOptions(
                     keyboardType = KeyboardType.Uri,
                     imeAction = ImeAction.Go,
@@ -224,7 +249,6 @@ fun ConnectScreen(core: Core) {
                 }
             }
 
-            val crashCount = CrashLogger.getReports().size
             if (crashCount > 0) {
                 Spacer(Modifier.height(Dimens.spaceLarge))
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -234,7 +258,7 @@ fun ConnectScreen(core: Core) {
                         tint = MaterialTheme.colorScheme.error,
                         modifier = Modifier.size(Dimens.iconInputLeading),
                     )
-                    Spacer(Modifier.size(6.dp))
+                    Spacer(Modifier.size(Dimens.gapTiny))
                     TextButton(onClick = { showCrashLogs = true }) {
                         Text(
                             text = pluralStringResource(R.plurals.crash_reports_view, crashCount, crashCount),
@@ -257,6 +281,8 @@ fun ConnectScreen(core: Core) {
             title = stringResource(R.string.crash_reports_title),
             clearLabel = stringResource(R.string.crash_reports_clear),
             closeLabel = stringResource(R.string.crash_reports_close),
+            clearConfirmLabel = stringResource(R.string.crash_reports_clear_confirm),
+            clearConfirmYesLabel = stringResource(R.string.crash_reports_clear_confirm_yes),
         )
     }
 }

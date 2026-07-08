@@ -14,6 +14,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
@@ -59,11 +60,25 @@ fun MessageBubble(
     } else {
         stringResource(R.string.chat_role_assistant)
     }
+    val timeLabel = remember(message.time) { formatTimestamp(message.time) }
+    // Build a single TalkBack utterance that includes the role and the
+    // message body. Setting an explicit contentDescription on a merge node
+    // replaces descendant text, so we must include the body ourselves rather
+    // than letting it merge — otherwise TalkBack reads only "User".
+    val announcement = buildString {
+        append(roleLabel)
+        if (message.time > 0uL) {
+            append(", ")
+            append(timeLabel)
+        }
+        append(". ")
+        append(if (message.text.isBlank()) stringResource(R.string.chat_no_content) else message.text)
+    }
     Row(
         modifier = modifier
             .fillMaxWidth()
             .semantics(mergeDescendants = true) {
-                contentDescription = roleLabel
+                contentDescription = announcement
             },
         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
     ) {
@@ -100,13 +115,29 @@ fun MessageBubble(
                         )
                         if (message.time > 0uL) {
                             Text(
-                                text = formatTimestamp(message.time),
+                                text = timeLabel,
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                     }
                     Spacer(Modifier.height(Dimens.spaceTiny))
+                } else {
+                    // Show a timestamp on user bubbles too, aligned to the
+                    // end so it reads as the message's send time.
+                    if (message.time > 0uL) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End,
+                        ) {
+                            Text(
+                                text = timeLabel,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onPrimary,
+                            )
+                        }
+                        Spacer(Modifier.height(Dimens.spaceTiny))
+                    }
                 }
                 if (message.text.isBlank()) {
                     Text(

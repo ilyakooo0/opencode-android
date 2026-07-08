@@ -7,12 +7,15 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -24,9 +27,11 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -38,9 +43,9 @@ import soy.iko.opencode.core.Event
 import soy.iko.opencode.core.MessageView
 import soy.iko.opencode.core.SseState
 import soy.iko.opencode.ui.components.ChatInputBar
+import soy.iko.opencode.ui.components.DualSnackbarHost
 import soy.iko.opencode.ui.components.EmptyState
 import soy.iko.opencode.ui.components.ErrorHost
-import soy.iko.opencode.ui.components.ErrorSnackbarHost
 import soy.iko.opencode.ui.components.GeneratingIndicator
 import soy.iko.opencode.ui.components.InfoHost
 import soy.iko.opencode.ui.components.LoadingPlaceholder
@@ -56,6 +61,7 @@ fun ChatScreen(core: Core) {
     val sseState by core.sseState.collectAsState()
     var inputText by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
+    var scrollRequest by remember { mutableIntStateOf(0) }
 
     // Track whether the user is parked at the bottom of the list. We only
     // auto-scroll when they are, so reading history isn't yanked away as
@@ -73,20 +79,52 @@ fun ChatScreen(core: Core) {
         }
     }
 
-    val snackbarHostState = ErrorHost(
+    // Scroll-to-bottom when the user taps the FAB. Keyed on a counter so
+    // repeated taps keep firing.
+    LaunchedEffect(scrollRequest) {
+        if (scrollRequest > 0 && view.messages.isNotEmpty()) {
+            // Index of the trailing __generating__ item (it's last in the
+            // list, at position == messages.size). Falling back to the last
+            // message is safe even if the generating item is invisible.
+            listState.animateScrollToItem(view.messages.size)
+        }
+    }
+
+    val errorHostState = ErrorHost(
         core = core,
         dismissLabel = stringResource(R.string.action_dismiss),
         retryLabel = stringResource(R.string.action_retry),
     )
-    InfoHost(
+    val infoHostState = InfoHost(
         core = core,
         successConnectedLabel = stringResource(R.string.connect_success),
         successSessionCreatedLabel = stringResource(R.string.session_created),
-        snackbarHostState = snackbarHostState,
     )
 
     val showSseBanner = sseState is SseState.Error ||
         (sseState == SseState.Disconnected && view.currentSessionId != null && !view.loading)
+
+    // Resolve nullable session fields into locals once per recomposition so we
+    // never smart-cast a delegate-backed collected property across calls.
+    val sessionId = view.currentSessionId
+    val sessionTitle = view.currentSessionTitle
+    val chatFallback = stringResource(R.string.top_bar_chat_fallback)
+    val idShortTemplate = stringResource(R.string.chat_session_id_short)
+    val title = remember(sessionId, sessionTitle) {
+        when {
+            sessionTitle.isNotEmpty() -> sessionTitle
+            sessionId != null -> {
+                val prefix = sessionId.take(8)
+                if (sessionId.length > prefix.length) "$prefix…" else prefix
+            }
+            else -> chatFallback
+        }
+    }
+    val subtitle = remember(sessionId, sessionTitle) {
+        if (sessionTitle.isNotEmpty() && sessionId != null) {
+            idShortTemplate.format(sessionId.take(8))
+        } else null
+    }
 
     Scaffold(
         topBar = {
@@ -94,16 +132,13 @@ fun ChatScreen(core: Core) {
                 title = {
                     Column {
                         Text(
-                            text = view.currentSessionTitle.ifEmpty {
-                                view.currentSessionId?.take(8)?.plus("…")
-                                    ?: stringResource(R.string.top_bar_chat_fallback)
-                            },
+                            text = title,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
-                        if (view.currentSessionTitle.isNotEmpty() && view.currentSessionId != null) {
+                        if (subtitle != null) {
                             Text(
-                                text = view.currentSessionId!!.take(8),
+                                text = subtitle,
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
@@ -131,12 +166,14 @@ fun ChatScreen(core: Core) {
                         inputText = ""
                     }
                 },
-                enabled = !view.loading,
+                // Disable while loading OR while the assistant is generating,
+                // so users can't fire a second message mid-reply.
+                enabled = !view.loading && !view.generating,
                 placeholder = stringResource(R.string.chat_input_placeholder),
                 sendContentDescription = stringResource(R.string.chat_cd_send),
             )
         },
-        snackbarHost = { ErrorSnackbarHost(snackbarHostState) },
+        snackbarHost = { DualSnackbarHost(errorHostState, infoHostState) },
     ) { padding ->
         Box(
             modifier = Modifier
@@ -182,6 +219,28 @@ fun ChatScreen(core: Core) {
                             }
                         }
                     }
+                }
+            }
+
+            // Scroll-to-bottom FAB: only when the user has scrolled up away
+            // from the latest message and there's content to scroll to.
+            if (view.messages.isNotEmpty() && !isAtBottom) {
+                FloatingActionButton(
+                    onClick = { scrollRequest++ },
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(
+                            end = Dimens.fabEndMargin,
+                            bottom = Dimens.fabBottomMargin,
+                        )
+                        .size(Dimens.fabSize),
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                ) {
+                    Icon(
+                        Icons.Default.KeyboardArrowDown,
+                        contentDescription = stringResource(R.string.chat_cd_scroll_to_bottom),
+                    )
                 }
             }
         }
@@ -242,14 +301,20 @@ private fun PreviewChatScreen(
     messages: List<MessageView>,
     generating: Boolean,
 ) {
+    val resolvedTitle = when {
+        title.isNotEmpty() -> title
+        sessionId != null -> {
+            val prefix = sessionId.take(8)
+            if (sessionId.length > prefix.length) "$prefix…" else prefix
+        }
+        else -> "Chat"
+    }
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
                     Text(
-                        text = title.ifEmpty {
-                            sessionId?.take(8)?.plus("…") ?: "Chat"
-                        },
+                        text = resolvedTitle,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )

@@ -2,6 +2,9 @@ package soy.iko.opencode
 
 import android.content.Context
 import android.util.Log
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import java.io.File
 import java.io.PrintWriter
 import java.io.StringWriter
@@ -27,13 +30,22 @@ object CrashLogger {
     private lateinit var appContext: Context
     private var previousHandler: Thread.UncaughtExceptionHandler? = null
 
+    private val _reportCount = MutableStateFlow(0)
+    /** Live count of persisted crash reports, safe to observe in composition. */
+    val reportCount: StateFlow<Int> = _reportCount.asStateFlow()
+
     fun init(context: Context) {
         appContext = context.applicationContext
+        refreshReportCount()
         previousHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             report(throwable, thread.name)
             previousHandler?.uncaughtException(thread, throwable)
         }
+    }
+
+    private fun refreshReportCount() {
+        _reportCount.value = getReports().size
     }
 
     /**
@@ -57,6 +69,7 @@ object CrashLogger {
      */
     fun clearReports() {
         crashDir().listFiles()?.forEach { it.delete() }
+        refreshReportCount()
     }
 
     private fun persistReport(source: String, stackTrace: String) {
@@ -65,6 +78,7 @@ object CrashLogger {
             val file = File(crashDir(), "crash_${timestamp}.txt")
             file.writeText("Time: $timestamp\nThread: $source\n\n$stackTrace")
             pruneOldReports()
+            refreshReportCount()
         } catch (e: Exception) {
             Log.e(TAG, "Failed to persist crash report", e)
         }
