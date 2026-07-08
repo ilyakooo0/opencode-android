@@ -19,9 +19,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ChatBubbleOutline
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.HorizontalDivider
@@ -31,6 +33,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
@@ -117,6 +120,9 @@ fun SessionsScreen(state: UiState, dispatch: (Event) -> Unit) {
         },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
+            if (!state.sseConnected) {
+                ReconnectingBanner()
+            }
             if (state.loading && !isPullRefreshing) {
                 LinearProgressIndicator(Modifier.fillMaxWidth())
             }
@@ -217,6 +223,12 @@ private fun SessionRow(session: SessionView, onOpen: () -> Unit, onDelete: () ->
                 overflow = TextOverflow.Ellipsis,
             )
         }
+        Icon(
+            Icons.Filled.ChevronRight,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 4.dp),
+        )
         IconButton(onClick = onDelete) {
             Icon(
                 Icons.Filled.DeleteOutline,
@@ -242,6 +254,32 @@ private fun SwipeDeleteBackground() {
             contentDescription = null,
             tint = MaterialTheme.colorScheme.onError,
         )
+    }
+}
+
+/** Shown at the top of the list while the SSE stream is down, since session updates stall too. */
+@Composable
+private fun ReconnectingBanner() {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.tertiaryContainer,
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(14.dp),
+                strokeWidth = 2.dp,
+                color = MaterialTheme.colorScheme.onTertiaryContainer,
+            )
+            Text(
+                text = "Reconnecting…",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onTertiaryContainer,
+            )
+        }
     }
 }
 

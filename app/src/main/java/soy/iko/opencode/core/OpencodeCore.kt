@@ -79,6 +79,7 @@ class OpencodeCore(
                 messages.clear()
                 screen = Screen.Chat
                 loading = true
+                generating = false
                 error = null
                 emit()
                 scope.launch { loadMessages(event.id) }
@@ -189,12 +190,14 @@ class OpencodeCore(
                     } else {
                         messages.firstOrNull { it.id == user.id }?.status = MessageStatus.Failed
                         generating = false
+                        messages.forEach { it.streaming = false }
                         error = "Server returned status ${resp.code}"
                     }
                 },
                 onFailure = { e ->
                     messages.firstOrNull { it.id == user.id }?.status = MessageStatus.Failed
                     generating = false
+                    messages.forEach { it.streaming = false }
                     error = "Request failed: ${e.message}"
                 },
             )
@@ -294,6 +297,7 @@ class OpencodeCore(
             onFailure = { e ->
                 if (!isCurrent(sessionId)) { loading = false; return }
                 loading = false
+                generating = false
                 error = "Request failed: ${e.message}"
                 emit()
             },

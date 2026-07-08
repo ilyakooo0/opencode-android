@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
@@ -201,7 +202,7 @@ private fun StatusLine(status: MessageStatus) {
     val (icon, label, tint) = when (status) {
         MessageStatus.Pending -> Triple(Icons.Filled.Schedule, "Sending…", MaterialTheme.colorScheme.onPrimaryContainer)
         MessageStatus.Failed -> Triple(Icons.Filled.ErrorOutline, "Failed to send", MaterialTheme.colorScheme.error)
-        MessageStatus.Sent -> Triple(Icons.Filled.Schedule, "", Color.Unspecified)
+        MessageStatus.Sent -> Triple(Icons.Filled.Check, "", Color.Unspecified)
     }
     Row(
         verticalAlignment = Alignment.CenterVertically,
