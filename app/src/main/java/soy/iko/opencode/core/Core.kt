@@ -3,8 +3,11 @@ package soy.iko.opencode.core
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import soy.iko.opencode.CrashLogger
@@ -35,6 +38,21 @@ class Core(application: Application) : AndroidViewModel(application) {
     private val _view = MutableStateFlow(getInitialView())
     val view: StateFlow<ViewModel> = _view.asStateFlow()
 
+    /** Live status of the SSE event stream, for the "disconnected" banner. */
+    val sseState: StateFlow<SseState> = sseClient.state
+
+    /**
+     * Transient, user-facing success/info notifications (e.g. "Session
+     * created", "Connected"). Consumed by the UI as a snackbar. This is a
+     * SharedFlow so a configuration change doesn't re-fire an old message.
+     */
+    private val _info = MutableSharedFlow<String>(extraBufferCapacity = 4)
+    val info: SharedFlow<String> = _info.asSharedFlow()
+
+    /** The last event the user triggered, so an error snackbar can retry it. */
+    private var lastUserEvent: Event? = null
+    val retryableEvent: Event? get() = lastUserEvent
+
     init {
         // Restore the persisted server URL before the first connect so the
         // user doesn't have to re-enter it on every launch.
@@ -54,6 +72,10 @@ class Core(application: Application) : AndroidViewModel(application) {
     }
 
     fun update(event: Event) {
+        // Track user-initiated events so an error snackbar can offer Retry.
+        if (event.isRetryable()) {
+            lastUserEvent = event
+        }
         val effectsBytes = ffi.update(event.bincodeSerialize())
         val requests = Requests.bincodeDeserialize(effectsBytes).value
         for (request in requests) {
@@ -61,10 +83,25 @@ class Core(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * Re-send the last user-initiated event, if any. Wired to the snackbar's
+     * "Retry" action.
+     */
+    fun retry() {
+        val last = lastUserEvent ?: return
+        update(last)
+    }
+
+    /** Re-establish the SSE stream after a drop. Wired to the banner button. */
+    fun reconnectSse() {
+        sseClient.reconnect()
+    }
+
     private fun processEffect(request: Request) {
         when (val effect = request.effect) {
             is Effect.Render -> {
                 refreshView()
+                emitSuccessInfo()
             }
             is Effect.Http -> {
                 handleHttpEffect(effect.value, request.id)
@@ -81,6 +118,7 @@ class Core(application: Application) : AndroidViewModel(application) {
                 processEffect(req)
             }
             refreshView()
+            emitSuccessInfo()
 
             val currentView = _view.value
             if (currentView.connected && currentView.currentSessionId != null) {
@@ -88,6 +126,29 @@ class Core(application: Application) : AndroidViewModel(application) {
             }
         }
     }
+
+    /**
+     * Derive a brief success/info notification from the latest view state —
+     * e.g. when the user just connected or created a session. The UI surfaces
+     * these as a snackbar so the user gets positive feedback, not just screen
+     * changes.
+     */
+    private fun emitSuccessInfo() {
+        val v = _view.value
+        val prev = previousScreen
+        when {
+            v.connected && prev == Screen.CONNECT -> {
+                viewModelScope.launch { _info.emit(SUCCESS_CONNECTED) }
+            }
+            v.currentSessionId != null && prev == Screen.SESSIONS &&
+                lastUserEvent is Event.CreateSession -> {
+                viewModelScope.launch { _info.emit(SUCCESS_SESSION_CREATED) }
+            }
+        }
+        previousScreen = v.screen
+    }
+
+    private var previousScreen: Screen = _view.value.screen
 
     private fun refreshView() {
         val newView = ViewModel.bincodeDeserialize(ffi.view())
@@ -142,8 +203,20 @@ class Core(application: Application) : AndroidViewModel(application) {
         sseClient.disconnect()
     }
 
+    private fun Event.isRetryable(): Boolean = when (this) {
+        is Event.Connect,
+        is Event.LoadSessions,
+        is Event.CreateSession,
+        is Event.LoadMessages,
+        is Event.SendMessage -> true
+        else -> false
+    }
+
     companion object {
         private const val PREFS_NAME = "opencode_prefs"
         private const val KEY_SERVER_URL = "server_url"
+
+        const val SUCCESS_CONNECTED = "__success_connected__"
+        const val SUCCESS_SESSION_CREATED = "__success_session_created__"
     }
 }

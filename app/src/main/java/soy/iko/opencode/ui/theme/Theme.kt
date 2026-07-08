@@ -53,6 +53,8 @@ fun OpencodeTheme(
     }
     MaterialTheme(
         colorScheme = colorScheme,
+        typography = OpencodeTypography,
+        shapes = OpencodeShapes,
         content = content,
     )
 }

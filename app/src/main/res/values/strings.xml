@@ -1,3 +1,59 @@
 <resources>
     <string name="app_name">Opencode</string>
+
+    <!-- Top bar titles -->
+    <string name="top_bar_connect">Opencode</string>
+    <string name="top_bar_sessions">Sessions</string>
+    <string name="top_bar_chat_fallback">Chat</string>
+
+    <!-- Connect screen -->
+    <string name="connect_heading">Connect to Opencode Server</string>
+    <string name="connect_field_server_url">Server URL</string>
+    <string name="connect_field_username">Username</string>
+    <string name="connect_field_password">Password</string>
+    <string name="connect_auth_required">Server requires authentication</string>
+    <string name="connect_password_hide">Hide password</string>
+    <string name="connect_password_show">Show password</string>
+    <string name="connect_button_cancel">Cancel</string>
+    <string name="connect_button_connect">Connect</string>
+    <string name="connect_success">Connected</string>
+    <string name="connect_cd_dns">Connection icon</string>
+    <string name="connect_cd_lock">Credentials icon</string>
+    <string name="connect_cd_warning">Warning icon</string>
+
+    <!-- Crash log -->
+    <string name="crash_reports_title">Crash Reports</string>
+    <plurals name="crash_reports_view">
+        <item quantity="one">%d crash report — view</item>
+        <item quantity="other">%d crash report(s) — view</item>
+    </plurals>
+    <string name="crash_reports_clear">Clear all</string>
+    <string name="crash_reports_close">Close</string>
+
+    <!-- Sessions screen -->
+    <string name="sessions_empty">No sessions yet</string>
+    <string name="sessions_cd_back">Change server</string>
+    <string name="sessions_cd_new">New session</string>
+    <string name="sessions_cd_disconnect">Disconnect</string>
+    <string name="sessions_untitled">Untitled</string>
+    <string name="session_created">Session created</string>
+
+    <!-- Chat screen -->
+    <string name="chat_empty">Send a message to start chatting</string>
+    <string name="chat_no_content">(no content)</string>
+    <string name="chat_generating">Generating…</string>
+    <string name="chat_input_placeholder">Message…</string>
+    <string name="chat_cd_back">Back</string>
+    <string name="chat_cd_send">Send</string>
+    <string name="chat_role_user">User</string>
+    <string name="chat_role_assistant">Assistant</string>
+    <string name="chat_cd_generating">Generating reply</string>
+
+    <!-- Error / snackbar -->
+    <string name="action_dismiss">Dismiss</string>
+    <string name="action_retry">Retry</string>
+
+    <!-- SSE / connectivity -->
+    <string name="sse_disconnected">Live stream disconnected</string>
+    <string name="sse_reconnect">Reconnect</string>
 </resources>

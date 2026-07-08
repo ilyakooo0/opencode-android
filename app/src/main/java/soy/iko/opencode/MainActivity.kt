@@ -9,6 +9,8 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -47,10 +49,24 @@ fun App(core: Core = viewModel()) {
         }
     }
 
-    // Crossfade between screens for a smoother navigation feel.
+    // Directional slide between screens for a smoother navigation feel:
+    // forward navigation slides the new screen in from the end side, back
+    // navigation slides it in from the start side. A short fade is layered on
+    // so the transition doesn't feel harsh. The TopAppBar still fades with
+    // each screen, but the directional motion reads as natural page changes
+    // rather than a flat crossfade.
     AnimatedContent(
         targetState = view.screen,
-        transitionSpec = { fadeIn() togetherWith fadeOut() },
+        transitionSpec = {
+            val forward = targetState.ordinal > initialState.ordinal
+            if (forward) {
+                slideInHorizontally(initialOffsetX = { it / 3 }) + fadeIn() togetherWith
+                    slideOutHorizontally(targetOffsetX = { -it / 6 }) + fadeOut()
+            } else {
+                slideInHorizontally(initialOffsetX = { -it / 6 }) + fadeIn() togetherWith
+                    slideOutHorizontally(targetOffsetX = { it / 3 }) + fadeOut()
+            }
+        },
         label = "screen-transition",
     ) { screen ->
         when (screen) {
