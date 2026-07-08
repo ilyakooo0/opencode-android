@@ -294,8 +294,11 @@ impl App for OpencodeApp {
             // ── Lifecycle / connect ─────────────────────────────────────────
             Event::Start => render(),
 
+            // Store the field verbatim while typing; normalizing here would fight
+            // the user's edits (e.g. eat the "://" as they type it). The URL is
+            // normalized once, on Connect.
             Event::ServerUrlChanged(url) => {
-                model.server_url = normalize_url(&url);
+                model.server_url = url;
                 render()
             }
             Event::UsernameChanged(u) => {
@@ -308,6 +311,7 @@ impl App for OpencodeApp {
             }
 
             Event::Connect => {
+                model.server_url = normalize_url(&model.server_url);
                 if model.server_url.is_empty() {
                     model.error = Some("Enter a server URL".to_string());
                     return render();
@@ -803,28 +807,33 @@ mod tests {
     }
 
     #[test]
-    fn server_url_is_normalized() {
+    fn server_url_is_kept_raw_while_typing() {
         let app = app();
         let mut model = Model::default();
-        let _ = app.update(Event::ServerUrlChanged("  http://host:4096/  ".into()), &mut model);
-        assert_eq!(app.view(&model).server_url, "http://host:4096");
+        // Mid-scheme input must survive verbatim — normalizing per keystroke
+        // would eat the "://" the user is typing and make the field unusable.
+        let _ = app.update(Event::ServerUrlChanged("http:/".into()), &mut model);
+        assert_eq!(app.view(&model).server_url, "http:/");
     }
 
     #[test]
-    fn server_url_without_scheme_defaults_to_http() {
+    fn connect_normalizes_scheme_less_url() {
         let app = app();
         let mut model = Model::default();
-        // A scheme-less host (what a user often types) must gain http://, or the
-        // shell's URL parser throws and the connect attempt crashes.
+        // A scheme-less host (what a user often types) must gain http:// on
+        // connect, or the shell's URL parser throws and the attempt crashes.
         let _ = app.update(Event::ServerUrlChanged("192.168.1.10:4096".into()), &mut model);
+        assert_eq!(app.view(&model).server_url, "192.168.1.10:4096");
+        let _ = app.update(Event::Connect, &mut model);
         assert_eq!(app.view(&model).server_url, "http://192.168.1.10:4096");
     }
 
     #[test]
-    fn server_url_keeps_https_scheme() {
+    fn connect_trims_and_keeps_explicit_scheme() {
         let app = app();
         let mut model = Model::default();
-        let _ = app.update(Event::ServerUrlChanged("https://host:4096".into()), &mut model);
+        let _ = app.update(Event::ServerUrlChanged("  https://host:4096/  ".into()), &mut model);
+        let _ = app.update(Event::Connect, &mut model);
         assert_eq!(app.view(&model).server_url, "https://host:4096");
     }
 

@@ -51,11 +51,15 @@ class OpencodeCore(
     // ── Event entry point ──────────────────────────────────────────────────────
     fun dispatch(event: Event) {
         when (event) {
-            is Event.ServerUrlChanged -> { serverUrl = normalizeUrl(event.url); emit() }
+            // Store the field verbatim while typing; normalizing here would fight
+            // the user's edits (e.g. eat the "://" as they type it). The URL is
+            // normalized once, on Connect.
+            is Event.ServerUrlChanged -> { serverUrl = event.url; emit() }
             is Event.UsernameChanged -> { username = event.value; emit() }
             is Event.PasswordChanged -> { password = event.value; emit() }
 
             Event.Connect -> {
+                serverUrl = normalizeUrl(serverUrl)
                 if (serverUrl.isEmpty()) { error = "Enter a server URL"; emit(); return }
                 loading = true; error = null; authRequired = false; emit()
                 scope.launch { probeHealth() }
