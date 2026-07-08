@@ -383,7 +383,8 @@ internal fun parseMessages(json: String): List<PureMessage> {
                     val role = extractJsonString(obj, "role") ?: ""
                     val time = extractJsonNumber(obj, "created") ?: 0uL
                     if (id.isNotEmpty() && role.isNotEmpty()) {
-                        messages.add(PureMessage(id, role, "", time))
+                        val text = extractMessageText(obj)
+                        messages.add(PureMessage(id, role, text, time))
                     }
                 }
             }
@@ -392,24 +393,43 @@ internal fun parseMessages(json: String): List<PureMessage> {
     return messages
 }
 
+/// Extract the text from a message part. opencode messages nest the user/assistant
+/// text inside a `parts` array; we do a shallow scan for `"text":"..."` after the
+/// first `"parts"` key, falling back to a top-level `"text"` field.
+internal fun extractMessageText(obj: String): String {
+    val partsIdx = obj.indexOf("\"parts\"")
+    if (partsIdx >= 0) {
+        val rest = obj.substring(partsIdx)
+        val text = extractJsonString(rest, "text")
+        if (text != null) return text
+    }
+    return extractJsonString(obj, "text") ?: ""
+}
+
 internal fun extractJsonString(json: String, key: String): String? {
     val pattern = "\"$key\""
-    val idx = json.indexOf(pattern) ?: return null
+    val idx = json.indexOf(pattern)
+    if (idx < 0) return null
     val rest = json.substring(idx + pattern.length)
-    val colon = rest.indexOf(':') ?: return null
+    val colon = rest.indexOf(':')
+    if (colon < 0) return null
     val rest2 = rest.substring(colon + 1)
-    val quote = rest2.indexOf('"') ?: return null
+    val quote = rest2.indexOf('"')
+    if (quote < 0) return null
     val rest3 = rest2.substring(quote + 1)
-    val end = rest3.indexOf('"') ?: return null
+    val end = rest3.indexOf('"')
+    if (end < 0) return null
     return rest3.substring(0, end)
 }
 
 internal fun extractJsonNumber(json: String, key: String): ULong? {
     val pattern = "\"$key\""
-    val idx = json.indexOf(pattern) ?: return null
+    val idx = json.indexOf(pattern)
+    if (idx < 0) return null
     val rest = json.substring(idx + pattern.length)
-    val colon = rest.indexOf(':') ?: return null
+    val colon = rest.indexOf(':')
+    if (colon < 0) return null
     val rest2 = rest.substring(colon + 1).trimStart()
-    val end = rest2.indexOfFirst { !it.isDigit() }.let { if (it == -1) rest2.length else it }
+    val end = rest2.indexOfFirst { !it.isDigit() }.let { if (it < 0) rest2.length else it }
     return rest2.substring(0, end).toULongOrNull()
 }

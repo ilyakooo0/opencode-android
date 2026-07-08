@@ -283,6 +283,7 @@ fun ConnectScreen(core: Core) {
             title = stringResource(R.string.crash_reports_title),
             clearLabel = stringResource(R.string.crash_reports_clear),
             closeLabel = stringResource(R.string.crash_reports_close),
+            cancelLabel = stringResource(R.string.crash_reports_cancel),
             clearConfirmLabel = stringResource(R.string.crash_reports_clear_confirm),
             clearConfirmYesLabel = stringResource(R.string.crash_reports_clear_confirm_yes),
         )

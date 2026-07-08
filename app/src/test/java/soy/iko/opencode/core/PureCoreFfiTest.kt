@@ -6,7 +6,6 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-
 class PureCoreFfiTest {
 
     private fun createCore(): PureCoreFfi = PureCoreFfi()
@@ -197,5 +196,34 @@ class PureCoreFfiTest {
         val view = core.currentView()
         assertTrue(view.connected)
         assertEquals(Screen.SESSIONS, view.screen)
+    }
+
+    @Test
+    fun `parseMessages extracts text from parts array`() {
+        val json = """[{"id":"m1","role":"user","created":100,"parts":[{"type":"text","text":"Hello world"}]}]"""
+        val messages = parseMessages(json)
+        assertEquals(1, messages.size)
+        assertEquals("m1", messages[0].id)
+        assertEquals("user", messages[0].role)
+        assertEquals("Hello world", messages[0].text)
+        assertEquals(100uL, messages[0].time)
+    }
+
+    @Test
+    fun `parseMessages falls back to top-level text field`() {
+        val json = """[{"id":"m2","role":"assistant","created":200,"text":"Fallback"}]"""
+        val messages = parseMessages(json)
+        assertEquals(1, messages.size)
+        assertEquals("Fallback", messages[0].text)
+    }
+
+    @Test
+    fun `extractJsonString returns null for missing key`() {
+        assertNull(extractJsonString("""{"a":"b"}""", "id"))
+    }
+
+    @Test
+    fun `extractJsonNumber returns null for missing key`() {
+        assertNull(extractJsonNumber("""{"a":"b"}""", "created"))
     }
 }

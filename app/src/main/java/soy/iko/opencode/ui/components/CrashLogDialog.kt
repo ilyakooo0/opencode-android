@@ -34,9 +34,12 @@ import java.io.File
  * recomposition) rather than on every recomposition — [File.readText] is disk
  * I/O and shouldn't run in composition repeatedly.
  *
- * "Clear all" is a destructive action: it's placed in the dismiss slot (left,
- * neutral) and tinted with the error color, and a confirmation step guards
- * against accidental taps. "Close" is the affirmative (right) action.
+ * "Clear all" is a destructive action guarded by a confirmation step. The
+ * single dialog swaps its content and buttons between the list view and the
+ * confirm view, so there's never a second dialog stacked on top.
+ *
+ *  - List view:     dismiss = "Clear all" (error-tinted), confirm = "Close"
+ *  - Confirm view:  dismiss = "Cancel",    confirm = "Clear"  (error-tinted)
  */
 @Composable
 fun CrashLogDialog(
@@ -47,6 +50,7 @@ fun CrashLogDialog(
     title: String = "Crash Reports",
     clearLabel: String = "Clear all",
     closeLabel: String = "Close",
+    cancelLabel: String = "Cancel",
     clearConfirmLabel: String = "Clear all crash reports?",
     clearConfirmYesLabel: String = "Clear",
 ) {
@@ -94,14 +98,26 @@ fun CrashLogDialog(
             }
         },
         confirmButton = {
-            // Primary (right) button: "Close" is the non-destructive action.
-            TextButton(onClick = onDismiss) { Text(closeLabel) }
+            if (confirmingClear) {
+                // Affirmative: clear (error-tinted).
+                TextButton(onClick = {
+                    onClear()
+                    confirmingClear = false
+                }) {
+                    Text(
+                        text = clearConfirmYesLabel,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            } else {
+                // Non-destructive: close.
+                TextButton(onClick = onDismiss) { Text(closeLabel) }
+            }
         },
         dismissButton = {
             if (confirmingClear) {
-                // Confirm step: the affirmative "Clear" sits on the right now,
-                // so expose a "Cancel" on the left to abort.
-                TextButton(onClick = { confirmingClear = false }) { Text(closeLabel) }
+                // Abort the clear.
+                TextButton(onClick = { confirmingClear = false }) { Text(cancelLabel) }
             } else {
                 // Destructive action in the dismiss slot (left), tinted error.
                 TextButton(onClick = { confirmingClear = true }) {
@@ -113,29 +129,6 @@ fun CrashLogDialog(
             }
         },
     )
-
-    // Second-stage confirmation dialog: actually clear when the user confirms.
-    if (confirmingClear) {
-        AlertDialog(
-            onDismissRequest = { confirmingClear = false },
-            title = { Text(title) },
-            text = { Text(clearConfirmLabel) },
-            confirmButton = {
-                TextButton(onClick = {
-                    onClear()
-                    confirmingClear = false
-                }) {
-                    Text(
-                        text = clearConfirmYesLabel,
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmingClear = false }) { Text(closeLabel) }
-            },
-        )
-    }
 }
 
 @Preview(showBackground = true)

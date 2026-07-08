@@ -50,6 +50,7 @@ import soy.iko.opencode.core.Event
 import soy.iko.opencode.core.MessageView
 import soy.iko.opencode.core.SseState
 import soy.iko.opencode.ui.components.ChatInputBar
+import soy.iko.opencode.ui.components.DateSeparator
 import soy.iko.opencode.ui.components.DualSnackbarHost
 import soy.iko.opencode.ui.components.EmptyState
 import soy.iko.opencode.ui.components.ErrorHost
@@ -58,6 +59,7 @@ import soy.iko.opencode.ui.components.InfoHost
 import soy.iko.opencode.ui.components.LoadingPlaceholder
 import soy.iko.opencode.ui.components.MessageBubble
 import soy.iko.opencode.ui.components.SseDisconnectedBanner
+import soy.iko.opencode.ui.components.dayOfEpoch
 import soy.iko.opencode.ui.theme.Dimens
 import soy.iko.opencode.ui.theme.OpencodeTheme
 
@@ -70,6 +72,7 @@ fun ChatScreen(core: Core) {
     val listState = rememberLazyListState()
     var scrollRequest by remember { mutableIntStateOf(0) }
     var menuExpanded by remember { mutableStateOf(false) }
+    var sseBannerDismissed by remember { mutableStateOf(false) }
     val inputFocusRequester = remember { FocusRequester() }
 
     // Track whether the user is parked at the bottom of the list. We only
@@ -118,10 +121,18 @@ fun ChatScreen(core: Core) {
         core = core,
         successConnectedLabel = stringResource(R.string.connect_success),
         successSessionCreatedLabel = stringResource(R.string.session_created),
+        copiedLabel = stringResource(R.string.chat_copied),
     )
 
-    val showSseBanner = sseState is SseState.Error ||
-        (sseState == SseState.Disconnected && view.currentSessionId != null && !view.loading)
+    val showSseBanner = (sseState is SseState.Error ||
+        (sseState == SseState.Disconnected && view.currentSessionId != null && !view.loading)) &&
+        !sseBannerDismissed
+
+    // Reset the dismissed flag whenever a fresh SSE error arrives so the
+    // banner reappears for a new disconnect.
+    LaunchedEffect((sseState as? SseState.Error)?.message) {
+        if (sseState is SseState.Error) sseBannerDismissed = false
+    }
 
     // Resolve nullable session fields into locals once per recomposition so we
     // never smart-cast a delegate-backed collected property across calls.
@@ -219,6 +230,9 @@ fun ChatScreen(core: Core) {
                 // Disable while loading OR while the assistant is generating,
                 // so users can't fire a second message mid-reply.
                 enabled = !view.loading && !view.generating,
+                generating = view.generating,
+                onStop = { sessionId?.let { core.update(Event.LoadMessages(it)) } },
+                stopContentDescription = stringResource(R.string.chat_cd_stop),
                 placeholder = stringResource(R.string.chat_input_placeholder),
                 sendContentDescription = stringResource(R.string.chat_cd_send),
                 modifier = Modifier.focusRequester(inputFocusRequester),
@@ -237,8 +251,13 @@ fun ChatScreen(core: Core) {
                         ?: stringResource(R.string.sse_disconnected)
                     SseDisconnectedBanner(
                         message = bannerMessage,
-                        onReconnect = { core.reconnectSse() },
+                        onReconnect = {
+                            sseBannerDismissed = false
+                            core.reconnectSse()
+                        },
+                        onDismiss = { sseBannerDismissed = true },
                         reconnectLabel = stringResource(R.string.sse_reconnect),
+                        dismissLabel = stringResource(R.string.sse_dismiss),
                     )
                 }
 
@@ -266,8 +285,28 @@ fun ChatScreen(core: Core) {
                                 verticalArrangement = Arrangement.spacedBy(Dimens.listItemSpacing),
                                 contentPadding = PaddingValues(vertical = Dimens.listVerticalPadding),
                             ) {
-                                items(view.messages, key = { it.id }) { message ->
-                                    MessageBubble(message)
+                                val msgs = view.messages
+                                for (i in msgs.indices) {
+                                    val msg = msgs[i]
+                                    // Insert a date separator before a message
+                                    // when its calendar day differs from the
+                                    // previous message's day (and it has a
+                                    // valid timestamp).
+                                    if (msg.time > 0uL) {
+                                        val prevDay = if (i > 0) dayOfEpoch(msgs[i - 1].time) else Int.MIN_VALUE
+                                        val curDay = dayOfEpoch(msg.time)
+                                        if (curDay != prevDay) {
+                                            item(key = "date_${msg.id}") {
+                                                DateSeparator(epochSeconds = msg.time)
+                                            }
+                                        }
+                                    }
+                                    item(key = msg.id) {
+                                        MessageBubble(
+                                            message = msg,
+                                            onCopied = { core.notifyCopied() },
+                                        )
+                                    }
                                 }
                                 // "Thinking" indicator shown after the user sends, while
                                 // the assistant reply hasn't arrived yet. The indicator
@@ -303,7 +342,7 @@ fun ChatScreen(core: Core) {
                             contentDescription = stringResource(R.string.chat_cd_scroll_to_bottom),
                         )
                     },
-                    text = { Text(stringResource(R.string.chat_cd_scroll_to_bottom)) },
+                    text = { Text(stringResource(R.string.chat_scroll_to_latest)) },
                     containerColor = MaterialTheme.colorScheme.primaryContainer,
                     contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
                     modifier = Modifier

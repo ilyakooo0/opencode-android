@@ -26,8 +26,9 @@ import soy.iko.opencode.ui.theme.OpencodeTheme
 
 /**
  * A thin banner shown above the message list when the SSE live stream drops.
- * Offers a "Reconnect" action. The banner is a polite live region so screen
- * readers announce the disconnection once.
+ * Offers a "Reconnect" action and a "Dismiss" action so the user can keep
+ * reading history without the banner persisting. The banner is a polite live
+ * region so screen readers announce the disconnection once.
  *
  * Only render this when [SseState] is [SseState.Error] or an unexpected
  * [SseState.Disconnected] while a chat is active.
@@ -36,8 +37,10 @@ import soy.iko.opencode.ui.theme.OpencodeTheme
 fun SseDisconnectedBanner(
     message: String,
     onReconnect: () -> Unit,
+    onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
     reconnectLabel: String = "Reconnect",
+    dismissLabel: String = "Dismiss",
 ) {
     Surface(
         color = MaterialTheme.colorScheme.errorContainer,
@@ -71,7 +74,10 @@ fun SseDisconnectedBanner(
                     maxLines = 2,
                 )
             }
-            TextButton(onClick = onReconnect) { Text(reconnectLabel) }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = onDismiss) { Text(dismissLabel) }
+                TextButton(onClick = onReconnect) { Text(reconnectLabel) }
+            }
         }
     }
 }
@@ -83,6 +89,7 @@ private fun SseDisconnectedBannerPreview() {
         SseDisconnectedBanner(
             message = "Live stream disconnected",
             onReconnect = {},
+            onDismiss = {},
         )
     }
 }

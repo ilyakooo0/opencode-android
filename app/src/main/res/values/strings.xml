@@ -26,10 +26,11 @@
     <string name="crash_reports_title">Crash Reports</string>
     <plurals name="crash_reports_view">
         <item quantity="one">%d crash report — view</item>
-        <item quantity="other">%d crash report(s) — view</item>
+        <item quantity="other">%d crash reports — view</item>
     </plurals>
     <string name="crash_reports_clear">Clear all</string>
     <string name="crash_reports_close">Close</string>
+    <string name="crash_reports_cancel">Cancel</string>
     <string name="crash_reports_clear_confirm">Clear all crash reports?</string>
     <string name="crash_reports_clear_confirm_yes">Clear</string>
 
@@ -50,7 +51,11 @@
     <string name="chat_role_user">User</string>
     <string name="chat_role_assistant">Assistant</string>
     <string name="chat_cd_generating">Generating reply</string>
+    <string name="chat_generating_label">Thinking…</string>
     <string name="chat_cd_scroll_to_bottom">Scroll to latest message</string>
+    <string name="chat_scroll_to_latest">Latest</string>
+    <string name="chat_copied">Copied</string>
+    <string name="chat_cd_stop">Stop generating</string>
     <string name="chat_session_id_short">Session %s</string>
     <string name="chat_menu_overflow">More options</string>
     <string name="chat_menu_refresh">Refresh messages</string>
@@ -62,4 +67,6 @@
     <!-- SSE / connectivity -->
     <string name="sse_disconnected">Live stream disconnected</string>
     <string name="sse_reconnect">Reconnect</string>
+    <string name="sse_dismiss">Dismiss</string>
+    <string name="press_back_again_to_exit">Press back again to exit</string>
 </resources>

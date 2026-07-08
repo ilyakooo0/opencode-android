@@ -97,6 +97,11 @@ class Core(application: Application) : AndroidViewModel(application) {
         sseClient.reconnect()
     }
 
+    /** Surface a transient "Copied" toast/snackbar to the user. */
+    fun notifyCopied() {
+        viewModelScope.launch { _info.emit(SUCCESS_COPIED) }
+    }
+
     private fun processEffect(request: Request) {
         when (val effect = request.effect) {
             is Effect.Render -> {
@@ -218,5 +223,6 @@ class Core(application: Application) : AndroidViewModel(application) {
 
         const val SUCCESS_CONNECTED = "__success_connected__"
         const val SUCCESS_SESSION_CREATED = "__success_session_created__"
+        const val SUCCESS_COPIED = "__success_copied__"
     }
 }

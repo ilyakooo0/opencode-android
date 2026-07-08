@@ -1,5 +1,6 @@
 package soy.iko.opencode.ui.components
 
+import android.text.format.DateFormat
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -25,6 +26,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalWindowInfo
@@ -44,9 +46,7 @@ import soy.iko.opencode.ui.theme.AssistantBubbleShape
 import soy.iko.opencode.ui.theme.Dimens
 import soy.iko.opencode.ui.theme.OpencodeTheme
 import soy.iko.opencode.ui.theme.UserBubbleShape
-import java.text.SimpleDateFormat
 import java.util.Date
-import java.util.Locale
 
 /**
  * A single chat message rendered as a left/right-aligned bubble. Assistant
@@ -66,6 +66,7 @@ import java.util.Locale
 fun MessageBubble(
     message: MessageView,
     modifier: Modifier = Modifier,
+    onCopied: () -> Unit = {},
 ) {
     val isUser = message.role == "user"
     val maxWidth = maxBubbleWidthDp()
@@ -74,9 +75,11 @@ fun MessageBubble(
     } else {
         stringResource(R.string.chat_role_assistant)
     }
-    val timeLabel = remember(message.time) { formatTimestamp(message.time) }
+    val context = LocalContext.current
+    val timeLabel = remember(message.time) { formatTimestamp(message.time, context) }
     val clipboardManager = LocalClipboardManager.current
     val hapticFeedback = LocalHapticFeedback.current
+    val onCopiedCallback = onCopied
     // Build a single TalkBack utterance that includes the role and the
     // message body. Setting an explicit contentDescription on a merge node
     // replaces descendant text, so we must include the body ourselves rather
@@ -98,6 +101,7 @@ fun MessageBubble(
                     if (message.text.isNotBlank()) {
                         clipboardManager.setText(AnnotatedString(message.text))
                         hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onCopiedCallback()
                     }
                 },
                 onClick = {},
@@ -197,7 +201,8 @@ fun MessageBubble(
 @Composable
 fun GeneratingIndicator(modifier: Modifier = Modifier) {
     val maxWidth = maxBubbleWidthDp()
-    val generatingLabel = stringResource(R.string.chat_cd_generating)
+    val generatingLabel = stringResource(R.string.chat_generating_label)
+    val cdLabel = stringResource(R.string.chat_cd_generating)
     val dotColor = MaterialTheme.colorScheme.onSurfaceVariant
     // Three dots that pulse in sequence: each dot scales/fades with a
     // staggered delay so the indicator reads as "typing" rather than a
@@ -244,7 +249,7 @@ fun GeneratingIndicator(modifier: Modifier = Modifier) {
         ) {
             Row(
                 verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(Dimens.spaceTiny),
+                horizontalArrangement = Arrangement.spacedBy(Dimens.spaceSmall),
                 modifier = Modifier
                     .padding(
                         horizontal = Dimens.bubbleHorizontalPadding,
@@ -253,12 +258,22 @@ fun GeneratingIndicator(modifier: Modifier = Modifier) {
                     .semantics(mergeDescendants = true) {
                         // Announced when the indicator appears/disappears.
                         liveRegion = LiveRegionMode.Polite
-                        contentDescription = generatingLabel
+                        contentDescription = cdLabel
                     },
             ) {
-                GeneratingDot(alpha = phase1, color = dotColor)
-                GeneratingDot(alpha = phase2, color = dotColor)
-                GeneratingDot(alpha = phase3, color = dotColor)
+                Text(
+                    text = generatingLabel,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(Dimens.spaceTiny),
+                ) {
+                    GeneratingDot(alpha = phase1, color = dotColor)
+                    GeneratingDot(alpha = phase2, color = dotColor)
+                    GeneratingDot(alpha = phase3, color = dotColor)
+                }
             }
         }
     }
@@ -281,9 +296,9 @@ private fun GeneratingDot(alpha: Float, color: androidx.compose.ui.graphics.Colo
     }
 }
 
-private fun formatTimestamp(epochSeconds: ULong): String {
+private fun formatTimestamp(epochSeconds: ULong, context: android.content.Context): String {
     val date = Date(epochSeconds.toLong() * 1000)
-    val formatter = SimpleDateFormat("HH:mm", Locale.getDefault())
+    val formatter = DateFormat.getTimeFormat(context)
     return formatter.format(date)
 }
 

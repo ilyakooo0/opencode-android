@@ -12,6 +12,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -38,6 +39,8 @@ import soy.iko.opencode.ui.theme.OpencodeTheme
  *   tapping the icon.
  * - Send is disabled while [enabled] is false (e.g. during loading) or when
  *   the text is blank.
+ * - When [generating] is true, a Stop button replaces the Send button so the
+ *   user can cancel the wait; tapping it calls [onStop].
  */
 @Composable
 fun ChatInputBar(
@@ -46,6 +49,9 @@ fun ChatInputBar(
     onSend: () -> Unit,
     enabled: Boolean,
     modifier: Modifier = Modifier,
+    generating: Boolean = false,
+    onStop: () -> Unit = {},
+    stopContentDescription: String = "Stop generating",
     placeholder: String = "Message…",
     sendContentDescription: String = "Send",
 ) {
@@ -75,14 +81,25 @@ fun ChatInputBar(
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                 keyboardActions = KeyboardActions(onSend = { onSend() }),
             )
-            IconButton(
-                onClick = onSend,
-                enabled = enabled && text.isNotBlank(),
-                modifier = Modifier.semantics {
-                    contentDescription = sendContentDescription
-                },
-            ) {
-                Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null)
+            if (generating) {
+                IconButton(
+                    onClick = onStop,
+                    modifier = Modifier.semantics {
+                        contentDescription = stopContentDescription
+                    },
+                ) {
+                    Icon(Icons.Default.Stop, contentDescription = null)
+                }
+            } else {
+                IconButton(
+                    onClick = onSend,
+                    enabled = enabled && text.isNotBlank(),
+                    modifier = Modifier.semantics {
+                        contentDescription = sendContentDescription
+                    },
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null)
+                }
             }
         }
     }
