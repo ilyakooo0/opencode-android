@@ -129,8 +129,9 @@ fun ChatScreen(state: UiState, dispatch: (Event) -> Unit) {
         topBar = {
             TopAppBar(
                 title = {
+                    val title = state.currentSessionTitle.ifEmpty { "Chat" }
                     Text(
-                        text = state.currentSessionTitle.ifEmpty { "Chat" },
+                        text = if (state.messages.isNotEmpty()) "$title (${state.messages.size})" else title,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.clickable { dispatch(Event.NavigateToSessions) },

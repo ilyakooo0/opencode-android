@@ -63,6 +63,12 @@ class OpencodeCore(
     // Tracks the in-flight probeHealth coroutine. Rapid double-taps on Connect would
     // otherwise launch two concurrent health probes; cancel the prior one first.
     private var connectJob: Job? = null
+    // Tracks the in-flight DeleteSession coroutine so navigating away can cancel it
+    // before its response handler mutates the sessions list / screen the user already left.
+    private var deleteSessionJob: Job? = null
+    // Tracks the in-flight sendMessage coroutine so navigating away or switching sessions
+    // can cancel it before its response handler touches stale message state.
+    private var sendMessageJob: Job? = null
     // Message IDs removed via SSE; a late MessageUpdated for one must not resurrect it.
     private val removedMessageIds = mutableSetOf<String>()
 
@@ -111,6 +117,7 @@ class OpencodeCore(
                 generating = false
                 error = null
                 emit()
+                sendMessageJob?.cancel()
                 loadMessagesJob?.cancel()
                 loadMessagesJob = scope.launch { loadMessages(event.id) }
             }
@@ -126,7 +133,8 @@ class OpencodeCore(
                 // Delete on the server first; only drop it from the UI once that
                 // succeeds, so a failed request leaves the session recoverable.
                 loading = true; error = null; emit()
-                scope.launch {
+                deleteSessionJob?.cancel()
+                deleteSessionJob = scope.launch {
                     http.delete("$serverUrl/session/$id", authHeader()).fold(
                         onSuccess = { resp ->
                             if (resp.code in 200..299) {
@@ -171,7 +179,10 @@ class OpencodeCore(
                 generating = false
                 loading = true
                 emit()
+                connectJob?.cancel()
                 createSessionJob?.cancel()
+                deleteSessionJob?.cancel()
+                sendMessageJob?.cancel()
                 loadMessagesJob?.cancel()
                 loadSessionsJob?.cancel()
                 loadSessionsJob = scope.launch { loadSessions() }
@@ -190,7 +201,10 @@ class OpencodeCore(
                 // Reset to the default so a late-firing close callback from the old
                 // SSE connection can't flash the reconnecting banner on the next connect.
                 sseConnected = true
+                connectJob?.cancel()
                 createSessionJob?.cancel()
+                deleteSessionJob?.cancel()
+                sendMessageJob?.cancel()
                 loadMessagesJob?.cancel()
                 closeSse()
                 emit()
@@ -230,7 +244,8 @@ class OpencodeCore(
         emit()
 
         val body = Protocol.json.encodeToString(PromptBody.serializer(), PromptBody(listOf(TextInput(text = text))))
-        scope.launch {
+        sendMessageJob?.cancel()
+        sendMessageJob = scope.launch {
             val result = http.postJson("$serverUrl/session/$session/prompt_async", body, authHeader())
             result.fold(
                 onSuccess = { resp ->
@@ -284,6 +299,7 @@ class OpencodeCore(
                     }
                     else -> {
                         loading = false
+                        connected = false
                         error = "Server returned status ${resp.code}"
                         emit()
                     }
@@ -291,6 +307,7 @@ class OpencodeCore(
             },
             onFailure = { e ->
                 loading = false
+                connected = false
                 error = "Connection failed: ${e.message}"
                 emit()
             },

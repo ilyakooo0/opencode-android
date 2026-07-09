@@ -3,6 +3,7 @@ package soy.iko.opencode.ui.components
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.widget.Toast
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -25,6 +26,8 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.SmartToy
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -67,6 +70,7 @@ fun MessageBubble(message: MessageView, modifier: Modifier = Modifier, onRetry: 
     )
 
     val context = LocalContext.current
+    var showMenu by remember { mutableStateOf(false) }
 
     Row(
         modifier = modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = if (compactSpacing) 1.dp else 4.dp),
@@ -90,13 +94,30 @@ fun MessageBubble(message: MessageView, modifier: Modifier = Modifier, onRetry: 
                     onClick = {},
                     onLongClick = {
                         if (message.text.isNotEmpty()) {
-                            copyToClipboard(context, message.text)
-                            Toast.makeText(context, "Copied", Toast.LENGTH_SHORT).show()
+                            showMenu = true
                         }
                     },
                 )
                 .padding(horizontal = 14.dp, vertical = 10.dp),
         ) {
+            DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                DropdownMenuItem(
+                    text = { Text("Copy") },
+                    onClick = {
+                        copyToClipboard(context, message.text)
+                        Toast.makeText(context, "Copied", Toast.LENGTH_SHORT).show()
+                        showMenu = false
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text("Share") },
+                    onClick = {
+                        shareText(context, message.text)
+                        showMenu = false
+                    },
+                )
+            }
+
             message.reasoning?.let { ReasoningBlock(it, context) }
 
             message.tools.forEach { ToolRow(it) }
@@ -138,6 +159,14 @@ fun MessageBubble(message: MessageView, modifier: Modifier = Modifier, onRetry: 
 private fun copyToClipboard(context: Context, text: String) {
     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
     clipboard.setPrimaryClip(ClipData.newPlainText("message", text))
+}
+
+private fun shareText(context: Context, text: String) {
+    val intent = Intent(Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(Intent.EXTRA_TEXT, text)
+    }
+    context.startActivity(Intent.createChooser(intent, null))
 }
 
 @Composable

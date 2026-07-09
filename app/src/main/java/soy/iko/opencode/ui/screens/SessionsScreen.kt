@@ -98,7 +98,7 @@ fun SessionsScreen(state: UiState, dispatch: (Event) -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Sessions") },
+                title = { Text(if (state.sessions.isNotEmpty()) "Sessions (${state.sessions.size})" else "Sessions") },
                 navigationIcon = {
                     IconButton(onClick = { dispatch(Event.NavigateToConnect) }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Disconnect")
