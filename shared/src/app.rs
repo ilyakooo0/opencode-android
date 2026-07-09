@@ -352,6 +352,9 @@ impl App for OpencodeApp {
                                 title: display_title(&s.title),
                             })
                             .collect();
+                        // Impose a stable alphabetical order so the list doesn't shuffle
+                        // with whatever order the server happens to return sessions in.
+                        model.sessions.sort_by_key(|s| s.title.to_lowercase());
                     }
                     Err(e) => model.error = Some(e),
                 }

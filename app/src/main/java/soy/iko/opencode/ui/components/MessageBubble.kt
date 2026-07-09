@@ -52,7 +52,7 @@ private val timeFormat = java.time.format.DateTimeFormatter.ofPattern("HH:mm")
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun MessageBubble(message: MessageView, modifier: Modifier = Modifier) {
+fun MessageBubble(message: MessageView, modifier: Modifier = Modifier, onRetry: () -> Unit = {}) {
     val isUser = message.isUser
     val bubbleColor = if (isUser) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
     val textColor = if (isUser) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
@@ -119,7 +119,7 @@ fun MessageBubble(message: MessageView, modifier: Modifier = Modifier) {
             }
 
             if (isUser && message.status != MessageStatus.Sent) {
-                StatusLine(message.status)
+                StatusLine(message.status, onRetry = onRetry)
             }
         }
     }
@@ -227,7 +227,7 @@ private fun ToolRow(tool: ToolView) {
 }
 
 @Composable
-private fun StatusLine(status: MessageStatus) {
+private fun StatusLine(status: MessageStatus, onRetry: () -> Unit) {
     val (icon, label, tint) = when (status) {
         MessageStatus.Pending -> Triple(Icons.Filled.Schedule, "Sending…", MaterialTheme.colorScheme.onPrimaryContainer)
         MessageStatus.Failed -> Triple(Icons.Filled.ErrorOutline, "Failed to send", MaterialTheme.colorScheme.error)
@@ -245,5 +245,15 @@ private fun StatusLine(status: MessageStatus) {
             color = tint,
             modifier = Modifier.padding(start = 4.dp),
         )
+        if (status == MessageStatus.Failed) {
+            Text(
+                text = "Retry",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .padding(start = 12.dp)
+                    .clickable { onRetry() },
+            )
+        }
     }
 }

@@ -28,6 +28,15 @@ class CoreViewModel(app: Application) : AndroidViewModel(app) {
         // the core is already connected (no-op otherwise — it guards on `connected`).
         core.resumeStreamingIfConnected()
 
+        // Returning users shouldn't have to tap Connect: if a URL was restored and we
+        // aren't already connected, kick off the connection attempt on launch. The core
+        // handles an empty/invalid URL, so this only fires when there's something to try.
+        core.view.value.let { restored ->
+            if (restored.serverUrl.isNotEmpty() && !restored.connected) {
+                core.dispatch(Event.Connect)
+            }
+        }
+
         // Persist connection details once a connection succeeds.
         viewModelScope.launch {
             core.view.distinctUntilChangedBy { it.connected to it.serverUrl }.collect { state ->

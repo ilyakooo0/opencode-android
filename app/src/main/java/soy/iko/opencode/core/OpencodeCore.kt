@@ -54,6 +54,9 @@ class OpencodeCore(
     // Guards against overlapping session refreshes: rapid taps launch multiple
     // loadSessions coroutines and the slowest-to-return would otherwise win.
     private var loadSessionsJob: Job? = null
+    // Tracks the in-flight createSession coroutine so navigating away can cancel it
+    // before it dispatches SelectSession into a screen the user already left.
+    private var createSessionJob: Job? = null
     // Message IDs removed via SSE; a late MessageUpdated for one must not resurrect it.
     private val removedMessageIds = mutableSetOf<String>()
 
@@ -104,7 +107,11 @@ class OpencodeCore(
                 scope.launch { loadMessages(event.id) }
             }
 
-            Event.CreateSession -> { loading = true; error = null; emit(); scope.launch { createSession() } }
+            Event.CreateSession -> {
+                loading = true; error = null; emit()
+                createSessionJob?.cancel()
+                createSessionJob = scope.launch { createSession() }
+            }
 
             is Event.DeleteSession -> {
                 val id = event.id
@@ -152,9 +159,11 @@ class OpencodeCore(
                 currentSessionId = null
                 messages.clear()
                 removedMessageIds.clear()
+                draft = ""
                 generating = false
                 loading = true
                 emit()
+                createSessionJob?.cancel()
                 loadSessionsJob?.cancel()
                 loadSessionsJob = scope.launch { loadSessions() }
             }
@@ -168,9 +177,11 @@ class OpencodeCore(
                 messages.clear()
                 removedMessageIds.clear()
                 currentSessionId = null
+                draft = ""
                 // Reset to the default so a late-firing close callback from the old
                 // SSE connection can't flash the reconnecting banner on the next connect.
                 sseConnected = true
+                createSessionJob?.cancel()
                 closeSse()
                 emit()
             }
@@ -253,7 +264,10 @@ class OpencodeCore(
                         loading = true
                         emit()
                         startSse()
-                        loadSessions()
+                        // Route through loadSessionsJob so a prior in-flight loadSessions
+                        // (e.g. from a rapid double-connect) is cancelled first.
+                        loadSessionsJob?.cancel()
+                        loadSessionsJob = scope.launch { loadSessions() }
                     }
                     else -> {
                         loading = false
@@ -276,6 +290,9 @@ class OpencodeCore(
                 if (resp.code in 200..299) {
                     sessions.clear()
                     sessions.addAll(Protocol.parseSessions(resp.body).map { SessionView(it.id, displayTitle(it.title)) })
+                    // Impose a stable alphabetical order so the list doesn't shuffle with
+                    // whatever order the server happens to return sessions in.
+                    sessions.sortBy { it.title.lowercase() }
                 } else {
                     error = "Server returned status ${resp.code}"
                 }
