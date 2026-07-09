@@ -69,6 +69,9 @@ class OpencodeCore(
     // Tracks the in-flight sendMessage coroutine so navigating away or switching sessions
     // can cancel it before its response handler touches stale message state.
     private var sendMessageJob: Job? = null
+    // Tracks the in-flight abort coroutine (CancelGeneration) so rapid cancel taps don't
+    // fire multiple abort requests, and navigating away can cancel it.
+    private var abortJob: Job? = null
     // Message IDs removed via SSE; a late MessageUpdated for one must not resurrect it.
     private val removedMessageIds = mutableSetOf<String>()
 
@@ -98,6 +101,7 @@ class OpencodeCore(
             }
 
             Event.LoadSessions -> {
+                if (!connected) { error = "Not connected"; emit(); return }
                 loading = true; emit()
                 loadSessionsJob?.cancel()
                 loadSessionsJob = scope.launch { loadSessions() }
@@ -117,18 +121,22 @@ class OpencodeCore(
                 generating = false
                 error = null
                 emit()
+                connectJob?.cancel()
+                abortJob?.cancel()
                 sendMessageJob?.cancel()
                 loadMessagesJob?.cancel()
                 loadMessagesJob = scope.launch { loadMessages(event.id) }
             }
 
             Event.CreateSession -> {
+                if (!connected) { error = "Not connected"; emit(); return }
                 loading = true; error = null; emit()
                 createSessionJob?.cancel()
                 createSessionJob = scope.launch { createSession() }
             }
 
             is Event.DeleteSession -> {
+                if (!connected) { error = "Not connected"; emit(); return }
                 val id = event.id
                 // Delete on the server first; only drop it from the UI once that
                 // succeeds, so a failed request leaves the session recoverable.
@@ -167,7 +175,10 @@ class OpencodeCore(
                 messages.forEach { it.streaming = false }
                 emit()
                 val id = currentSessionId ?: return
-                scope.launch { http.postJson("$serverUrl/session/$id/abort", "{}", authHeader()) }
+                // Debounce rapid cancel taps: cancel any in-flight abort before firing
+                // another so we don't stack duplicate abort requests.
+                abortJob?.cancel()
+                abortJob = scope.launch { http.postJson("$serverUrl/session/$id/abort", "{}", authHeader()) }
             }
 
             Event.NavigateToSessions -> {
@@ -180,6 +191,7 @@ class OpencodeCore(
                 loading = true
                 emit()
                 connectJob?.cancel()
+                abortJob?.cancel()
                 createSessionJob?.cancel()
                 deleteSessionJob?.cancel()
                 sendMessageJob?.cancel()
@@ -202,6 +214,7 @@ class OpencodeCore(
                 // SSE connection can't flash the reconnecting banner on the next connect.
                 sseConnected = true
                 connectJob?.cancel()
+                abortJob?.cancel()
                 createSessionJob?.cancel()
                 deleteSessionJob?.cancel()
                 sendMessageJob?.cancel()

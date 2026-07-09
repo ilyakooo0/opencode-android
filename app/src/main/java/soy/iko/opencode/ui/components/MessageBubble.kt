@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.widget.Toast
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -41,10 +42,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -124,8 +130,12 @@ fun MessageBubble(message: MessageView, modifier: Modifier = Modifier, onRetry: 
 
             SelectionContainer {
                 if (message.text.isNotEmpty()) {
+                    val linkColor = MaterialTheme.colorScheme.primary
+                    val annotatedText = remember(message.text, message.streaming, linkColor) {
+                        buildLinkedText(message.text, message.streaming, linkColor, context)
+                    }
                     Text(
-                        text = message.text + if (message.streaming) " ▌" else "",
+                        text = annotatedText,
                         color = textColor,
                         // Give assistant replies (often long, code-heavy) extra line
                         // spacing for readability; user bubbles keep the default.
@@ -159,6 +169,45 @@ fun MessageBubble(message: MessageView, modifier: Modifier = Modifier, onRetry: 
 private fun copyToClipboard(context: Context, text: String) {
     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
     clipboard.setPrimaryClip(ClipData.newPlainText("message", text))
+}
+
+private val urlRegex = Regex("""https?://[^\s]+""")
+
+/**
+ * Render [text] as an AnnotatedString where each http(s) URL becomes a clickable link
+ * that opens in the browser. Falls back to plain text when no URLs are present. The
+ * streaming cursor (" ▌") is appended outside any link annotation.
+ */
+private fun buildLinkedText(
+    text: String,
+    streaming: Boolean,
+    linkColor: Color,
+    context: Context,
+): AnnotatedString = buildAnnotatedString {
+    val matches = urlRegex.findAll(text).toList()
+    var cursor = 0
+    for (match in matches) {
+        append(text.substring(cursor, match.range.first))
+        val url = match.value
+        withLink(
+            LinkAnnotation.Clickable(
+                tag = url,
+                styles = TextLinkStyles(
+                    SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline),
+                ),
+                linkInteractionListener = {
+                    runCatching {
+                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                    }
+                },
+            ),
+        ) {
+            append(url)
+        }
+        cursor = match.range.last + 1
+    }
+    append(text.substring(cursor))
+    if (streaming) append(" ▌")
 }
 
 private fun shareText(context: Context, text: String) {

@@ -1,5 +1,9 @@
 package soy.iko.opencode.ui.screens
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -10,8 +14,10 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -65,6 +71,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontStyle
@@ -77,11 +84,12 @@ import soy.iko.opencode.core.Event
 import soy.iko.opencode.core.UiState
 import soy.iko.opencode.ui.components.MessageBubble
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun ChatScreen(state: UiState, dispatch: (Event) -> Unit) {
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
+    val context = LocalContext.current
 
     // Hide the jump-to-bottom FAB while the keyboard is up: it would otherwise
     // sit over the top of the IME. Reading the ime inset bottom during composition
@@ -134,7 +142,15 @@ fun ChatScreen(state: UiState, dispatch: (Event) -> Unit) {
                         text = if (state.messages.isNotEmpty()) "$title (${state.messages.size})" else title,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.clickable { dispatch(Event.NavigateToSessions) },
+                        modifier = Modifier.combinedClickable(
+                            onClick = { dispatch(Event.NavigateToSessions) },
+                            onLongClick = {
+                                state.currentSessionId?.let { id ->
+                                    copyToClipboard(context, id)
+                                    Toast.makeText(context, "Session ID copied", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                        ),
                     )
                 },
                 navigationIcon = {
@@ -219,7 +235,13 @@ fun ChatScreen(state: UiState, dispatch: (Event) -> Unit) {
                     onClick = {
                         coroutineScope.launch {
                             if (state.messages.isNotEmpty()) {
-                                listState.animateScrollToItem(state.messages.size - 1)
+                                // When the typing indicator is showing it occupies the item
+                                // just past the last message, so scroll one further to reach it.
+                                val target = if (state.generating && state.messages.none { it.streaming })
+                                    state.messages.size
+                                else
+                                    state.messages.size - 1
+                                listState.animateScrollToItem(target)
                             }
                         }
                     },
@@ -261,6 +283,11 @@ private fun BoxScope.ScrollToBottomButton(visible: Boolean, showBadge: Boolean, 
             }
         }
     }
+}
+
+private fun copyToClipboard(context: Context, text: String) {
+    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+    clipboard.setPrimaryClip(ClipData.newPlainText("session", text))
 }
 
 private val dateSeparatorFormat = java.time.format.DateTimeFormatter.ofPattern("MMM d")
