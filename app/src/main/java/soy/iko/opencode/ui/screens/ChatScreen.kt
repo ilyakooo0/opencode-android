@@ -59,6 +59,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -72,6 +73,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -455,9 +457,13 @@ private fun ChatInputBar(
     onStop: () -> Unit,
 ) {
     val haptic = LocalHapticFeedback.current
+    val clipboardManager = LocalClipboardManager.current
     Surface(tonalElevation = 3.dp) {
-        Row(
+        Column(
             modifier = Modifier.fillMaxWidth().imePadding().padding(horizontal = 12.dp, vertical = 8.dp),
+        ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.Bottom,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
@@ -468,6 +474,24 @@ private fun ChatInputBar(
                 enabled = !loading,
                 placeholder = { Text("Message opencode…") },
                 maxLines = 5,
+                // Offer a quick way to wipe the draft once there's something to clear
+                // and we're not mid-generation (where the field is a poor place to fuss).
+                trailingIcon = if (draft.isNotEmpty() && !generating) {
+                    {
+                        IconButton(
+                            onClick = { onDraftChange("") },
+                            modifier = Modifier.size(20.dp),
+                        ) {
+                            Icon(
+                                Icons.Filled.Close,
+                                contentDescription = "Clear draft",
+                                modifier = Modifier.size(16.dp),
+                            )
+                        }
+                    }
+                } else {
+                    null
+                },
                 // Surface a running count once the draft gets long, so the user has a
                 // sense of scale before sending a wall of text.
                 supportingText = if (draft.length > 500) {
@@ -509,6 +533,18 @@ private fun ChatInputBar(
                     Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
                 }
             }
+        }
+        // With nothing typed yet, offer a one-tap way to drop in clipboard contents.
+        if (draft.isEmpty() && !generating && !loading) {
+            TextButton(
+                onClick = {
+                    clipboardManager.getText()?.text?.let { onDraftChange(it) }
+                },
+                contentPadding = PaddingValues(0.dp),
+            ) {
+                Text("Paste")
+            }
+        }
         }
     }
 }

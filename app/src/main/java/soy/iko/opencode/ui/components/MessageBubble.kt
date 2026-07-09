@@ -49,6 +49,7 @@ import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextDecoration
@@ -209,21 +210,49 @@ private fun buildLinkedText(
                 append(segment)
             }
         } else {
-            appendLinkedText(segment, linkColor, context)
+            appendLinkedText(segment, linkColor, codeBackground, context)
         }
     }
     if (streaming) append(" ▌")
 }
 
 /**
- * Append [text] to the builder. Single-backtick pairs are rendered as inline code
- * (monospace, backticks dropped); the remaining prose has each http(s) URL turned
- * into a clickable link. Triple-backtick fences are already stripped upstream in
- * [buildLinkedText], so only inline spans reach here.
+ * Append [text] to the builder. Double-asterisk pairs are rendered bold; within each
+ * segment, single-backtick pairs are rendered as inline code (monospace, backticks
+ * dropped), and the remaining prose has each http(s) URL turned into a clickable link.
+ * Triple-backtick fences are already stripped upstream in [buildLinkedText], so only
+ * inline spans reach here.
  */
 private fun AnnotatedString.Builder.appendLinkedText(
     text: String,
     linkColor: Color,
+    codeBackground: Color,
+    context: Context,
+) {
+    // Bold is the outermost inline layer: split on ** first so a bold span can wrap
+    // inline code and links inside it. Odd-indexed segments sit between a pair of **
+    // markers, so they're bold (markers dropped); even segments are ordinary prose.
+    val segments = text.split("**")
+    segments.forEachIndexed { index, segment ->
+        if (index % 2 == 1) {
+            withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
+                appendInlineCode(segment, linkColor, codeBackground, context)
+            }
+        } else {
+            appendInlineCode(segment, linkColor, codeBackground, context)
+        }
+    }
+}
+
+/**
+ * Append [text] to the builder, rendering single-backtick pairs as inline code
+ * (monospace, backticks dropped) and turning each http(s) URL in the remaining prose
+ * into a clickable link.
+ */
+private fun AnnotatedString.Builder.appendInlineCode(
+    text: String,
+    linkColor: Color,
+    codeBackground: Color,
     context: Context,
 ) {
     // Odd-indexed segments sit between a pair of single backticks, so they're inline
@@ -231,7 +260,7 @@ private fun AnnotatedString.Builder.appendLinkedText(
     val segments = text.split("`")
     segments.forEachIndexed { index, segment ->
         if (index % 2 == 1) {
-            withStyle(SpanStyle(fontFamily = FontFamily.Monospace)) {
+            withStyle(SpanStyle(fontFamily = FontFamily.Monospace, background = codeBackground)) {
                 append(segment)
             }
         } else {

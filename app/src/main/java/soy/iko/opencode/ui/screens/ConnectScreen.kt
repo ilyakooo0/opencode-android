@@ -155,7 +155,15 @@ fun ConnectScreen(state: UiState, dispatch: (Event) -> Unit) {
                 },
                 modifier = Modifier.fillMaxWidth(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Go),
-                keyboardActions = KeyboardActions(onGo = { dispatch(Event.Connect) }),
+                keyboardActions = KeyboardActions(onGo = {
+                    // Mirror the connect button's enabled condition so the keyboard's
+                    // Go action can't fire a request the form isn't ready for.
+                    if (!state.loading && state.serverUrl.isNotBlank() &&
+                        (!state.authRequired || state.username.isNotBlank() || state.password.isNotBlank())
+                    ) {
+                        dispatch(Event.Connect)
+                    }
+                }),
                 enabled = !state.loading,
             )
             Spacer(Modifier.height(4.dp))
