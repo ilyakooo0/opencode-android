@@ -124,6 +124,7 @@ class OpencodeCore(
                 connectJob?.cancel()
                 abortJob?.cancel()
                 sendMessageJob?.cancel()
+                deleteSessionJob?.cancel()
                 loadMessagesJob?.cancel()
                 loadMessagesJob = scope.launch { loadMessages(event.id) }
             }
@@ -291,6 +292,10 @@ class OpencodeCore(
                 when {
                     resp.code == 401 -> {
                         loading = false
+                        // A prior connection may have succeeded (connected = true); a
+                        // re-probe returning 401 (e.g. expired credentials) means we're
+                        // no longer authenticated, so drop the connected flag.
+                        connected = false
                         // Always reveal the auth fields so the user can see/edit
                         // their credentials — even when the ones supplied were wrong.
                         authRequired = true

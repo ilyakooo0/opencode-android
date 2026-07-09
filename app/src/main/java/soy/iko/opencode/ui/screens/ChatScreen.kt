@@ -455,6 +455,21 @@ private fun ChatInputBar(
                 enabled = !loading,
                 placeholder = { Text("Message opencode…") },
                 maxLines = 5,
+                // Surface a running count once the draft gets long, so the user has a
+                // sense of scale before sending a wall of text.
+                supportingText = if (draft.length > 500) {
+                    {
+                        Text(
+                            text = "${draft.length} characters",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.End,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                } else {
+                    null
+                },
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                 keyboardActions = KeyboardActions(onSend = {
                     if (!generating && !loading && draft.isNotBlank()) onSend()

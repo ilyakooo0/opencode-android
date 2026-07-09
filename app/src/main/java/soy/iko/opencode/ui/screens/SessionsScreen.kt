@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
@@ -72,6 +73,15 @@ fun SessionsScreen(state: UiState, dispatch: (Event) -> Unit) {
     var pendingDeleteId by remember { mutableStateOf<String?>(null) }
     var isPullRefreshing by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
+    val sessionsListState = rememberLazyListState()
+
+    // Bring a newly created session (which lands at the top of the list) into view.
+    // Only scroll when the list actually grows, not on every reload of the same sessions.
+    var prevSize by remember { mutableStateOf(state.sessions.size) }
+    LaunchedEffect(state.sessions.size) {
+        if (state.sessions.size > prevSize) sessionsListState.animateScrollToItem(0)
+        prevSize = state.sessions.size
+    }
 
     // The pull-to-refresh spinner should only reflect a user-initiated pull, not
     // every loading operation. Clear it once the underlying load completes.
@@ -169,6 +179,7 @@ fun SessionsScreen(state: UiState, dispatch: (Event) -> Unit) {
                     state = rememberPullToRefreshState(),
                 ) {
                     LazyColumn(
+                        state = sessionsListState,
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(bottom = 88.dp),
                     ) {

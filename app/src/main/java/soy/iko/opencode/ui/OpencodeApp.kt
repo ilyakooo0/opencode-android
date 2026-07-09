@@ -7,13 +7,19 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import soy.iko.opencode.core.Event
 import soy.iko.opencode.core.Screen
@@ -25,6 +31,7 @@ import soy.iko.opencode.ui.screens.SessionsScreen
 @Composable
 fun OpencodeApp(state: UiState, dispatch: (Event) -> Unit) {
     val snackbar = remember { SnackbarHostState() }
+    var showStopConfirm by remember { mutableStateOf(false) }
 
     LaunchedEffect(state.error) {
         state.error?.let {
@@ -40,10 +47,33 @@ fun OpencodeApp(state: UiState, dispatch: (Event) -> Unit) {
 
     BackHandler(enabled = state.screen != Screen.Connect) {
         when (state.screen) {
-            Screen.Chat -> dispatch(Event.NavigateToSessions)
+            // Leaving mid-generation would silently drop the reply, so confirm first.
+            Screen.Chat -> if (state.generating) showStopConfirm = true else dispatch(Event.NavigateToSessions)
             Screen.Sessions -> dispatch(Event.NavigateToConnect)
             Screen.Connect -> Unit
         }
+    }
+
+    if (showStopConfirm) {
+        AlertDialog(
+            onDismissRequest = { showStopConfirm = false },
+            title = { Text("Stop generation?") },
+            text = { Text("Leaving will stop the current generation.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showStopConfirm = false
+                    dispatch(Event.CancelGeneration)
+                    dispatch(Event.NavigateToSessions)
+                }) {
+                    Text("Stop and leave")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showStopConfirm = false }) {
+                    Text("Stay")
+                }
+            },
+        )
     }
 
     Scaffold(snackbarHost = { SnackbarHost(snackbar) }) { padding ->

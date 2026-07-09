@@ -47,6 +47,7 @@ import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.withStyle
@@ -131,8 +132,9 @@ fun MessageBubble(message: MessageView, modifier: Modifier = Modifier, onRetry: 
             SelectionContainer {
                 if (message.text.isNotEmpty()) {
                     val linkColor = MaterialTheme.colorScheme.primary
-                    val annotatedText = remember(message.text, message.streaming, linkColor) {
-                        buildLinkedText(message.text, message.streaming, linkColor, context)
+                    val codeBackground = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+                    val annotatedText = remember(message.text, message.streaming, linkColor, codeBackground, context) {
+                        buildLinkedText(message.text, message.streaming, linkColor, codeBackground, context)
                     }
                     Text(
                         text = annotatedText,
@@ -174,16 +176,39 @@ private fun copyToClipboard(context: Context, text: String) {
 private val urlRegex = Regex("""https?://[^\s]+""")
 
 /**
- * Render [text] as an AnnotatedString where each http(s) URL becomes a clickable link
- * that opens in the browser. Falls back to plain text when no URLs are present. The
- * streaming cursor (" ▌") is appended outside any link annotation.
+ * Render [text] as an AnnotatedString. Triple-backtick fences split the text into
+ * prose and code segments: code segments are rendered monospace on a tinted
+ * [codeBackground] (fences dropped), while prose has each http(s) URL turned into a
+ * clickable link. The streaming cursor (" ▌") is appended outside any annotation.
  */
 private fun buildLinkedText(
     text: String,
     streaming: Boolean,
     linkColor: Color,
+    codeBackground: Color,
     context: Context,
 ): AnnotatedString = buildAnnotatedString {
+    // Odd-indexed segments sit between a pair of ``` fences, so they're code. An
+    // unclosed fence leaves the trailing segment styled as code, mirroring markdown.
+    val segments = text.split("```")
+    segments.forEachIndexed { index, segment ->
+        if (index % 2 == 1) {
+            withStyle(SpanStyle(fontFamily = FontFamily.Monospace, background = codeBackground)) {
+                append(segment)
+            }
+        } else {
+            appendLinkedText(segment, linkColor, context)
+        }
+    }
+    if (streaming) append(" ▌")
+}
+
+/** Append [text] to the builder, turning each http(s) URL into a clickable link. */
+private fun AnnotatedString.Builder.appendLinkedText(
+    text: String,
+    linkColor: Color,
+    context: Context,
+) {
     val matches = urlRegex.findAll(text).toList()
     var cursor = 0
     for (match in matches) {
@@ -207,7 +232,6 @@ private fun buildLinkedText(
         cursor = match.range.last + 1
     }
     append(text.substring(cursor))
-    if (streaming) append(" ▌")
 }
 
 private fun shareText(context: Context, text: String) {
