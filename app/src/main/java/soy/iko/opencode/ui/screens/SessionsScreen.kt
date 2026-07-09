@@ -162,28 +162,32 @@ fun SessionsScreen(state: UiState, dispatch: (Event) -> Unit) {
                         contentPadding = PaddingValues(bottom = 88.dp),
                     ) {
                         items(filteredSessions, key = { it.id }) { session ->
-                            val dismissState = rememberSwipeToDismissBoxState(
-                                // Only a swipe from the end (right-to-left) triggers deletion;
-                                // return false so the row snaps back and the confirm dialog decides.
-                                confirmValueChange = { value ->
-                                    if (value == SwipeToDismissBoxValue.EndToStart) {
-                                        pendingDeleteId = session.id
-                                    }
-                                    false
-                                },
-                            )
-                            SwipeToDismissBox(
-                                state = dismissState,
-                                enableDismissFromStartToEnd = false,
-                                backgroundContent = { SwipeDeleteBackground() },
-                            ) {
-                                SessionRow(
-                                    session = session,
-                                    onOpen = { dispatch(Event.SelectSession(session.id)) },
-                                    onDelete = { pendingDeleteId = session.id },
+                            // animateItem() slides the remaining rows into place when one is
+                            // deleted (and fades new rows in) instead of snapping instantly.
+                            Column(modifier = Modifier.animateItem()) {
+                                val dismissState = rememberSwipeToDismissBoxState(
+                                    // Only a swipe from the end (right-to-left) triggers deletion;
+                                    // return false so the row snaps back and the confirm dialog decides.
+                                    confirmValueChange = { value ->
+                                        if (value == SwipeToDismissBoxValue.EndToStart) {
+                                            pendingDeleteId = session.id
+                                        }
+                                        false
+                                    },
                                 )
+                                SwipeToDismissBox(
+                                    state = dismissState,
+                                    enableDismissFromStartToEnd = false,
+                                    backgroundContent = { SwipeDeleteBackground() },
+                                ) {
+                                    SessionRow(
+                                        session = session,
+                                        onOpen = { dispatch(Event.SelectSession(session.id)) },
+                                        onDelete = { pendingDeleteId = session.id },
+                                    )
+                                }
+                                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
                             }
-                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
                         }
                     }
                 }

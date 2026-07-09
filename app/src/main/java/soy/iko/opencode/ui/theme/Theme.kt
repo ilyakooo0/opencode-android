@@ -35,7 +35,7 @@ private val LightColors = lightColorScheme(
 @Composable
 fun OpencodeTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    dynamicColor: Boolean = true,
+    dynamicColor: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     val context = LocalContext.current

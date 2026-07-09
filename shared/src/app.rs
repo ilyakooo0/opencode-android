@@ -297,16 +297,27 @@ impl App for OpencodeApp {
             // Store the field verbatim while typing; normalizing here would fight
             // the user's edits (e.g. eat the "://" as they type it). The URL is
             // normalized once, on Connect.
+            // Clear any prior error as soon as the user edits a field, so a stale
+            // message (e.g. "Invalid credentials") doesn't linger while they correct it.
             Event::ServerUrlChanged(url) => {
                 model.server_url = url;
+                if model.error.is_some() {
+                    model.error = None;
+                }
                 render()
             }
             Event::UsernameChanged(u) => {
                 model.username = u;
+                if model.error.is_some() {
+                    model.error = None;
+                }
                 render()
             }
             Event::PasswordChanged(p) => {
                 model.password = p;
+                if model.error.is_some() {
+                    model.error = None;
+                }
                 render()
             }
 

@@ -51,15 +51,23 @@ class OpencodeCore(
     private var reconnectAttempts = 0
     private var reconnectJob: Job? = null
 
+    // Guards against overlapping session refreshes: rapid taps launch multiple
+    // loadSessions coroutines and the slowest-to-return would otherwise win.
+    private var loadSessionsJob: Job? = null
+    // Message IDs removed via SSE; a late MessageUpdated for one must not resurrect it.
+    private val removedMessageIds = mutableSetOf<String>()
+
     // ── Event entry point ──────────────────────────────────────────────────────
     fun dispatch(event: Event) {
         when (event) {
             // Store the field verbatim while typing; normalizing here would fight
             // the user's edits (e.g. eat the "://" as they type it). The URL is
             // normalized once, on Connect.
-            is Event.ServerUrlChanged -> { serverUrl = event.url; emit() }
-            is Event.UsernameChanged -> { username = event.value; emit() }
-            is Event.PasswordChanged -> { password = event.value; emit() }
+            // Clear any prior error as soon as the user edits a field, so a stale
+            // message (e.g. "Invalid credentials") doesn't linger while they correct it.
+            is Event.ServerUrlChanged -> { serverUrl = event.url; if (error != null) error = null; emit() }
+            is Event.UsernameChanged -> { username = event.value; if (error != null) error = null; emit() }
+            is Event.PasswordChanged -> { password = event.value; if (error != null) error = null; emit() }
 
             Event.Connect -> {
                 serverUrl = normalizeUrl(serverUrl)
@@ -73,12 +81,21 @@ class OpencodeCore(
                 scope.launch { probeHealth() }
             }
 
-            Event.LoadSessions -> { loading = true; emit(); scope.launch { loadSessions() } }
+            Event.LoadSessions -> {
+                loading = true; emit()
+                loadSessionsJob?.cancel()
+                loadSessionsJob = scope.launch { loadSessions() }
+            }
 
             is Event.SelectSession -> {
-                currentSessionTitle = sessions.firstOrNull { it.id == event.id }?.title.orEmpty()
+                // The session may have been deleted (e.g. via SSE) while the list was on
+                // screen; opening it would only 404 on loadMessages. Bail with an error.
+                val session = sessions.firstOrNull { it.id == event.id }
+                if (session == null) { error = "Session no longer exists"; emit(); return }
+                currentSessionTitle = session.title
                 currentSessionId = event.id
                 messages.clear()
+                removedMessageIds.clear()
                 screen = Screen.Chat
                 loading = true
                 generating = false
@@ -134,10 +151,12 @@ class OpencodeCore(
                 screen = Screen.Sessions
                 currentSessionId = null
                 messages.clear()
+                removedMessageIds.clear()
                 generating = false
                 loading = true
                 emit()
-                scope.launch { loadSessions() }
+                loadSessionsJob?.cancel()
+                loadSessionsJob = scope.launch { loadSessions() }
             }
 
             Event.NavigateToConnect -> {
@@ -147,6 +166,7 @@ class OpencodeCore(
                 generating = false
                 sessions.clear()
                 messages.clear()
+                removedMessageIds.clear()
                 currentSessionId = null
                 // Reset to the default so a late-firing close callback from the old
                 // SSE connection can't flash the reconnecting banner on the next connect.
@@ -294,6 +314,7 @@ class OpencodeCore(
                 loading = false
                 if (resp.code in 200..299) {
                     messages.clear()
+                    removedMessageIds.clear()
                     messages.addAll(Protocol.parseMessages(resp.body).map(::messageFromWire))
                     generating = messages.any { it.streaming }
                 } else {
@@ -367,6 +388,9 @@ class OpencodeCore(
             is Protocol.Event.MessageUpdated -> {
                 val info = event.info
                 if (info.role != "assistant" || !isCurrent(info.sessionId)) return false
+                // A MessageRemoved may have arrived before this (late/out-of-order) update;
+                // don't re-create a message the server has already deleted.
+                if (info.id in removedMessageIds) return false
                 val streaming = info.time.completed == null && info.error == null
                 val existing = messages.firstOrNull { it.id == info.id }
                 if (existing != null) {
@@ -408,7 +432,11 @@ class OpencodeCore(
                 return true
             }
 
-            is Protocol.Event.MessageRemoved -> return messages.removeAll { it.id == event.messageId }
+            is Protocol.Event.MessageRemoved -> {
+                // Remember the ID so a late MessageUpdated can't resurrect the message.
+                removedMessageIds.add(event.messageId)
+                return messages.removeAll { it.id == event.messageId }
+            }
 
             is Protocol.Event.SessionIdle -> {
                 if (!isCurrent(event.sessionId)) return false

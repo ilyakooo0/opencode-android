@@ -42,6 +42,7 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import soy.iko.opencode.core.MessageStatus
 import soy.iko.opencode.core.MessageView
 import soy.iko.opencode.core.ToolView
@@ -95,7 +96,13 @@ fun MessageBubble(message: MessageView, modifier: Modifier = Modifier) {
                     Text(
                         text = message.text + if (message.streaming) " ▌" else "",
                         color = textColor,
-                        style = MaterialTheme.typography.bodyLarge,
+                        // Give assistant replies (often long, code-heavy) extra line
+                        // spacing for readability; user bubbles keep the default.
+                        style = if (isUser) {
+                            MaterialTheme.typography.bodyLarge
+                        } else {
+                            MaterialTheme.typography.bodyLarge.copy(lineHeight = 22.sp)
+                        },
                     )
                 } else if (message.streaming && message.tools.isEmpty() && message.reasoning == null) {
                     Text("▌", color = textColor, style = MaterialTheme.typography.bodyLarge)
