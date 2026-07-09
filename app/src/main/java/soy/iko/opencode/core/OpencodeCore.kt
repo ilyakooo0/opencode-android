@@ -57,6 +57,9 @@ class OpencodeCore(
     // Tracks the in-flight createSession coroutine so navigating away can cancel it
     // before it dispatches SelectSession into a screen the user already left.
     private var createSessionJob: Job? = null
+    // Tracks the in-flight loadMessages coroutine. Rapidly switching sessions launches
+    // several; cancel the prior one so only the newest fetch runs (saves needless requests).
+    private var loadMessagesJob: Job? = null
     // Message IDs removed via SSE; a late MessageUpdated for one must not resurrect it.
     private val removedMessageIds = mutableSetOf<String>()
 
@@ -104,7 +107,8 @@ class OpencodeCore(
                 generating = false
                 error = null
                 emit()
-                scope.launch { loadMessages(event.id) }
+                loadMessagesJob?.cancel()
+                loadMessagesJob = scope.launch { loadMessages(event.id) }
             }
 
             Event.CreateSession -> {
@@ -164,6 +168,7 @@ class OpencodeCore(
                 loading = true
                 emit()
                 createSessionJob?.cancel()
+                loadMessagesJob?.cancel()
                 loadSessionsJob?.cancel()
                 loadSessionsJob = scope.launch { loadSessions() }
             }
@@ -182,6 +187,7 @@ class OpencodeCore(
                 // SSE connection can't flash the reconnecting banner on the next connect.
                 sseConnected = true
                 createSessionJob?.cancel()
+                loadMessagesJob?.cancel()
                 closeSse()
                 emit()
             }

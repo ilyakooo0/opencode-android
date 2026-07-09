@@ -21,11 +21,13 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -63,9 +65,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
@@ -78,6 +82,11 @@ import soy.iko.opencode.ui.components.MessageBubble
 fun ChatScreen(state: UiState, dispatch: (Event) -> Unit) {
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
+
+    // Hide the jump-to-bottom FAB while the keyboard is up: it would otherwise
+    // sit over the top of the IME. Reading the ime inset bottom during composition
+    // observes snapshot state, so this flips as the keyboard opens/closes.
+    val isImeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
 
     // Show a jump-to-bottom button once the user scrolls up away from the latest
     // message. derivedStateOf keeps this from recomposing on every pixel of scroll —
@@ -180,7 +189,13 @@ fun ChatScreen(state: UiState, dispatch: (Event) -> Unit) {
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(vertical = 8.dp),
                 ) {
-                    items(state.messages, key = { it.id }) { message ->
+                    itemsIndexed(state.messages, key = { _, message -> message.id }) { index, message ->
+                        // Insert a date separator whenever a message falls on a different
+                        // calendar day than the one before it (and above the first message).
+                        val previous = state.messages.getOrNull(index - 1)
+                        if (shouldShowDateSeparator(previous, message)) {
+                            DateSeparator(message.time)
+                        }
                         MessageBubble(
                             message,
                             onRetry = { dispatch(Event.SendMessage(message.text)) },
@@ -196,7 +211,7 @@ fun ChatScreen(state: UiState, dispatch: (Event) -> Unit) {
                     }
                 }
                 ScrollToBottomButton(
-                    visible = showScrollButton,
+                    visible = showScrollButton && !isImeVisible,
                     showBadge = hasUnseenMessages,
                     onClick = {
                         coroutineScope.launch {
@@ -243,6 +258,46 @@ private fun BoxScope.ScrollToBottomButton(visible: Boolean, showBadge: Boolean, 
             }
         }
     }
+}
+
+private val dateSeparatorFormat = java.time.format.DateTimeFormatter.ofPattern("MMM d")
+
+/** Convert an epoch-millis timestamp to the local calendar day it falls on. */
+private fun localDayOf(epochMillis: Long): java.time.LocalDate =
+    java.time.Instant.ofEpochMilli(epochMillis)
+        .atZone(java.time.ZoneId.systemDefault())
+        .toLocalDate()
+
+/**
+ * A separator is shown above a message when it starts a new calendar day — i.e. the
+ * first timestamped message, or one whose day differs from the previous message's.
+ * Messages without a valid time (time <= 0) never get one.
+ */
+private fun shouldShowDateSeparator(previous: soy.iko.opencode.core.MessageView?, current: soy.iko.opencode.core.MessageView): Boolean {
+    if (current.time <= 0) return false
+    if (previous == null || previous.time <= 0) return true
+    return localDayOf(previous.time) != localDayOf(current.time)
+}
+
+/** Human-friendly day label: "Today", "Yesterday", or "MMM d" (e.g. "Jul 8"). */
+private fun dateSeparatorLabel(day: java.time.LocalDate): String {
+    val today = java.time.LocalDate.now()
+    return when (day) {
+        today -> "Today"
+        today.minusDays(1) -> "Yesterday"
+        else -> day.format(dateSeparatorFormat)
+    }
+}
+
+@Composable
+private fun DateSeparator(epochMillis: Long) {
+    Text(
+        text = dateSeparatorLabel(localDayOf(epochMillis)),
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        textAlign = TextAlign.Center,
+        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+    )
 }
 
 // Assistant-style bubble with three sequentially-pulsing dots, shown as a stand-in

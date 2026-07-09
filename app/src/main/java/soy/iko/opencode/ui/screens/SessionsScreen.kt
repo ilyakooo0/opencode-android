@@ -112,11 +112,15 @@ fun SessionsScreen(state: UiState, dispatch: (Event) -> Unit) {
             )
         },
         floatingActionButton = {
-            ExtendedFloatingActionButton(
-                onClick = { dispatch(Event.CreateSession) },
-                icon = { Icon(Icons.Filled.Add, contentDescription = null) },
-                text = { Text("New session") },
-            )
+            // Give the search results the full width while searching — the FAB would
+            // otherwise cover the bottom rows and isn't relevant mid-search anyway.
+            if (searchQuery.isEmpty()) {
+                ExtendedFloatingActionButton(
+                    onClick = { dispatch(Event.CreateSession) },
+                    icon = { Icon(Icons.Filled.Add, contentDescription = null) },
+                    text = { Text("New session") },
+                )
+            }
         },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {

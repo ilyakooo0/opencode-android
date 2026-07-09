@@ -101,6 +101,18 @@ fun ConnectScreen(state: UiState, dispatch: (Event) -> Unit) {
             enabled = !state.loading,
         )
 
+        // Point first-time users at the expected address format. Hidden once they
+        // start typing so it doesn't compete with the field's own contents.
+        if (state.serverUrl.isEmpty()) {
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = "Enter the URL of your opencode server (e.g. http://192.168.1.10:4096)",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+            )
+        }
+
         if (state.authRequired) {
             Spacer(Modifier.height(12.dp))
             OutlinedTextField(
