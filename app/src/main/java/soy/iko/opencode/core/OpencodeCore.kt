@@ -189,6 +189,9 @@ class OpencodeCore(
                 removedMessageIds.clear()
                 draft = ""
                 generating = false
+                // Clear any error from the chat (e.g. a failed send) so it doesn't
+                // linger on the sessions list after the user navigates back.
+                error = null
                 loading = true
                 emit()
                 connectJob?.cancel()
@@ -358,6 +361,10 @@ class OpencodeCore(
                 if (session != null) {
                     if (sessions.none { it.id == session.id }) {
                         sessions.add(0, SessionView(session.id, displayTitle(session.title)))
+                        // Restore the alphabetical order immediately (matching loadSessions /
+                        // SessionUpserted) so the new session doesn't sit out-of-order at the
+                        // top until the SSE SessionUpserted event arrives to re-sort.
+                        sessions.sortBy { it.title.lowercase() }
                     }
                     emit()
                     // SelectSession takes over the loading state (loads messages).

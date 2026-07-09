@@ -32,6 +32,7 @@ import soy.iko.opencode.ui.screens.SessionsScreen
 fun OpencodeApp(state: UiState, dispatch: (Event) -> Unit) {
     val snackbar = remember { SnackbarHostState() }
     var showStopConfirm by remember { mutableStateOf(false) }
+    var showDisconnectConfirm by remember { mutableStateOf(false) }
 
     LaunchedEffect(state.error) {
         state.error?.let {
@@ -49,7 +50,8 @@ fun OpencodeApp(state: UiState, dispatch: (Event) -> Unit) {
         when (state.screen) {
             // Leaving mid-generation would silently drop the reply, so confirm first.
             Screen.Chat -> if (state.generating) showStopConfirm = true else dispatch(Event.NavigateToSessions)
-            Screen.Sessions -> dispatch(Event.NavigateToConnect)
+            // Disconnecting drops the server session, so guard the back button.
+            Screen.Sessions -> showDisconnectConfirm = true
             Screen.Connect -> Unit
         }
     }
@@ -71,6 +73,27 @@ fun OpencodeApp(state: UiState, dispatch: (Event) -> Unit) {
             dismissButton = {
                 TextButton(onClick = { showStopConfirm = false }) {
                     Text("Stay")
+                }
+            },
+        )
+    }
+
+    if (showDisconnectConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDisconnectConfirm = false },
+            title = { Text("Disconnect?") },
+            text = { Text("You will be disconnected from the server.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showDisconnectConfirm = false
+                    dispatch(Event.NavigateToConnect)
+                }) {
+                    Text("Disconnect")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDisconnectConfirm = false }) {
+                    Text("Cancel")
                 }
             },
         )

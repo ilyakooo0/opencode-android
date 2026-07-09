@@ -127,12 +127,24 @@ fun MessageBubble(message: MessageView, modifier: Modifier = Modifier, onRetry: 
 
             message.reasoning?.let { ReasoningBlock(it, context) }
 
+            // Give a quick overview of how many tools ran before listing them.
+            if (message.tools.size > 1) {
+                Text(
+                    text = "${message.tools.size} tool calls",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 4.dp),
+                )
+            }
+
             message.tools.forEach { ToolRow(it) }
 
             SelectionContainer {
                 if (message.text.isNotEmpty()) {
                     val linkColor = MaterialTheme.colorScheme.primary
-                    val codeBackground = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+                    // Tint the code background off the bubble's own foreground colour so it
+                    // contrasts on both bubble types (user bubbles use primaryContainer).
+                    val codeBackground = (if (isUser) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface).copy(alpha = 0.08f)
                     val annotatedText = remember(message.text, message.streaming, linkColor, codeBackground, context) {
                         buildLinkedText(message.text, message.streaming, linkColor, codeBackground, context)
                     }

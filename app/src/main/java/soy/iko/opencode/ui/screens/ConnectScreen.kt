@@ -170,7 +170,10 @@ fun ConnectScreen(state: UiState, dispatch: (Event) -> Unit) {
 
         Button(
             onClick = { dispatch(Event.Connect) },
-            enabled = !state.loading && state.serverUrl.isNotBlank(),
+            // When auth is required, keep the button disabled until at least one
+            // credential is entered — otherwise it just triggers a validation error.
+            enabled = !state.loading && state.serverUrl.isNotBlank() &&
+                (!state.authRequired || state.username.isNotBlank() || state.password.isNotBlank()),
             modifier = Modifier.fillMaxWidth(),
         ) {
             if (state.loading) {
