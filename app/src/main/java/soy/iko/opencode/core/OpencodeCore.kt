@@ -60,6 +60,9 @@ class OpencodeCore(
     // Tracks the in-flight loadMessages coroutine. Rapidly switching sessions launches
     // several; cancel the prior one so only the newest fetch runs (saves needless requests).
     private var loadMessagesJob: Job? = null
+    // Tracks the in-flight probeHealth coroutine. Rapid double-taps on Connect would
+    // otherwise launch two concurrent health probes; cancel the prior one first.
+    private var connectJob: Job? = null
     // Message IDs removed via SSE; a late MessageUpdated for one must not resurrect it.
     private val removedMessageIds = mutableSetOf<String>()
 
@@ -84,7 +87,8 @@ class OpencodeCore(
                 // Leave authRequired as-is; probeHealth sets it from the response (true on
                 // 401, false on success). Resetting it here just flickers the auth fields.
                 loading = true; error = null; emit()
-                scope.launch { probeHealth() }
+                connectJob?.cancel()
+                connectJob = scope.launch { probeHealth() }
             }
 
             Event.LoadSessions -> {
@@ -208,6 +212,9 @@ class OpencodeCore(
         val text = raw.trim()
         val session = currentSessionId ?: return
         if (text.isEmpty()) return
+        // Debounce rapid double-taps on send: a send is already in flight, so a second
+        // tap would create a duplicate user message and fire a duplicate request.
+        if (generating) return
         localSeq += 1
         val user = MsgState("local-$localSeq", "user", System.currentTimeMillis()).apply {
             status = MessageStatus.Pending
@@ -422,7 +429,7 @@ class OpencodeCore(
                 } else {
                     messages.add(MsgState(info.id, "assistant", info.time.created).apply { this.streaming = streaming })
                 }
-                info.error?.let { error = it.message(); generating = false }
+                info.error?.let { error = it.message(); messages.forEach { m -> m.streaming = false }; generating = false }
                 return true
             }
 
@@ -485,6 +492,9 @@ class OpencodeCore(
                 } else {
                     sessions.add(0, SessionView(event.info.id, title))
                 }
+                // Keep the list alphabetically sorted (matching loadSessions) so an
+                // upserted session doesn't jump to the top and break the ordering.
+                sessions.sortBy { it.title.lowercase() }
                 if (isCurrent(event.info.id)) currentSessionTitle = title
                 return true
             }

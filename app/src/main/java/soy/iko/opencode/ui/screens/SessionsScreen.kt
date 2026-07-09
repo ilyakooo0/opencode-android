@@ -247,7 +247,7 @@ private fun SessionRow(session: SessionView, onOpen: () -> Unit, onDelete: () ->
     }
 }
 
-/** Red background with a trailing delete icon, revealed while swiping a session row away. */
+/** Red background with a trailing delete icon and label, revealed while swiping a session row away. */
 @Composable
 private fun SwipeDeleteBackground() {
     Box(
@@ -257,11 +257,19 @@ private fun SwipeDeleteBackground() {
             .padding(horizontal = 24.dp),
         contentAlignment = Alignment.CenterEnd,
     ) {
-        Icon(
-            Icons.Filled.DeleteOutline,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onError,
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                Icons.Filled.DeleteOutline,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onError,
+            )
+            Text(
+                text = "Delete",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onError,
+                modifier = Modifier.padding(start = 4.dp),
+            )
+        }
     }
 }
 

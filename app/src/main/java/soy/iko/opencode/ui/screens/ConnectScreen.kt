@@ -113,6 +113,18 @@ fun ConnectScreen(state: UiState, dispatch: (Event) -> Unit) {
             )
         }
 
+        // Nudge the user if the URL looks like it's missing a scheme — a bare host:port
+        // won't connect. Informational (tertiary), not an error, since it's a heuristic.
+        if (state.serverUrl.isNotBlank() && "://" !in state.serverUrl && !state.serverUrl.startsWith("http")) {
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = "Tip: Add http:// if connecting to a local server",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.tertiary,
+                textAlign = TextAlign.Center,
+            )
+        }
+
         if (state.authRequired) {
             Spacer(Modifier.height(12.dp))
             OutlinedTextField(

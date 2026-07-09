@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -23,6 +24,7 @@ import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -52,7 +54,7 @@ private val timeFormat = java.time.format.DateTimeFormatter.ofPattern("HH:mm")
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun MessageBubble(message: MessageView, modifier: Modifier = Modifier, onRetry: () -> Unit = {}) {
+fun MessageBubble(message: MessageView, modifier: Modifier = Modifier, onRetry: () -> Unit = {}, compactSpacing: Boolean = false) {
     val isUser = message.isUser
     val bubbleColor = if (isUser) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
     val textColor = if (isUser) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
@@ -67,9 +69,17 @@ fun MessageBubble(message: MessageView, modifier: Modifier = Modifier, onRetry: 
     val context = LocalContext.current
 
     Row(
-        modifier = modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+        modifier = modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = if (compactSpacing) 1.dp else 4.dp),
         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
     ) {
+        if (!isUser) {
+            Icon(
+                Icons.Filled.SmartToy,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.align(Alignment.Top).padding(end = 6.dp, top = 2.dp).size(28.dp),
+            )
+        }
         Column(
             modifier = Modifier
                 .fillMaxWidth(0.85f)

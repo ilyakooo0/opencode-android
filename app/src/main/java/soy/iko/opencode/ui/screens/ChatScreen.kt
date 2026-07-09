@@ -196,9 +196,11 @@ fun ChatScreen(state: UiState, dispatch: (Event) -> Unit) {
                         if (shouldShowDateSeparator(previous, message)) {
                             DateSeparator(message.time)
                         }
+                        val sameSenderAsPrevious = index > 0 && state.messages[index - 1].isUser == message.isUser
                         MessageBubble(
                             message,
                             onRetry = { dispatch(Event.SendMessage(message.text)) },
+                            compactSpacing = sameSenderAsPrevious,
                         )
                     }
                     // While the assistant is spinning up but hasn't emitted a streaming
