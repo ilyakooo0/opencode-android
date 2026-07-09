@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.ime
@@ -45,6 +46,7 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.ChatBubbleOutline
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -109,6 +111,12 @@ fun ChatScreen(state: UiState, dispatch: (Event) -> Unit) {
             val totalItems = layoutInfo.totalItemsCount
             totalItems > 0 && lastVisibleIndex < totalItems - 3
         }
+    }
+
+    // Offer a jump-to-top shortcut once the conversation is long and the user has
+    // scrolled a few messages down — saves flick-scrolling back through history.
+    val showScrollTop by remember {
+        derivedStateOf { state.messages.size > 10 && listState.firstVisibleItemIndex > 3 }
     }
 
     // Track how many messages the user has "seen" (i.e. was at the bottom for). While
@@ -261,6 +269,14 @@ fun ChatScreen(state: UiState, dispatch: (Event) -> Unit) {
                         }
                     },
                 )
+                ScrollToTopButton(
+                    visible = showScrollTop,
+                    onClick = {
+                        coroutineScope.launch {
+                            listState.animateScrollToItem(0)
+                        }
+                    },
+                )
             }
         }
     }
@@ -294,6 +310,30 @@ private fun BoxScope.ScrollToBottomButton(visible: Boolean, showBadge: Boolean, 
                         .size(8.dp)
                         .clip(CircleShape)
                         .background(MaterialTheme.colorScheme.error),
+                )
+            }
+        }
+    }
+}
+
+// Mirror of ScrollToBottomButton, pinned to the top-start corner. Same BoxScope
+// extension trick so the top-level AnimatedVisibility overload resolves cleanly.
+@Composable
+private fun BoxScope.ScrollToTopButton(visible: Boolean, onClick: () -> Unit) {
+    AnimatedVisibility(
+        visible = visible,
+        modifier = Modifier.align(Alignment.TopStart),
+        enter = scaleIn() + fadeIn(),
+        exit = scaleOut() + fadeOut(),
+    ) {
+        Box(Modifier.padding(16.dp)) {
+            FloatingActionButton(
+                onClick = onClick,
+                modifier = Modifier.size(44.dp),
+            ) {
+                Icon(
+                    Icons.Filled.KeyboardArrowUp,
+                    contentDescription = "Scroll to top",
                 )
             }
         }
@@ -470,7 +510,7 @@ private fun ChatInputBar(
             OutlinedTextField(
                 value = draft,
                 onValueChange = onDraftChange,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(1f).heightIn(min = 48.dp),
                 enabled = !loading,
                 placeholder = { Text("Message opencode…") },
                 maxLines = 5,

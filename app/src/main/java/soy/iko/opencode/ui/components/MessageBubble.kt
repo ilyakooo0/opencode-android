@@ -232,13 +232,50 @@ private fun AnnotatedString.Builder.appendLinkedText(
     // Bold is the outermost inline layer: split on ** first so a bold span can wrap
     // inline code and links inside it. Odd-indexed segments sit between a pair of **
     // markers, so they're bold (markers dropped); even segments are ordinary prose.
+    // Only the non-bold (even) segments get single-* italic handling — splitting a bold
+    // segment on "*" would misfire on the leftover asterisks from the ** markers.
     val segments = text.split("**")
+    // An even segment count means an odd number of ** markers, so the final ** is unclosed:
+    // its trailing segment isn't bold. Restore the literal ** and render it as ordinary prose.
+    val unclosed = segments.size % 2 == 0
     segments.forEachIndexed { index, segment ->
-        if (index % 2 == 1) {
+        val isUnclosedTail = unclosed && index == segments.size - 1
+        if (index % 2 == 1 && !isUnclosedTail) {
             withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
                 appendInlineCode(segment, linkColor, codeBackground, context)
             }
         } else {
+            if (isUnclosedTail) append("**")
+            appendItalicText(segment, linkColor, codeBackground, context)
+        }
+    }
+}
+
+/**
+ * Append [text] to the builder, rendering single-asterisk pairs as italic. Double
+ * asterisks are already consumed as bold upstream in [appendLinkedText], so only lone
+ * `*` markers reach here. Each segment then flows through inline-code and URL handling.
+ */
+private fun AnnotatedString.Builder.appendItalicText(
+    text: String,
+    linkColor: Color,
+    codeBackground: Color,
+    context: Context,
+) {
+    // Odd-indexed segments sit between a pair of single asterisks, so they're italic
+    // (markers dropped); even segments are ordinary prose.
+    val segments = text.split("*")
+    // An even segment count means an odd number of * markers, so the final * is unclosed:
+    // its trailing segment isn't italic. Restore the literal * and render it as prose.
+    val unclosed = segments.size % 2 == 0
+    segments.forEachIndexed { index, segment ->
+        val isUnclosedTail = unclosed && index == segments.size - 1
+        if (index % 2 == 1 && !isUnclosedTail) {
+            withStyle(SpanStyle(fontStyle = FontStyle.Italic)) {
+                appendInlineCode(segment, linkColor, codeBackground, context)
+            }
+        } else {
+            if (isUnclosedTail) append("*")
             appendInlineCode(segment, linkColor, codeBackground, context)
         }
     }
@@ -258,12 +295,17 @@ private fun AnnotatedString.Builder.appendInlineCode(
     // Odd-indexed segments sit between a pair of single backticks, so they're inline
     // code. Even segments are ordinary prose and get URL linking applied.
     val segments = text.split("`")
+    // An even segment count means an odd number of backtick markers, so the final backtick
+    // is unclosed: its trailing segment isn't code. Restore the literal ` and treat as prose.
+    val unclosed = segments.size % 2 == 0
     segments.forEachIndexed { index, segment ->
-        if (index % 2 == 1) {
+        val isUnclosedTail = unclosed && index == segments.size - 1
+        if (index % 2 == 1 && !isUnclosedTail) {
             withStyle(SpanStyle(fontFamily = FontFamily.Monospace, background = codeBackground)) {
                 append(segment)
             }
         } else {
+            if (isUnclosedTail) append("`")
             appendUrls(segment, linkColor, context)
         }
     }

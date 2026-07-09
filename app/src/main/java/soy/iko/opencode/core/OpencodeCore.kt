@@ -236,7 +236,18 @@ class OpencodeCore(
         if (connected && sse == null) startSse()
     }
 
-    fun shutdown() = closeSse()
+    fun shutdown() {
+        // Cancel every tracked coroutine before tearing down the stream so none can
+        // emit into a cancelled scope after the ViewModel is cleared.
+        connectJob?.cancel()
+        loadSessionsJob?.cancel()
+        createSessionJob?.cancel()
+        loadMessagesJob?.cancel()
+        deleteSessionJob?.cancel()
+        sendMessageJob?.cancel()
+        abortJob?.cancel()
+        closeSse()
+    }
 
     // ── Effects ────────────────────────────────────────────────────────────────
     private fun sendMessage(raw: String) {

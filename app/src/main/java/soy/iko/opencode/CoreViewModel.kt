@@ -23,6 +23,9 @@ class CoreViewModel(app: Application) : AndroidViewModel(app) {
     init {
         prefs.getString(KEY_URL, null)?.let { core.dispatch(Event.ServerUrlChanged(it)) }
         prefs.getString(KEY_USER, null)?.let { core.dispatch(Event.UsernameChanged(it)) }
+        // The password is stored in plain text in SharedPreferences — a deliberate
+        // convenience trade-off for a local dev tool so reconnecting is one tap.
+        prefs.getString(KEY_PASSWORD, null)?.let { core.dispatch(Event.PasswordChanged(it)) }
 
         // On a fresh process after a configuration change, resume the SSE stream if
         // the core is already connected (no-op otherwise — it guards on `connected`).
@@ -44,6 +47,7 @@ class CoreViewModel(app: Application) : AndroidViewModel(app) {
                     prefs.edit {
                         putString(KEY_URL, state.serverUrl)
                         putString(KEY_USER, state.username)
+                        putString(KEY_PASSWORD, state.password)
                     }
                 }
             }
@@ -57,5 +61,6 @@ class CoreViewModel(app: Application) : AndroidViewModel(app) {
     private companion object {
         const val KEY_URL = "serverUrl"
         const val KEY_USER = "username"
+        const val KEY_PASSWORD = "password"
     }
 }

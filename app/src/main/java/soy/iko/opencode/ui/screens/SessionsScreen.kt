@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
@@ -57,6 +58,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -116,7 +119,23 @@ fun SessionsScreen(state: UiState, dispatch: (Event) -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(if (state.sessions.isNotEmpty()) "Sessions (${state.sessions.size})" else "Sessions") },
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        // A quick at-a-glance health dot for the SSE stream: green when
+                        // connected, error-tinted when the stream is down (updates stall).
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    if (state.sseConnected) Color(0xFF4CAF50)
+                                    else MaterialTheme.colorScheme.error,
+                                ),
+                        )
+                        Spacer(Modifier.size(8.dp))
+                        Text(if (state.sessions.isNotEmpty()) "Sessions (${state.sessions.size})" else "Sessions")
+                    }
+                },
                 navigationIcon = {
                     IconButton(onClick = { dispatch(Event.NavigateToConnect) }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Disconnect")
