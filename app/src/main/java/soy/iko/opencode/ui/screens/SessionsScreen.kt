@@ -267,7 +267,7 @@ private fun SessionRow(session: SessionView, onOpen: () -> Unit, onDelete: () ->
             Icon(
                 Icons.Filled.DeleteOutline,
                 contentDescription = "Delete session",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                tint = MaterialTheme.colorScheme.error,
             )
         }
     }

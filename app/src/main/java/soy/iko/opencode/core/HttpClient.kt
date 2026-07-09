@@ -51,6 +51,7 @@ class HttpClient(
     ): Result<HttpResp> = withContext(Dispatchers.IO) {
         runCatching {
             val builder = Request.Builder().url(url).method()
+            builder.header("User-Agent", "opencode-android/1.0")
             if (auth != null) builder.header("Authorization", auth)
             await(okhttp.newCall(builder.build()))
         }

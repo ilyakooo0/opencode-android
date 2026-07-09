@@ -33,6 +33,7 @@ class SseClient(
 
     fun connect() {
         val builder = Request.Builder().url(url).header("Accept", "text/event-stream")
+        builder.header("User-Agent", "opencode-android/1.0")
         if (auth != null) builder.header("Authorization", auth)
         source = EventSources.createFactory(client).newEventSource(builder.build(), listener)
     }

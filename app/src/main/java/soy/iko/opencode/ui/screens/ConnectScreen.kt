@@ -187,6 +187,18 @@ fun ConnectScreen(state: UiState, dispatch: (Event) -> Unit) {
             }
         }
 
+        // While connecting (including auto-connect on launch), echo the target URL
+        // so the user knows what the spinner is waiting on.
+        if (state.loading) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = "Connecting to ${state.serverUrl}...",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+            )
+        }
+
         // Surface the error inline as well, so it stays visible while the user
         // corrects the form (the snackbar is transient).
         if (state.error != null && !state.loading) {

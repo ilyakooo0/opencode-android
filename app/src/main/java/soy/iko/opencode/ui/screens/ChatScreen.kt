@@ -42,6 +42,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.ChatBubbleOutline
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Stop
@@ -194,12 +195,24 @@ fun ChatScreen(state: UiState, dispatch: (Event) -> Unit) {
             }
             Box(Modifier.fillMaxWidth().weight(1f)) {
                 if (state.messages.isEmpty() && !state.loading) {
-                    Text(
-                        text = "Send a message to start the conversation.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    Column(
                         modifier = Modifier.align(Alignment.Center).padding(32.dp),
-                    )
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Icon(
+                            Icons.Filled.ChatBubbleOutline,
+                            contentDescription = null,
+                            modifier = Modifier.size(48.dp),
+                            tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                        )
+                        Spacer(Modifier.size(16.dp))
+                        Text(
+                            text = "Send a message to start the conversation.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center,
+                        )
+                    }
                 }
                 LazyColumn(
                     state = listState,

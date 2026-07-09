@@ -215,8 +215,33 @@ private fun buildLinkedText(
     if (streaming) append(" ▌")
 }
 
-/** Append [text] to the builder, turning each http(s) URL into a clickable link. */
+/**
+ * Append [text] to the builder. Single-backtick pairs are rendered as inline code
+ * (monospace, backticks dropped); the remaining prose has each http(s) URL turned
+ * into a clickable link. Triple-backtick fences are already stripped upstream in
+ * [buildLinkedText], so only inline spans reach here.
+ */
 private fun AnnotatedString.Builder.appendLinkedText(
+    text: String,
+    linkColor: Color,
+    context: Context,
+) {
+    // Odd-indexed segments sit between a pair of single backticks, so they're inline
+    // code. Even segments are ordinary prose and get URL linking applied.
+    val segments = text.split("`")
+    segments.forEachIndexed { index, segment ->
+        if (index % 2 == 1) {
+            withStyle(SpanStyle(fontFamily = FontFamily.Monospace)) {
+                append(segment)
+            }
+        } else {
+            appendUrls(segment, linkColor, context)
+        }
+    }
+}
+
+/** Append [text] to the builder, turning each http(s) URL into a clickable link. */
+private fun AnnotatedString.Builder.appendUrls(
     text: String,
     linkColor: Color,
     context: Context,
